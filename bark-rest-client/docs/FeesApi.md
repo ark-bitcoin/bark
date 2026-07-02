@@ -8,6 +8,7 @@ Method | HTTP request | Description
 [**lightning_receive_fee**](FeesApi.md#lightning_receive_fee) | **GET** /api/v1/fees/lightning/receive | Estimate Lightning receive fee
 [**lightning_send_fee**](FeesApi.md#lightning_send_fee) | **GET** /api/v1/fees/lightning/pay | Estimate Lightning send fee
 [**offboard_all_fee**](FeesApi.md#offboard_all_fee) | **GET** /api/v1/fees/offboard-all | Estimate offboard-all fee
+[**offboard_fee**](FeesApi.md#offboard_fee) | **POST** /api/v1/fees/offboard | Estimate offboard fee
 [**onchain_fee_rates**](FeesApi.md#onchain_fee_rates) | **GET** /api/v1/fees/onchain | Get on-chain fee rates
 [**send_onchain_fee**](FeesApi.md#send_onchain_fee) | **GET** /api/v1/fees/send-onchain | Estimate send-onchain fee
 
@@ -128,6 +129,36 @@ Name | Type | Description  | Required | Notes
 ### HTTP request headers
 
 - **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## offboard_fee
+
+> models::FeeEstimateResponse offboard_fee(offboard_fee_estimate_request)
+Estimate offboard fee
+
+Estimates the fee for offboarding a specific set of VTXOs to the given on-chain address. Each VTXO is offboarded in full. The gross amount is the total value of the selected VTXOs, and the net amount is what the user receives on-chain after fees. The fee depends on the destination address type, current fee rates, and VTXO expiry.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**offboard_fee_estimate_request** | [**OffboardFeeEstimateRequest**](OffboardFeeEstimateRequest.md) |  | [required] |
+
+### Return type
+
+[**models::FeeEstimateResponse**](FeeEstimateResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

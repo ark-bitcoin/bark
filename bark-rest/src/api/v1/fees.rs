@@ -1,14 +1,14 @@
 use std::str::FromStr;
 
 use axum::extract::{Query, State};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
 use anyhow::Context;
 use bitcoin::Amount;
 use utoipa::OpenApi;
 
 use crate::ServerState;
-use crate::error::{self, HandlerResult, ContextExt};
+use crate::error::{self, HandlerResult, ContextExt, badarg};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -17,6 +17,7 @@ use crate::error::{self, HandlerResult, ContextExt};
 		board_fee,
 		send_onchain_fee,
 		offboard_all_fee,
+		offboard_fee,
 		lightning_send_fee,
 		lightning_receive_fee,
 	),
@@ -24,6 +25,7 @@ use crate::error::{self, HandlerResult, ContextExt};
 		bark_json::web::FeeEstimateQuery,
 		bark_json::web::SendOnchainFeeEstimateQuery,
 		bark_json::web::OffboardAllFeeEstimateQuery,
+		bark_json::web::OffboardFeeEstimateRequest,
 		bark_json::web::FeeEstimateResponse,
 		bark_json::web::OnchainFeeRatesResponse,
 	)),
@@ -37,6 +39,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/board", get(board_fee))
 		.route("/send-onchain", get(send_onchain_fee))
 		.route("/offboard-all", get(offboard_all_fee))
+		.route("/offboard", post(offboard_fee))
 		.route("/lightning/pay", get(lightning_send_fee))
 		.route("/lightning/receive", get(lightning_receive_fee))
 }
@@ -172,6 +175,54 @@ pub async fn offboard_all_fee(
 
 	let estimate = wallet.estimate_offboard_all(&address).await
 		.context("Failed to estimate offboard-all fee")?;
+
+	Ok(axum::Json(estimate.into()))
+}
+
+#[utoipa::path(
+	post,
+	path = "/offboard",
+	summary = "Estimate offboard fee",
+	request_body = bark_json::web::OffboardFeeEstimateRequest,
+	responses(
+		(status = 200, description = "Returns the fee estimate", body = bark_json::web::FeeEstimateResponse),
+		(status = 400, description = "No VTXO IDs provided, or an invalid VTXO id or address", body = error::BadRequestError),
+		(status = 404, description = "One of the VTXOs wasn't found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Estimates the fee for offboarding a specific set of VTXOs to the given \
+		on-chain address. Each VTXO is offboarded in full. The gross amount is the total \
+		value of the selected VTXOs, and the net amount is what the user receives on-chain \
+		after fees. The fee depends on the destination address type, current fee rates, and \
+		VTXO expiry.",
+	tag = "fees"
+)]
+#[debug_handler]
+pub async fn offboard_fee(
+	State(state): State<ServerState>,
+	Json(body): Json<bark_json::web::OffboardFeeEstimateRequest>,
+) -> HandlerResult<Json<bark_json::web::FeeEstimateResponse>> {
+	let wallet = state.require_wallet()?;
+
+	if body.vtxos.is_empty() {
+		badarg!("No VTXO IDs provided");
+	}
+
+	let network = wallet.network().await?;
+	let address = bitcoin::Address::from_str(&body.address)
+		.badarg("Invalid destination address")?
+		.require_network(network)
+		.badarg("Address is not valid for configured network")?;
+
+	let mut vtxos = Vec::with_capacity(body.vtxos.len());
+	for s in &body.vtxos {
+		let id = ark::VtxoId::from_str(s).badarg("Invalid VTXO id")?;
+		let vtxo = wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
+		vtxos.push(vtxo);
+	}
+
+	let estimate = wallet.estimate_offboard(&address, &vtxos).await
+		.context("Failed to estimate offboard fee")?;
 
 	Ok(axum::Json(estimate.into()))
 }

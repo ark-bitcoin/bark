@@ -59,6 +59,16 @@ pub struct OffboardAllFeeEstimateQuery {
 	pub address: String,
 }
 
+/// Request body for estimating the fee of offboarding a specific set of VTXOs.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct OffboardFeeEstimateRequest {
+	/// The destination Bitcoin address. The fee depends on its script type.
+	pub address: String,
+	/// The IDs of the VTXOs to offboard. Each is offboarded in full.
+	pub vtxos: Vec<String>,
+}
+
 /// A fee estimate for an Ark wallet operation.
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]

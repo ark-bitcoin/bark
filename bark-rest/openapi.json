@@ -679,6 +679,68 @@
         }
       }
     },
+    "/api/v1/fees/offboard": {
+      "post": {
+        "tags": [
+          "fees"
+        ],
+        "summary": "Estimate offboard fee",
+        "description": "Estimates the fee for offboarding a specific set of VTXOs to the given on-chain address. Each VTXO is offboarded in full. The gross amount is the total value of the selected VTXOs, and the net amount is what the user receives on-chain after fees. The fee depends on the destination address type, current fee rates, and VTXO expiry.",
+        "operationId": "offboard_fee",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OffboardFeeEstimateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the fee estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeeEstimateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No VTXO IDs provided, or an invalid VTXO id or address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "One of the VTXOs wasn't found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/fees/offboard-all": {
       "get": {
         "tags": [
@@ -4940,6 +5002,27 @@
               "null"
             ],
             "description": "Optional Bitcoin address to send to. If not provided, uses the onchain wallet's address"
+          }
+        }
+      },
+      "OffboardFeeEstimateRequest": {
+        "type": "object",
+        "description": "Request body for estimating the fee of offboarding a specific set of VTXOs.",
+        "required": [
+          "address",
+          "vtxos"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The destination Bitcoin address. The fee depends on its script type."
+          },
+          "vtxos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The IDs of the VTXOs to offboard. Each is offboarded in full."
           }
         }
       },
