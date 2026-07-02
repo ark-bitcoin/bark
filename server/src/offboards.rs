@@ -41,11 +41,10 @@ pub struct PendingOffboard {
 }
 
 impl Server {
-	/// Returns a vector with all the UTXOs currently in use by a pending offboard
-	pub fn pending_offboard_utxos(&self) -> Vec<OutPoint> {
+	/// Drop pending offboard sessions older than the session timeout,
+	/// releasing their vtxo and wallet UTXO locks.
+	fn expire_pending_offboards(&self) {
 		let mut guard = self.pending_offboards.lock();
-
-		// clean up old offboards
 		for (offboard_txid, opt) in guard.remove_older(self.config.offboard_session_timeout) {
 			if let Some(removed) = opt {
 				let utxos = removed.wallet_input_guard.utxos().to_vec();
@@ -53,7 +52,13 @@ impl Server {
 				slog!(OffboardSessionTimeout, offboard_txid, utxos, vtxos);
 			}
 		}
+	}
 
+	/// Returns a vector with all the UTXOs currently in use by a pending offboard
+	pub fn pending_offboard_utxos(&self) -> Vec<OutPoint> {
+		self.expire_pending_offboards();
+
+		let guard = self.pending_offboards.lock();
 		guard.values()
 			.filter_map(|o| o.as_ref())
 			.map(|p| p.offboard_tx.unsigned_tx.input.iter().map(|i| i.previous_output))
@@ -75,6 +80,8 @@ impl Server {
 					_ = interval.tick() => {},
 					_ = self.rtmgr.shutdown_signal() => return,
 				}
+
+				self.expire_pending_offboards();
 
 				match self.db.read(async |t| t.get_uncommitted_offboards().await).await {
 					Ok(txs) => {
