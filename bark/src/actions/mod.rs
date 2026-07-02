@@ -371,7 +371,19 @@ impl Wallet {
 			let snapshot = action.clone();
 			let first = action.advance(self).await;
 			let second = snapshot.advance(self).await;
-			assert_reentrant(&first, &second);
+
+			// A first run that parks made no committed progress: it is a
+			// "nothing finished, re-drive me later" outcome (waiting on a
+			// confirmation, polling for an incoming payment, retrying a
+			// transient server rejection). The second run is that later
+			// re-drive and may legitimately diverge once the awaited condition
+			// clears, progressing to the next step or completing. So only
+			// assert equivalence when the first run committed a step (Next),
+			// finished (Done) or failed terminally.
+			let first_parked = matches!(first, Ok(Advance::Park { .. }));
+			if !first_parked {
+				assert_reentrant(&first, &second);
+			}
 			return second;
 		}
 
