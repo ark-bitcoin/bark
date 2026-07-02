@@ -350,7 +350,9 @@ impl Wallet {
 	where
 		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
 	{
-		self.run_action_loop(action, mode).await
+		// Box the driver so its state machine lives on the heap rather
+		// than inline in the caller's future.
+		Box::pin(self.run_action_loop(action, mode)).await
 	}
 
 	/// Run one `advance` step.
