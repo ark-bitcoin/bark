@@ -1121,7 +1121,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 
 #[tokio::test]
 async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign").await;
 	let ctx = Arc::new(ctx);
