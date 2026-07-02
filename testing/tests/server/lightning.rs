@@ -341,7 +341,7 @@ async fn server_claim_lightning_receive_is_idempotent(
 	pay: impl AsyncFn(String),
 ) {
 	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -387,7 +387,7 @@ async fn server_returned_htlc_recv_vtxos_identical(
 	pay: impl AsyncFn(String),
 ) {
 	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
