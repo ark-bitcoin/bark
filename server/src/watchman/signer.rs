@@ -71,6 +71,31 @@ impl WatchmanSigner {
 
 #[async_trait::async_trait]
 impl VtxoSigner<ServerVtxoPolicy> for WatchmanSigner {
+	async fn can_sign<G: Sync + Send>(
+		&self, clause: &VtxoClause, _vtxo: &Vtxo<G, ServerVtxoPolicy>,
+	) -> bool {
+		// first check for the key to sign
+		let have_key = if clause.pubkey() == self.server_keypair.leak_ref().public_key() {
+			true
+		} else {
+			self.db.read(async |t| t.fetch_ephemeral_tweak(clause.pubkey()).await).await
+				.ok().flatten().is_some()
+		};
+		if !have_key {
+			return false;
+		}
+
+		// then check for other witness items
+		match clause {
+			VtxoClause::HashDelaySign(c) => self.get_preimage(c.hash).await.is_some(),
+			VtxoClause::HashSign(c) => self.get_preimage(c.hash).await.is_some(),
+			// others are simple signatures
+			VtxoClause::DelayedSign(_) => true,
+			VtxoClause::DelayedTimelockSign(_) => true,
+			VtxoClause::TimelockSign(_) => true,
+		}
+	}
+
 	async fn sign_keyspend<G: Sync + Send>(
 		&self,
 		vtxo: &Vtxo<G, ServerVtxoPolicy>,

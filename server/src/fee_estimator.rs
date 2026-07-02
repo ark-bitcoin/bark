@@ -233,7 +233,7 @@ impl Process {
 				slow: FeeRate::ZERO,
 			});
 		self.fee_estimator.update(rates);
-		drop(rates);
+		let _ = rates;
 		let current = self.fee_estimator.fee_rates.read().front().unwrap().0;
 
 		// Convert sat/kwu to sat/vb: 1 vbyte = 4 weight units, so sat/vb = sat/kwu / 250
