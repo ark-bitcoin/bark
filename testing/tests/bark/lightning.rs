@@ -1642,8 +1642,23 @@ async fn bark_cannot_cancel_lightning_receive_after_preimage_revealed() {
 	});
 
 	// The claim will fail because the proxy drops claim_lightning_receive,
-	// but set_preimage_revealed has already been called locally.
-	let _ = bark.try_lightning_receive(&invoice_info.invoice).try_wait_millis(10_000).await;
+	// but set_preimage_revealed has already been called locally. Re-drive
+	// until that checkpoint is persisted: a single fixed window is not enough
+	// when payment routing is slow or under the double-drive reentrancy mode.
+	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
+	let mut revealed = false;
+	for _ in 0..6 {
+		let _ = bark.try_lightning_receive(&invoice_info.invoice).try_wait_millis(10_000).await;
+		let state = bark.client().await
+			.lightning_receive_state(invoice.payment_hash()).await;
+		if let Ok(LightningReceiveState::InProgress(recv)) = state {
+			if matches!(recv.progress, bark::actions::lightning::receive::Progress::PreimageRevealed(_)) {
+				revealed = true;
+				break;
+			}
+		}
+	}
+	assert!(revealed, "receive should have reached the preimage-revealed state");
 
 	// Trying to cancel should fail because the preimage has been revealed
 	let err = bark.try_cancel_lightning_receive(&invoice_info.invoice).await.unwrap_err();
@@ -1773,7 +1788,10 @@ async fn bark_keeps_lightning_receive_pending_after_retry_budget_exhausted() {
 	bark.try_lightning_receive(&invoice_info.invoice).wait_millis(60_000).await
 		.expect_err("claim should fail after retry budget is exhausted");
 
-	assert_eq!(attempts.load(Ordering::Relaxed), usize::from(retries) + 1,
+	// The double-drive reentrancy mode runs each advance twice, so the server
+	// sees every claim attempt twice.
+	let expected_attempts = (usize::from(retries) + 1) * ark_testing::util::action_drive_factor();
+	assert_eq!(attempts.load(Ordering::Relaxed), expected_attempts,
 		"server should see one claim per attempt (initial + each retry)");
 
 	// We no longer auto-exit when the budget runs out: the receive stays
