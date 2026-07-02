@@ -16,14 +16,14 @@ impl_slog!(LightningPayHtlcsRequested, INFO, "requested HTLCs for lightning paym
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPaymentInitRequested {
-	pub invoice_payment_hash: PaymentHash,
+	pub payment_hash: PaymentHash,
 	pub htlc_vtxo_ids: Vec<VtxoId>,
 }
 impl_slog!(LightningPaymentInitRequested, TRACE, "requested lightning payment initiation");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPaymentInitiated {
-	pub invoice_payment_hash: PaymentHash,
+	pub payment_hash: PaymentHash,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	pub fee: Amount,
@@ -33,14 +33,14 @@ impl_slog!(LightningPaymentInitiated, INFO, "initiated lightning payment");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPayHtlcsRevocationRequested {
-	pub invoice_payment_hash: PaymentHash,
+	pub payment_hash: PaymentHash,
 	pub htlc_vtxo_ids: Vec<VtxoId>,
 }
 impl_slog!(LightningPayHtlcsRevocationRequested, TRACE, "requested htlc revocation");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPayHtlcsRevoked {
-	pub invoice_payment_hash: PaymentHash,
+	pub payment_hash: PaymentHash,
 	pub htlc_vtxo_ids: Vec<VtxoId>,
 	pub new_vtxo_ids: Vec<VtxoId>,
 }

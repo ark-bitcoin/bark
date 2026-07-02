@@ -23,6 +23,7 @@ macro_rules! slog {
 		);
 	}};
 	($struct:ident, $($args:tt)+) => {{
+		#[allow(deprecated)]
 		let temp = $crate::$struct { $($args)* };
 		let data_json = serde_json::to_string(&temp)
 			.unwrap_or_else(|_| "json serialization error".into());
