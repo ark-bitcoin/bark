@@ -45,7 +45,7 @@ use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
 use crate::persist::models::{
-	PaidInvoice, PendingBoard, RoundStateId, SettledLightningReceive,
+	PaidInvoice, RoundStateId, SettledLightningReceive,
 	StoredExit, StoredRoundState, Unlocked, PendingOffboard,
 };
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
@@ -232,50 +232,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 		&self,
 		payment_method: &PaymentMethod,
 	) -> anyhow::Result<Vec<Movement>>;
-
-	/// Store a pending board.
-	///
-	/// Parameters:
-	/// - vtxo: The [Vtxo] to store.
-	/// - funding_txid: The funding [Txid].
-	/// - movement_id: The [MovementId] associated with this board.
-	///
-	/// Errors:
-	/// - Returns an error if the board cannot be stored.
-	async fn store_pending_board(
-		&self,
-		vtxo: &Vtxo<Full>,
-		funding_tx: &Transaction,
-		movement_id: MovementId,
-	) -> anyhow::Result<()>;
-
-	/// Remove a pending board.
-	///
-	/// Parameters:
-	/// - vtxo_id: The [VtxoId] to remove.
-	///
-	/// Errors:
-	/// - Returns an error if the board cannot be removed.
-	async fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()>;
-
-	/// Get the [VtxoId] for each pending board.
-	///
-	/// Returns:
-	/// - `Ok(Vec<VtxoId>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	async fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>>;
-
-	/// Get the [PendingBoard] associated with the given [VtxoId].
-	///
-	/// Returns:
-	/// - `Ok(Some(PendingBoard))` if a matching board exists
-	/// - `Ok(None)` if no matching board exists
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	async fn get_pending_board_by_vtxo_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>>;
 
 	/// Store a new ongoing round state
 	///

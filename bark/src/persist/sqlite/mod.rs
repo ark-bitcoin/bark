@@ -33,7 +33,7 @@ use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
 use crate::persist::models::{
-	PaidInvoice, PendingBoard, PendingOffboard, SettledLightningReceive,
+	PaidInvoice, PendingOffboard, SettledLightningReceive,
 	StoredExit,
 };
 use crate::round::RoundState;
@@ -154,37 +154,6 @@ impl BarkPersister for SqliteClient {
 	) -> anyhow::Result<Vec<Movement>> {
 		let conn = self.connect()?;
 		query::get_movements_by_payment_method(&conn, payment_method)
-	}
-
-	async fn store_pending_board(
-		&self,
-		vtxo: &Vtxo<Full>,
-		funding_tx: &bitcoin::Transaction,
-		movement_id: MovementId,
-	) -> anyhow::Result<()> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		query::store_new_pending_board(&tx, vtxo, funding_tx, movement_id)?;
-		tx.commit()?;
-		Ok(())
-	}
-
-	async fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		query::remove_pending_board(&tx, vtxo_id)?;
-		tx.commit()?;
-		Ok(())
-	}
-
-	async fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
-		let conn = self.connect()?;
-		query::get_all_pending_boards_ids(&conn)
-	}
-
-	async fn get_pending_board_by_vtxo_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>> {
-		let conn = self.connect()?;
-		query::get_pending_board_by_vtxo_id(&conn, vtxo_id)
 	}
 
 	async fn store_round_state(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {
