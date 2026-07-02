@@ -32,6 +32,9 @@ pub struct OffboardResponse {
 /// This session state locks the UTXOs that are used in this offboard and they are
 /// released automatically when this state is dropped because of the guard.
 pub struct PendingOffboard {
+	/// The request this session was created for, kept so that identical
+	/// retries of [Server::prepare_offboard] can be recognized and replayed.
+	request: OffboardRequest,
 	offboard_tx: Psbt,
 	input_vtxos_guard: OwnedVtxoFluxGuard,
 	wallet_input_guard: WalletUtxosGuard,
@@ -132,8 +135,21 @@ impl Server {
 		// - send arkoor to self to create new vtxo
 		// - repeat 100 times
 		// => all our money locked
-		let input_vtxos_guard = self.vtxos_in_flux.try_lock(&input_vtxos)
-			.context("some VTXO is already locked by another process")?;
+		let input_vtxos_guard = match self.vtxos_in_flux.try_lock(&input_vtxos) {
+			Ok(guard) => guard,
+			Err(e) => {
+				// The client may be re-sending a request whose response it
+				// never received. If we still hold the pending session for
+				// exactly this request, replay the same response.
+				let replayed = self.replay_pending_offboard(
+					&request, &input_vtxos, &attestations,
+				).await?;
+				if let Some(resp) = replayed {
+					return Ok(resp);
+				}
+				return Err(e).context("some VTXO is already locked by another process");
+			},
+		};
 
 		// Check no duplicates in inputs
 		if input_vtxos.iter().collect::<HashSet<_>>().len() != input_vtxos.len() {
@@ -220,7 +236,7 @@ impl Server {
 			b.current_height(tip);
 			b.unspendable(unavailable);
 			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
-			b.add_recipient(request.script_pubkey, net_amount);
+			b.add_recipient(request.script_pubkey.clone(), net_amount);
 			b.add_recipient(connector_spk, connector_amt);
 			b.fee_rate(request.fee_rate);
 			b.finish().context("bdk failed to create offboard tx")?
@@ -247,13 +263,59 @@ impl Server {
 
 		let state = PendingOffboard {
 			input_vtxos_guard: input_vtxos_guard.into_owned(),
-			connector_key, forfeit_pub_nonces, forfeit_sec_nonces, offboard_tx, wallet_input_guard,
+			request, connector_key, forfeit_pub_nonces, forfeit_sec_nonces, offboard_tx,
+			wallet_input_guard,
 		};
 		assert!(self.pending_offboards.lock().insert_some(offboard_txid, state).is_none(),
 			"should be impossible to get same txid when inputs are locked",
 		);
 
 		Ok(ret)
+	}
+
+	/// Check whether we hold a pending offboard session for exactly this
+	/// request and input set, and if so, replay its response.
+	///
+	/// This makes [Server::prepare_offboard] idempotent for a client that
+	/// re-sends an identical request, e.g. because it crashed before it
+	/// could process our first response. Replaying the same public nonces
+	/// is safe: the secret nonces are used to sign at most once, because
+	/// [Server::finish_offboard] takes the session out of the map before
+	/// signing with them.
+	async fn replay_pending_offboard(
+		&self,
+		request: &OffboardRequest,
+		input_vtxos: &[VtxoId],
+		attestations: &[OffboardRequestAttestation],
+	) -> anyhow::Result<Option<OffboardResponse>> {
+		let existing = {
+			let guard = self.pending_offboards.lock();
+			guard.values().filter_map(|o| o.as_ref())
+				.find(|p| p.request == *request && p.input_vtxos_guard.vtxos() == input_vtxos)
+				.map(|p| OffboardResponse {
+					offboard_tx: p.offboard_tx.unsigned_tx.clone(),
+					forfeit_cosign_nonces: p.forfeit_pub_nonces.clone(),
+				})
+		};
+		let Some(resp) = existing else {
+			return Ok(None);
+		};
+
+		// Verify the attestations so that only the owner of the input
+		// vtxos can learn the session's txid and nonces.
+		if attestations.len() != input_vtxos.len() {
+			return badarg!("wrong number of attestations");
+		}
+		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(input_vtxos).await).await?;
+		for (input, attestation) in vtxos.iter().zip(attestations) {
+			attestation.verify(request, input_vtxos, &input.vtxo)
+				.with_badarg(|| format!("invalid attestations for vtxo {}", input.vtxo.id()))?;
+		}
+
+		slog!(ReplayedOffboardSession, offboard_txid: resp.offboard_tx.compute_txid(),
+			input_vtxos: input_vtxos.to_vec(),
+		);
+		Ok(Some(resp))
 	}
 
 	/// Commit the offboard with the wallet, broadcast it and mark committed in db.

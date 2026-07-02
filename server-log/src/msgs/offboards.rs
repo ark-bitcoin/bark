@@ -18,6 +18,13 @@ pub struct PreparedOffboard {
 impl_slog!(PreparedOffboard, TRACE, "prepared offboard tx");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayedOffboardSession {
+	pub offboard_txid: Txid,
+	pub input_vtxos: Vec<VtxoId>,
+}
+impl_slog!(ReplayedOffboardSession, DEBUG, "replayed pending offboard session for identical request");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedOffboard {
 	pub offboard_txid: Txid,
 	pub input_vtxos: Vec<VtxoId>,
