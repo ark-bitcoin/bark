@@ -1,0 +1,17 @@
+- Make `prepare_offboard` idempotent for identical retries
+  A client that lost the response to a `prepare_offboard` request (e.g. it
+  crashed before persisting it) can re-send the exact same request and get
+  the pending session's response replayed — the same unsigned offboard tx
+  and the same cosign nonces — instead of being rejected because its own
+  session still holds the vtxo locks. Attestations are re-verified before
+  replaying, so only the vtxo owner can retrieve the session.
+  [#2252](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2252)
+- Expire abandoned offboard sessions on schedule
+  Pending offboard sessions were never swept, so an abandoned session kept
+  its input vtxos and wallet UTXOs locked until a restart. A handful of
+  abandoned sessions — one per wallet UTXO — could lock the entire rounds
+  wallet and starve round funding. Sessions now expire after
+  `offboard_session_timeout`, and the sweep runs at least as often as
+  sessions can expire, so timeouts shorter than 30 seconds take effect at
+  their configured resolution.
+  [#2252](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2252)
