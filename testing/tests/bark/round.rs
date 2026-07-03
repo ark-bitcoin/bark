@@ -370,7 +370,7 @@ async fn delegated_refresh_must_not_leave_server_trace_on_failure() {
 
 #[tokio::test]
 async fn delegated_refresh_dropped_when_input_spent_before_round() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	let ctx = TestContext::new("bark/delegated_refresh_dropped_when_input_spent_before_round").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -402,7 +402,7 @@ async fn delegated_refresh_dropped_when_input_spent_before_round() {
 
 #[tokio::test]
 async fn delegated_refresh_then_unsynced_spend_is_rejected() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	let ctx = TestContext::new("bark/delegated_refresh_then_unsynced_spend_is_rejected").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -434,7 +434,7 @@ async fn delegated_refresh_then_unsynced_spend_is_rejected() {
 
 #[tokio::test]
 async fn delegated_refresh_sync_cleans_up_after_input_spent_elsewhere() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	let ctx = TestContext::new("bark/delegated_refresh_sync_cleans_up_after_input_spent_elsewhere").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;

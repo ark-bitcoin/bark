@@ -446,7 +446,7 @@ async fn bark_can_receive_lightning(
 	pay: impl AsyncFn(String),
 ) {
 	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -561,7 +561,7 @@ async fn bark_can_receive_lightning_when_pool_spend_creates_subdust_output(
 	pay: impl AsyncFn(String),
 ) {
 	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -607,7 +607,7 @@ async fn bark_check_lightning_receive_no_wait(
 	pay: impl AsyncFn(String),
 ) {
 	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -1089,7 +1089,7 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning(
 	pay: impl AsyncFn(String),
 ) {
 	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.bark("bark", srv).funded(btc(3)).create().await);
@@ -1217,7 +1217,7 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 
 #[tokio::test]
 async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.3.0");
 
 	let ctx = TestContext::new("lightningd/server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used").await;
 
