@@ -301,6 +301,8 @@ impl CollectingPayments {
 		outputs: impl IntoIterator<Item = impl Borrow<SignedVtxoRequest>>,
 	) -> anyhow::Result<()> {
 		let mut nb_outputs = 0;
+		let mut cosign_pubkeys = HashSet::new();
+
 		for output in outputs {
 			let output = output.borrow();
 			nb_outputs += 1;
@@ -312,7 +314,7 @@ impl CollectingPayments {
 				bail!("incorrect number of cosign nonces per set");
 			}
 
-			if self.inputs_per_cosigner.contains_key(&output.cosign_pubkey) {
+			if self.inputs_per_cosigner.contains_key(&output.cosign_pubkey) || !cosign_pubkeys.insert(output.cosign_pubkey) {
 				client_rslog!(RoundUserDuplicateCosignPubkey, self.round_step,
 					cosign_pubkey: output.cosign_pubkey,
 				);
@@ -328,7 +330,6 @@ impl CollectingPayments {
 				}
 			}
 		}
-
 
 		if self.all_outputs.len() + nb_outputs > self.round_data.max_output_vtxos {
 			warn!("Got payment we don't have space for, dropping");
@@ -2086,6 +2087,27 @@ mod tests {
 		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
 		state.register_interactive_participation(flux.empty_guard(), inputs1, outputs1, pre);
 		state.validate_payment_data(&input_ids2, &outputs2).unwrap_err();
+	}
+
+	#[test]
+	fn test_client_cannot_reuse_pubkey_on_cosign() {
+		// Two outputs sharing one cosign_pubkey in a SINGLE request must be
+		// rejected here.
+		let state = create_collecting_payments(2);
+
+		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone()];
+		let input_ids = inputs
+			.iter()
+			.map(|v| SelfSignedInput { vtxo_id: v.id(), attestation: *TEST_ATTESTATION })
+			.collect::<Vec<_>>();
+
+		let mut outputs = vec![
+			create_signed_req(100, &state.round_data),
+			create_signed_req(100, &state.round_data),
+		];
+		outputs[1].cosign_pubkey = outputs[0].cosign_pubkey;
+
+		state.validate_payment_data(&input_ids, &outputs).unwrap_err();
 	}
 
 	#[test]
