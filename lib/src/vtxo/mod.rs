@@ -87,7 +87,7 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TapTweakHash;
 
-use bitcoin_ext::{fee, BlockDelta, BlockHeight, NonStandardOutput, TxOutExt};
+use bitcoin_ext::{fee, BlockDelta, BlockHeight, NonStandardOutput, TxOutExt, P2TR_DUST, P2TR_DUST_SAT};
 
 use crate::vtxo::policy::{check_block_delta, check_block_height, HarkForfeitVtxoPolicy};
 use crate::scripts;
@@ -97,6 +97,11 @@ use crate::encode::{
 };
 use crate::lightning::PaymentHash;
 use crate::tree::signed::{UnlockHash, UnlockPreimage};
+
+/// VTXO dust is the same as [P2TR_DUST_SAT] because all outputs are P2TR
+pub const VTXO_DUST_SAT: u64 = P2TR_DUST_SAT;
+/// VTXO dust is the same as [P2TR_DUST] because all outputs are P2TR
+pub const VTXO_DUST: Amount = P2TR_DUST;
 
 /// The total signed tx weight of a exit tx.
 pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(124);

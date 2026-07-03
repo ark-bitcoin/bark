@@ -372,6 +372,7 @@ impl Wallet {
 		let tip = self.inner.chain.tip().await?;
 
 		let destination_spk = destination.script_pubkey();
+		let dust = destination_spk.minimal_non_dust();
 		let vtxos_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 		let fee = ark.fees.offboard.calculate(
 			&destination_spk,
@@ -379,7 +380,7 @@ impl Wallet {
 			offboard_feerate,
 			vtxos.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip)),
 		).context("error calculating offboard fee")?;
-		let net_amount = validate_and_subtract_fee_min_dust(vtxos_amount, fee)?;
+		let net_amount = validate_and_subtract_fee_min_dust(vtxos_amount, fee, dust)?;
 		let vtxo_keys = {
 			let mut keys = Vec::with_capacity(vtxos.len());
 			for v in &vtxos {

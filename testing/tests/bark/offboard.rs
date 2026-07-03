@@ -202,9 +202,14 @@ async fn bark_rejects_offboarding_dust_amount() {
 	let addr = bark2.get_onchain_address().await;
 
 	let err = bark1.try_send_onchain(&addr, sat(P2TR_DUST_SAT - 1)).await.unwrap_err();
-	assert!(err.to_alt_string().contains(
-		"it doesn't make sense to send dust",
-	), "err: {err}");
+	let err = err.to_alt_string();
+	assert!(
+		// current wallet
+		err.contains("the minimum you can send")
+		// bark <= 0.2.x under the backward-compat jobs
+		|| err.contains("it doesn't make sense to send dust"),
+		"err: {err}",
+	);
 }
 
 #[tokio::test]

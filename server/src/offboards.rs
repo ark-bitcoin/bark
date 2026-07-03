@@ -212,13 +212,14 @@ impl Server {
 		// If the user is trying to perform a send-onchain then we add fees onto the request amount.
 		// If the user is performing an offboard then we deduct fees from the total VTXO sum.
 		let (net_amount, fee) = if request.deduct_fees_from_gross_amount {
+			let dust = request.script_pubkey.minimal_non_dust();
 			let fee = self.config.fees.offboard.calculate(
 				&request.script_pubkey,
 				gross_amount,
 				request.fee_rate,
-				fee_info
+				fee_info,
 			).context("unable to calculate fee for offboard")?;
-			let net_amount = validate_and_subtract_fee_min_dust(gross_amount, fee)?;
+			let net_amount = validate_and_subtract_fee_min_dust(gross_amount, fee, dust)?;
 			if net_amount != request.net_amount {
 				return badarg!(
 					"offboard net amount does not match expected amount: provided = {}, expected = {}",

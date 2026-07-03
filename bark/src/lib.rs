@@ -359,9 +359,9 @@ use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::rounds::{RoundAttempt, RoundEvent};
-use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef};
+use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef, VTXO_DUST};
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
+use bitcoin_ext::{BlockHeight, TxStatus};
 use server_rpc::{protos, ServerConnection};
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
@@ -1931,9 +1931,9 @@ impl Wallet {
 			info!("Skipping refresh since no VTXOs are provided.");
 			return Ok(None);
 		}
-		ensure!(total_amount >= P2TR_DUST,
+		ensure!(total_amount >= VTXO_DUST,
 			"vtxo amount must be at least {} to participate in a round",
-			P2TR_DUST,
+			VTXO_DUST,
 		);
 
 		// Calculate refresh fees
@@ -1942,7 +1942,7 @@ impl Wallet {
 		let vtxo_fee_infos = vtxos.iter()
 			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, current_height));
 		let fee = ark_info.fees.refresh.calculate(vtxo_fee_infos).context("fee overflowed")?;
-		let output_amount = validate_and_subtract_fee_min_dust(total_amount, fee)?;
+		let output_amount = validate_and_subtract_fee_min_dust(total_amount, fee, VTXO_DUST)?;
 
 		info!("Refreshing {} VTXOs (total amount = {}, fee = {}, output = {}).",
 			vtxos.len(), total_amount, fee, output_amount,
