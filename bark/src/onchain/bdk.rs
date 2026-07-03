@@ -225,7 +225,7 @@ impl OnchainWalletTrait for OnchainWallet {
 			..Default::default()
 		};
 		let finalized = self.inner.sign(&mut psbt, opts).context("signing error")?;
-		assert!(finalized);
+		ensure!(finalized, "failed to succesfully sign the tx");
 		let tx = psbt.clone().extract_tx()?;
 		self.inner.apply_unconfirmed_txs([(tx, timestamp_secs())]);
 		self.persist().await?;
