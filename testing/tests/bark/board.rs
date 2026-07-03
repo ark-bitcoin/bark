@@ -17,6 +17,8 @@ use ark_testing::util::ToAltString;
 
 #[tokio::test]
 async fn board_bark() {
+	require_bark_version!(> "0.3.0");
+
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_bark").await;
 	let srv = ctx.captaind("server").create().await;
@@ -37,6 +39,8 @@ async fn board_bark() {
 
 #[tokio::test]
 async fn board_twice_bark() {
+	require_bark_version!(> "0.3.0");
+
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_twice_bark").await;
 	let srv = ctx.captaind("server").create().await;
@@ -60,6 +64,8 @@ async fn board_twice_bark() {
 
 #[tokio::test]
 async fn board_all_bark() {
+	require_bark_version!(> "0.3.0");
+
 	let ctx = TestContext::new("bark/board_all_bark").await;
 
 	let srv = ctx.captaind("server").create().await;
@@ -92,6 +98,8 @@ async fn board_all_bark() {
 
 #[tokio::test]
 async fn bark_rejects_boarding_subdust_amount() {
+	require_bark_version!(> "0.3.0");
+
 	let ctx = TestContext::new("bark/bark_rejects_boarding_subdust_amount").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
@@ -105,6 +113,8 @@ async fn bark_rejects_boarding_subdust_amount() {
 
 #[tokio::test]
 async fn bark_rejects_boarding_below_minimum_board_amount() {
+	require_bark_version!(> "0.3.0");
+
 	let ctx = TestContext::new("bark/bark_rejects_boarding_below_minimum_board_amount").await;
 	// Set up server with `min_board_amount` of 30 000 sats
 	const MIN_BOARD_AMOUNT_SATS: u64 = 30_000;
@@ -123,6 +133,8 @@ async fn bark_rejects_boarding_below_minimum_board_amount() {
 
 #[tokio::test]
 async fn bark_recover_unregistered_board() {
+	require_bark_version!(> "0.3.0");
+
 	let ctx = TestContext::new("bark/recover_unregistered_board").await;
 
 	// Set up the server.
@@ -167,7 +179,7 @@ async fn bark_recover_unregistered_board() {
 
 #[tokio::test]
 async fn board_tx_rejects_wrong_funding_address() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.3.0");
 
 	let ctx = TestContext::new("bark/board_tx_rejects_wrong_funding_address").await;
 	let srv = ctx.captaind("server").create().await;
@@ -205,7 +217,7 @@ async fn board_tx_rejects_wrong_funding_address() {
 
 #[tokio::test]
 async fn board_tx_rejects_wrong_expiry_height() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.3.0");
 
 	let ctx = TestContext::new("bark/board_tx_rejects_wrong_expiry_height").await;
 	let srv = ctx.captaind("server").create().await;
@@ -236,7 +248,7 @@ async fn board_tx_rejects_wrong_expiry_height() {
 
 #[tokio::test]
 async fn board_tx_rejects_dust_amount() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.3.0");
 
 	let ctx = TestContext::new("bark/board_tx_rejects_dust_amount").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
@@ -277,12 +289,7 @@ async fn board_tx_rejects_dust_amount() {
 /// This will be workflow will be replicated by external wallets
 #[tokio::test]
 async fn board_tx_full_flow() {
-	// Boarding through the library `board_tx` persists a `Board` wallet-action
-	// checkpoint. Pre-0.3.0 binaries don't know that checkpoint variant and abort
-	// their sync when they read it, so this new-library-writes / old-cli-reads
-	// flow only works from 0.3.0 on. The test still runs against the current build
-	// in the normal (non-compat) job.
-	require_bark_version!(>= "0.3.0");
+	require_bark_version!(> "0.3.0");
 
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_tx_full_flow").await;
