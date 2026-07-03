@@ -1,5 +1,5 @@
 
-mod selection;
+pub mod selection;
 mod signing;
 mod state;
 

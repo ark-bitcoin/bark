@@ -241,7 +241,7 @@ pub(crate) async fn start_arkoor_send(
 	wallet.inner.db.store_vtxo_key(change_key_index, change_keypair.public_key()).await
 		.context("failed to store arkoor change keypair")?;
 
-	let inputs = wallet.select_vtxos_to_cover(amount).await?;
+	let inputs = wallet.select_any_vtxos_to_cover(amount).await?;
 	let input_vtxo_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 
 	let id = new_action_id();

@@ -319,7 +319,7 @@ pub(crate) async fn compute_lightning_receive_anti_dos(
 	Ok(if let Some(token) = token {
 		LightningReceiveAntiDos::Token(token.to_string())
 	} else {
-		let vtxo = wallet.select_vtxos_to_cover(Amount::ONE_SAT).await
+		let vtxo = wallet.select_any_vtxos_to_cover(Amount::ONE_SAT).await
 			.and_then(|vtxos| vtxos.into_iter().next()
 				.context("have no spendable vtxo to prove ownership of")
 			)?;

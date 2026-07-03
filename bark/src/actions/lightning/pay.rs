@@ -319,7 +319,7 @@ pub(crate) async fn start_lightning_send(
 		bail!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
 	}
 
-	let (inputs, fee) = wallet.select_vtxos_to_cover_with_fee(
+	let (inputs, fee) = wallet.select_any_vtxos_to_cover_with_fee(
 		payment_amount,
 		|a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
 	).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
