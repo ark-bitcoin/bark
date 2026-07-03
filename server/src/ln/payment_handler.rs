@@ -78,10 +78,15 @@ impl<'a> PaymentAttemptHandler<'a> {
 		}
 
 		let updated = self.db.write(async |t| {
-			// Mark the spendable HTLC-send vtxos as ln-spent as soon as the
-			// preimage is known. Any linked vtxo that wasn't spendable is left
-			// untouched and reported, but the settlement still proceeds.
-			if preimage.is_some() {
+			let updated = t.verify_and_update_payment_attempt(
+				attempt, status, payment_error, final_amount_msat
+			).await?;
+
+			// Only mark linked HTLC-send vtxos as ln-spent once the attempt
+			// update has actually committed in this transaction; a lost
+			// optimistic-lock race would otherwise leave the vtxos flagged
+			// ln-spent for an attempt we did not transition.
+			if updated && preimage.is_some() {
 				let not_spendable = t.mark_htlc_send_vtxos_ln_spent(attempt.payment_hash).await?;
 				if !not_spendable.is_empty() {
 					warn!(
@@ -92,9 +97,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 				}
 			}
 
-			t.verify_and_update_payment_attempt(
-				attempt, status, payment_error, final_amount_msat
-			).await
+			Ok(updated)
 		}).await?;
 
 		if updated {

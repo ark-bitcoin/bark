@@ -801,14 +801,15 @@ impl<'t> Tx<'t> {
 		}
 	}
 
-	/// Transition every currently-`spendable` HTLC-send vtxo linked to the
-	/// given payment hash's open attempts to `ln-spent`. Called when a lightning
-	/// send settles, so the vtxo is explicitly marked as consumed by a paid
-	/// invoice.
+	/// Transition every currently-`spendable` HTLC-send vtxo linked to any
+	/// attempt for the given payment hash to `ln-spent`. Called when a
+	/// lightning send settles, so the vtxo is explicitly marked as consumed
+	/// by a paid invoice.
 	///
-	/// Returns the ids of the linked vtxos that were *not* spendable and so
-	/// were left untouched. An empty vec means every linked vtxo was spendable
-	/// and transitioned.
+	/// Returns the ids of linked vtxos left untouched because their
+	/// `spend_state` was no longer `spendable` at update time (e.g. already
+	/// `ln-spent` from a prior settlement of the same payment hash). An
+	/// empty vec means every linked vtxo transitioned.
 	pub async fn mark_htlc_send_vtxos_ln_spent(
 		&self,
 		payment_hash: PaymentHash,
@@ -820,25 +821,19 @@ impl<'t> Tx<'t> {
 				JOIN lightning_payment_attempt_htlc_vtxo link ON link.vtxo_id = vtxo.vtxo_id
 				JOIN lightning_payment_attempt lpa ON lpa.id = link.lightning_payment_attempt_id
 				WHERE lpa.payment_hash = $1
-				  AND lpa.status NOT IN ($2, $3)
 			),
 			updated AS (
 				UPDATE vtxo
 				SET spend_state = 'ln-spent', updated_at = NOW()
-				WHERE vtxo_id IN (SELECT vtxo_id FROM found WHERE spend_state = 'spendable')
+				WHERE vtxo_id IN (SELECT vtxo_id FROM found)
+				  AND spend_state = 'spendable'
 				RETURNING vtxo.vtxo_id
 			)
-			SELECT vtxo_id FROM found WHERE spend_state != 'spendable'
+			SELECT vtxo_id FROM found
+			WHERE vtxo_id NOT IN (SELECT vtxo_id FROM updated)
 		").await?;
 
-		let status_failed = LightningPaymentStatus::Failed;
-		let status_succeeded = LightningPaymentStatus::Succeeded;
-
-		let rows = self.query(&stmt, &[
-			&payment_hash.to_string(),
-			&status_failed,
-			&status_succeeded,
-		]).await
+		let rows = self.query(&stmt, &[&payment_hash.to_string()]).await
 			.context("failed to mark HTLC-send vtxos as ln-spent")?;
 
 		rows.iter()

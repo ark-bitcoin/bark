@@ -1515,6 +1515,58 @@ async fn lightning_payment_attempt_result_update() {
 	assert_eq!(attempt2.final_amount_msat, Some(9999));
 }
 
+/// `mark_htlc_send_vtxos_ln_spent` flags a linked spendable vtxo `ln-spent`,
+/// including when its attempt has already reached `Succeeded`. The settlement
+/// path transitions the attempt to `Succeeded` before marking its vtxos, so the
+/// mark must not depend on the attempt still being open.
+#[tokio::test]
+async fn mark_htlc_send_vtxos_ln_spent_for_settled_attempt() {
+	use server::database::ln::LightningPaymentStatus;
+
+	let mut ctx = TestContext::new_minimal("postgresd/ln_spent_settled_attempt").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+
+	// A spendable HTLC-send vtxo that funds the payment.
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.arkoor_htlc_out_vtxo.clone());
+	db.write(async |t| t.upsert_vtxos([vtxo.clone()]).await).await.unwrap();
+
+	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
+	let invoice = Invoice::Bolt11(bolt11.clone());
+
+	// Open attempt linked to the HTLC-send vtxo.
+	db.write(async |t| t.store_lightning_payment_start(
+		node_id, &invoice, sat(2), None, &[vtxo.id()],
+	).await).await.unwrap();
+
+	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
+		(&bolt11).into()
+	).await).await.unwrap().expect("open attempt present");
+
+	// Settle the attempt, then mark its linked vtxos.
+	db.write(async |t| t.update_lightning_payment_attempt_result(
+		&attempt, LightningPaymentStatus::Succeeded, None, None,
+	).await).await.unwrap().expect("attempt should have transitioned to Succeeded");
+
+	db.write(async |t| t.mark_htlc_send_vtxos_ln_spent(attempt.payment_hash).await).await.unwrap();
+
+	// The funding vtxo must be flagged ln-spent.
+	let db_client = ctx.postgres_manager().database_client(Some(&ctx.test_name)).await;
+	let row = db_client.query_one(
+		"SELECT spend_state::text AS spend_state FROM vtxo WHERE vtxo_id = $1",
+		&[&vtxo.id().to_string()],
+	).await.unwrap();
+	let spend_state: String = row.get("spend_state");
+	assert_eq!(spend_state, "ln-spent",
+		"HTLC-send vtxo should be ln-spent for a settled payment attempt");
+}
+
 #[tokio::test]
 async fn lightning_generated_invoice_and_htlc_subscription() {
 	let mut ctx = TestContext::new_minimal("postgresd/lightning_generated_invoice").await;

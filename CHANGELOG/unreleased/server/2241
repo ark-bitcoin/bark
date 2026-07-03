@@ -1,0 +1,11 @@
+- Harden lightning payment-attempt settlement against optimistic-lock races
+  `process_payment_attempt` now runs the attempt update before marking linked
+  HTLC-send vtxos `ln-spent`, and only mutates the vtxos when the update
+  actually committed, so a lost optimistic-lock race no longer spends vtxos
+  for an attempt we did not transition. Because the attempt has already
+  transitioned to `Succeeded` by the time the vtxos are marked,
+  `mark_htlc_send_vtxos_ln_spent` no longer filters linked attempts by
+  status. The query also re-checks the live `spend_state` during the
+  `UPDATE`, so a concurrent transition of a linked vtxo cannot be
+  clobbered.
+  [#2241](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2241)
