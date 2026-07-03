@@ -46,7 +46,10 @@ pub fn build_client(url: &str, auth: Auth) -> anyhow::Result<Client> {
 		Auth::UserPass(u, p) => bitcoind_async_client::Auth::UserPass(u, p),
 		Auth::CookieFile(p) => bitcoind_async_client::Auth::CookieFile(p),
 	};
-	Client::new(url.to_owned(), async_auth, None, None, None)
+	// Cap the per-request timeout (upstream default is 30s) so that a
+	// hanging request to a down bitcoind can't stall shutdown for long.
+	const TIMEOUT_SECONDS: u64 = 10;
+	Client::new(url.to_owned(), async_auth, None, None, Some(TIMEOUT_SECONDS))
 		.context("failed to create bitcoind rpc client")
 }
 
