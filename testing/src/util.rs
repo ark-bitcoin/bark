@@ -11,7 +11,9 @@ use tokio::fs;
 use tokio::process::Child;
 use tokio::time::Instant;
 
-use crate::constants::env::{CHAIN_SOURCE, TEST_DIRECTORY, TX_PROPAGATION_TIMEOUT_MILLIS};
+use crate::constants::env::{
+	BARK_DOUBLE_DRIVE_ACTIONS, CHAIN_SOURCE, TEST_DIRECTORY, TX_PROPAGATION_TIMEOUT_MILLIS,
+};
 use crate::daemon::electrs::ElectrsType;
 
 pub enum TestContextChainSource {
@@ -159,6 +161,15 @@ pub fn get_tx_propagation_timeout_millis() -> u64 {
 	} else {
 		30_000
 	}
+}
+
+/// How many times the wallet executor runs each action step: 2 under the
+/// reentrancy double-drive (`BARK_DOUBLE_DRIVE_ACTIONS`), 1 otherwise.
+///
+/// Tests that count per-step side effects (e.g. server RPCs seen by a proxy)
+/// must scale their expectations by this factor.
+pub fn action_drive_factor() -> usize {
+	if env::var_os(BARK_DOUBLE_DRIVE_ACTIONS).is_some() { 2 } else { 1 }
 }
 
 /// Extension trait for futures.

@@ -9,7 +9,7 @@ use bitcoin::hashes::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
-use rusqlite::{self, named_params, params, Connection, ToSql, Transaction};
+use rusqlite::{self, named_params, params, Connection, OptionalExtension, ToSql, Transaction};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::lightning::{PaymentHash, Preimage};
@@ -127,12 +127,13 @@ pub fn create_new_movement(
 	status: MovementStatus,
 	subsystem: &MovementSubsystem,
 	time: DateTime<chrono::Local>,
+	action_id: Option<&str>,
 ) -> anyhow::Result<MovementId> {
 	let mut statement = tx.prepare("
 		INSERT INTO bark_movements (status, subsystem_name, movement_kind, intended_balance,
-			effective_balance, offchain_fee, created_at, updated_at)
+			effective_balance, offchain_fee, created_at, updated_at, action_id)
 		VALUES (:status, :name, :kind, :intended_balance, :effective_balance, :offchain_fee,
-			:created_at, :updated_at)
+			:created_at, :updated_at, :action_id)
 		RETURNING id"
 	)?;
 	let time = time.with_timezone(&chrono::Utc);
@@ -145,9 +146,22 @@ pub fn create_new_movement(
 		":offchain_fee": Amount::ZERO.to_sat(),
 		":created_at": time,
 		":updated_at": time,
+		":action_id": action_id,
 	}, |row| row.get::<_, u32>(0))?;
 
 	Ok(MovementId::new(id))
+}
+
+pub fn get_movement_id_by_action(
+	tx: &Transaction,
+	action_id: &str,
+) -> anyhow::Result<Option<MovementId>> {
+	let mut statement = tx.prepare(
+		"SELECT id FROM bark_movements WHERE action_id = ?1"
+	)?;
+	let id = statement.query_row([action_id], |row| row.get::<_, u32>(0))
+		.optional()?;
+	Ok(id.map(MovementId::new))
 }
 
 pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<()> {

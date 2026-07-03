@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{self, AtomicBool};
+use std::sync::atomic::{self, AtomicUsize};
 
 use bitcoin::{Amount, OutPoint, Psbt, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use bitcoin::absolute::LockTime;
@@ -13,7 +13,7 @@ use server_rpc::protos;
 use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::ToAltString;
+use ark_testing::util::{action_drive_factor, ToAltString};
 
 #[tokio::test]
 async fn board_bark() {
@@ -141,16 +141,22 @@ async fn bark_recover_unregistered_board() {
 	// The server misbehaves and drops the first request to register_board_vtxo
 	let srv = ctx.captaind("server").funded(btc(1)).create().await;
 
-	/// This proxy will drop the very first request to register_board
+	/// This proxy drops the first `action_drive_factor()` requests to
+	/// register_board (2 under the double-drive reentrancy mode, which runs
+	/// each advance step twice, 1 otherwise), so the first maintenance cycle
+	/// always leaves the board unregistered.
 	#[derive(Clone)]
-	struct Proxy(Arc<AtomicBool>);
+	struct Proxy(Arc<AtomicUsize>);
 
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn register_board_vtxo(
 			&self, upstream: &mut ArkClient, req: protos::BoardVtxoRequest,
 		) -> Result<protos::Empty, tonic::Status> {
-			if self.0.swap(false, atomic::Ordering::Relaxed) {
+			let dropped = self.0.fetch_update(
+				atomic::Ordering::Relaxed, atomic::Ordering::Relaxed, |n| n.checked_sub(1),
+			).is_ok();
+			if dropped {
 				Err(tonic::Status::from_error(
 					"Nope! I do not register on the first attempt!".into(),
 				))
@@ -160,7 +166,9 @@ async fn bark_recover_unregistered_board() {
 		}
 	}
 
-	let proxy = srv.start_proxy_no_mailbox(Proxy(Arc::new(AtomicBool::new(true)))).await;
+	let proxy = srv.start_proxy_no_mailbox(
+		Proxy(Arc::new(AtomicUsize::new(action_drive_factor()))),
+	).await;
 
 	let bark = ctx.bark("bark", &proxy.address).funded(sat(1_000_00)).create().await;
 	// Only asks server to cosign, not register a board.

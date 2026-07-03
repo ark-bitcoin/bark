@@ -107,12 +107,15 @@ test-integration-bark: ensure-build-bins docker-pull
 		--test bark --test barkd
 alias int-bark := test-integration-bark
 
-[doc("run the bark-sdk integration tests double-driving every action step to check reentrancy")]
-test-integration-bark-sdk-action-reentrancy TEST="": ensure-build-bins docker-pull
+# Run the integration tests that drive wallet actions (bark, barkd, bark-sdk)
+# double-driving every action step (BARK_DOUBLE_DRIVE_ACTIONS) to check
+# reentrancy.
+[doc("run the bark/barkd/bark-sdk integration tests double-driving every action step to check reentrancy")]
+test-integration-bark-int-action-reentrancy TEST="": ensure-build-bins docker-pull
 	BARK_DOUBLE_DRIVE_ACTIONS=1 \
-		cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} \
-		--package ark-testing --test bark-sdk {{TEST}}
-alias int-bark-sdk-action-reentrancy := test-integration-bark-sdk-action-reentrancy
+		cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+		--test bark --test barkd --test bark-sdk {{TEST}}
+alias int-bark-int-action-reentrancy := test-integration-bark-int-action-reentrancy
 
 # Must not run under backward-compat mode (BARK_EXEC override has no effect
 # on tests linked against the current bark-wallet crate).
@@ -147,6 +150,11 @@ test-integration-bark-sdk-prebuilt: docker-pull
 test-integration-core-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
 		-E 'binary(core) + binary(server)'
+
+test-integration-bark-int-prebuilt: docker-pull
+	RUST_MIN_STACK=33554432 \
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
+		-E 'binary(bark) + binary(barkd) + binary(=bark-sdk)'
 
 test-integration-codecov TEST="": docker-pull
 	#!/usr/bin/env bash

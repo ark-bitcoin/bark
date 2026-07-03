@@ -9,7 +9,6 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, SignedAmount};
 use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
@@ -73,6 +72,8 @@ pub struct LightningReceive {
 	pub payment_preimage: Preimage,
 	pub htlc_recv_cltv_delta: BlockDelta,
 	pub anti_dos_token: Option<String>,
+	/// Index of the wallet key backing both the HTLC-recv vtxo and the claim output.
+	pub key_index: u32,
 
 	// Mutable state:
 	pub progress: Progress,
@@ -217,8 +218,6 @@ pub struct Htlcs {
 	pub vtxo_ids: Vec<VtxoId>,
 	/// The ID of the ongoing movement
 	pub movement_id: MovementId,
-	/// The pubkey to send claim outputs to
-	pub claim_key: PublicKey,
 }
 
 /// Triage of a payment hash on the receive side, mirroring
@@ -299,12 +298,15 @@ pub(crate) async fn start_lightning_receive(
 		.context("invalid bolt11 invoice returned by Ark server")?;
 	validate_bolt11_payment_hash(&invoice, payment_hash)?;
 
+	let (_, key_index) = wallet.derive_store_next_keypair().await?;
+
 	Ok(LightningReceive {
 		invoice,
 		payment_hash,
 		payment_preimage: preimage,
 		htlc_recv_cltv_delta: requested_min_cltv_delta,
 		anti_dos_token: token,
+		key_index,
 		progress: Progress::AwaitingPayment,
 	})
 }
@@ -382,10 +384,10 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 	};
 
 	let htlc_recv_expiry = current_height + recv.htlc_recv_cltv_delta as BlockHeight;
-	let (next_keypair, _) = wallet.derive_store_next_keypair().await?;
+	let keypair = wallet.peek_keypair(recv.key_index).await?;
 	let req = protos::PrepareLightningReceiveClaimRequest {
 		payment_hash: payment_hash.to_vec(),
-		user_pubkey: next_keypair.public_key().serialize().to_vec(),
+		user_pubkey: keypair.public_key().serialize().to_vec(),
 		htlc_recv_expiry,
 		lightning_receive_anti_dos,
 	};
@@ -409,7 +411,7 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 				return Err(anyhow!("invalid payment hash on HTLC VTXOs received from server: {}",
 					p.payment_hash).into());
 			}
-			if p.user_pubkey != next_keypair.public_key() {
+			if p.user_pubkey != keypair.public_key() {
 				return Err(anyhow!("invalid pubkey on HTLC VTXOs received from server: {}",
 					p.user_pubkey).into());
 			}
@@ -441,9 +443,10 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 		return Err(anyhow!("Server didn't return enough VTXOs to cover invoice amount").into());
 	}
 
-	let movement_id = wallet.inner.movements.new_movement_with_update(
+	let movement_id = wallet.inner.movements.get_or_create_movement_with_action(
 		Subsystem::LIGHTNING_RECEIVE,
 		LightningReceiveMovement::Receive.to_string(),
+		&recv.id(),
 		MovementUpdate::new()
 			.intended_balance(invoice_amount.to_signed().context("invoice amount out of range")?)
 			.effective_balance(htlc_amount.to_signed().context("htlc amount out of range")?)
@@ -458,12 +461,13 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 		Some(VtxoLockHolder::Action { id: recv.id() }),
 	).await?;
 
-	let (claim_key, _) = wallet.derive_store_next_keypair().await?;
+	// Sort for a deterministic checkpoint (the server may return them in any order).
+	let mut vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+	vtxo_ids.sort();
 
 	Ok(Htlcs {
-		vtxo_ids: vtxos.iter().map(|v| v.id()).collect(),
+		vtxo_ids,
 		movement_id,
-		claim_key: claim_key.public_key(),
 	})
 }
 
@@ -494,7 +498,8 @@ async fn claim_lightning_receive_htlcs(
 		keypairs.push(wallet.get_vtxo_key(v).await?);
 	}
 
-	let receive_policy = VtxoPolicy::new_pubkey(htlcs.claim_key);
+	let claim_key = wallet.peek_keypair(recv.key_index).await?.public_key();
+	let receive_policy = VtxoPolicy::new_pubkey(claim_key);
 	trace!("ln claim arkoor params: inputs: {:?}; policy: {:?}", input_ids, receive_policy);
 	let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
 		inputs, receive_policy,

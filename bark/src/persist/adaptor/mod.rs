@@ -69,6 +69,7 @@ use crate::exit::ExitTxOrigin;
 use crate::movement::{
 	Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod,
 };
+use crate::movement::update::MovementUpdate;
 use crate::persist::BarkPersister;
 use crate::persist::models::{
 	PaidInvoice, PendingOffboard,
@@ -111,6 +112,9 @@ pub mod partition {
 	/// Permanent record of every settled incoming lightning receive,
 	/// keyed by payment hash.
 	pub const SETTLED_LIGHTNING_RECEIVE: u8 = 16;
+	/// An index from [WalletActionId] to the movement that action owns, so a
+	/// re-driven action step reuses its movement instead of duplicating it.
+	pub const MOVEMENT_ACTION: u8 = 17;
 
 	pub const LAST_IDS: u8 = u8::MAX;
 }
@@ -216,6 +220,44 @@ fn serialize_payment_method(pm: &PaymentMethod) -> Vec<u8> {
 	buf.push(0xfe);
 	buf.extend(body.into_bytes());
 	buf
+}
+
+/// Write a movement record and its payment-method index records through the
+/// given adaptor guard. Shared by the plain update path and the atomic
+/// action-owned create path.
+async fn write_movement_records<S: StorageAdaptor>(
+	guard: &mut S,
+	movement: &Movement,
+) -> anyhow::Result<()> {
+	let record = Record::from_data(
+		partition::MOVEMENT,
+		&movement.id.to_bytes(),
+		Some(sort::movement_sort_key(&movement.time.created_at)),
+		movement,
+	)?;
+	guard.put(record).await?;
+
+	// then add records for each payment method
+	let sent = movement.sent_to.iter().map(|d| &d.destination);
+	let rcvd = movement.received_on.iter().map(|d| &d.destination);
+	for pm in sent.chain(rcvd) {
+		let pm_bytes = serialize_payment_method(pm);
+		let primary_key = {
+			// We just need a unique key, but we will never query using this
+			let mut buf = Vec::with_capacity(pm_bytes.len() + 4);
+			buf.extend(pm_bytes.iter().copied());
+			buf.extend(movement.id.to_bytes());
+			buf
+		};
+		let record = Record::from_data(
+			partition::MOVEMENT_PAYMENT_METHOD,
+			&primary_key,
+			Some(SortKey::from_bytes(pm_bytes)),
+			&movement.id.0,
+		)?;
+		guard.put(record).await?;
+	}
+	Ok(())
 }
 
 /// Storage adaptor trait for persistence backends.
@@ -447,6 +489,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		status: MovementStatus,
 		subsystem: &MovementSubsystem,
 		time: DateTime<Local>,
+		action_id: Option<&str>,
 	) -> anyhow::Result<MovementId> {
 		let mut lock = self.inner.write().await;
 
@@ -461,42 +504,56 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		)?;
 		lock.put(record).await?;
 
+		// Index by owning action so the movement can be reused on re-drive.
+		if let Some(action_id) = action_id {
+			let idx = Record::from_data(
+				partition::MOVEMENT_ACTION,
+				action_id.as_bytes(),
+				None,
+				&id.0,
+			)?;
+			lock.put(idx).await?;
+		}
+
 		Ok(id)
+	}
+
+	async fn get_or_create_movement_for_action(
+		&self,
+		subsystem: &MovementSubsystem,
+		time: DateTime<Local>,
+		action_id: &str,
+		update: MovementUpdate,
+	) -> anyhow::Result<(MovementId, bool)> {
+		let mut guard = self.inner.write().await;
+
+		// Reuse the movement already owned by this action, if any.
+		if let Some(rec) = guard.get(partition::MOVEMENT_ACTION, action_id.as_bytes()).await? {
+			let id = MovementId::new(
+				rec.to_data::<u32>().context("corrupt db: movement action index value")?);
+			return Ok((id, false));
+		}
+
+		let id = MovementId(guard.incremental_id(partition::MOVEMENT).await?);
+		let mut movement = Movement::new(id, MovementStatus::Pending, subsystem, time);
+		update.apply_to(&mut movement, time);
+		write_movement_records(&mut *guard, &movement).await?;
+
+		// Index by owning action so the movement can be reused on re-drive.
+		let idx = Record::from_data(
+			partition::MOVEMENT_ACTION,
+			action_id.as_bytes(),
+			None,
+			&id.0,
+		)?;
+		guard.put(idx).await?;
+
+		Ok((id, true))
 	}
 
 	async fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
-
-		let record = Record::from_data(
-			partition::MOVEMENT,
-			&movement.id.to_bytes(),
-			Some(sort::movement_sort_key(&movement.time.created_at)),
-			movement,
-		)?;
-		guard.put(record).await?;
-
-		// then add records for each payment method
-		let sent = movement.sent_to.iter().map(|d| &d.destination);
-		let rcvd = movement.received_on.iter().map(|d| &d.destination);
-		for pm in sent.chain(rcvd) {
-			let pm_bytes = serialize_payment_method(pm);
-			let primary_key = {
-				// We just need a unique key, but we will never query using this
-				let mut buf = Vec::with_capacity(pm_bytes.len() + 4);
-				buf.extend(pm_bytes.iter().copied());
-				buf.extend(movement.id.to_bytes());
-				buf
-			};
-			let record = Record::from_data(
-				partition::MOVEMENT_PAYMENT_METHOD,
-				&primary_key,
-				Some(SortKey::from_bytes(pm_bytes)),
-				&movement.id.0,
-			)?;
-			guard.put(record).await?;
-		}
-
-		Ok(())
+		write_movement_records(&mut *guard, movement).await
 	}
 
 	async fn get_movement_by_id(&self, movement_id: MovementId) -> anyhow::Result<Movement> {

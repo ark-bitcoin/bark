@@ -425,6 +425,7 @@ mod vtxo_lifecycle {
 mod movements {
 	use bitcoin::ScriptBuf;
 	use crate::movement::{MovementDestination, PaymentMethod};
+	use crate::movement::update::MovementUpdate;
 	use super::*;
 
 	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
@@ -432,15 +433,57 @@ mod movements {
 		test_update_movement(a, b).await;
 		test_get_all_movements(a, b).await;
 		test_get_movements_by_payment_method(a, b).await;
+		test_get_or_create_movement_for_action(a, b).await;
+	}
+
+	async fn test_get_or_create_movement_for_action<A: BarkPersister, B: BarkPersister>(
+		a: &A, b: &B,
+	) {
+		let subsystem = test_subsystem();
+		let time = test_time();
+		let action_id = "ln_recv.reentrancy";
+		let balance = bitcoin::SignedAmount::from_sat(4_200);
+
+		// First call creates the movement and applies the initial update atomically.
+		let (id_a, created_a) = a.get_or_create_movement_for_action(
+			&subsystem, time, action_id, MovementUpdate::new().intended_balance(balance),
+		).await.expect("a: first get_or_create");
+		let (id_b, created_b) = b.get_or_create_movement_for_action(
+			&subsystem, time, action_id, MovementUpdate::new().intended_balance(balance),
+		).await.expect("b: first get_or_create");
+		assert!(created_a && created_b, "first call should report a creation");
+		assert_eq!(id_a, id_b, "created movement id mismatch");
+
+		let ma = a.get_movement_by_id(id_a).await.expect("a: get after create");
+		let mb = b.get_movement_by_id(id_b).await.expect("b: get after create");
+		assert_eq!(ma.intended_balance, balance, "initial update was not applied");
+		assert_eq!(ma, mb, "movement mismatch after create");
+
+		// A re-drive reuses the same movement instead of inserting a duplicate,
+		// and does not re-apply the update.
+		let (again_a, recreated_a) = a.get_or_create_movement_for_action(
+			&subsystem, time, action_id,
+			MovementUpdate::new().intended_balance(bitcoin::SignedAmount::from_sat(9_001)),
+		).await.expect("a: second get_or_create");
+		let (again_b, recreated_b) = b.get_or_create_movement_for_action(
+			&subsystem, time, action_id,
+			MovementUpdate::new().intended_balance(bitcoin::SignedAmount::from_sat(9_001)),
+		).await.expect("b: second get_or_create");
+		assert!(!recreated_a && !recreated_b, "second call should reuse the movement");
+		assert_eq!(again_a, id_a, "a: reused movement id mismatch");
+		assert_eq!(again_b, id_b, "b: reused movement id mismatch");
+
+		let ma2 = a.get_movement_by_id(id_a).await.expect("a: get after reuse");
+		assert_eq!(ma2.intended_balance, balance, "reuse must not re-apply the update");
 	}
 
 	async fn test_create_and_get_movement<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 		let subsystem = test_subsystem();
 		let time = test_time();
 
-		let id_a = a.create_new_movement(MovementStatus::Pending, &subsystem, time).await
+		let id_a = a.create_new_movement(MovementStatus::Pending, &subsystem, time, None).await
 			.expect("a: create_new_movement");
-		let id_b = b.create_new_movement(MovementStatus::Pending, &subsystem, time).await
+		let id_b = b.create_new_movement(MovementStatus::Pending, &subsystem, time, None).await
 			.expect("b: create_new_movement");
 		assert_eq!(id_a, id_b, "create_new_movement id mismatch");
 
@@ -451,9 +494,9 @@ mod movements {
 
 	async fn test_update_movement<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 		let time = test_time();
-		let id_a = a.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
+		let id_a = a.create_new_movement(MovementStatus::Pending, &test_subsystem(), time, None).await
 			.expect("a: create_new_movement");
-		let id_b = b.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
+		let id_b = b.create_new_movement(MovementStatus::Pending, &test_subsystem(), time, None).await
 			.expect("b: create_new_movement");
 		assert_eq!(id_a, id_b, "create_new_movement id mismatch");
 
@@ -477,13 +520,13 @@ mod movements {
 		let subsystem = test_subsystem();
 		let time = test_time();
 
-		a.create_new_movement(MovementStatus::Pending, &subsystem, time).await
+		a.create_new_movement(MovementStatus::Pending, &subsystem, time, None).await
 			.expect("a: create_new_movement 1");
-		b.create_new_movement(MovementStatus::Pending, &subsystem, time).await
+		b.create_new_movement(MovementStatus::Pending, &subsystem, time, None).await
 			.expect("b: create_new_movement 1");
-		a.create_new_movement(MovementStatus::Failed, &subsystem, time).await
+		a.create_new_movement(MovementStatus::Failed, &subsystem, time, None).await
 			.expect("a: create_new_movement 2");
-		b.create_new_movement(MovementStatus::Failed, &subsystem, time).await
+		b.create_new_movement(MovementStatus::Failed, &subsystem, time, None).await
 			.expect("b: create_new_movement 2");
 
 		let mut ra = a.get_all_movements().await.expect("a: get_all_movements");
@@ -502,7 +545,7 @@ mod movements {
 
 		let addr = ark::Address::from_str(ARK_ADDR).unwrap();
 
-		let id_a_1 = a.create_new_movement(MovementStatus::Pending, &subsystem, time).await.unwrap();
+		let id_a_1 = a.create_new_movement(MovementStatus::Pending, &subsystem, time, None).await.unwrap();
 		let mut m = a.get_movement_by_id(id_a_1).await.unwrap();
 		m.received_on = vec![MovementDestination {
 			destination: PaymentMethod::Ark(addr.clone()),
@@ -510,7 +553,7 @@ mod movements {
 		}];
 		a.update_movement(&m).await.unwrap();
 
-		let id_b_1 = b.create_new_movement(MovementStatus::Pending, &subsystem, time).await.unwrap();
+		let id_b_1 = b.create_new_movement(MovementStatus::Pending, &subsystem, time, None).await.unwrap();
 		let mut m = b.get_movement_by_id(id_b_1).await.unwrap();
 		m.received_on = vec![MovementDestination {
 			destination: PaymentMethod::Ark(addr.clone()),
@@ -518,7 +561,7 @@ mod movements {
 		}];
 		b.update_movement(&m).await.unwrap();
 
-		let id_a_2 = a.create_new_movement(MovementStatus::Pending, &subsystem, time).await.unwrap();
+		let id_a_2 = a.create_new_movement(MovementStatus::Pending, &subsystem, time, None).await.unwrap();
 		let mut m = a.get_movement_by_id(id_a_2).await.unwrap();
 		m.received_on = vec![MovementDestination {
 			destination: PaymentMethod::OutputScript(ScriptBuf::new_p2a()),
@@ -526,7 +569,7 @@ mod movements {
 		}];
 		a.update_movement(&m).await.unwrap();
 
-		let id_b_2 = b.create_new_movement(MovementStatus::Pending, &subsystem, time).await.unwrap();
+		let id_b_2 = b.create_new_movement(MovementStatus::Pending, &subsystem, time, None).await.unwrap();
 		let mut m = b.get_movement_by_id(id_b_2).await.unwrap();
 		m.received_on = vec![MovementDestination {
 			destination: PaymentMethod::OutputScript(ScriptBuf::new_p2a()),

@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS "bark_movements" (
 					created_at        DATETIME NOT NULL,
 					updated_at        DATETIME NOT NULL,
 					completed_at      DATETIME
-				);
+				, action_id TEXT);
 CREATE TABLE bark_movements_input_vtxos (
 					movement_id INTEGER NOT NULL REFERENCES bark_movements(id),
 					vtxo_id     TEXT    NOT NULL,
@@ -226,3 +226,5 @@ CREATE TABLE bark_settled_lightning_receive (
 				amount_sat   INTEGER NOT NULL,
 				settled_at   DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);
+CREATE UNIQUE INDEX idx_bark_movements_action_id
+				ON bark_movements (action_id) WHERE action_id IS NOT NULL;

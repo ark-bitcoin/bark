@@ -46,6 +46,9 @@ pub mod env {
 	/// Path to a pre-generated bitcoind snapshot directory.
 	/// When set, tests copy the snapshot instead of generating blocks from scratch.
 	pub const BITCOIND_SNAPSHOT_DIR: &str = "BITCOIND_SNAPSHOT_DIR";
+	/// When set, the wallet executor runs every action step twice to check
+	/// reentrancy (debug builds only). See `just int-bark-int-action-reentrancy`.
+	pub const BARK_DOUBLE_DRIVE_ACTIONS: &str = "BARK_DOUBLE_DRIVE_ACTIONS";
 	pub const TOR_EXEC: &str = "TOR_EXEC";
 }
 
