@@ -22,7 +22,7 @@ use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::vtxo::Full;
-use server_rpc::protos;
+use server_rpc::{protos, MAX_NB_MAILBOX_RECOVERY_IDS};
 use server_rpc::protos::mailbox_server::MailboxMessage;
 
 use crate::{Wallet, SUBSCRIBE_REQUEST_TIMEOUT};
@@ -540,21 +540,23 @@ impl Wallet {
 		}
 		let nb_vtxos = vtxo_ids.len();
 
-		let (mut srv, _) = self.require_server().await?;
-
 		// Prove ownership of the recovery mailbox; short validity is enough as
 		// it's consumed by this single request.
-		let expiry = chrono::Local::now() + std::time::Duration::from_secs(10);
+		let expiry = chrono::Local::now() + std::time::Duration::from_secs(60);
 		let auth = MailboxAuthorization::new(&self.recovery_mailbox_keypair(), expiry);
 		let mailbox_id = self.recovery_mailbox_identifier().serialize();
-		let req = protos::mailbox_server::PostRecoveryVtxoIdsRequest {
-			mailbox_id,
-			vtxo_ids,
-			authorization: Some(auth.serialize()),
-		};
 
-		srv.mailbox_client.post_recovery_vtxo_ids(req).await
-			.context("error posting recovery vtxo IDs to server")?;
+		let (mut srv, _) = self.require_server().await?;
+		for chunk in vtxo_ids.chunks(MAX_NB_MAILBOX_RECOVERY_IDS) {
+			let req = protos::mailbox_server::PostRecoveryVtxoIdsRequest {
+				mailbox_id: mailbox_id.clone(),
+				vtxo_ids: chunk.to_vec(),
+				authorization: Some(auth.serialize()),
+			};
+
+			srv.mailbox_client.post_recovery_vtxo_ids(req).await
+				.context("error posting recovery vtxo IDs to server")?;
+		}
 
 		debug!("Posted {} recovery vtxo IDs to server", nb_vtxos);
 		Ok(())
