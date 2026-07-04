@@ -581,7 +581,11 @@ impl Process {
 		let tx = wallet.finish_tx(funding_psbt).context("error finishing tree funding tx")?;
 
 		// Create the vtxos and virtual transactions in the database
-		// before committing the funding tx to the wallet.
+		// before committing the funding tx to the wallet. The funding tx
+		// is handed to the nursery in the same db tx, so that once the
+		// wallet considers its inputs spent, broadcast follow-up is
+		// guaranteed even if a later step fails.
+		let confirm_target = self.srv.nursery_confirm_target();
 		let update = VtxoTreeUpdate::new()
 			.upsert_funding_tx(&tx)
 			.upsert_signed_tx(tree.internal_node_txs().iter().cloned())
@@ -591,7 +595,10 @@ impl Process {
 				tree.output_vtxos().map(ServerVtxo::from),
 				database::SpendState::Pool,
 			);
-		self.srv.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
+		self.srv.db.write(async |t| {
+			t.execute_vtxo_tree_update(update).await?;
+			t.upsert_nursery_tx(&tx, confirm_target).await
+		}).await?;
 
 		// Here we commit the transaction to the wallet
 		wallet.commit_tx(&tx);
@@ -615,10 +622,8 @@ impl Process {
 
 		slog!(FinishedPoolIssuance, txid: funding_txid, total_count: requests.len(), total_amount);
 
-		self.srv.tx_nursery.broadcast_tx(tx).await
+		self.srv.tx_nursery.broadcast_tx(tx, confirm_target).await
 			.with_context(|| format!("error broadcasting vtxopool issuance tx {}", txid))?;
-
-		//TODO(stevenroose) should ensure tx gets confirmed
 
 		Ok(())
 	}

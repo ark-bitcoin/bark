@@ -987,9 +987,9 @@ impl<'t> Tx<'t> {
 		Ok(ret)
 	}
 
-	// ***********
-	// * TXINDEX *
-	// ***********
+	// ***************
+	// * BITCOIN TXS *
+	// ***************
 
 	/// Adds a [bitcoin::Transaction] to the database
 	/// that can be queried by [bitcoin::Txid].

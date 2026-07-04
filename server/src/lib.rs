@@ -25,10 +25,10 @@ pub(crate) mod bitcoin_blocklist;
 pub mod bitcoind;
 mod intman;
 pub mod ln;
+mod nursery;
 mod offboards;
 mod round;
 pub mod telemetry;
-mod txindex;
 pub mod utils;
 
 
@@ -84,10 +84,9 @@ use crate::mailbox_manager::MailboxManager;
 use crate::fee_estimator::FeeEstimator;
 use crate::round::RoundInput;
 use crate::round::forfeit::HarkForfeitNonces;
+use crate::nursery::TxNursery;
 use crate::secret::Secret;
 use crate::system::RuntimeManager;
-use crate::txindex::TxIndex;
-use crate::txindex::broadcast::TxNursery;
 use crate::utils::{InstrumentedLock, TimedEntryMap};
 use crate::vtxopool::VtxoPool;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
@@ -396,20 +395,7 @@ impl Server {
 		let _startup_worker = rtmgr.spawn("Bootstrapping");
 		rtmgr.run_shutdown_signal_listener(Duration::from_secs(60));
 
-		let txindex = TxIndex::start(
-			deep_tip,
-			rtmgr.clone(),
-			bitcoind.clone(),
-			cfg.txindex_check_interval,
-			db.clone(),
-		);
-
-		let tx_nursery = TxNursery::start(
-			rtmgr.clone(),
-			txindex.clone(),
-			bitcoind.clone(),
-			cfg.transaction_rebroadcast_interval,
-		);
+		let tx_nursery = TxNursery::new(db.clone(), bitcoind.clone());
 
 		let fee_estimator = fee_estimator::start(
 			rtmgr.clone(),
@@ -424,6 +410,10 @@ impl Server {
 		let mut listeners: Vec<Box<dyn ChainEventListener>> = vec![];
 		listeners.push(Box::new(rounds_wallet.clone()));
 		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
+			// The nursery follow-up runs wherever the watchman runs, so
+			// that only a single process is following up on nursery txs.
+			listeners.push(Box::new(tx_nursery.clone()));
+
 			let mut watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 				cfg.min_trusted_confs,
@@ -441,6 +431,8 @@ impl Server {
 
 			Some((watchman_cfg.clone(), watchman_wallet, frontier))
 		} else {
+			info!("Embedded watchman disabled: nursery tx follow-up is left \
+				to the watchmand process");
 			None
 		};
 		let watchman_wallet = watchman_deps.as_ref().map(|(_, w, _)| w.clone());
@@ -653,6 +645,12 @@ impl Server {
 		self.sync_manager.chain_tip_watcher()
 	}
 
+	/// The height by which a tx broadcast via the nursery right now is
+	/// expected to confirm.
+	fn nursery_confirm_target(&self) -> BlockHeight {
+		self.chain_tip().height + self.config.nursery_confirm_target_blocks
+	}
+
 	/// Rebalance coins between the rounds and watchman wallets.
 	///
 	/// If the watchman wallet balance is below `watchman_min_balance`,
@@ -690,18 +688,8 @@ impl Server {
 		};
 		drop(wallet);
 
-		let tx = self.tx_nursery.broadcast_tx(tx).await
+		self.tx_nursery.broadcast_tx(tx, self.nursery_confirm_target()).await
 			.context("Failed to broadcast transaction")?;
-
-		// wait until it's actually broadcast
-		tokio::time::timeout(Duration::from_millis(5_000), async {
-			loop {
-				if tx.status().seen() {
-					break;
-				}
-				tokio::time::sleep(Duration::from_millis(500)).await;
-			}
-		}).await.context("waiting for tx broadcast timed out")?;
 
 		Ok(())
 	}
