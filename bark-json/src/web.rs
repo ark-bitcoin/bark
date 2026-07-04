@@ -248,9 +248,10 @@ pub struct Bip321UriRequest {
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct Bip321UriQuery {
 	/// Whether to upper-case the returned `bip321` URI so QR encoders can use
-	/// the compact alphanumeric mode. Defaults to `false`. Requesting an
-	/// upper-case URI fails when it carries case-sensitive data (a label,
-	/// message, or base58 address) that cannot be upper-cased.
+	/// the compact alphanumeric mode. Defaults to `false`.
+	/// Requesting an upper-case URI fails when it carries case-sensitive data
+	/// (a label or message with lowercase characters, or base58 address) that
+	/// cannot be upper-cased.
 	pub uppercase: Option<bool>,
 }
 
