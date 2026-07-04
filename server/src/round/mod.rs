@@ -823,7 +823,7 @@ impl CollectingPayments {
 				script_pubkey: vtxos_spec.funding_tx_script_pubkey(),
 				value: vtxos_spec.total_required_value(),
 			},
-			fee_rate: srv.fee_estimator.regular(),
+			fee_rate: srv.fee_estimator.fast(),
 			min_trusted_confs: srv.config.min_trusted_confs,
 			pinned_input: self.common_round_tx_input.take(),
 		}.build(&srv.rounds_wallet).await.map_err(RoundError::Recoverable)?;
