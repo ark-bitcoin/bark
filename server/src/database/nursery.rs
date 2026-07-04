@@ -156,15 +156,14 @@ impl<'t> Tx<'t> {
 		}).collect())
 	}
 
-	/// Abandon a nursery tx: the nursery gives up on the tx and the
-	/// operator won't be warned about it anymore.
-	///
-	/// Returns false when the txid is not in the nursery or was already
-	/// abandoned.
+	/// Abandon a nursery tx: give up on it and stop warning.
+	/// Returns false when the txid is unknown, already abandoned or
+	/// confirmed. A confirmed tx must stay active: if a reorg evicts
+	/// its confirmation, the nursery has to follow it up again.
 	pub async fn abandon_nursery_tx(&self, txid: Txid) -> anyhow::Result<bool> {
 		let stmt = self.prepare_typed("
 			UPDATE nursery_tx SET abandoned_at = NOW(), updated_at = NOW()
-			WHERE txid = $1 AND abandoned_at IS NULL
+			WHERE txid = $1 AND abandoned_at IS NULL AND confirmed_at_height IS NULL
 			RETURNING id
 		", &[Type::TEXT]).await?;
 

@@ -77,6 +77,7 @@ pub mod admin {
 	pub use crate::protos::bark_server::lightning_admin_service_client::LightningAdminServiceClient;
 	pub use crate::protos::bark_server::sweep_admin_service_client::SweepAdminServiceClient;
 	pub use crate::protos::bark_server::ban_admin_service_client::BanAdminServiceClient;
+	pub use crate::protos::bark_server::nursery_admin_service_client::NurseryAdminServiceClient;
 }
 
 #[cfg(feature = "intman")]
@@ -92,6 +93,7 @@ pub mod server {
 	pub use crate::protos::bark_server::lightning_admin_service_server::{LightningAdminService, LightningAdminServiceServer};
 	pub use crate::protos::bark_server::sweep_admin_service_server::{SweepAdminService, SweepAdminServiceServer};
 	pub use crate::protos::bark_server::ban_admin_service_server::{BanAdminService, BanAdminServiceServer};
+	pub use crate::protos::bark_server::nursery_admin_service_server::{NurseryAdminService, NurseryAdminServiceServer};
 	pub use crate::protos::intman::integration_service_server::{IntegrationService, IntegrationServiceServer};
 	pub use crate::protos::mailbox_server::mailbox_service_server::{MailboxService, MailboxServiceServer};
 }

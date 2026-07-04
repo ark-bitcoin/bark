@@ -3,6 +3,7 @@ mod blocklist;
 mod block_index;
 mod lightning;
 mod mailbox;
+mod nursery;
 mod offboard;
 mod postgres;
 mod postgres_migrations;

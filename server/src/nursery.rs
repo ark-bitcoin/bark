@@ -78,8 +78,8 @@ impl TxNursery {
 	/// Abandon a nursery tx: stop following it up and stop warning the
 	/// operator about it.
 	///
-	/// Returns false when the txid is not in the nursery or was already
-	/// abandoned.
+	/// Returns false when the txid is not in the nursery, was already
+	/// abandoned or has confirmed.
 	pub async fn abandon(&self, txid: Txid) -> anyhow::Result<bool> {
 		let abandoned = self.db.write(async |t| t.abandon_nursery_tx(txid).await).await?;
 		if abandoned {

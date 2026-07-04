@@ -124,6 +124,43 @@ impl rpc::server::SweepAdminService for crate::watchman::Daemon {
 	}
 }
 
+/// Abandon a nursery tx; shared between the captaind and watchmand
+/// admin services.
+async fn abandon_nursery_tx(
+	nursery: &crate::nursery::TxNursery,
+	req: protos::AbandonRequest,
+) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+	let txid = bitcoin::Txid::from_str(&req.txid)
+		.badarg("invalid txid")?;
+	if nursery.abandon(txid).await.to_status()? {
+		Ok(tonic::Response::new(protos::Empty {}))
+	} else {
+		Err(tonic::Status::not_found("no active nursery tx with that txid"))
+	}
+}
+
+#[async_trait]
+impl rpc::server::NurseryAdminService for Server {
+	#[tracing::instrument(skip(self, req))]
+	async fn abandon(
+		&self,
+		req: tonic::Request<protos::AbandonRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		abandon_nursery_tx(&self.tx_nursery, req.into_inner()).await
+	}
+}
+
+#[async_trait]
+impl rpc::server::NurseryAdminService for crate::watchman::Daemon {
+	#[tracing::instrument(skip(self, req))]
+	async fn abandon(
+		&self,
+		req: tonic::Request<protos::AbandonRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		abandon_nursery_tx(&self.tx_nursery, req.into_inner()).await
+	}
+}
+
 #[async_trait]
 impl rpc::server::BanAdminService for Server {
 	#[tracing::instrument(skip(self, req))]
@@ -183,7 +220,8 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.add_service(rpc::server::RoundAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::LightningAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::SweepAdminServiceServer::from_arc(srv.clone()))
-		.add_service(rpc::server::BanAdminServiceServer::from_arc(srv.clone()));
+		.add_service(rpc::server::BanAdminServiceServer::from_arc(srv.clone()))
+		.add_service(rpc::server::NurseryAdminServiceServer::from_arc(srv.clone()));
 
 	tonic::transport::Server::builder()
 		.http2_max_pending_accept_reset_streams(Some(DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS))
@@ -206,7 +244,8 @@ pub async fn run_watchmand_admin_rpc_server(
 	info!("Starting watchmand admin gRPC service on address {}", addr);
 
 	let routes = tonic::service::Routes::default()
-		.add_service(rpc::server::SweepAdminServiceServer::from_arc(daemon));
+		.add_service(rpc::server::SweepAdminServiceServer::from_arc(daemon.clone()))
+		.add_service(rpc::server::NurseryAdminServiceServer::from_arc(daemon));
 
 	tonic::transport::Server::builder()
 		.http2_max_pending_accept_reset_streams(Some(DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS))

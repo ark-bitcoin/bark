@@ -722,6 +722,10 @@ async fn nursery_txs() {
 	// Recording the same confirmation again reports no change.
 	assert!(!db.write(async |t| t.set_nursery_tx_confirmed(txid, 105).await).await.unwrap());
 
+	// A confirmed tx can't be abandoned: it has to stay active in case
+	// a reorg evicts its confirmation.
+	assert!(!db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap());
+
 	// A reorg unconfirms all txs confirmed after the fork point.
 	assert!(db.write(async |t| t.clear_nursery_confirmations_after(105).await).await.unwrap().is_empty());
 	let reorged = db.write(async |t| t.clear_nursery_confirmations_after(104).await).await.unwrap();
