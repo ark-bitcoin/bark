@@ -45,6 +45,7 @@ use std::str::FromStr;
 
 use bitcoin::address::{NetworkChecked, NetworkUnchecked};
 use bitcoin::{Address, Amount, Denomination, Network, NetworkKind};
+use bitcoin_ext::AddressExt;
 use lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
@@ -626,6 +627,43 @@ fn write_query_param(f: &mut String, key: &str, value: &str, required: bool) -> 
 	write!(f, "={}", utf8_percent_encode(value, QUERY_ENCODE_SET))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("uri is not fully uppercasable")]
+pub struct NotUppercasable;
+
+impl<E: ExtensionHandler> Bip321Uri<E> {
+	/// Whether every component of the URI is case-insensitive, so the whole
+	/// string can be upper-cased without changing its meaning. This is false
+	/// when the URI carries human-readable text (`label`, `message`), a
+	/// case-sensitive `pop` prefix or custom parameter, or a base58
+	/// (P2PKH/P2SH) address.
+	fn is_fully_uppercasable(&self) -> bool {
+		self.label.is_none()
+			&& self.message.is_none()
+			&& self.pop.is_none()
+			&& self.custom.is_empty()
+			&& self.address.as_ref().map_or(true, |a| a.is_uppercasable())
+			&& self.bc.iter().all(|f| f.inner().is_uppercasable())
+			&& self.tb.iter().all(|f| f.inner().is_uppercasable())
+	}
+
+	/// Serializes the URI as an all-uppercase `bitcoin:` URI string.
+	///
+	/// Only possible if the URI contains exclusively case-insensitive (bech32, etc.) components
+	/// such that converting to uppercase will not change the meaning.
+	///
+	/// Returns [`None`] if the URI contains any case-sensitive components (see
+	/// [`is_fully_uppercasable`](Self::is_fully_uppercasable)), since uppercasing would change
+	/// the semantics. In that case, callers may fall back to [`Display`](Self::to_string).
+	pub fn checked_uppercase(&self) -> Option<String> {
+		if self.is_fully_uppercasable() {
+			Some(self.to_string().to_uppercase())
+		} else {
+			None
+		}
+	}
+}
+
 impl<E: ExtensionHandler> fmt::Display for Bip321Uri<E> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "bitcoin:")?;
@@ -1180,5 +1218,44 @@ mod tests {
 	fn reject_mainnet_address_in_tb() {
 		let err = parse("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?tb=bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq").unwrap_err();
 		assert_eq!(err, Bip321Error::NetworkKindMismatch { expected: NetworkKind::Test });
+	}
+
+	// ── Uppercase rendering ──────────────────────────────────────────
+
+	#[test]
+	fn uppercase_segwit_address_and_amount() {
+		let uri = parse_no_ext("bitcoin:bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq?amount=1.5").unwrap();
+		let up = uri.checked_uppercase().unwrap();
+		assert_eq!(
+			up,
+			"BITCOIN:BC1QAR0SRRR7XFKVY5L643LYDNW9RE59GTZZWF5MDQ?AMOUNT=1.5",
+		);
+		// upper-cased URI must parse back to an equal URI
+		assert_eq!(parse_no_ext(&up).unwrap(), uri);
+	}
+
+	#[test]
+	fn uppercase_errors_for_base58_address() {
+		// base58 addresses are case-sensitive, so the URI can't be upper-cased.
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=1").unwrap();
+		assert!(uri.checked_uppercase().is_none());
+	}
+
+	#[test]
+	fn uppercase_errors_with_label_and_message() {
+		// human-readable text can't be upper-cased without changing it.
+		let uri = parse_no_ext(
+			"bitcoin:bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq?label=Coffee%20Order&message=Thanks",
+		).unwrap();
+		assert!(uri.checked_uppercase().is_none());
+	}
+
+	#[test]
+	fn uppercase_lightning_roundtrips() {
+		let input = "bitcoin:?lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc";
+		let uri = parse(input).unwrap();
+		let up = uri.checked_uppercase().unwrap();
+		assert!(up.starts_with("BITCOIN:?LIGHTNING=LNBC"), "{}", up);
+		assert_eq!(parse(&up).unwrap(), uri);
 	}
 }

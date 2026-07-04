@@ -217,6 +217,64 @@ pub struct ArkAddressResponse {
 	pub address: String,
 }
 
+/// Request to build a BIP 321 unified payment URI.
+///
+/// An Ark address is always included. A BOLT11 invoice is only included when
+/// `amount_sat` is given (an amount is required to create one). An on-chain
+/// address is included only when `onchain` is `true`.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct Bip321UriRequest {
+	/// Optional amount (in satoshis) to request. When set, it is embedded in
+	/// the URI and used to create the BOLT11 invoice. Any server-configured
+	/// [LightningReceiveFees](crate::cli::fees::LightningReceiveFees) are
+	/// deducted from the amount the client ultimately receives over Lightning.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub amount_sat: Option<u64>,
+	/// Whether to include a fresh on-chain address as a payment destination.
+	/// Defaults to `false`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub onchain: Option<bool>,
+	/// Optional label describing the payment, recorded in the URI's `label`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub label: Option<String>,
+	/// Optional message describing the payment, recorded in the URI's `message`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub message: Option<String>,
+}
+
+/// Query parameters for building a BIP 321 URI.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct Bip321UriQuery {
+	/// Whether to upper-case the returned `bip321` URI so QR encoders can use
+	/// the compact alphanumeric mode. Defaults to `false`. Requesting an
+	/// upper-case URI fails when it carries case-sensitive data (a label,
+	/// message, or base58 address) that cannot be upper-cased.
+	pub uppercase: Option<bool>,
+}
+
+/// A BIP 321 unified payment URI together with its individual destinations.
+///
+/// The `bip321` field is the combined `bitcoin:` URI; the other fields expose
+/// each generated destination separately for convenience. A field is `null`
+/// when that destination was not requested or could not be produced.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct Bip321UriResponse {
+	/// The generated Ark address, if any.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub ark: Option<String>,
+	/// The generated BOLT11 invoice, included only when an amount was given.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub bolt11: Option<String>,
+	/// The generated on-chain address, included only when `onchain` was set.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub onchain: Option<String>,
+	/// The combined BIP 321 `bitcoin:` URI.
+	pub bip321: String,
+}
+
 /// Response for the encoded-VTXO endpoint.
 ///
 /// Wraps the hex-encoded VTXO in a named field so clients can easily

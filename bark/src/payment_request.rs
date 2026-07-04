@@ -71,6 +71,13 @@ pub struct BarkExtension {
 	ark: Vec<FieldWithAttributes<ArkAddressType>>,
 }
 
+impl BarkExtension {
+	/// The Ark addresses carried by the URI's `ark=` parameters.
+	pub fn ark(&self) -> &[FieldWithAttributes<ArkAddressType>] {
+		&self.ark
+	}
+}
+
 impl ExtensionHandler for BarkExtension {
 	fn handle_param(
 		&mut self,
@@ -102,7 +109,7 @@ impl ExtensionHandler for BarkExtension {
 	}
 }
 
-type BarkBip321Uri = Bip321Uri<BarkExtension>;
+pub type BarkBip321Uri = Bip321Uri<BarkExtension>;
 
 /// A non-fatal issue detected while validating a single payment option.
 ///
@@ -197,7 +204,9 @@ impl From<AvailablePaymentMethod> for PaymentRequest {
 /// ```
 pub struct BarkBip321UriBuilder<'a> {
 	wallet: &'a mut Wallet,
-	onchain_wallet: Option<&'a mut dyn GetAddress>,
+	// `+ Send` so the builder can be driven from a multi-threaded async
+	// context such as the REST server.
+	onchain_wallet: Option<&'a mut (dyn GetAddress + Send)>,
 
 	amount: Option<Amount>,
 	label: Option<String>,
@@ -261,7 +270,7 @@ impl<'a> BarkBip321UriBuilder<'a> {
 	/// Set the onchain wallet to fetch onchain address from
 	///
 	/// Setting this will also set the flag to include an onchain address.
-	pub fn onchain_wallet(mut self, onchain: &'a mut dyn GetAddress) -> Self {
+	pub fn onchain_wallet(mut self, onchain: &'a mut (dyn GetAddress + Send)) -> Self {
 		self.onchain_wallet = Some(onchain);
 		self.onchain = true;
 		self
@@ -714,5 +723,42 @@ impl Wallet {
 	/// ```
 	pub fn bip321_uri<'a>(&'a mut self) -> BarkBip321UriBuilder<'a> {
 		BarkBip321UriBuilder::new(self)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use std::str::FromStr;
+
+	use ark::{SECP, VtxoPolicy};
+	use bitcoin::Amount;
+	use bitcoin::secp256k1::Keypair;
+	use bitcoin::secp256k1::rand::thread_rng;
+
+	use super::*;
+
+	fn dummy_ark_address(testnet: bool) -> ark::Address {
+		let server = Keypair::new(&SECP, &mut thread_rng()).public_key();
+		let user = Keypair::new(&SECP, &mut thread_rng()).public_key();
+		ark::Address::new(testnet, server, VtxoPolicy::new_pubkey(user), vec![])
+	}
+
+	/// The upper-cased URI must parse back to an equal URI, which only holds
+	/// if `ark::Address::from_str` accepts the upper-cased bech32m form.
+	#[test]
+	fn ark_uppercase_uri_roundtrips() {
+		let addr = ArkAddressType::Bark(dummy_ark_address(false));
+		let mut uri = BarkBip321Uri::new();
+		uri.set_amount(Amount::from_sat(100_000)).unwrap();
+
+		uri.extensions_mut().ark.push(FieldWithAttributes::new(addr.clone(), false));
+
+		let upper = uri.checked_uppercase().unwrap();
+		assert!(upper.starts_with("BITCOIN:?AMOUNT="), "{}", upper);
+		assert!(upper.contains("&ARK=ARK1"), "{}", upper);
+
+		let reparsed = BarkBip321Uri::from_str(&upper).unwrap();
+		assert_eq!(reparsed, uri);
+		assert_eq!(reparsed.extensions().ark()[0].inner(), &addr);
 	}
 }

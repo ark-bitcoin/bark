@@ -746,6 +746,7 @@ dependencies = [
 name = "bip321"
 version = "0.1.0"
 dependencies = [
+ "bark-bitcoin-ext",
  "bitcoin",
  "lightning",
  "lightning-invoice",

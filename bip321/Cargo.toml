@@ -13,6 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 bitcoin = "0.32"
+bark-bitcoin-ext = { version = "0.3.0", path = "../bitcoin-ext", default-features = false }
 lightning-invoice = { version = "0.34.0", default-features = false }
 lightning = { version = "0.2.0", default-features = false }
 
