@@ -486,32 +486,6 @@ ALTER SEQUENCE public.arkoor_mailbox_id_seq OWNED BY public.arkoor_mailbox.id;
 
 
 --
--- Name: bitcoin_transaction; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.bitcoin_transaction (
-    id bigint NOT NULL,
-    txid text NOT NULL,
-    tx bytea NOT NULL,
-    created_at timestamp with time zone NOT NULL
-);
-
-
---
--- Name: bitcoin_transaction_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-ALTER TABLE public.bitcoin_transaction ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME public.bitcoin_transaction_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
-);
-
-
---
 -- Name: captaind_block; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1031,6 +1005,36 @@ CREATE TABLE public.mailbox (
     unlock_hash text,
     preimage text,
     amount_sat bigint
+);
+
+
+--
+-- Name: nursery_tx; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.nursery_tx (
+    id bigint NOT NULL,
+    txid text NOT NULL,
+    tx bytea NOT NULL,
+    confirm_target_height integer NOT NULL,
+    confirmed_at_height integer,
+    abandoned_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: nursery_tx_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.nursery_tx ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.nursery_tx_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -2007,22 +2011,6 @@ ALTER TABLE ONLY public.arkoor_mailbox
 
 
 --
--- Name: bitcoin_transaction bitcoin_transaction_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.bitcoin_transaction
-    ADD CONSTRAINT bitcoin_transaction_pkey PRIMARY KEY (id);
-
-
---
--- Name: bitcoin_transaction bitcoin_transaction_txid_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.bitcoin_transaction
-    ADD CONSTRAINT bitcoin_transaction_txid_key UNIQUE (txid);
-
-
---
 -- Name: captaind_block captaind_block_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2148,6 +2136,22 @@ ALTER TABLE ONLY public.lightning_payment_attempt_htlc_vtxo
 
 ALTER TABLE ONLY public.lightning_payment_attempt
     ADD CONSTRAINT lightning_payment_attempt_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: nursery_tx nursery_tx_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nursery_tx
+    ADD CONSTRAINT nursery_tx_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: nursery_tx nursery_tx_txid_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.nursery_tx
+    ADD CONSTRAINT nursery_tx_txid_key UNIQUE (txid);
 
 
 --

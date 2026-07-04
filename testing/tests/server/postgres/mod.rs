@@ -676,6 +676,77 @@ async fn bitcoin_transaction_index() {
 }
 
 #[tokio::test]
+async fn nursery_txs() {
+	let mut ctx = TestContext::new_minimal("postgresd/nursery_txs").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let tx = Transaction {
+		version: bitcoin::transaction::Version::non_standard(42),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let txid = tx.compute_txid();
+
+	// Hand the tx to the nursery.
+	db.write(async |t| t.upsert_nursery_tx(&tx, 100).await).await.unwrap();
+	let stored = db.read(async |t| t.get_nursery_raw_tx(txid).await).await.unwrap().unwrap();
+	assert_eq!(stored.compute_txid(), txid);
+
+	let active = db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap();
+	assert_eq!(active.len(), 1);
+	assert_eq!(active[0].txid, txid);
+	assert_eq!(active[0].confirm_target_height, 100);
+	assert_eq!(active[0].confirmed_at_height, None);
+	let unconfirmed = db.read(async |t| t.get_unconfirmed_nursery_txids().await).await.unwrap();
+	assert_eq!(unconfirmed, vec![txid]);
+
+	// Upserting again keeps the original target.
+	db.write(async |t| t.upsert_nursery_tx(&tx, 200).await).await.unwrap();
+	let active = db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap();
+	assert_eq!(active.len(), 1);
+	assert_eq!(active[0].confirm_target_height, 100);
+
+	// Confirm the tx: still active until it is deeply confirmed.
+	assert!(db.write(async |t| t.set_nursery_tx_confirmed(txid, 105).await).await.unwrap());
+	let active = db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap();
+	assert_eq!(active.len(), 1);
+	assert_eq!(active[0].confirmed_at_height, Some(105));
+	assert!(db.read(async |t| t.get_active_nursery_txs(105).await).await.unwrap().is_empty());
+	assert!(db.read(async |t| t.get_unconfirmed_nursery_txids().await).await.unwrap().is_empty());
+
+	// Recording the same confirmation again reports no change.
+	assert!(!db.write(async |t| t.set_nursery_tx_confirmed(txid, 105).await).await.unwrap());
+
+	// A reorg unconfirms all txs confirmed after the fork point.
+	assert!(db.write(async |t| t.clear_nursery_confirmations_after(105).await).await.unwrap().is_empty());
+	let reorged = db.write(async |t| t.clear_nursery_confirmations_after(104).await).await.unwrap();
+	assert_eq!(reorged, vec![(txid, 105)]);
+	let active = db.read(async |t| t.get_active_nursery_txs(105).await).await.unwrap();
+	assert_eq!(active.len(), 1);
+	assert_eq!(active[0].confirmed_at_height, None);
+
+	// Abandoning the tx removes it from the active set.
+	assert!(db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap());
+	assert!(db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap().is_empty());
+	assert!(db.read(async |t| t.get_unconfirmed_nursery_txids().await).await.unwrap().is_empty());
+
+	// Abandoning twice or abandoning an unknown txid reports failure.
+	assert!(!db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap());
+	let unknown = Transaction {
+		version: bitcoin::transaction::Version::non_standard(43),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	}.compute_txid();
+	assert!(!db.write(async |t| t.abandon_nursery_tx(unknown).await).await.unwrap());
+}
+
+#[tokio::test]
 async fn ephemeral_tweaks() {
 	let mut ctx = TestContext::new_minimal("postgresd/ephemeral_tweaks").await;
 	ctx.init_central_postgres().await;

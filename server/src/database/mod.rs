@@ -14,6 +14,7 @@ pub mod data_migrations;
 pub mod watchman;
 pub mod intman;
 pub mod ln;
+pub mod nursery;
 pub mod rounds;
 pub mod tree;
 pub mod vtxopool;
