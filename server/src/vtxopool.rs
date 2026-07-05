@@ -612,8 +612,6 @@ impl Process {
 		self.srv.db.write(async |t| {
 			t.add_funding_vtxos_to_frontier(txid, None).await
 				.context("failed to add vtxopool vtxos to frontier")?;
-			t.upsert_bitcoin_transaction(txid, &tx).await
-				.context("error storing unbroadcasted vtxo issuance funding tx")?;
 			t.store_vtxopool_vtxos(&pool_vtxos).await.context("storing pool vtxos")?;
 			Ok(())
 		}).await?;

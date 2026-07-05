@@ -643,39 +643,6 @@ async fn postgres_offboards() {
 }
 
 #[tokio::test]
-async fn bitcoin_transaction_index() {
-	let mut ctx = TestContext::new_minimal("postgresd/bitcoin_tx_index").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(42),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid = tx.compute_txid();
-
-	// Not found initially
-	assert!(db.read(async |t| t.get_bitcoin_transaction_by_id(txid).await).await.unwrap().is_none());
-
-	// Upsert the transaction
-	db.write(async |t| t.upsert_bitcoin_transaction(txid, &tx).await).await.unwrap();
-
-	// Now found
-	let stored = db.read(async |t| t.get_bitcoin_transaction_by_id(txid).await).await.unwrap().unwrap();
-	assert_eq!(stored.compute_txid(), txid);
-
-	// Upsert same txid again (idempotent)
-	db.write(async |t| t.upsert_bitcoin_transaction(txid, &tx).await).await.unwrap();
-	let stored2 = db.read(async |t| t.get_bitcoin_transaction_by_id(txid).await).await.unwrap().unwrap();
-	assert_eq!(stored2.compute_txid(), txid);
-}
-
-#[tokio::test]
 async fn nursery_txs() {
 	let mut ctx = TestContext::new_minimal("postgresd/nursery_txs").await;
 	ctx.init_central_postgres().await;
