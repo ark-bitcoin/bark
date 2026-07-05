@@ -67,7 +67,6 @@ use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPreimage};
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use bitcoin_ext::{BlockHeight, BlockRef, P2TR_DUST};
-use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::rpc::BitcoinAsyncRpcExt;
 use bitcoind_async_client::Client as BitcoindClient;
 use bitcoind_async_client::traits::Reader;
@@ -75,7 +74,6 @@ use bitcoind_async_client::traits::Reader;
 use crate::bitcoind as bcd;
 use crate::sync::{ChainEventListener, SyncManager};
 use crate::error::ContextExt;
-use crate::watchman::VtxoExitFrontier;
 use crate::flux::VtxosInFlux;
 use crate::ln::guard::PaymentGuards;
 use crate::ln::node_manager::LightningManager;
@@ -84,7 +82,7 @@ use crate::mailbox_manager::MailboxManager;
 use crate::fee_estimator::FeeEstimator;
 use crate::round::RoundInput;
 use crate::round::forfeit::HarkForfeitNonces;
-use crate::nursery::{NurseryTxKind, TxNursery};
+use crate::nursery::TxNursery;
 use crate::secret::Secret;
 use crate::system::RuntimeManager;
 use crate::utils::{InstrumentedLock, TimedEntryMap};
@@ -200,7 +198,6 @@ pub struct Server {
 	/// The keypair used to generate ephemeral keys using tweaks
 	ephemeral_master_key: Secret<Keypair>,
 	rounds_wallet: InstrumentedLock<PersistedWallet>,
-	watchman_wallet: Option<InstrumentedLock<PersistedWallet>>,
 	bitcoind: BitcoindClient,
 	// NB needs to be Arc so tasks started before Server is constructed can share it
 	sync_manager: Arc<SyncManager>,
@@ -218,7 +215,6 @@ pub struct Server {
 	lightning_manager: LightningManager,
 	htlc_settler: Arc<HtlcSettler>,
 	vtxopool: VtxoPool,
-	watchman_handle: Option<watchman::WatchmanHandle>,
 	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, offboards::OffboardSession>>,
 	fee_estimator: Arc<FeeEstimator>,
 	/// scriptPubkeys in the bitcoin address blocklist
@@ -412,27 +408,6 @@ impl Server {
 		// Captaind is the only process broadcasting via the nursery, so it
 		// also runs the follow-up.
 		listeners.push(Box::new(tx_nursery.clone()));
-		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
-			let mut watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
-				db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
-				cfg.min_trusted_confs,
-			).await.context("error loading watchman wallet")?;
-			if let Some(list) = bitcoin_address_blocklist.clone() {
-				watchman_wallet.set_address_blocklist(list);
-			}
-			telemetry::set_wallet_balance(WalletKind::Watchman, watchman_wallet.balance());
-			let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
-			listeners.push(Box::new(watchman_wallet.clone()));
-
-			let frontier = VtxoExitFrontier::init(db.clone(), htlc_settler.clone()).await?;
-			let frontier = Arc::new(tokio::sync::RwLock::new(frontier));
-			listeners.push(Box::new(frontier.clone()));
-
-			Some((watchman_cfg.clone(), watchman_wallet, frontier))
-		} else {
-			None
-		};
-		let watchman_wallet = watchman_deps.as_ref().map(|(_, w, _)| w.clone());
 
 		let sync_manager = Arc::new(SyncManager::start(
 			rtmgr.clone(),
@@ -443,34 +418,6 @@ impl Server {
 			cfg.sync_manager_block_poll_interval,
 			BlockTable::Captaind,
 		).await.context("Failed to start SyncManager")?);
-
-		// Start Watchman VTXO processor if enabled
-		let watchman_handle = if let Some((watchman_cfg, watchman_wallet, frontier)) = watchman_deps {
-			let signer = watchman::WatchmanSigner::new(
-				Secret::new(Keypair::from_secret_key(&SECP, &server_key.secret_key())),
-				Secret::new(ephemeral_master_key),
-				db.clone(),
-			);
-			let drain_address = rounds_wallet.lock().await.peek_next_address().address;
-			let sync_height_watcher = sync_manager.sync_height_watcher();
-
-			let watchman = watchman::Watchman::new(
-				watchman_cfg,
-				signer,
-				bitcoind.clone(),
-				db.clone(),
-				BlockTable::Captaind,
-				fee_estimator.clone(),
-				drain_address,
-				watchman_wallet,
-				frontier,
-				sync_height_watcher,
-			);
-
-			Some(watchman.start(rtmgr.clone()))
-		} else {
-			None
-		};
 
 		let mailbox_manager = Arc::new(MailboxManager::new());
 
@@ -500,7 +447,6 @@ impl Server {
 
 		let srv = Server {
 			rounds_wallet,
-			watchman_wallet,
 			rounds: RoundHandle {
 				round_event_tx,
 				last_round_event: parking_lot::Mutex::new(None),
@@ -528,7 +474,6 @@ impl Server {
 			lightning_manager: cln,
 			htlc_settler,
 			vtxopool,
-			watchman_handle,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
 			fee_estimator,
 			bitcoin_address_blocklist,
@@ -648,48 +593,6 @@ impl Server {
 		self.chain_tip().height + self.config.nursery_confirm_target_blocks
 	}
 
-	/// Rebalance coins between the rounds and watchman wallets.
-	///
-	/// If the watchman wallet balance is below `watchman_min_balance`,
-	/// sends bitcoin from the rounds wallet to top it up.
-	///
-	/// Wallet syncing is handled by the SyncManager via the ChainEventListener.
-	#[tracing::instrument(skip(self))]
-	pub async fn rebalance_wallets(&self) -> anyhow::Result<()> {
-		let Some(ref watchman_wallet) = self.watchman_wallet else {
-			return Ok(());
-		};
-
-		let watchman_status = watchman_wallet.lock().await.status();
-		if watchman_status.total_balance >= self.config.watchman_min_balance {
-			return Ok(());
-		}
-
-		let amount = self.config.watchman_min_balance * 2;
-		let rounds_balance = self.rounds_wallet.lock().await.status().total_balance;
-		if rounds_balance < amount {
-			warn!("Rounds wallet doesn't have sufficient bitcoin to top up watchman.");
-			return Ok(());
-		}
-
-		let mut wallet = self.rounds_wallet.lock().await;
-		let addr = watchman_status.address.assume_checked();
-		let feerate = self.fee_estimator.regular();
-		info!("Sending {amount} to watchman wallet address {addr}...");
-		let tx = match wallet.send(addr.script_pubkey(), amount, feerate).await {
-			Ok(tx) => tx,
-			Err(e) => {
-				warn!("Error sending from round to watchman wallet: {:?}", e);
-				return Err(e).context("error sending tx from round to watchman wallet");
-			},
-		};
-		drop(wallet);
-
-		self.tx_nursery.broadcast_tx(tx, NurseryTxKind::Internal, self.nursery_confirm_target()).await
-			.context("Failed to broadcast transaction")?;
-
-		Ok(())
-	}
 
 	pub async fn new_onchain_address(&self) -> anyhow::Result<Address> {
 		let mut wallet = self.rounds_wallet.lock().await;

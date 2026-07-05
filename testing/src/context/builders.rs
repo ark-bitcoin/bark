@@ -34,6 +34,8 @@ pub struct CaptaindBuilder<'a> {
 	lightningd: Option<&'a Lightningd>,
 	mod_cfg: Option<Box<dyn FnOnce(&mut server::Config)>>,
 	no_vtxo_pool: bool,
+	watchmand: bool,
+	mod_watchmand_cfg: Option<Box<dyn FnOnce(&mut server::config::watchmand::Config)>>,
 }
 
 impl<'a> CaptaindBuilder<'a> {
@@ -46,6 +48,8 @@ impl<'a> CaptaindBuilder<'a> {
 			lightningd: None,
 			mod_cfg: None,
 			no_vtxo_pool: false,
+			watchmand: false,
+			mod_watchmand_cfg: None,
 		}
 	}
 
@@ -78,6 +82,26 @@ impl<'a> CaptaindBuilder<'a> {
 		self
 	}
 
+	/// Also start a watchmand process next to this captaind, like in
+	/// production. Off by default: only tests that exercise watchman
+	/// duties (sweeping, exit reaction, on-chain preimage extraction)
+	/// need one.
+	pub fn watchmand(mut self) -> Self {
+		self.watchmand = true;
+		self
+	}
+
+	/// Adjust the config of the watchmand that accompanies this captaind.
+	/// Implies [`Self::watchmand`].
+	pub fn watchmand_cfg(
+		mut self,
+		f: impl FnOnce(&mut server::config::watchmand::Config) + 'static,
+	) -> Self {
+		self.watchmand = true;
+		self.mod_watchmand_cfg = Some(Box::new(f));
+		self
+	}
+
 	/// Create the server but do not register it as the main server for the test
 	pub async fn create_unregistered(self) -> Captaind {
 		let bitcoind = match self.bitcoind {
@@ -95,8 +119,17 @@ impl<'a> CaptaindBuilder<'a> {
 			cfg.vtxopool.vtxo_targets.clear();
 		}
 
-		let ret = Captaind::new(&self.name, bitcoind, cfg);
+		let ret = Captaind::new(&self.name, bitcoind.clone(), cfg);
 		ret.start().await.unwrap();
+
+		if self.watchmand {
+			let mut watchmand = self.ctx.watchmand(format!("{}-watchmand", self.name))
+				.bitcoind(bitcoind);
+			if let Some(mod_cfg) = self.mod_watchmand_cfg {
+				watchmand = watchmand.cfg(mod_cfg);
+			}
+			ret.attach_watchmand(watchmand.create(&ret).await);
+		}
 
 		if let Some(amount) = self.fund_amount {
 			self.ctx.fund_captaind(&ret, amount).await;

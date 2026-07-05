@@ -1895,12 +1895,6 @@ pub async fn run_round_coordinator(
 				return Err(e);
 			},
 		}
-
-		// Rebalance wallets now so that it doesn't interfere with rounds happening.
-		// Wallet syncing is handled by the SyncManager via the ChainEventListener.
-		if let Err(e) = srv.rebalance_wallets().await {
-			slog!(RoundSyncError, error: format!("{:?}", e));
-		};
 	}
 }
 impl Server {

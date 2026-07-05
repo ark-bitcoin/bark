@@ -387,12 +387,6 @@ pub struct RoundError {
 impl_slog!(RoundError, ERROR, "error during round, restarting");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoundSyncError {
-	pub error: String,
-}
-impl_slog!(RoundSyncError, WARN, "onchain wallet sync failed during round");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FatalStoringRound {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,

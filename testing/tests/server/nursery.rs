@@ -56,9 +56,6 @@ async fn nursery_warns_until_tx_is_abandoned() {
 		cfg.round_interval = Duration::from_secs(3600);
 		// warn quickly after the round tx fails to confirm
 		cfg.nursery_confirm_target_blocks = 2;
-		// No watchman top-up: it would spend the round change and get
-		// stuck alongside it, warning on its own.
-		cfg.watchman_min_balance = sat(0);
 	}).create().await;
 
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;

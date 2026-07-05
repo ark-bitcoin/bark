@@ -20,12 +20,26 @@
 ///     cfg.invoice_check_interval = Duration::from_secs(1);
 /// });
 /// ```
+///
+/// Tests that exercise watchman duties (e.g. on-chain preimage
+/// extraction) also need the watchmand process, which the test captaind
+/// doesn't get by default:
+///
+/// ```ignore
+/// lightning_test!(my_test, watchmand, |cfg| { ... });
+/// ```
 #[macro_export]
 macro_rules! lightning_test {
 	($test_fn:ident) => {
 		$crate::lightning_test!($test_fn, |_cfg| {});
 	};
 	($test_fn:ident, |$cfg:ident| $cfg_body:block) => {
+		$crate::lightning_test!(@inner $test_fn, [], |$cfg| $cfg_body);
+	};
+	($test_fn:ident, watchmand, |$cfg:ident| $cfg_body:block) => {
+		$crate::lightning_test!(@inner $test_fn, [.watchmand()], |$cfg| $cfg_body);
+	};
+	(@inner $test_fn:ident, [$($builder:tt)*], |$cfg:ident| $cfg_body:block) => {
 		mod $test_fn {
 			use super::*;
 
@@ -35,7 +49,8 @@ macro_rules! lightning_test {
 					concat!("lightningd/external_", stringify!($test_fn)),
 				).await;
 				let lightning = ctx.new_lightning_setup("lightningd").await;
-				let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|$cfg| $cfg_body).create().await;
+				let srv = ctx.captaind("server").lightningd(&lightning.internal)
+					$($builder)*.cfg(|$cfg| $cfg_body).create().await;
 				ctx.fund_captaind(&srv, btc(10)).await;
 
 				let pay = async |invoice: String| {
@@ -51,7 +66,8 @@ macro_rules! lightning_test {
 					concat!("lightningd/intra_", stringify!($test_fn)),
 				).await;
 				let lightning = ctx.new_lightning_setup("lightningd").await;
-				let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|$cfg| $cfg_body).create().await;
+				let srv = ctx.captaind("server").lightningd(&lightning.internal)
+					$($builder)*.cfg(|$cfg| $cfg_body).create().await;
 				ctx.fund_captaind(&srv, btc(10)).await;
 
 				let bark_sender = Arc::new(
