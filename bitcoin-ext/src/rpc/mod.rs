@@ -25,19 +25,21 @@ pub const RPC_VERIFY_ALREADY_IN_UTXO_SET: i32 = -27;
 pub const RPC_INVALID_ADDRESS_OR_KEY: i32 = -5;
 
 /// Clonable bitcoind rpc client.
-#[derive(Debug)]
+///
+/// Clones share the underlying [Client] and its single TCP connection.
+/// The client can safely be used from multiple threads, but only one
+/// request is in flight at a time: concurrent callers take turns on the
+/// connection. Create separate clients if requests must run in parallel.
+/// The connection is re-established transparently when it drops.
+#[derive(Debug, Clone)]
 pub struct BitcoinRpcClient {
-	client: Client,
-	url: String,
-	auth: Auth,
+	client: std::sync::Arc<Client>,
 }
 
 impl BitcoinRpcClient {
 	pub fn new(url: &str, auth: Auth) -> Result<Self, Error> {
 		Ok(BitcoinRpcClient {
-			client: Client::new(url, auth.clone())?,
-			url: url.to_owned(),
-			auth: auth,
+			client: std::sync::Arc::new(Client::new(url, auth)?),
 		})
 	}
 }
@@ -47,12 +49,6 @@ impl RpcApi for BitcoinRpcClient {
 		&self, cmd: &str, args: &[serde_json::Value],
 	) -> Result<T, Error> {
 		self.client.call(cmd, args)
-	}
-}
-
-impl Clone for BitcoinRpcClient {
-	fn clone(&self) -> Self {
-		Self::new(&self.url, self.auth.clone()).unwrap()
 	}
 }
 
