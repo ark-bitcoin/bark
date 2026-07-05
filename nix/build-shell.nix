@@ -52,6 +52,8 @@ in {
 
 			# to access just targets
 			pkgs.just
+			# the justfile locates the cargo target dir with jq
+			pkgs.jq
 		] ++ lib.optionals (!isDarwin) [ # honggfuzz deps (Linux only)
 			pkgs.binutils-unwrapped
 			pkgs.libunwind
