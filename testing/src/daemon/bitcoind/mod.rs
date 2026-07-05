@@ -4,11 +4,11 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use anyhow::Context;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, Amount, FeeRate, Network, Transaction, Txid};
+use bitcoind_async_client::traits::{Reader, Wallet};
 use log::{debug, info};
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -62,6 +62,12 @@ pub struct BitcoindState {
 	rpc_port: Option<u16>,
 	p2p_port: Option<u16>,
 	zmq_port: Option<u16>,
+	/// The shared async RPC client, created lazily after startup.
+	///
+	/// The client pools its TCP connections, so all RPC helpers share it
+	/// instead of opening a new connection per call. It is dropped on
+	/// restart because the node then gets a new port and RPC cookie.
+	async_client: Option<bitcoind_async_client::Client>,
 }
 
 pub type Bitcoind = Daemon<BitcoindHelper>;
@@ -125,13 +131,18 @@ impl Bitcoind {
 		bitcoin_ext::rpc::BitcoinRpcClient::new(&self.rpc_url(), self.auth()).unwrap()
 	}
 
+	/// The shared async RPC client for this node.
+	///
+	/// The returned client is cheap to clone and pools its TCP connections,
+	/// so all callers share the same few connections to the node.
 	pub fn async_client(&self) -> bitcoind_async_client::Client {
-		let auth = match self.auth() {
-			rpc::Auth::CookieFile(p) => bitcoind_async_client::Auth::CookieFile(p),
-			rpc::Auth::UserPass(u, p) => bitcoind_async_client::Auth::UserPass(u, p),
-			rpc::Auth::None => panic!("anonymous bitcoind auth not supported"),
-		};
-		bitcoind_async_client::Client::new(self.rpc_url(), auth, None, None, None).unwrap()
+		if let Some(client) = self.inner.state.lock().async_client.clone() {
+			return client;
+		}
+		// NB create the client before taking the state lock:
+		// new_async_client locks the state again to read the RPC port
+		let client = self.inner.new_async_client();
+		self.inner.state.lock().async_client.get_or_insert(client).clone()
 	}
 
 	pub fn rpc_handle(&self) -> BitcoindRpcHandle {
@@ -196,23 +207,29 @@ impl Bitcoind {
 		self.inner.config.datadir.clone()
 	}
 
+	async fn generate_to_address(&self, block_num: u64, address: &Address) {
+		self.async_client().call_raw::<Vec<String>>(
+			"generatetoaddress", &[block_num.into(), address.to_string().into()],
+		).await.expect("failed to generate blocks");
+	}
+
 	pub async fn create_wallet(&self, name: &str) {
 		info!("Creating wallet '{}'", name);
-		let client = self.sync_client();
-		client.create_wallet(name, None, None, None, None).expect("failed to create wallet");
+		self.async_client().call_raw::<serde_json::Value>(
+			"createwallet", &[name.into()],
+		).await.expect("failed to create wallet");
 	}
 
 	pub async fn load_wallet(&self, name: &str) {
 		info!("Loading wallet '{}'", name);
-		let client = self.sync_client();
-		client.load_wallet(name).expect("failed to load wallet");
+		self.async_client().call_raw::<serde_json::Value>(
+			"loadwallet", &[name.into()],
+		).await.expect("failed to load wallet");
 	}
 
 	pub async fn generate_to_wallet(&self, block_num: u64) {
-		let client = self.sync_client();
-		let address = client.get_new_address(None, None).unwrap()
-			.require_network(Network::Regtest).unwrap();
-		client.generate_to_address(block_num, &address).unwrap();
+		let address = self.async_client().get_new_address().await.unwrap();
+		self.generate_to_address(block_num, &address).await;
 	}
 
 	pub async fn generate(&self, block_num: u32) {
@@ -222,16 +239,16 @@ impl Bitcoind {
 			).unwrap().assume_checked();
 		}
 
-		self.sync_client().generate_to_address(block_num as u64, &*RANDOM_ADDR).unwrap();
+		self.generate_to_address(block_num as u64, &*RANDOM_ADDR).await;
 	}
 
 	pub async fn await_transaction(&self, txid: Txid) -> Transaction {
-		let client = self.sync_client();
+		let client = self.async_client();
 		let start = Instant::now();
 		let timeout = get_tx_propagation_timeout_millis();
 		while Instant::now().duration_since(start).as_millis() < timeout as u128 {
-			if let Ok(result) = client.get_raw_transaction(&txid, None) {
-				return result;
+			if let Ok(result) = client.get_raw_transaction_verbosity_zero(&txid).await {
+				return result.0;
 			} else {
 				tokio::time::sleep(poll_interval()).await;
 			}
@@ -245,16 +262,13 @@ impl Bitcoind {
 	}
 
 	pub async fn fund_addr(&self, address: impl fmt::Display, amount: Amount) -> Txid {
-		let addr = Address::<NetworkUnchecked>::from_str(&address.to_string()).unwrap().assume_checked();
-		let client = self.sync_client();
-		client.send_to_address(
-			&addr, amount, None, None, None, None, None, None,
-		).unwrap()
+		self.async_client().call_raw::<Txid>(
+			"sendtoaddress", &[address.to_string().into(), amount.to_btc().into()],
+		).await.expect("failed to send to address")
 	}
 
 	pub async fn get_block_count(&self) -> u64 {
-		let client = self.sync_client();
-		client.get_block_count().unwrap()
+		self.async_client().get_block_count().await.unwrap()
 	}
 
 	/// The tip watcher listening on this node's ZMQ block notifications.
@@ -311,27 +325,20 @@ impl BitcoindHelper {
 		format!("127.0.0.1:{}", self.state.lock().p2p_port.expect("A P2P port has been assigned."))
 	}
 
-	pub fn sync_client(&self) -> anyhow::Result<rpc::Client> {
-		let url = self.rpc_url();
-		let auth = self.auth();
-		let (user, pass) = auth.get_user_pass()?;
+	fn new_async_client(&self) -> bitcoind_async_client::Client {
+		let auth = match self.auth() {
+			rpc::Auth::CookieFile(p) => bitcoind_async_client::Auth::CookieFile(p),
+			rpc::Auth::UserPass(u, p) => bitcoind_async_client::Auth::UserPass(u, p),
+			rpc::Auth::None => panic!("anonymous bitcoind auth not supported"),
+		};
 
 		let timeout_str = std::env::var(BITCOINRPC_TIMEOUT_SECS)
 			.unwrap_or_else(|_| String::from("15"));
-		let timeout = Duration::from_secs(
-			timeout_str.parse::<u64>()
-				.expect("BITCOINRPC_TIMEOUT_SECS is not a number"),
-		);
+		let timeout = timeout_str.parse::<u64>()
+			.expect("BITCOINRPC_TIMEOUT_SECS is not a number");
 
-		let transport = rpc::jsonrpc::http::simple_http::Builder::new()
-			.url(&url).with_context(|| format!("Invalid rpc-url: {}", url))?
-			.auth(user.expect("A user is defined"), pass)
-			.timeout(timeout)
-			.build();
-
-		let jsonrpc = rpc::jsonrpc::client::Client::with_transport(transport);
-		let client = rpc::Client::from_jsonrpc(jsonrpc);
-		Ok(client)
+		bitcoind_async_client::Client::new(self.rpc_url(), auth, None, None, Some(timeout))
+			.expect("failed to create bitcoind rpc client")
 	}
 
 	pub fn zmq_port(&self) -> u16 {
@@ -343,45 +350,22 @@ impl BitcoindHelper {
 	}
 
 	async fn is_initialized(&self) -> bool {
-		let url = self.rpc_url();
-		let auth = self.auth();
-		let timeout_str = std::env::var(BITCOINRPC_TIMEOUT_SECS)
-			.unwrap_or_else(|_| String::from("15"));
-		let timeout = Duration::from_secs(
-			timeout_str.parse::<u64>()
-				.expect("BITCOINRPC_TIMEOUT_SECS is not a number"),
-		);
-		let check_init = tokio::task::spawn_blocking(move || {
-			let (user, pass) = match auth.get_user_pass() {
-				Ok(v) => v,
-				Err(_) => return false,
-			};
-			let transport = match rpc::jsonrpc::http::simple_http::Builder::new()
-				.url(&url)
-			{
-				Ok(b) => b.auth(user.expect("user defined"), pass).timeout(timeout).build(),
-				Err(_) => return false,
-			};
-			let jsonrpc = rpc::jsonrpc::client::Client::with_transport(transport);
-			let client = rpc::Client::from_jsonrpc(jsonrpc);
-			client.get_network_info().is_ok()
-		});
+		// NB we use a throwaway client with no retries here: the RPC cookie
+		// only appears once bitcoind has started, so the shared client can't
+		// be built yet and a failing probe should report quickly.
+		let auth = bitcoind_async_client::Auth::CookieFile(self.rpc_cookie());
+		let client = match bitcoind_async_client::Client::new(
+			self.rpc_url(), auth, Some(1), Some(100), Some(1),
+		) {
+			Ok(c) => c,
+			Err(_) => return false,
+		};
 
-		// We do need an additional time-out here to ensure this method returns
-		//
-		// In a normal scenario connecting to bitcoind and requesting
-		// `get_network_info` will always succeed in 100 ms
-		//
-		// However, if the `BitcoindClient` tries to connect before `bitcoind`
-		// is started it will just halt forever. The time-out is only respected for
-		// the call to `get_network_info` and not for the connection.
-		//
-		// Without this time-out there is a race-condition which can prevent
-		// this method from returning
-		check_init
+		// The extra time-out ensures this method returns even if bitcoind
+		// accepts the TCP connection but never answers during startup.
+		async { client.get_blockchain_info().await.is_ok() }
 			.try_wait_millis(500)
 			.await
-			.unwrap_or(Ok(false)) // Not initialized if the task fails
 			.unwrap_or(false)
 	}
 }
@@ -410,6 +394,8 @@ impl DaemonHelper for BitcoindHelper {
 		if state.zmq_port.is_none() {
 			state.zmq_port = Some(pick_port());
 		}
+		// bitcoind writes a fresh RPC cookie on every start
+		state.async_client = None;
 
 		Ok(())
 	}
