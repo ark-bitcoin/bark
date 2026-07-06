@@ -1,0 +1,4 @@
+- Post recovery VTXO IDs in batches of 20
+  Recovery VTXO IDs are now sent to the mailbox server in chunks of at most
+  `MAX_NB_MAILBOX_RECOVERY_IDS` (20) per request.
+  [#2267](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2267)
