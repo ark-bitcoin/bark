@@ -1,5 +1,6 @@
 
 use std::collections::HashSet;
+use std::mem;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -43,13 +44,47 @@ pub struct PendingOffboard {
 	forfeit_sec_nonces: Vec<musig::SecretNonce>,
 }
 
+/// The response of a successful [Server::finish_offboard], kept in the
+/// session slot until it expires so that retries can be replayed.
+pub struct FinishedOffboard {
+	signed_tx: Transaction,
+}
+
+/// A slot in the pending offboard session map.
+///
+/// The map's expiry sweep relies on its entries being ordered by insertion
+/// time, so a session transitions between these states by in-place
+/// mutation of its slot, never by re-insertion.
+pub enum OffboardSession {
+	/// A prepared session waiting for the user's forfeit signatures.
+	Pending(PendingOffboard),
+	/// A finish attempt consumed the session but failed to complete
+	/// (invalid signatures, mempool rejection, db error). The secret
+	/// nonces must sign at most once, so the session cannot be revived;
+	/// the tombstone just keeps the map's time ordering intact.
+	Failed,
+	/// The offboard was finished and durably registered. Kept until the
+	/// entry expires so that a client that never received our response
+	/// can retry the finish request and get the same signed tx back.
+	Finished(FinishedOffboard),
+}
+
+impl OffboardSession {
+	fn as_pending(&self) -> Option<&PendingOffboard> {
+		match self {
+			OffboardSession::Pending(p) => Some(p),
+			OffboardSession::Failed | OffboardSession::Finished(..) => None,
+		}
+	}
+}
+
 impl Server {
 	/// Drop pending offboard sessions older than the session timeout,
 	/// releasing their vtxo and wallet UTXO locks.
 	fn expire_pending_offboards(&self) {
 		let mut guard = self.pending_offboards.lock();
-		for (offboard_txid, opt) in guard.remove_older(self.config.offboard_session_timeout) {
-			if let Some(removed) = opt {
+		for (offboard_txid, session) in guard.remove_older(self.config.offboard_session_timeout) {
+			if let OffboardSession::Pending(removed) = session {
 				let utxos = removed.wallet_input_guard.utxos().to_vec();
 				let vtxos = removed.input_vtxos_guard.vtxos().to_vec();
 				slog!(OffboardSessionTimeout, offboard_txid, utxos, vtxos);
@@ -63,7 +98,7 @@ impl Server {
 
 		let guard = self.pending_offboards.lock();
 		guard.values()
-			.filter_map(|o| o.as_ref())
+			.filter_map(|s| s.as_pending())
 			.map(|p| p.offboard_tx.unsigned_tx.input.iter().map(|i| i.previous_output))
 			.flatten().collect()
 	}
@@ -268,7 +303,12 @@ impl Server {
 			request, server_fee, connector_key, forfeit_pub_nonces, forfeit_sec_nonces, offboard_tx,
 			wallet_input_guard,
 		};
-		assert!(self.pending_offboards.lock().insert_some(offboard_txid, state).is_none(),
+		// A txid collision with an old Failed/Finished slot is also
+		// impossible: every prepare uses a fresh random connector key, so
+		// two offboard txs can never be identical.
+		let old = self.pending_offboards.lock()
+			.insert(offboard_txid, OffboardSession::Pending(state));
+		assert!(old.is_none(),
 			"should be impossible to get same txid when inputs are locked",
 		);
 
@@ -292,7 +332,7 @@ impl Server {
 	) -> anyhow::Result<Option<OffboardResponse>> {
 		let existing = {
 			let guard = self.pending_offboards.lock();
-			guard.values().filter_map(|o| o.as_ref())
+			guard.values().filter_map(|s| s.as_pending())
 				.find(|p| p.request == *request && p.input_vtxos_guard.vtxos() == input_vtxos)
 				.map(|p| OffboardResponse {
 					offboard_tx: p.offboard_tx.unsigned_tx.clone(),
@@ -344,10 +384,32 @@ impl Server {
 		user_pub_nonces: &[musig::PublicNonce],
 		user_partial_sigs: &[musig::PartialSignature],
 	) -> anyhow::Result<Transaction> {
-		// we remove the state immediatelly. the user authenticates himself by
-		// knowing the txid and we only give them one chance
-		let state = self.pending_offboards.lock().take(&offboard_txid)
-			.badarg("unknown offboard txid")?;
+		// we consume the state immediately: the secret nonces must sign at
+		// most once, so a session gives exactly one signing chance. the
+		// user authenticates himself by knowing the txid.
+		let state = {
+			let mut guard = self.pending_offboards.lock();
+			let Some(slot) = guard.get_mut(&offboard_txid) else {
+				return badarg!("unknown offboard txid");
+			};
+			match mem::replace(slot, OffboardSession::Failed) {
+				OffboardSession::Pending(state) => state,
+				// A client that never received our response re-sends the
+				// finish request, possibly with different signatures (it
+				// signs with fresh nonces on every attempt). Replay the
+				// stored response: nothing is signed again, the caller
+				// authenticates by knowing the txid — just like a first
+				// finish — and the tx is already registered and on its
+				// way to the mempool anyway.
+				OffboardSession::Finished(fin) => {
+					let signed_tx = fin.signed_tx.clone();
+					*slot = OffboardSession::Finished(fin);
+					slog!(ReplayedOffboardFinish, offboard_txid);
+					return Ok(signed_tx);
+				},
+				OffboardSession::Failed => return badarg!("unknown offboard txid"),
+			}
+		};
 		let input_vtxos = state.input_vtxos_guard.vtxos();
 		let offboard_txid = state.offboard_tx.unsigned_tx.compute_txid();
 
@@ -406,6 +468,23 @@ impl Server {
 		if let Err(e) = self.db.write(async |t| t.register_offboard(&vtxo_refs, &signed_tx, &forfeit_txs).await).await {
 			error!("Failed to register offboard {} in db: {:#}", offboard_txid, e);
 			bail!("failed to register offboard in db, please start over");
+		}
+
+		// From here on the offboard is durable: even if the commit below
+		// fails, the retry task will commit and broadcast it. Keep the
+		// signed tx in the session slot until it expires, so a finish
+		// retry from a client that lost our response can be replayed.
+		{
+			let finished = OffboardSession::Finished(FinishedOffboard {
+				signed_tx: signed_tx.clone(),
+			});
+			let mut guard = self.pending_offboards.lock();
+			match guard.get_mut(&offboard_txid) {
+				// upgrade the Failed tombstone we left behind
+				Some(slot) => *slot = finished,
+				// the tombstone expired while we were signing
+				None => { guard.insert(offboard_txid, finished); },
+			}
 		}
 
 		// The on-chain payout is the first output (set in prepare_offboard via
