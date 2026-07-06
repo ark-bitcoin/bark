@@ -34,7 +34,7 @@ use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, FeeRate, SignedAmount, Transaction, Txid};
 use bitcoin::hashes::Hash;
-use log::{error, info};
+use log::{error, info, trace, warn};
 
 use ark::{musig, ProtocolEncoding, VtxoPolicy, VtxoId, fees};
 use ark::arkoor::ArkoorDestination;
@@ -42,6 +42,7 @@ use ark::attestations::OffboardRequestAttestation;
 use ark::fees::VtxoFeeInfo;
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use ark::vtxo::VtxoRef;
+use bitcoin_ext::{BlockHeight, TxStatus};
 use server_rpc::{protos, TryFromBytes};
 
 use crate::{Wallet, WalletVtxo};
@@ -49,7 +50,7 @@ use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId, BASE_R
 use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::subsystem::{OffboardMovement, Subsystem};
-use crate::vtxo::VtxoLockHolder;
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
 use crate::vtxo::selection::InputSelection;
 
 /// How long to sleep between confirmation polls while a tx is in
@@ -181,6 +182,20 @@ pub enum Progress {
 	},
 }
 
+/// Outcome of a single confirmation check on an `AwaitingConfirmations` offboard.
+pub(crate) enum ConfirmationOutcome {
+	Confirmed,
+	Pending,
+	/// The tx hasn't been seen on chain for over
+	/// [Config::offboard_lost_tx_grace_period_secs](crate::Config::offboard_lost_tx_grace_period_secs).
+	///
+	/// We deliberately do NOT cancel the action and release its vtxos:
+	/// after finish they are forfeited to the server, so treating them
+	/// as spendable again would corrupt the wallet. The action parks
+	/// with an error and keeps re-checking the chain on every drive.
+	Lost,
+}
+
 /// User-level spec passed to [`start_offboard`] describing which
 /// flavour of offboard is being launched.
 pub enum StartOffboardSpec {
@@ -232,11 +247,46 @@ impl WalletAction for Offboard {
 					error: None,
 				});
 			},
-			// Temporary while the stages land one commit at a time; the
-			// last stage commit removes this.
-			progress => return Err(anyhow!(
-				"offboard stage {:?} not implemented yet", progress,
-			).into()),
+			Progress::AwaitingConfirmations {
+				ref offboard_vtxo_ids, offboard_txid, offboard_tx, movement_id, created_at,
+			} => {
+				return match check_offboard_confirmation(
+					wallet, &offboard_tx, created_at,
+				).await? {
+					ConfirmationOutcome::Confirmed => {
+						settle_offboard(
+							wallet, offboard_vtxo_ids, movement_id, offboard_txid,
+						).await?;
+						Ok(Advance::Done)
+					},
+					ConfirmationOutcome::Pending => {
+						Ok(Advance::Park {
+							state: self,
+							wake_after: Some(CONFIRMATION_POLL_INTERVAL),
+							error: None,
+						})
+					},
+					ConfirmationOutcome::Lost => {
+						// The forfeits only become valid once the offboard tx
+						// confirms (they spend one of its outputs), but the
+						// server holds the fully signed tx and can commit it
+						// at any time — so the inputs cannot be released.
+						let error = anyhow!(
+							"offboard tx {} has not been seen on chain since {}; \
+							the server can still commit the signed tx, making the \
+							forfeits valid, so the inputs stay locked; \
+							will keep checking, but manual intervention may be needed",
+							offboard_txid, created_at,
+						);
+						error!("{:#}", error);
+						Ok(Advance::Park {
+							state: self,
+							wake_after: None,
+							error: Some(error.into()),
+						})
+					},
+				}
+			},
 		};
 
 		Ok(Advance::Next(Offboard { progress: new_progress, ..self }))
@@ -275,6 +325,15 @@ impl WalletAction for Offboard {
 		error: AdvanceError,
 	) -> anyhow::Result<Advance<Self>> {
 		match &self.progress {
+			Progress::Start | Progress::AwaitingConfirmations { .. } => {
+				debug_assert!(false, "server cannot reject here");
+				error!("Rejection should be impossible here: {:#}", error);
+				Ok(Advance::Park {
+					state: self.clone(),
+					wake_after: None,
+					error: Some(error.into())
+				})
+			},
 			Progress::SplitWithArkoor => {
 				// We can safely unlock our VTXOs.
 				fail_offboard_movement(wallet, &self).await?;
@@ -665,6 +724,90 @@ async fn broadcast_offboard(
 		movement_id,
 		created_at: chrono::Utc::now(),
 	})
+}
+
+/// `AwaitingConfirmations -> Done`: mark the forfeited vtxos as spent and
+/// finalise the movement. Only called once the caller has established that
+/// the tx has enough confirmations (or zero confs are required and the tx
+/// is in the mempool).
+async fn settle_offboard(
+	wallet: &Wallet,
+	offboard_vtxo_ids: &[VtxoId],
+	movement_id: MovementId,
+	offboard_txid: Txid,
+) -> anyhow::Result<()> {
+	info!("Offboard tx {} confirmed, finalizing movement {}",
+		offboard_txid, movement_id);
+
+	// The vtxos MUST all be Spent before the executor sees Done: Done
+	// releases anything still locked by the action back to Spendable, and
+	// these vtxos are forfeited to the server. So a failure here has to
+	// propagate and retry the step rather than fall through. Spent is
+	// allowed as an old state so a re-driven settle is a no-op.
+	wallet.inner.db.update_vtxo_states_checked(
+		offboard_vtxo_ids,
+		VtxoState::Spent,
+		&[VtxoStateKind::Locked, VtxoStateKind::Spent],
+	).await.context("failed to mark offboard vtxos as spent")?;
+
+	wallet.inner.movements.finish_movement(movement_id, MovementStatus::Successful).await
+		.context("failed to finish offboard movement")?;
+	Ok(())
+}
+
+/// Look up the current confirmation status for an offboard tx and
+/// collapse it to a `ConfirmationOutcome`.
+async fn check_offboard_confirmation(
+	wallet: &Wallet,
+	offboard_tx: &Transaction,
+	created_at: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<ConfirmationOutcome> {
+	let offboard_txid = offboard_tx.compute_txid();
+	let required_confs = wallet.inner.config.offboard_required_confirmations;
+	let current_height = wallet.inner.chain.tip().await
+		.context("error fetching chain tip")?;
+	let status = wallet.inner.chain.tx_status(offboard_txid).await;
+
+	match status {
+		Ok(TxStatus::Confirmed(block_ref)) => {
+			let confs = current_height - (block_ref.height - 1);
+			if confs >= required_confs as BlockHeight {
+				Ok(ConfirmationOutcome::Confirmed)
+			} else {
+				trace!(
+					"Offboard tx {} has {}/{} confirmations, waiting...",
+					offboard_txid, confs, required_confs,
+				);
+				Ok(ConfirmationOutcome::Pending)
+			}
+		},
+		Ok(TxStatus::Mempool) => {
+			if required_confs == 0 {
+				Ok(ConfirmationOutcome::Confirmed)
+			} else {
+				trace!("Offboard tx {} still in mempool, waiting...", offboard_txid);
+				Ok(ConfirmationOutcome::Pending)
+			}
+		},
+		Ok(TxStatus::NotFound) => {
+			let age = chrono::Utc::now() - created_at;
+			let grace_period = chrono::Duration::seconds(
+				wallet.inner.config.offboard_lost_tx_grace_period_secs as i64,
+			);
+			if age > grace_period {
+				return Ok(ConfirmationOutcome::Lost);
+			}
+			trace!("Offboard tx {} not found — re-broadcasting...", offboard_txid);
+			wallet.inner.chain.broadcast_tx(&offboard_tx).await.with_context(|| format!(
+				"error broadcasting offboard tx {}", offboard_txid,
+			))?;
+			Ok(ConfirmationOutcome::Pending)
+		},
+		Err(e) => {
+			warn!("Failed to check status of offboard tx {}: {:#}", offboard_txid, e);
+			Ok(ConfirmationOutcome::Pending)
+		},
+	}
 }
 
 /// Creates a movement for the offboard action based on the [OffboardKind].

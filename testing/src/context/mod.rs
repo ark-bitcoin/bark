@@ -566,6 +566,7 @@ impl TestContext {
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(5)),
 			round_tx_required_confirmations: constants::ROUND_CONFIRMATIONS,
 			offboard_required_confirmations: constants::OFFBOARD_CONFIRMATIONS,
+			offboard_lost_tx_grace_period_secs: 3600,
 			daemon_sync_interval_secs: 3,
 			daemon_manual_sync: false,
 		}
