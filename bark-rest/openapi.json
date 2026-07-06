@@ -2956,7 +2956,7 @@
               "boolean",
               "null"
             ],
-            "description": "Whether to upper-case the returned `bip321` URI so QR encoders can use\nthe compact alphanumeric mode. Defaults to `false`. Requesting an\nupper-case URI fails when it carries case-sensitive data (a label,\nmessage, or base58 address) that cannot be upper-cased."
+            "description": "Whether to upper-case the returned `bip321` URI so QR encoders can use\nthe compact alphanumeric mode. Defaults to `false`.\nRequesting an upper-case URI fails when it carries case-sensitive data\n(a label or message with lowercase characters, or base58 address) that\ncannot be upper-cased."
           }
         }
       },
