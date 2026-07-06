@@ -1,11 +1,17 @@
 
+use std::sync::Arc;
+use std::sync::atomic::{self, AtomicUsize};
+use std::time::Duration;
+
 use bitcoin::Amount;
 
+use bark::actions::offboard::Progress;
 use bark::movement::{Movement, MovementStatus, PaymentMethod};
 use server_rpc::protos;
 
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
+use ark_testing::util::action_drive_factor;
 
 /// Sends every prepare_offboard request to the server twice, like a
 /// client that lost the first response and retries. The server must
@@ -28,6 +34,65 @@ impl captaind::proxy::ArkRpcProxy for ReplayPrepareOffboardProxy {
 			)));
 		}
 		Ok(retry)
+	}
+}
+
+/// Swallows the first `action_drive_factor()` finish_offboard requests
+/// without forwarding them, like a network failure on the way to the
+/// server (the double-drive reentrancy mode runs each advance step twice,
+/// so both calls of the first step must behave the same). Later calls
+/// pass through.
+#[derive(Clone)]
+struct DropFirstFinishRequestProxy(Arc<AtomicUsize>);
+
+impl DropFirstFinishRequestProxy {
+	fn new() -> Self {
+		Self(Arc::new(AtomicUsize::new(action_drive_factor())))
+	}
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for DropFirstFinishRequestProxy {
+	async fn finish_offboard(
+		&self, upstream: &mut ArkClient, req: protos::FinishOffboardRequest,
+	) -> Result<protos::FinishOffboardResponse, tonic::Status> {
+		let dropped = self.0.fetch_update(
+			atomic::Ordering::Relaxed, atomic::Ordering::Relaxed, |n| n.checked_sub(1),
+		).is_ok();
+		if dropped {
+			return Err(tonic::Status::internal("proxy: dropped the finish_offboard request"));
+		}
+		Ok(upstream.finish_offboard(req).await?.into_inner())
+	}
+}
+
+/// Forwards the first `action_drive_factor()` finish_offboard requests
+/// upstream but reports an error instead of the response, like a client
+/// that crashed before it could process it (the double-drive reentrancy
+/// mode runs each advance step twice, so both calls of the first step
+/// must behave the same). Later calls pass through.
+#[derive(Clone)]
+struct LoseFirstFinishResponseProxy(Arc<AtomicUsize>);
+
+impl LoseFirstFinishResponseProxy {
+	fn new() -> Self {
+		Self(Arc::new(AtomicUsize::new(action_drive_factor())))
+	}
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for LoseFirstFinishResponseProxy {
+	async fn finish_offboard(
+		&self, upstream: &mut ArkClient, req: protos::FinishOffboardRequest,
+	) -> Result<protos::FinishOffboardResponse, tonic::Status> {
+		let resp = upstream.finish_offboard(req).await?.into_inner();
+		let lost = self.0.fetch_update(
+			atomic::Ordering::Relaxed, atomic::Ordering::Relaxed, |n| n.checked_sub(1),
+		).is_ok();
+		if lost {
+			return Err(tonic::Status::internal("proxy: lost the finish_offboard response"));
+		}
+		Ok(resp)
 	}
 }
 
@@ -73,4 +138,117 @@ async fn offboard_replays_identical_prepare_request() {
 
 	// And the destination address received the funds onchain.
 	assert_eq!(ctx.bitcoind().get_received_by_address(&address), sent.amount);
+}
+
+/// A wallet whose finish_offboard request never reached the server comes
+/// back after the session expired: nothing was signed or broadcast, so
+/// the wallet must fall back and prepare a fresh session.
+#[tokio::test]
+async fn offboard_recovers_expired_session_by_repreparing() {
+	const SESSION_TIMEOUT: Duration = Duration::from_secs(5);
+
+	let ctx = TestContext::new("bark_sdk/offboard_recovers_expired_session_by_repreparing").await;
+	let srv = ctx.captaind("server")
+		.funded(btc(10))
+		.cfg(|c| c.offboard_session_timeout = SESSION_TIMEOUT)
+		.create().await;
+	let proxy = srv.start_proxy_no_mailbox(DropFirstFinishRequestProxy::new()).await;
+
+	// Manual sync only: the daemon's periodic sync would retry the finish
+	// before the session expires, sidestepping the recovery under test.
+	let wallet = ctx.bark_sdk("bark", &proxy)
+		.cfg(|c| {
+			c.offboard_required_confirmations = 1;
+			c.daemon_manual_sync = true;
+		})
+		.boarded(sat(800_000))
+		.create().await;
+
+	// The proxy swallows the finish request; the offboard parks for retry,
+	// reporting the failure that parked it.
+	let address = ctx.bitcoind().get_new_address();
+	let err = wallet.offboard_all(address.clone()).await
+		.expect_err("the proxy should have dropped the finish request");
+	let err = format!("{err:#}");
+	assert!(err.contains("dropped the finish_offboard request"), "unexpected error: {err}");
+
+	// Wait until the server has expired the session, releasing its locks.
+	tokio::time::sleep(2 * SESSION_TIMEOUT).await;
+
+	// First sync: the finish retry is rejected (unknown session), the tx
+	// is not on chain, so the wallet falls back to a fresh prepare.
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	let pending = wallet.pending_offboards().await.expect("pending offboards");
+	assert_eq!(pending.len(), 1);
+	assert!(
+		matches!(pending[0].progress, Progress::ReadyForOffboard { prior_txid: Some(..), .. }),
+		"expected fallback to a fresh prepare: {:?}", pending[0].progress,
+	);
+
+	// Second sync: the fresh session goes through end to end.
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	let pending = wallet.pending_offboards().await.expect("pending offboards");
+	assert_eq!(pending.len(), 1);
+	assert!(
+		matches!(pending[0].progress, Progress::AwaitingConfirmations { .. }),
+		"expected the fresh session to reach broadcast: {:?}", pending[0].progress,
+	);
+
+	ctx.generate_blocks(1).await;
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Successful);
+	assert_ne!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO);
+}
+
+/// A wallet that loses the finish_offboard response and only comes back
+/// after the server session expired cannot have the finish replayed. But
+/// the server did broadcast the offboard tx, so the wallet must find it
+/// on chain and adopt it — failing instead would strand the action while
+/// its vtxos are already forfeited.
+#[tokio::test]
+async fn offboard_recovers_lost_finish_by_adopting_chain_tx() {
+	const SESSION_TIMEOUT: Duration = Duration::from_secs(5);
+
+	let ctx = TestContext::new("bark_sdk/offboard_recovers_lost_finish_by_adopting_chain_tx").await;
+	let srv = ctx.captaind("server")
+		.funded(btc(10))
+		.cfg(|c| c.offboard_session_timeout = SESSION_TIMEOUT)
+		.create().await;
+	let proxy = srv.start_proxy_no_mailbox(LoseFirstFinishResponseProxy::new()).await;
+
+	// Manual sync only: the daemon's periodic sync would retry the finish
+	// before the session expires, sidestepping the recovery under test.
+	let wallet = ctx.bark_sdk("bark", &proxy)
+		.cfg(|c| {
+			c.offboard_required_confirmations = 1;
+			c.daemon_manual_sync = true;
+		})
+		.boarded(sat(800_000))
+		.create().await;
+
+	// The proxy eats the finish response; the offboard parks for retry,
+	// reporting the failure that parked it.
+	let address = ctx.bitcoind().get_new_address();
+	let err = wallet.offboard_all(address.clone()).await
+		.expect_err("the proxy should have lost the finish response");
+	let err = format!("{err:#}");
+	assert!(err.contains("lost the finish_offboard response"), "unexpected error: {err}");
+
+	// Wait until the server has dropped the finished session, so the retry
+	// cannot be replayed and has to recover through the chain.
+	tokio::time::sleep(2 * SESSION_TIMEOUT).await;
+
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	let pending = wallet.pending_offboards().await.expect("pending offboards");
+	assert_eq!(pending.len(), 1);
+	assert!(
+		matches!(pending[0].progress, Progress::AwaitingConfirmations { .. }),
+		"expected the offboard to adopt the broadcast tx: {:?}", pending[0].progress,
+	);
+
+	// From here the offboard settles like any other.
+	ctx.generate_blocks(1).await;
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Successful);
+	assert_ne!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO);
 }
