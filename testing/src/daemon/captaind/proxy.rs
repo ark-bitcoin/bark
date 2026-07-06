@@ -30,14 +30,6 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.get_offboard_fee_rate(req).await?.into_inner())
 	}
 
-	async fn get_fresh_rounds(&self, upstream: &mut ArkClient, req: protos::FreshRoundsRequest) -> Result<protos::FreshRounds, tonic::Status> {
-		Ok(upstream.get_fresh_rounds(req).await?.into_inner())
-	}
-
-	async fn get_round(&self, upstream: &mut ArkClient, req: protos::RoundId) -> Result<protos::RoundInfo, tonic::Status> {
-		Ok(upstream.get_round(req).await?.into_inner())
-	}
-
 	async fn get_vtxo(&self, upstream: &mut ArkClient, req: protos::GetVtxoRequest) -> Result<protos::GetVtxoResponse, tonic::Status> {
 		Ok(upstream.get_vtxo(req).await?.into_inner())
 	}
@@ -264,20 +256,6 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	) -> Result<tonic::Response<protos::OffboardFeeRateResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::get_offboard_fee_rate(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
-	}
-
-	async fn get_fresh_rounds(
-		&self, req: tonic::Request<protos::FreshRoundsRequest>,
-	) -> Result<tonic::Response<protos::FreshRounds>, tonic::Status> {
-		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::get_fresh_rounds(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
-	}
-
-	async fn get_round(
-		&self, req: tonic::Request<protos::RoundId>,
-	) -> Result<tonic::Response<protos::RoundInfo>, tonic::Status> {
-		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::get_round(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_vtxo(

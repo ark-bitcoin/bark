@@ -5,9 +5,8 @@ pub use model::*;
 
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::time::Duration;
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use bitcoin::hashes::Hash;
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::serialize;
@@ -165,42 +164,6 @@ impl<'t> Tx<'t> {
 		").await?;
 
 		let rows = self.query(&statement, &[&(height as i32)]).await?;
-		Ok(rows
-			.into_iter()
-			.map(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
-			.collect::<Vec<_>>()
-		)
-	}
-
-	/// Get all new rounds since either a given round or within a lifetime window
-	///
-	/// Returned round ids are ordered chronologically.
-	pub async fn get_fresh_round_ids(
-		&self,
-		last_round_id: Option<RoundId>,
-		vtxo_lifetime: Option<Duration>,
-	) -> anyhow::Result<Vec<RoundId>> {
-		let rows = if let Some(last) = last_round_id {
-			let stmt = self.prepare("
-				SELECT funding_txid
-				FROM round
-				WHERE created_at > (SELECT created_at FROM round WHERE funding_txid = $1)
-				ORDER BY id
-			").await?;
-			self.query(&stmt, &[&last.to_string()]).await?
-		} else if let Some(lifetime) = vtxo_lifetime {
-			let window = lifetime + lifetime / 2;
-			let stmt = self.prepare("
-				SELECT funding_txid
-				FROM round
-				WHERE created_at >= NOW() - ($1 * interval '1 second')
-				ORDER BY id
-			").await?;
-			self.query(&stmt, &[&(window.as_secs() as f64)]).await?
-		} else {
-			bail!("need to provide either last_round_id or vtxo_lifetime argument");
-		};
-
 		Ok(rows
 			.into_iter()
 			.map(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
