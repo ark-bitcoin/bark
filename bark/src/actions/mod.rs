@@ -251,7 +251,16 @@ pub trait WalletAction: Sized + Send + Sync {
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError>;
 
 	/// Called when the action should be retried
-	async fn on_retry(self, _wallet: &Wallet, attempts: u32) -> anyhow::Result<Advance<Self>> {
+	///
+	/// `error` is the failure that triggered the retry; implementations can
+	/// attach it to their park so callers driving [DriveMode::UntilParkOrDone]
+	/// see why the action stopped.
+	async fn on_retry(
+		self,
+		_wallet: &Wallet,
+		attempts: u32,
+		_error: AdvanceError,
+	) -> anyhow::Result<Advance<Self>> {
 		Ok(park_with_backoff(self, attempts))
 	}
 
@@ -416,7 +425,7 @@ impl Wallet {
 				Err(e) => {
 					retries = retries.saturating_add(1);
 					log::error!("Got error {:?} from action {}, retrying", e, id);
-					snapshot.on_retry(self, retries).await.inspect_err(|err| {
+					snapshot.on_retry(self, retries, e).await.inspect_err(|err| {
 						warn!("action {} on_retry failed, leaving checkpoint for retry: {:#}", id, err);
 					})?
 				},

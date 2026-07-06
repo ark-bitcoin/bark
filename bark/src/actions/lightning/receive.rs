@@ -144,7 +144,9 @@ impl WalletAction for LightningReceive {
 		Ok(Advance::Next(LightningReceive { progress: new_progress, ..self }))
 	}
 
-	async fn on_retry(self, wallet: &Wallet, retries: u32) -> anyhow::Result<Advance<Self>> {
+	async fn on_retry(self, wallet: &Wallet, retries: u32, _error: AdvanceError)
+		-> anyhow::Result<Advance<Self>>
+	{
 		match self.progress.clone() {
 			// No money committed; just back off. Expiry reaping happens in advance.
 			Progress::AwaitingPayment => Ok(park_with_backoff(self, retries)),
