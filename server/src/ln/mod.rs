@@ -359,16 +359,13 @@ impl Server {
 			.insert_unregistered_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_oor_spent(builder.input_spend_info());
 		self.db.write(async |t| {
-			// Re-check the settlement inside the write tx. The `is_settled`
-			// check and the eligibility read above both happen in their own
-			// (read) transactions, so a payment can settle between them and
-			// this write. The settler records the preimage *before* the
-			// settlement path marks the attempt succeeded or spends the
-			// HTLC-send vtxos, so a preimage visible here means the payment
-			// completed: refunding the sender now would double-pay it.
-			if let Some(preimage) = t.get_htlc_settlement_by_payment_hash(payment_hash).await? {
-				return badarg!("invoice has already been paid, preimage: {}", preimage);
-			}
+			// Re-check the settlement inside the write tx: the early gate and
+			// the eligibility read above both run in their own (read)
+			// transactions, so a payment can settle between them and this write.
+			// `ensure_not_settled` commits the check atomically with the
+			// vtxo-tree update below, so a settled payment can no longer be
+			// refunded (which would double-pay the sender).
+			t.ensure_not_settled(payment_hash).await?;
 
 			// For an intra-Ark payment the payee shares this payment hash via a
 			// receive subscription. The settlement check above only catches a
