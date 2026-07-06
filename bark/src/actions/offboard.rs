@@ -27,6 +27,7 @@
 
 use std::collections::HashSet;
 use std::iter;
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::consensus::encode::serialize_hex;
@@ -50,6 +51,10 @@ use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::subsystem::{OffboardMovement, Subsystem};
 use crate::vtxo::VtxoLockHolder;
 use crate::vtxo::selection::InputSelection;
+
+/// How long to sleep between confirmation polls while a tx is in
+/// mempool or has too few confirmations.
+pub(crate) const CONFIRMATION_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 /// An outgoing offboard, persisted as a single checkpoint row and
 /// driven across crashes by the executor.
@@ -213,6 +218,20 @@ impl WalletAction for Offboard {
 					wallet, offboard_vtxo_ids, offboard_tx, forfeit_cosign_nonces, movement_id,
 				).await?
 			},
+			Progress::ReadyForBroadcast { offboard_vtxo_ids, signed_offboard_tx, movement_id } => {
+				// Reaching `AwaitingConfirmations` is the user-observable boundary
+				// (caller wants the txid back). Park here so the
+				// orchestration layer can read the persisted checkpoint
+				// without racing the executor past it.
+				let progress = broadcast_offboard(
+					wallet, offboard_vtxo_ids, signed_offboard_tx, movement_id,
+				).await?;
+				return Ok(Advance::Park {
+					state: Offboard { progress, ..self },
+					wake_after: Some(CONFIRMATION_POLL_INTERVAL),
+					error: None,
+				});
+			},
 			// Temporary while the stages land one commit at a time; the
 			// last stage commit removes this.
 			progress => return Err(anyhow!(
@@ -262,7 +281,8 @@ impl WalletAction for Offboard {
 				Ok(Advance::Failed(error.into()))
 			}
 			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, .. } |
-			Progress::OffboardTxPrepared { offboard_vtxo_ids, .. } => {
+			Progress::OffboardTxPrepared { offboard_vtxo_ids, .. } |
+			Progress::ReadyForBroadcast {  offboard_vtxo_ids, .. } => {
 				// TODO: should we auto-exit here ?
 				error!("Server rejected VTXOs, consider exiting: {:?}", offboard_vtxo_ids);
 				Ok(Advance::Park {
@@ -624,6 +644,27 @@ async fn finish_offboard(
 	).await.context("failed to update movement with offboard tx")?;
 
 	Ok(Progress::ReadyForBroadcast { offboard_vtxo_ids, signed_offboard_tx, movement_id })
+}
+
+/// `ReadyForBroadcast -> AwaitingConfirmations`: publish the signed offboard tx to chain.
+/// Idempotent: re-broadcasting a tx already in mempool/chain is a no-op.
+async fn broadcast_offboard(
+	wallet: &Wallet,
+	offboard_vtxo_ids: Vec<VtxoId>,
+	offboard_tx: Transaction,
+	movement_id: MovementId,
+) -> Result<Progress, AdvanceError> {
+	let offboard_txid = offboard_tx.compute_txid();
+	wallet.inner.chain.broadcast_tx(&offboard_tx).await.with_context(|| format!(
+		"error broadcasting offboard tx {}", offboard_txid,
+	))?;
+	Ok(Progress::AwaitingConfirmations {
+		offboard_vtxo_ids,
+		offboard_txid,
+		offboard_tx,
+		movement_id,
+		created_at: chrono::Utc::now(),
+	})
 }
 
 /// Creates a movement for the offboard action based on the [OffboardKind].
