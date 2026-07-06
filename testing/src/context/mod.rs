@@ -380,6 +380,7 @@ impl TestContext {
 				issue_interval: Duration::from_secs(3),
 			},
 			offboard_session_timeout: Duration::from_secs(30),
+			offboard_check_interval: Duration::from_secs(1),
 			offboard_acceptable_fee_rate_duration: Duration::from_secs(60 * 10),
 			fee_estimator: server::fee_estimator::Config {
 				update_interval: Duration::from_secs(60),
