@@ -136,10 +136,11 @@ pub struct OffboardForfeitContext<'a, V> {
 	offboard_tx: &'a Transaction,
 }
 
-impl<'a, V> OffboardForfeitContext<'a, V>
-where
-	V: AsRef<Vtxo<Full>>,
-{
+/// Construction and validation work with any VTXO representation: they
+/// only need the number of inputs, so the client can validate a prepared
+/// offboard tx with bare wallet vtxos. Only signing and finishing need
+/// the full form; those methods are bounded on `AsRef<Vtxo<Full>>` below.
+impl<'a, V> OffboardForfeitContext<'a, V> {
 	/// Create a new [OffboardForfeitContext] with given input VTXOs and offboard tx
 	///
 	/// Number of input VTXOs must not be zero.
@@ -184,7 +185,12 @@ where
 
 		Ok(())
 	}
+}
 
+impl<'a, V> OffboardForfeitContext<'a, V>
+where
+	V: AsRef<Vtxo<Full>>,
+{
 	/// Sign forfeit transactions for all input VTXOs
 	///
 	/// Provide the keys for the VTXO pubkeys in order of the input VTXOs.
