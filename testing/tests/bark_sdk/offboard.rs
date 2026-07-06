@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicUsize};
 use std::time::Duration;
 
-use bitcoin::Amount;
+use bitcoin::{Amount, FeeRate};
 
 use bark::actions::offboard::Progress;
 use bark::movement::{Movement, MovementStatus, PaymentMethod};
@@ -251,4 +251,71 @@ async fn offboard_recovers_lost_finish_by_adopting_chain_tx() {
 	wallet.sync_pending_offboards().await.expect("sync pending offboards");
 	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Successful);
 	assert_ne!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO);
+}
+
+/// A wallet whose finish request never reached the server re-prepares
+/// once the server session is gone — but by then the server's fee rates
+/// have moved and the fee rate committed at start is no longer
+/// acceptable, so the fresh prepare can never succeed. The server only
+/// rejects the request parameters after checking that the inputs are
+/// still spendable, which proves the prior session died unfinished:
+/// the wallet cancels the offboard and releases the vtxos instead of
+/// retrying forever.
+#[tokio::test]
+async fn offboard_cancels_when_fees_change_after_lost_session() {
+	let ctx = TestContext::new("bark_sdk/offboard_cancels_when_fees_change_after_lost_session").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let proxy = srv.start_proxy_no_mailbox(DropFirstFinishRequestProxy::new()).await;
+
+	// Manual sync only, so the test controls each recovery step.
+	let wallet = ctx.bark_sdk("bark", &proxy)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(800_000))
+		.create().await;
+
+	// The proxy swallows the finish request; the offboard parks with the
+	// unsigned session tx in its checkpoint.
+	let address = ctx.bitcoind().get_new_address();
+	let err = wallet.offboard_all(address.clone()).await
+		.expect_err("the proxy should have dropped the finish request");
+	let err = format!("{err:#}");
+	assert!(err.contains("dropped the finish_offboard request"), "unexpected error: {err}");
+
+	// Drop the server's regular fee rate. The restart wipes the fee
+	// estimator's history (so the committed rate is no longer a recent
+	// regular rate) and the pending offboard session (so the finish
+	// retry cannot be replayed).
+	srv.stop().await.expect("server stops");
+	srv.config_mut().fee_estimator.fallback_fee_rate_regular = FeeRate::from_sat_per_vb_u32(2);
+	srv.start().await.expect("server starts");
+	// The restart moved the server to fresh ports; repoint the proxy.
+	proxy.set_ark_upstream(srv.get_public_rpc().await);
+
+	// First sync: the finish retry is rejected (unknown session), the tx
+	// is not on chain, so the wallet falls back to a fresh prepare.
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	let pending = wallet.pending_offboards().await.expect("pending offboards");
+	assert_eq!(pending.len(), 1);
+	assert!(
+		matches!(pending[0].progress, Progress::ReadyForOffboard { prior_txid: Some(..), .. }),
+		"expected fallback to a fresh prepare: {:?}", pending[0].progress,
+	);
+
+	// Second sync: the fresh prepare is rejected for the stale fee rate,
+	// proving the inputs are still spendable on the server, so the
+	// offboard is cancelled.
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	assert!(wallet.pending_offboards().await.expect("pending offboards").is_empty(),
+		"the offboard should have been cancelled");
+	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Failed);
+	assert_eq!(wallet.balance().await.expect("balance").spendable, sat(800_000),
+		"the cancelled offboard should have released its vtxos");
+
+	// And the vtxos are actually spendable: offboard them again at the
+	// new fee rate and check the funds arrive onchain.
+	wallet.offboard_all(address.clone()).await
+		.expect("offboarding again at the new fee rate should succeed");
+	ctx.generate_blocks(1).await;
+	assert_eq!(ctx.bitcoind().get_received_by_address(&address), sat(799_756));
+	assert_eq!(wallet.balance().await.expect("balance").spendable, sat(0));
 }
