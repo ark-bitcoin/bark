@@ -29,8 +29,10 @@ use std::collections::HashSet;
 use std::iter;
 
 use anyhow::Context;
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, FeeRate, SignedAmount, Transaction, Txid};
+use bitcoin::hashes::Hash;
 use log::{error, info};
 
 use ark::{musig, ProtocolEncoding, VtxoPolicy, VtxoId, fees};
@@ -204,6 +206,13 @@ impl WalletAction for Offboard {
 			Progress::ReadyForOffboard { offboard_vtxo_ids } => {
 				prepare_offboard(wallet, &self, offboard_vtxo_ids).await?
 			},
+			Progress::OffboardTxPrepared {
+				offboard_vtxo_ids, offboard_tx, forfeit_cosign_nonces, movement_id
+			} => {
+				finish_offboard(
+					wallet, offboard_vtxo_ids, offboard_tx, forfeit_cosign_nonces, movement_id,
+				).await?
+			},
 			// Temporary while the stages land one commit at a time; the
 			// last stage commit removes this.
 			progress => return Err(anyhow!(
@@ -252,7 +261,8 @@ impl WalletAction for Offboard {
 				fail_offboard_movement(wallet, &self).await?;
 				Ok(Advance::Failed(error.into()))
 			}
-			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, .. } => {
+			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, .. } |
+			Progress::OffboardTxPrepared { offboard_vtxo_ids, .. } => {
 				// TODO: should we auto-exit here ?
 				error!("Server rejected VTXOs, consider exiting: {:?}", offboard_vtxo_ids);
 				Ok(Advance::Park {
@@ -551,6 +561,69 @@ async fn prepare_offboard(
 		forfeit_cosign_nonces,
 		movement_id,
 	})
+}
+
+/// `OffboardTxPrepared -> ReadyForBroadcast`: sign our forfeits and trade
+/// them for the server-signed offboard tx, WITHOUT broadcasting it
+/// ([`broadcast_offboard`] does that).
+///
+/// The forfeits are signed here, with fresh nonces on every attempt:
+/// re-signing the same message with a new random nonce is safe, and
+/// keeping signatures out of the checkpoint keeps the prepared state
+/// value-deterministic across re-drives. A retry can thus carry different
+/// signatures than the attempt the server completed; the server replays
+/// its response by txid, so this is re-entrant while the session lives.
+async fn finish_offboard(
+	wallet: &Wallet,
+	offboard_vtxo_ids: Vec<VtxoId>,
+	offboard_tx: Transaction,
+	forfeit_cosign_nonces: Vec<musig::PublicNonce>,
+	movement_id: MovementId,
+) -> Result<Progress, AdvanceError> {
+	let (mut srv, _) = wallet.require_server().await?;
+
+	let full_inputs = wallet.inner.db.get_full_vtxos(&offboard_vtxo_ids).await
+		.context("failed to hydrate offboard input vtxos")?;
+	debug_assert!(
+		full_inputs.iter().map(|v| v.id()).eq(offboard_vtxo_ids.iter().copied()),
+		"get_full_vtxos should return inputs in the exact same order",
+	);
+	let mut vtxo_keys = Vec::with_capacity(full_inputs.len());
+	for v in &full_inputs {
+		vtxo_keys.push(wallet.get_vtxo_key(v).await?);
+	}
+	let ctx = OffboardForfeitContext::new(&full_inputs, &offboard_tx);
+	let sigs = ctx.user_sign_forfeits(&vtxo_keys, &forfeit_cosign_nonces);
+
+	let offboard_txid = offboard_tx.compute_txid();
+	let finish_resp = srv.client.finish_offboard(protos::FinishOffboardRequest {
+		offboard_txid: offboard_txid.as_byte_array().to_vec(),
+		user_nonces: sigs.public_nonces.iter()
+			.map(|n| n.serialize().to_vec())
+			.collect(),
+		partial_signatures: sigs.partial_signatures.iter()
+			.map(|s| s.serialize().to_vec())
+			.collect(),
+	}).await.map_err(AdvanceError::Server)?.into_inner();
+
+	let signed_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(
+		&finish_resp.signed_offboard_tx,
+	).with_context(|| format!(
+		"received invalid offboard tx from server: {}", finish_resp.signed_offboard_tx.as_hex(),
+	))?;
+	if signed_offboard_tx.compute_txid() != offboard_txid {
+		return Err(anyhow!("Signed offboard tx received from server is different from \
+			unsigned tx we forfeited for: unsigned={}, signed={}",
+			serialize_hex(&offboard_tx), finish_resp.signed_offboard_tx.as_hex(),
+		).into());
+	}
+
+	wallet.inner.movements.update_movement(
+		movement_id,
+		MovementUpdate::new().metadata(OffboardMovement::metadata(&signed_offboard_tx)),
+	).await.context("failed to update movement with offboard tx")?;
+
+	Ok(Progress::ReadyForBroadcast { offboard_vtxo_ids, signed_offboard_tx, movement_id })
 }
 
 /// Creates a movement for the offboard action based on the [OffboardKind].
