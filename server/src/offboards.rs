@@ -149,14 +149,6 @@ impl Server {
 
 		request.validate().badarg("invalid offboard request")?;
 
-		let valid_fee_duration = self.config.offboard_acceptable_fee_rate_duration;
-		if !self.fee_estimator.is_historical_regular_rate(request.fee_rate, valid_fee_duration) {
-			return badarg!(
-				"fee rate is no longer valid: provided = {}, expected = {}",
-				request.fee_rate, self.offboard_feerate(),
-			);
-		}
-
 		// We keep the VTXO flux lock for the duration of the session, this means
 		// that if the user bails a session he has to wait for it to time out
 		// (currently set to 30 secs)
@@ -190,6 +182,12 @@ impl Server {
 			return badarg!("wrong number of attestations");
 		}
 
+		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxos).await).await?;
+		let tip = self.chain_tip().height;
+		for v in &vtxos {
+			v.check_spendable(tip)?;
+		}
+
 		// Check delivery address against blocklist
 		if let Some(ref list) = self.bitcoin_address_blocklist {
 			if list.check_spk(&request.script_pubkey).await {
@@ -199,10 +197,12 @@ impl Server {
 			}
 		}
 
-		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxos).await).await?;
-		let tip = self.chain_tip().height;
-		for v in &vtxos {
-			v.check_spendable(tip)?;
+		let valid_fee_duration = self.config.offboard_acceptable_fee_rate_duration;
+		if !self.fee_estimator.is_historical_regular_rate(request.fee_rate, valid_fee_duration) {
+			return badarg!(
+				"fee rate is no longer valid: provided = {}, expected = {}",
+				request.fee_rate, self.offboard_feerate(),
+			);
 		}
 
 		// Validate the request parameters

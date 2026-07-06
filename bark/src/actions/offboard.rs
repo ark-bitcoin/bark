@@ -360,17 +360,28 @@ impl WalletAction for Offboard {
 			Progress::ReadyForOffboard { offboard_vtxo_ids, prior_txid: Some(prior_txid) } => {
 				// We already fell back here once from OffboardTxPrepared:
 				// our finish session had disappeared and its tx wasn't
-				// visible on chain. Now the fresh prepare got rejected too
-				// (typically: inputs already spent), so the likeliest
-				// explanation is that the prior finish DID go through and
-				// our chain source simply lags the server's node. Keep
-				// looking for the prior tx; failing here would wrongly
-				// release forfeited vtxos as spendable.
+				// visible on chain. Now the fresh prepare got rejected too.
 				if let Some(progress) = adopt_broadcast_offboard(
 					wallet, &self, offboard_vtxo_ids, *prior_txid,
 				).await? {
 					return Ok(Advance::Next(Offboard { progress, ..self.clone() }));
 				}
+				if rejection_proves_inputs_spendable(&error) {
+					// The server rejected the request itself (e.g. the fee
+					// rate we committed to went stale), which it only does
+					// after checking the inputs spendable. That proves the
+					// prior session died unfinished and nothing of ours is
+					// forfeited, so retrying can never succeed and it is
+					// safe to cancel the offboard and release the vtxos.
+					warn!("Offboard prepare rejected after session loss, cancelling: {:#}", error);
+					fail_offboard_movement(wallet, &self).await?;
+					return Ok(Advance::Failed(error.into()));
+				}
+				// Any other rejection (typically: inputs already spent)
+				// makes it likeliest that the prior finish DID go through
+				// and our chain source simply lags the server's node. Keep
+				// looking for the prior tx; failing here would wrongly
+				// release forfeited vtxos as spendable.
 				error!("Offboard inputs rejected but prior offboard tx {} is not on chain, \
 					will keep looking for it: {:#}", prior_txid, error);
 				Ok(Advance::Park {
@@ -770,6 +781,25 @@ async fn finish_offboard(
 	).await.context("failed to update movement with offboard tx")?;
 
 	Ok(Progress::ReadyForBroadcast { offboard_vtxo_ids, signed_offboard_tx, movement_id })
+}
+
+/// Whether a server rejection of a prepare request proves the input
+/// vtxos were still spendable when the server processed it.
+///
+/// The server validates the request parameters (fee rate freshness,
+/// amounts, the address blocklist) only after its input spendability
+/// check, so these rejections can only be raised for unspent inputs.
+/// Matching is conservative: anything unrecognized returns false, so
+/// callers fall back to the behavior that is safe for spent inputs.
+fn rejection_proves_inputs_spendable(error: &AdvanceError) -> bool {
+	let AdvanceError::Server(status) = error else {
+		return false;
+	};
+	// TODO: We need to formalize server errors more, perhaps with a dedicated error code system.
+	let msg = status.message();
+	msg.contains("fee rate is no longer valid")
+		|| msg.contains("does not match expected amount")
+		|| msg.contains("output address is blocked")
 }
 
 /// Check whether the offboard tx made it to the mempool or chain even
