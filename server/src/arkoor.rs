@@ -153,6 +153,7 @@ impl Server {
 			}
 		}
 
+		let total_input_amount = input_vtxo_states.iter().map(|v| v.vtxo.amount()).sum();
 		let request = request.set_vtxos(input_vtxo_states.into_iter().map(|v| v.vtxo))?;
 
 		let validation = ArkoorCosignRequestValidationParams {
@@ -180,6 +181,7 @@ impl Server {
 
 		slog!(ArkoorCosign, input_ids: input_vtxo_ids,
 			output_ids: builder.build_unsigned_vtxos().into_iter().map(|v| v.id()).collect(),
+			amount: total_input_amount,
 		);
 
 		// inserted == 0 means the tree update collapsed onto rows that already

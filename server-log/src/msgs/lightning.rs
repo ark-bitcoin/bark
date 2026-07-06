@@ -26,6 +26,7 @@ pub struct LightningPaymentInitiated {
 	pub payment_hash: PaymentHash,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub fee: Amount,
 	pub min_expiry: BlockHeight,
 }
@@ -58,7 +59,9 @@ impl_slog!(LightningReceivePrepareRequested, TRACE, "requested lightning receive
 pub struct LightningReceivePrepared {
 	pub payment_hash: PaymentHash,
 	pub htlc_vtxo_ids: Vec<VtxoId>,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub htlc_amount: Amount,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub fee: Amount,
 }
 impl_slog!(LightningReceivePrepared, INFO, "prepared HTLC VTXOs for lightning receive");
@@ -83,8 +86,10 @@ pub struct LightningReceiveClaimed {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
 	pub vtxo_request: VtxoRequest,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount,
 }
-impl_slog!(LightningReceiveClaimed, INFO, "claimed lightning receive");
+impl_slog!(LightningReceiveClaimed, DEBUG, "claimed lightning receive");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct XpayStarted {
@@ -137,6 +142,7 @@ impl_slog!(VtxoBucketPruned, DEBUG, "Pruning vtxo bucket");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MustIssueVtxos {
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub target_amount: Amount,
 	pub current_count: usize,
 	pub target_count: usize,

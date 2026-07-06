@@ -1250,6 +1250,8 @@ async fn persist_round(
 			txid: state.funding_tx.txid(),
 			vtxo_expiry_block_height: state.expiry_height,
 			nb_input_vtxos: state.all_inputs.len(),
+			nb_output_vtxos: signed_vtxos.nb_leaves(),
+			total_output_amount: signed_vtxos.spec.spec.total_required_value(),
 		);
 
 		Ok(())

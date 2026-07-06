@@ -794,7 +794,8 @@ impl Server {
 			amount: sub.amount(),
 			policy: vtxo_policy,
 		};
-		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, vtxo_request);
+		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, vtxo_request,
+			amount: sub.amount());
 
 		Ok(builder.cosign_response())
 	}

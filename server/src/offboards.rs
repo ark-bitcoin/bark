@@ -388,6 +388,7 @@ impl Server {
 
 		slog!(SignedOffboard, offboard_txid, input_vtxos: input_vtxos.to_vec(),
 			wallet_utxos: state.wallet_input_guard.utxos().to_vec(),
+			amount: state.request.net_amount,
 		);
 
 		// nb catch the error and don't return it, as it might contain the signed offboard tx
