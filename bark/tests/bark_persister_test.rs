@@ -103,6 +103,10 @@ impl BarkPersister for Dummy {
 		}]))
 	}
 
+	async fn get_wallet_vtxos(&self, _ids: &[VtxoId]) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(Vec::new())
+	}
+
 	async fn get_full_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
 		Ok(Some(Vtxo::deserialize(&[])?))
 	}

@@ -486,6 +486,43 @@ pub fn get_wallet_vtxo_by_id(
 	}
 }
 
+/// Fetch a batch of wallet VTXOs by id, preserving the order of the input
+/// slice. Errors if any id is missing — callers pass ids they just read
+/// from the wallet, so missing rows indicate the wallet's state is
+/// inconsistent with what the caller observed.
+pub fn get_wallet_vtxos_by_ids(
+	conn: &Connection,
+	ids: &[VtxoId],
+) -> anyhow::Result<Vec<WalletVtxo>> {
+	if ids.is_empty() {
+		return Ok(Vec::new());
+	}
+
+	let query = format!(
+		"SELECT {VTXO_VIEW_COLUMNS} FROM vtxo_view
+		WHERE id IN (SELECT atom FROM json_each(?))",
+	);
+	let mut statement = conn.prepare(&query)?;
+
+	let json_ids = serde_json::to_string(&ids)?;
+	let rows = statement.query([json_ids])?;
+	let vtxos = rows_to_wallet_vtxos(rows)?;
+
+	let by_id = vtxos.into_iter()
+		.map(|v| (v.vtxo.id(), v))
+		.collect::<HashMap<_, _>>();
+	let mut out = Vec::with_capacity(ids.len());
+	for id in ids {
+		// Look up rather than consume so that a repeated id yields the
+		// same vtxo again instead of a spurious "not found".
+		match by_id.get(id) {
+			Some(v) => out.push(v.clone()),
+			None => bail!("vtxo {id} not found in vtxo_view"),
+		}
+	}
+	Ok(out)
+}
+
 pub fn get_all_vtxos(conn: &Connection) -> anyhow::Result<Vec<WalletVtxo>> {
 	let query = format!(
 		"SELECT {VTXO_VIEW_COLUMNS}

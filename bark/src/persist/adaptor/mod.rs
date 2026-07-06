@@ -690,6 +690,19 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		}
 	}
 
+	async fn get_wallet_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<WalletVtxo>> {
+		let lock = self.inner.read().await;
+		let mut out = Vec::with_capacity(ids.len());
+		for id in ids {
+			let serde_vtxo = get_vtxo(&*lock, *id).await?
+				.with_context(|| format!("vtxo {id} not found"))?;
+			let state = serde_vtxo.current_state()
+				.context("vtxo has no state")?.clone();
+			out.push(wallet_vtxo_from_full(&serde_vtxo.vtxo, state));
+		}
+		Ok(out)
+	}
+
 	async fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let records = self.inner.read().await
 			.query_sorted(Query::new_full_range(partition::VTXO)).await?;

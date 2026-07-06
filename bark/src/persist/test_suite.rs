@@ -290,6 +290,22 @@ mod vtxo_lifecycle {
 		let rb = b.get_wallet_vtxo(vtxo.id()).await.expect("b: get_wallet_vtxo");
 		assert_eq!(ra, rb, "get_wallet_vtxo mismatch");
 
+		let ra = a.get_wallet_vtxos(&[vtxo.id()]).await.expect("a: get_wallet_vtxos");
+		let rb = b.get_wallet_vtxos(&[vtxo.id()]).await.expect("b: get_wallet_vtxos");
+		assert_eq!(ra, rb, "get_wallet_vtxos mismatch");
+		let ra = a.get_wallet_vtxos(&[vtxo.id(), vtxo.id()]).await
+			.expect("a: get_wallet_vtxos with duplicate id");
+		let rb = b.get_wallet_vtxos(&[vtxo.id(), vtxo.id()]).await
+			.expect("b: get_wallet_vtxos with duplicate id");
+		assert_eq!(ra, rb, "get_wallet_vtxos duplicate-id mismatch");
+		assert_eq!(ra.len(), 2, "a repeated id yields the vtxo once per occurrence");
+		// round1_vtxo is only stored by a later test in this group, so its
+		// id is guaranteed absent here.
+		assert!(a.get_wallet_vtxos(&[VTXO_VECTORS.round1_vtxo.id()]).await.is_err(),
+			"a: get_wallet_vtxos should error on a missing id");
+		assert!(b.get_wallet_vtxos(&[VTXO_VECTORS.round1_vtxo.id()]).await.is_err(),
+			"b: get_wallet_vtxos should error on a missing id");
+
 		let mut ra = a.get_all_vtxos().await.expect("a: get_all_vtxos");
 		let mut rb = b.get_all_vtxos().await.expect("b: get_all_vtxos");
 		ra.sort_by_key(|v| v.vtxo.id());

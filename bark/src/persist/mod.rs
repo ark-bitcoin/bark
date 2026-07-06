@@ -337,6 +337,19 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the lookup fails.
 	async fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>>;
 
+	/// Fetch multiple wallet VTXOs by id, preserving the order of the
+	/// input slice.
+	///
+	/// Parameters:
+	/// - ids: [VtxoId]s to look up.
+	///
+	/// Returns:
+	/// - `Ok(Vec<WalletVtxo>)` with one entry per input id, in order.
+	///
+	/// Errors:
+	/// - Returns an error if any id is missing or the lookup fails.
+	async fn get_wallet_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<WalletVtxo>>;
+
 	/// Fetch all wallet VTXOs in the database.
 	///
 	/// Returns:

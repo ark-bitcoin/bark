@@ -228,6 +228,11 @@ impl BarkPersister for SqliteClient {
 		query::get_wallet_vtxo_by_id(&conn, id)
 	}
 
+	async fn get_wallet_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<WalletVtxo>> {
+		let conn = self.connect()?;
+		query::get_wallet_vtxos_by_ids(&conn, ids)
+	}
+
 	async fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let conn = self.connect()?;
 		query::get_all_vtxos(&conn)
