@@ -31,12 +31,15 @@ use std::iter;
 use anyhow::Context;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, FeeRate, SignedAmount, Transaction, Txid};
-use log::error;
+use log::{error, info};
 
-use ark::{musig, VtxoPolicy, VtxoId, fees};
+use ark::{musig, ProtocolEncoding, VtxoPolicy, VtxoId, fees};
 use ark::arkoor::ArkoorDestination;
+use ark::attestations::OffboardRequestAttestation;
 use ark::fees::VtxoFeeInfo;
+use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use ark::vtxo::VtxoRef;
+use server_rpc::{protos, TryFromBytes};
 
 use crate::{Wallet, WalletVtxo};
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId, BASE_RETRY_BACKOFF};
@@ -198,6 +201,9 @@ impl WalletAction for Offboard {
 			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, change_vtxo_ids } => {
 				register_arkoor_split(wallet, offboard_vtxo_ids, change_vtxo_ids).await?
 			},
+			Progress::ReadyForOffboard { offboard_vtxo_ids } => {
+				prepare_offboard(wallet, &self, offboard_vtxo_ids).await?
+			},
 			// Temporary while the stages land one commit at a time; the
 			// last stage commit removes this.
 			progress => return Err(anyhow!(
@@ -254,6 +260,11 @@ impl WalletAction for Offboard {
 					wake_after: None,
 					error: Some(error.into())
 				})
+			},
+			Progress::ReadyForOffboard { .. } => {
+				// Arkoor are spendable at this point, it is safe to fail here on rejection
+				fail_offboard_movement(wallet, &self).await?;
+				Ok(Advance::Failed(error.into()))
 			},
 			// Temporary while the stages land one commit at a time; each
 			// stage commit adds its rejection handling.
@@ -452,6 +463,94 @@ async fn register_arkoor_split(
 		.context("failed to unlock change vtxos after registration")?;
 
 	Ok(Progress::ReadyForOffboard { offboard_vtxo_ids })
+}
+
+/// `ReadyForOffboard -> OffboardTxPrepared`: have the server build the
+/// offboard tx, validate it and record the movement (for `SendOnchain`
+/// it already exists from the arkoor split).
+///
+/// Server-side `prepare_offboard` is idempotent as long as we re-send the exact same request
+/// (inputs, amounts, fee rate): the server replays its pending session, returning the same
+/// unsigned tx and the same cosign nonces.
+async fn prepare_offboard(
+	wallet: &Wallet,
+	action: &Offboard,
+	mut offboard_vtxo_ids: Vec<VtxoId>,
+) -> Result<Progress, AdvanceError> {
+	let (mut srv, _) = wallet.require_server().await?;
+
+	// Ensure the request remains deterministic and thus reentrant by sorting the offboard inputs.
+	offboard_vtxo_ids.sort_unstable();
+	debug_assert!(
+		offboard_vtxo_ids.windows(2).all(|w| w[0] != w[1]),
+		"offboard inputs must not contain duplicates",
+	);
+	let vtxos = wallet.inner.db.get_wallet_vtxos(&offboard_vtxo_ids).await
+		.context("failed to load offboard input vtxos")?;
+	debug_assert!(
+		vtxos.iter().map(|v| v.id()).eq(offboard_vtxo_ids.iter().copied()),
+		"get_wallet_vtxos should return inputs in the exact same order",
+	);
+
+	// Build the request, we can skip recalculating fees because the user already committed to a
+	// fee structure, the server will reject invalid fees so we can safely unlock our inputs if
+	// our numbers differ later on. This will fail the payment and the user can try again if they
+	// find the new fees acceptable.
+	let destination = action.check_destination(wallet.network().await?)?;
+	let destination_spk = destination.script_pubkey();
+	let req = OffboardRequest {
+		script_pubkey: destination_spk,
+		net_amount: action.onchain_output_amount,
+		deduct_fees_from_gross_amount: action.kind.deduct_fees_from_gross_amount(),
+		fee_rate: action.committed_fee_rate,
+	};
+	let attestation = {
+		let mut attestations = Vec::with_capacity(vtxos.len());
+		for v in &vtxos {
+			let key = wallet.get_vtxo_key(v).await?;
+			let att = OffboardRequestAttestation::new(&req, &offboard_vtxo_ids, &key).serialize();
+			attestations.push(att);
+		}
+		attestations
+	};
+
+	// Finally, we can make the request; this is idempotent ONLY if our request is deterministic. If
+	// the server rejects this, we can safely unlock our funds.
+	let prep_resp = srv.client.prepare_offboard(protos::PrepareOffboardRequest {
+		offboard: Some(req.clone().into()),
+		input_vtxo_ids: offboard_vtxo_ids.iter()
+			.map(|id| id.to_bytes().to_vec())
+			.collect(),
+		attestation,
+	}).await.map_err(AdvanceError::Server)?.into_inner();
+
+	let unsigned_tx = bitcoin::consensus::deserialize::<Transaction>(&prep_resp.offboard_tx)
+		.with_context(|| format!("received invalid unsigned offboard tx from server: {}",
+			prep_resp.offboard_tx.as_hex(),
+		))?;
+	let offboard_txid = unsigned_tx.compute_txid();
+	let ctx = OffboardForfeitContext::new(&vtxos, &unsigned_tx);
+	ctx.validate_offboard_tx(&req).context("received invalid offboard tx from server")?;
+	info!("Received unsigned offboard tx {} from server", offboard_txid);
+
+	// A replayed prepare returns the same cosign nonces, so this
+	// checkpoint is identical no matter how often the step re-runs.
+	let forfeit_cosign_nonces = prep_resp.forfeit_cosign_nonces.into_iter().map(|n| {
+		musig::PublicNonce::from_bytes(&n)
+			.context("received invalid public cosign nonce from server")
+	}).collect::<anyhow::Result<Vec<_>>>()?;
+
+	// We can safely ignore the change in the movement because `SendOnchain` has already had a
+	// movement created for it.
+	let movement_id = get_or_create_movement(
+		wallet, action, &offboard_vtxo_ids, iter::empty::<VtxoId>(),
+	).await?;
+	Ok(Progress::OffboardTxPrepared {
+		offboard_vtxo_ids,
+		offboard_tx: unsigned_tx,
+		forfeit_cosign_nonces,
+		movement_id,
+	})
 }
 
 /// Creates a movement for the offboard action based on the [OffboardKind].
