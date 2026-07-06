@@ -29,8 +29,10 @@ pub struct SignedOffboard {
 	pub offboard_txid: Txid,
 	pub input_vtxos: Vec<VtxoId>,
 	pub wallet_utxos: Vec<OutPoint>,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount,
 }
-impl_slog!(SignedOffboard, TRACE, "signed offboard tx");
+impl_slog!(SignedOffboard, DEBUG, "signed offboard tx");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OffboardTxRejected {

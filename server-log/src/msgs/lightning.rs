@@ -86,8 +86,10 @@ pub struct LightningReceiveClaimed {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
 	pub vtxo_request: VtxoRequest,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount,
 }
-impl_slog!(LightningReceiveClaimed, INFO, "claimed lightning receive");
+impl_slog!(LightningReceiveClaimed, DEBUG, "claimed lightning receive");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct XpayStarted {
