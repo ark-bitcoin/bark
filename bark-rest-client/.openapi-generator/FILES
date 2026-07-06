@@ -127,6 +127,7 @@ docs/NotFoundError.md
 docs/NotificationsApi.md
 docs/OffboardAllFeeEstimateQuery.md
 docs/OffboardAllRequest.md
+docs/OffboardFeeEstimateRequest.md
 docs/OffboardFees.md
 docs/OffboardResult.md
 docs/OffboardVtxosRequest.md
@@ -307,6 +308,7 @@ src/models/next_round_start.rs
 src/models/not_found_error.rs
 src/models/offboard_all_fee_estimate_query.rs
 src/models/offboard_all_request.rs
+src/models/offboard_fee_estimate_request.rs
 src/models/offboard_fees.rs
 src/models/offboard_result.rs
 src/models/offboard_vtxos_request.rs

@@ -46,6 +46,7 @@ Class | Method | HTTP request | Description
 *FeesApi* | [**lightning_receive_fee**](docs/FeesApi.md#lightning_receive_fee) | **GET** /api/v1/fees/lightning/receive | Estimate Lightning receive fee
 *FeesApi* | [**lightning_send_fee**](docs/FeesApi.md#lightning_send_fee) | **GET** /api/v1/fees/lightning/pay | Estimate Lightning send fee
 *FeesApi* | [**offboard_all_fee**](docs/FeesApi.md#offboard_all_fee) | **GET** /api/v1/fees/offboard-all | Estimate offboard-all fee
+*FeesApi* | [**offboard_fee**](docs/FeesApi.md#offboard_fee) | **POST** /api/v1/fees/offboard | Estimate offboard fee
 *FeesApi* | [**onchain_fee_rates**](docs/FeesApi.md#onchain_fee_rates) | **GET** /api/v1/fees/onchain | Get on-chain fee rates
 *FeesApi* | [**send_onchain_fee**](docs/FeesApi.md#send_onchain_fee) | **GET** /api/v1/fees/send-onchain | Estimate send-onchain fee
 *HistoryApi* | [**list**](docs/HistoryApi.md#list) | **GET** /api/v1/history | Get wallet history
@@ -211,6 +212,7 @@ Class | Method | HTTP request | Description
  - [NotFoundError](docs/NotFoundError.md)
  - [OffboardAllFeeEstimateQuery](docs/OffboardAllFeeEstimateQuery.md)
  - [OffboardAllRequest](docs/OffboardAllRequest.md)
+ - [OffboardFeeEstimateRequest](docs/OffboardFeeEstimateRequest.md)
  - [OffboardFees](docs/OffboardFees.md)
  - [OffboardResult](docs/OffboardResult.md)
  - [OffboardVtxosRequest](docs/OffboardVtxosRequest.md)
