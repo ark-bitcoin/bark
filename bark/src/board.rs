@@ -79,13 +79,14 @@ impl Wallet {
 				},
 			};
 			// We can silently filter out exited VTXOs, next time we sync they will be dropped from
-			// the pending list.
+			// the pending list. A spent one means the funding tx was double-spent and the board
+			// action is being torn down, which will likewise drop it from the pending list.
 			match vtxo.state.kind() {
 				VtxoStateKind::Locked => vtxos.push(vtxo),
-				VtxoStateKind::Exited => continue,
-				VtxoStateKind::Spendable | VtxoStateKind::Spent => {
+				VtxoStateKind::Exited | VtxoStateKind::Spent => continue,
+				VtxoStateKind::Spendable => {
 					warn!("Pending board VTXO {} has unexpected state: {:?}", vtxo_id, vtxo.state);
-					debug_assert!(false, "all pending board vtxos should be locked or exited");
+					debug_assert!(false, "all pending board vtxos should be locked, spent or exited");
 				}
 			}
 		}

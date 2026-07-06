@@ -1,0 +1,10 @@
+- Fail a board when its funding tx is double-spent
+  If an input of the board funding tx is spent by a confirmed conflicting
+  transaction, the funding tx can never confirm. Once the funding tx drops from
+  the mempool the board action re-broadcasts it to probe the inputs: a
+  `missing or spent inputs` rejection means a confirmed conflict consumed an
+  input, so the board is failed (vtxo dropped, movement marked failed) instead
+  of re-broadcasting and retrying forever. A missing parent tx, a competing
+  unconfirmed spend, or a transient node rejection keeps the board alive since
+  our funding tx could still confirm.
+  [#2263](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2263)

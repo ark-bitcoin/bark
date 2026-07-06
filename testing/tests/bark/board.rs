@@ -1,13 +1,15 @@
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicUsize};
 
-use bitcoin::{Amount, OutPoint, Psbt, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use bitcoin::{Amount, OutPoint, Psbt, ScriptBuf, SignedAmount, Transaction, TxIn, TxOut, Txid};
 use bitcoin::absolute::LockTime;
 use bitcoin::hashes::Hash;
 use bitcoin_ext::P2TR_DUST_SAT;
 
 use bark::onchain::{ChainSync, PreparePsbt, SignPsbt};
+use bark_json::movements::MovementStatus;
 use bark_json::primitives::VtxoStateInfo;
+use bitcoin_ext::rpc::RpcApi;
 use server_rpc::protos;
 
 use ark_testing::{btc, require_bark_version, sat, TestContext};
@@ -94,6 +96,75 @@ async fn board_all_bark() {
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 
 	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO, "balance should be reset to zero");
+}
+
+/// A board whose funding tx input is spent by a confirmed conflicting tx can
+/// never confirm: the board action must fail the board (vtxo dropped, movement
+/// failed) instead of re-broadcasting and retrying forever.
+#[tokio::test]
+async fn board_fails_when_funding_tx_double_spent() {
+	require_bark_version!(> "0.3.0");
+
+	let ctx = TestContext::new("bark/board_fails_when_funding_tx_double_spent").await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
+
+	// Build a conflicting tx spending the wallet's only utxo before boarding,
+	// so it necessarily double-spends the board funding input. Sign via the
+	// inner in-memory bdk wallet so the conflict is never persisted to the
+	// wallet db, which would make the board below refuse the utxo.
+	let wallet = bark1.client().await;
+	let mut onchain = bark1.onchain_wallet().await;
+	onchain.sync(wallet.chain()).await.unwrap();
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+	let conflict_addr = ctx.bitcoind().get_new_address();
+	let conflict_psbt = onchain.prepare_drain_tx(conflict_addr, fee_rate).unwrap();
+	let conflict_tx = onchain.inner.finish_psbt(conflict_psbt).await.unwrap()
+		.extract_tx().unwrap();
+	drop(onchain);
+
+	let board = bark1.board(sat(90_000)).await;
+
+	// Mine the conflicting tx directly into a block, bypassing mempool
+	// policy, which evicts the funding tx. Then bury it deep enough for the
+	// wallet to consider the conflict irreversible.
+	let mining_addr = ctx.bitcoind().get_new_address();
+	ctx.bitcoind().sync_client().call::<serde_json::Value>("generateblock", &[
+		mining_addr.to_string().into(),
+		serde_json::json!([bitcoin::consensus::encode::serialize_hex(&conflict_tx)]),
+	]).expect("failed to mine the conflicting tx");
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Maintenance drives the board action, which should observe the
+	// confirmed double-spend and tear the board down.
+	bark1.maintain().await;
+
+	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO);
+	assert_eq!(bark1.spendable_balance().await, Amount::ZERO);
+	assert!(bark1.vtxos().await.is_empty(), "double-spent board vtxo should be gone");
+
+	let history = bark1.history().await;
+	let movement = history.iter()
+		.find(|m| m.subsystem.name == "bark.board")
+		.expect("board movement should exist");
+	assert_eq!(movement.status, MovementStatus::Failed);
+	assert_eq!(movement.output_vtxos, board.vtxos);
+	// The failed board must not leave its vtxo amount counted towards the
+	// wallet balance: the effective balance is reset to zero on teardown.
+	assert_eq!(movement.effective_balance, SignedAmount::ZERO);
+
+	// The action checkpoint is removed, so nothing is left to retry.
+	assert!(wallet.pending_boards().await.unwrap().is_empty());
+
+	// The onchain BDK wallet must not still hold the dead funding tx: once it
+	// syncs and observes the confirmed conflict, the evicted funding tx is
+	// canonicalized out of the wallet.
+	let mut onchain = bark1.onchain_wallet().await;
+	onchain.sync(wallet.chain()).await.unwrap();
+	assert!(
+		!onchain.list_transactions().iter().any(|tx| tx.compute_txid() == board.funding_tx.txid),
+		"onchain wallet should have dropped the double-spent board funding tx",
+	);
 }
 
 #[tokio::test]
