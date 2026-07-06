@@ -26,17 +26,23 @@
 //!   once the tx has enough confirmations.
 
 use std::collections::HashSet;
+use std::iter;
 
 use anyhow::Context;
 use bitcoin::hex::DisplayHex;
-use bitcoin::{Amount, FeeRate, Transaction, Txid};
+use bitcoin::{Amount, FeeRate, SignedAmount, Transaction, Txid};
+use log::error;
 
-use ark::{musig, VtxoId, fees};
+use ark::{musig, VtxoPolicy, VtxoId, fees};
+use ark::arkoor::ArkoorDestination;
 use ark::fees::VtxoFeeInfo;
+use ark::vtxo::VtxoRef;
 
 use crate::{Wallet, WalletVtxo};
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId, BASE_RETRY_BACKOFF};
-use crate::movement::MovementId;
+use crate::movement::update::MovementUpdate;
+use crate::movement::{MovementDestination, MovementId, MovementStatus};
+use crate::subsystem::{OffboardMovement, Subsystem};
 use crate::vtxo::VtxoLockHolder;
 use crate::vtxo::selection::InputSelection;
 
@@ -123,7 +129,12 @@ pub enum Progress {
 	/// offboard the exact amount requested.
 	SplitWithArkoor,
 	/// `SendOnchain` intermediate: arkoor done, yet to be registered with the server.
-	ArkoorRegistrationRequired { offboard_vtxo_ids: Vec<VtxoId> },
+	/// Both the offboard vtxos and the change are held locked until registration
+	/// succeeds; only then is the change released as spendable.
+	ArkoorRegistrationRequired {
+		offboard_vtxo_ids: Vec<VtxoId>,
+		change_vtxo_ids: Vec<VtxoId>,
+	},
 	/// VTXOs are locked, (potential) split is done, now we can start the actual offboard.
 	ReadyForOffboard {
 		/// In the case of `SendOnchain` this is the arkoor VTXOs we just created, in the case
@@ -181,6 +192,12 @@ impl WalletAction for Offboard {
 			Progress::Start => {
 				lock_vtxos(wallet, &self).await?
 			},
+			Progress::SplitWithArkoor => {
+				arkoor_split_offboard(wallet, &self).await?
+			}
+			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, change_vtxo_ids } => {
+				register_arkoor_split(wallet, offboard_vtxo_ids, change_vtxo_ids).await?
+			},
 			// Temporary while the stages land one commit at a time; the
 			// last stage commit removes this.
 			progress => return Err(anyhow!(
@@ -223,10 +240,28 @@ impl WalletAction for Offboard {
 		wallet: &Wallet,
 		error: AdvanceError,
 	) -> anyhow::Result<Advance<Self>> {
-		// Temporary while the stages land one commit at a time; each
-		// stage commit adds its rejection handling.
-		bail!("offboard stage {:?} rejection handling not implemented yet: {:#}",
-			self.progress, error)
+		match &self.progress {
+			Progress::SplitWithArkoor => {
+				// We can safely unlock our VTXOs.
+				fail_offboard_movement(wallet, &self).await?;
+				Ok(Advance::Failed(error.into()))
+			}
+			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, .. } => {
+				// TODO: should we auto-exit here ?
+				error!("Server rejected VTXOs, consider exiting: {:?}", offboard_vtxo_ids);
+				Ok(Advance::Park {
+					state: self.clone(),
+					wake_after: None,
+					error: Some(error.into())
+				})
+			},
+			// Temporary while the stages land one commit at a time; each
+			// stage commit adds its rejection handling.
+			progress => bail!(
+				"offboard stage {:?} rejection handling not implemented yet: {:#}",
+				progress, error,
+			),
+		}
 	}
 }
 
@@ -335,4 +370,159 @@ async fn lock_vtxos(
 			Ok(Progress::SplitWithArkoor)
 		},
 	}
+}
+
+/// Split the inputs into an exact-sized offboard vtxo plus change and record the `SendOnchain`
+/// movement.
+async fn arkoor_split_offboard(
+	wallet: &Wallet,
+	action: &Offboard,
+) -> Result<Progress, AdvanceError> {
+	let OffboardKind::SendOnchain {
+		input_vtxo_ids, arkoor_key_index, change_key_index,
+	} = &action.kind
+	else {
+		return Err(anyhow!("arkoor_split_offboard called for non-SendOnchain kind").into());
+	};
+
+	let mut inputs = Vec::with_capacity(input_vtxo_ids.len());
+	for id in input_vtxo_ids {
+		inputs.push(wallet.get_vtxo_by_id(*id).await
+			.context("failed to load offboard input vtxo")?);
+	}
+
+	// VTXO creation is deterministic and idempotent due to the previously derived keypairs.
+	let required_amount = action.onchain_output_amount + action.committed_fee;
+	let keypair = wallet.peek_keypair(*arkoor_key_index).await
+		.context("failed to load keypair for offboard action")?;
+	let change_keypair = wallet.peek_keypair(*change_key_index).await
+		.context("failed to load change keypair for offboard action")?;
+	let split_destination = ArkoorDestination {
+		total_amount: required_amount,
+		policy: VtxoPolicy::new_pubkey(keypair.public_key()),
+	};
+	let arkoor = wallet
+		.create_checkpointed_arkoor_with_vtxos(split_destination, inputs.into_iter(), change_keypair)
+		.await
+		.context("error preparing offboard vtxos with arkoor")?;
+
+	// The server has marked our VTXOs as spent, so we must update accordingly.
+	// Both the offboard vtxo and the change are held under the action until
+	// the registration step registers their tx chains with the server; only
+	// then is the change released as spendable (the offboard vtxo stays
+	// locked until it is forfeited).
+	wallet.store_locked_vtxos(
+		&arkoor.change,
+		Some(VtxoLockHolder::Action { id: action.id.clone() }),
+	).await.context("error storing change vtxos from preparatory arkoor")?;
+	wallet.store_locked_vtxos(
+		&arkoor.created,
+		Some(VtxoLockHolder::Action { id: action.id.clone() }),
+	).await.context("error storing offboard vtxos from preparatory arkoor")?;
+	wallet.mark_vtxos_as_spent(&arkoor.inputs).await
+		.context("error marking offboard inputs as spent")?;
+
+	// Create the movement early since we just performed an operation.
+	let offboard_vtxo_ids = arkoor.created.iter().map(|v| v.id()).collect::<Vec<_>>();
+	let change_vtxo_ids = arkoor.change.iter().map(|v| v.id()).collect::<Vec<_>>();
+	get_or_create_movement(
+		wallet, action, &offboard_vtxo_ids, change_vtxo_ids.iter().copied(),
+	).await?;
+
+	Ok(Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, change_vtxo_ids })
+}
+
+/// Registers the new arkoor VTXOs (both the offboard vtxos and the change)
+/// with the server, then releases the change as spendable. The offboard
+/// vtxos stay locked until they are forfeited.
+async fn register_arkoor_split(
+	wallet: &Wallet,
+	offboard_vtxo_ids: Vec<VtxoId>,
+	change_vtxo_ids: Vec<VtxoId>,
+) -> Result<Progress, AdvanceError> {
+	let to_register = offboard_vtxo_ids.iter().chain(&change_vtxo_ids).copied().collect::<Vec<_>>();
+	let full_vtxos = wallet.inner.db.get_full_vtxos(&to_register).await
+		.context("failed to hydrate arkoor split vtxos")?;
+
+	wallet.register_vtxo_transactions_with_server(&full_vtxos).await
+		.context("failed to register arkoor split vtxo transactions with server")?;
+
+	// Registration succeeded, so the change is safe to spend now.
+	wallet.unlock_vtxos(&change_vtxo_ids).await
+		.context("failed to unlock change vtxos after registration")?;
+
+	Ok(Progress::ReadyForOffboard { offboard_vtxo_ids })
+}
+
+/// Creates a movement for the offboard action based on the [OffboardKind].
+async fn get_or_create_movement(
+	wallet: &Wallet,
+	action: &Offboard,
+	offboard_vtxo_ids: &Vec<VtxoId>,
+	change: impl IntoIterator<Item = impl VtxoRef>,
+) -> anyhow::Result<MovementId> {
+	let destination = action.check_destination(wallet.network().await?)?;
+	let net = action.onchain_output_amount;
+	let required = net.checked_add(action.committed_fee).context("overflow")?;
+	match &action.kind {
+		OffboardKind::OffboardWhole { .. } => {
+			let effective_amt = -SignedAmount::try_from(required)
+				.context("can't have this many vtxo sats")?;
+			wallet.inner.movements.get_or_create_movement_with_action(
+				Subsystem::OFFBOARD,
+				OffboardMovement::Offboard.to_string(),
+				&action.id,
+				MovementUpdate::new()
+					.intended_balance(effective_amt)
+					.effective_balance(effective_amt)
+					.fee(action.committed_fee)
+					.consumed_vtxos(offboard_vtxo_ids)
+					.sent_to([MovementDestination::bitcoin(destination, net)]),
+			).await.context("failed to create offboard movement")
+		},
+		OffboardKind::SendOnchain { input_vtxo_ids, .. } => {
+			wallet.inner.movements.get_or_create_movement_with_action(
+				Subsystem::OFFBOARD,
+				OffboardMovement::SendOnchain.to_string(),
+				&action.id,
+				MovementUpdate::new()
+					.intended_balance(-net.to_signed().context("amount out of range")?)
+					.effective_balance(-required.to_signed().context("required amount out of range")?)
+					.fee(action.committed_fee)
+					.consumed_vtxos(input_vtxo_ids)
+					.produced_vtxos(change)
+					.metadata([(
+						"offboard_vtxos".into(),
+						serde_json::to_value(offboard_vtxo_ids).expect("offboard_vtxos can serde"),
+					)])
+					.sent_to([MovementDestination::bitcoin(destination, net)]),
+			).await.context("failed to create send-onchain movement")
+		}
+	}
+}
+
+/// Record the action's movement as failed before the action fails
+/// terminally; without this, `Advance::Failed` removes the checkpoint but
+/// leaves the movement pending forever.
+///
+/// The movement is keyed by the action id, so an attempt that had already
+/// created one (`SendOnchain` after its arkoor, `OffboardWhole` after
+/// prepare) finds it back; an attempt that hadn't gets a failed movement
+/// recording what it tried to do. Both make this re-entrant.
+async fn fail_offboard_movement(
+	wallet: &Wallet,
+	action: &Offboard,
+) -> anyhow::Result<()> {
+	let offboard_vtxo_ids = action.kind.vtxo_ids();
+	let movement_id = get_or_create_movement(
+		wallet, action, offboard_vtxo_ids, iter::empty::<VtxoId>(),
+	).await?;
+	// The balance didn't actually change: we only fail on paths where no
+	// forfeit was signed and nothing was broadcast, so every vtxo the
+	// action locked goes back to spendable.
+	wallet.inner.movements.finish_movement_with_update(
+		movement_id,
+		MovementStatus::Failed,
+		MovementUpdate::new().effective_balance(SignedAmount::ZERO),
+	).await.context("failed to mark offboard movement as failed")
 }
