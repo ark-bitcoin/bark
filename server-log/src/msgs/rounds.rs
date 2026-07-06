@@ -323,6 +323,9 @@ pub struct RoundFinished {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 	pub nb_input_vtxos: usize,
+	pub nb_output_vtxos: usize,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub total_output_amount: Amount,
 }
 impl_slog!(RoundFinished, INFO, "Round finished");
 
