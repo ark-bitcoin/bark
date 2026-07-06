@@ -151,6 +151,14 @@ pub enum Progress {
 		/// In the case of `SendOnchain` this is the arkoor VTXOs we just created, in the case
 		/// of `OffboardWhole` this is the VTXOs we selected to offboard.
 		offboard_vtxo_ids: Vec<VtxoId>,
+		/// Set when we fell back here from [Progress::OffboardTxPrepared]
+		/// because the server's session disappeared before we could finish
+		/// it, and its tx wasn't visible on chain. If the fresh prepare then
+		/// gets rejected because the inputs are spent, the prior tx probably
+		/// did make it out after all, so we keep looking for it on chain
+		/// instead of failing the action.
+		#[serde(default)]
+		prior_txid: Option<Txid>,
 	},
 	/// Offboard tx built by the server and validated by us; our forfeits
 	/// are not signed yet — that happens inside the finish step, with
@@ -223,7 +231,7 @@ impl WalletAction for Offboard {
 			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, change_vtxo_ids } => {
 				register_arkoor_split(wallet, offboard_vtxo_ids, change_vtxo_ids).await?
 			},
-			Progress::ReadyForOffboard { offboard_vtxo_ids } => {
+			Progress::ReadyForOffboard { offboard_vtxo_ids, .. } => {
 				prepare_offboard(wallet, &self, offboard_vtxo_ids).await?
 			},
 			Progress::OffboardTxPrepared {
@@ -340,7 +348,6 @@ impl WalletAction for Offboard {
 				Ok(Advance::Failed(error.into()))
 			}
 			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, .. } |
-			Progress::OffboardTxPrepared { offboard_vtxo_ids, .. } |
 			Progress::ReadyForBroadcast {  offboard_vtxo_ids, .. } => {
 				// TODO: should we auto-exit here ?
 				error!("Server rejected VTXOs, consider exiting: {:?}", offboard_vtxo_ids);
@@ -350,17 +357,65 @@ impl WalletAction for Offboard {
 					error: Some(error.into())
 				})
 			},
-			Progress::ReadyForOffboard { .. } => {
+			Progress::ReadyForOffboard { offboard_vtxo_ids, prior_txid: Some(prior_txid) } => {
+				// We already fell back here once from OffboardTxPrepared:
+				// our finish session had disappeared and its tx wasn't
+				// visible on chain. Now the fresh prepare got rejected too
+				// (typically: inputs already spent), so the likeliest
+				// explanation is that the prior finish DID go through and
+				// our chain source simply lags the server's node. Keep
+				// looking for the prior tx; failing here would wrongly
+				// release forfeited vtxos as spendable.
+				if let Some(progress) = adopt_broadcast_offboard(
+					wallet, &self, offboard_vtxo_ids, *prior_txid,
+				).await? {
+					return Ok(Advance::Next(Offboard { progress, ..self.clone() }));
+				}
+				error!("Offboard inputs rejected but prior offboard tx {} is not on chain, \
+					will keep looking for it: {:#}", prior_txid, error);
+				Ok(Advance::Park {
+					state: self.clone(),
+					wake_after: Some(CONFIRMATION_POLL_INTERVAL),
+					error: Some(error.into()),
+				})
+			},
+			Progress::ReadyForOffboard { prior_txid: None, .. } => {
 				// Arkoor are spendable at this point, it is safe to fail here on rejection
 				fail_offboard_movement(wallet, &self).await?;
 				Ok(Advance::Failed(error.into()))
 			},
-			// Temporary while the stages land one commit at a time; each
-			// stage commit adds its rejection handling.
-			progress => bail!(
-				"offboard stage {:?} rejection handling not implemented yet: {:#}",
-				progress, error,
-			),
+			Progress::OffboardTxPrepared { offboard_vtxo_ids, offboard_tx, .. } => {
+				// The server no longer holds a session for this offboard
+				// (finish sessions only survive the server's session
+				// timeout). Either our finish went through and we lost the
+				// response — then the tx is on chain and we adopt it — or
+				// the session expired unfinished, and it is safe to prepare
+				// a fresh one: the expired session's forfeits can never be
+				// completed since the server's secret nonces died with it.
+				let offboard_txid = offboard_tx.compute_txid();
+				if let Some(progress) = adopt_broadcast_offboard(
+					wallet, &self, offboard_vtxo_ids, offboard_txid,
+				).await? {
+					return Ok(Advance::Next(Offboard { progress, ..self.clone() }));
+				}
+				warn!("Offboard session for tx {} is gone and the tx is not on chain, \
+					going back to prepare a fresh session: {:#}", offboard_txid, error);
+				let state = Offboard {
+					progress: Progress::ReadyForOffboard {
+						offboard_vtxo_ids: offboard_vtxo_ids.clone(),
+						prior_txid: Some(offboard_txid),
+					},
+					..self.clone()
+				};
+				// Park instead of advancing directly so that a repeated
+				// rejection can't spin hot, burning a fresh server session
+				// (and its UTXO locks) every round trip.
+				Ok(Advance::Park {
+					state,
+					wake_after: Some(CONFIRMATION_POLL_INTERVAL),
+					error: None,
+				})
+			},
 		}
 	}
 }
@@ -464,6 +519,7 @@ async fn lock_vtxos(
 		OffboardKind::OffboardWhole { input_vtxo_ids } => {
 			Ok(Progress::ReadyForOffboard {
 				offboard_vtxo_ids: input_vtxo_ids.clone(),
+				prior_txid: None,
 			})
 		},
 		OffboardKind::SendOnchain { .. } => {
@@ -551,7 +607,7 @@ async fn register_arkoor_split(
 	wallet.unlock_vtxos(&change_vtxo_ids).await
 		.context("failed to unlock change vtxos after registration")?;
 
-	Ok(Progress::ReadyForOffboard { offboard_vtxo_ids })
+	Ok(Progress::ReadyForOffboard { offboard_vtxo_ids, prior_txid: None })
 }
 
 /// `ReadyForOffboard -> OffboardTxPrepared`: have the server build the
@@ -652,6 +708,8 @@ async fn prepare_offboard(
 /// value-deterministic across re-drives. A retry can thus carry different
 /// signatures than the attempt the server completed; the server replays
 /// its response by txid, so this is re-entrant while the session lives.
+/// Once the session is gone, the resulting rejection is recovered in
+/// `on_rejection`.
 async fn finish_offboard(
 	wallet: &Wallet,
 	offboard_vtxo_ids: Vec<VtxoId>,
@@ -703,6 +761,38 @@ async fn finish_offboard(
 	).await.context("failed to update movement with offboard tx")?;
 
 	Ok(Progress::ReadyForBroadcast { offboard_vtxo_ids, signed_offboard_tx, movement_id })
+}
+
+/// Check whether the offboard tx made it to the mempool or chain even
+/// though the server no longer holds a session for it (the server also
+/// broadcasts the tx itself after a successful finish). If so, return an
+/// [Progress::AwaitingConfirmations] adopting the broadcast tx.
+///
+/// Used by rejection recovery, so it must be re-entrant; it only reads
+/// the chain and (re-)uses the movement keyed by the action id.
+async fn adopt_broadcast_offboard(
+	wallet: &Wallet,
+	action: &Offboard,
+	offboard_vtxo_ids: &Vec<VtxoId>,
+	offboard_txid: Txid,
+) -> anyhow::Result<Option<Progress>> {
+	let tx = wallet.inner.chain.get_tx(&offboard_txid).await
+		.with_context(|| format!("failed to look up offboard tx {} on chain", offboard_txid))?;
+	let Some(offboard_tx) = tx else {
+		return Ok(None);
+	};
+
+	info!("Found offboard tx {} on chain, adopting it", offboard_txid);
+	let movement_id = get_or_create_movement(
+		wallet, action, offboard_vtxo_ids, iter::empty::<VtxoId>(),
+	).await?;
+	Ok(Some(Progress::AwaitingConfirmations {
+		offboard_vtxo_ids: offboard_vtxo_ids.to_vec(),
+		offboard_txid,
+		offboard_tx,
+		movement_id,
+		created_at: chrono::Utc::now(),
+	}))
 }
 
 /// `ReadyForBroadcast -> AwaitingConfirmations`: publish the signed offboard tx to chain.
