@@ -119,6 +119,9 @@ pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_LN_RECEIVE_CHECKPOI
 /// The string used in the gRPC HTTP header for the protocol version.
 pub const PROTOCOL_VERSION_HEADER: &str = "pver";
 
+/// The maximum number of recovery IDs that the server accepts per request.
+pub const MAX_NB_MAILBOX_RECOVERY_IDS: usize = 20;
+
 
 #[derive(Debug, Clone)]
 pub struct WalletStatus {

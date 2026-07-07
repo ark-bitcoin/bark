@@ -1,0 +1,5 @@
+- Limit mailbox recovery requests to 20 VTXO IDs
+  `post_recovery_vtxo_ids` now rejects a request carrying more than 20 VTXO
+  IDs (the new `MAX_NB_MAILBOX_RECOVERY_IDS` constant) with a bad-argument
+  error.
+  [#2267](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2267)

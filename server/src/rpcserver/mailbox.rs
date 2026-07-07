@@ -2,6 +2,7 @@ use std::pin::Pin;
 use bitcoin::hashes::Hash;
 use futures::Stream;
 use futures::StreamExt;
+use server_rpc::MAX_NB_MAILBOX_RECOVERY_IDS;
 use tracing::{error, warn};
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier, MailboxType};
@@ -251,11 +252,15 @@ impl rpc::server::MailboxService for crate::Server {
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
 		let req = req.into_inner();
 
+		if req.vtxo_ids.len() > MAX_NB_MAILBOX_RECOVERY_IDS {
+			self::badarg!("too many VTXOs, max is {}", MAX_NB_MAILBOX_RECOVERY_IDS);
+		}
+
 		let vtxo_ids = req.vtxo_ids.into_iter()
 			.map(|v| VtxoId::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
 		if vtxo_ids.is_empty() {
-			self::badarg!("no vtxo ids provided");
+			self::badarg!("no VTXO IDs provided");
 		}
 
 		let mailbox_id = MailboxIdentifier::deserialize(req.mailbox_id.as_slice())
