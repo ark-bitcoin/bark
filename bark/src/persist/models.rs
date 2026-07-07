@@ -539,6 +539,10 @@ mod test {
 		serde_json::from_str::<ExitState>(serialised).unwrap();
 		let serialised = r#"{"type":"claimed","tip_height":134,"txid":"599347c35870bd36f7acb22b81f9ffa8b911d9b5e94834858aebd3ec09339f4c","block": "122:3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f"}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
+		let serialised = r#"{"type":"vtxo-already-spent","tip_height":135}"#;
+		serde_json::from_str::<ExitState>(serialised).unwrap();
+		let serialised = r#"{"type":"canceled","tip_height":135}"#;
+		serde_json::from_str::<ExitState>(serialised).unwrap();
 
 		// Exit state — `processing` carrying each ExitTxStatus variant. These fixtures
 		// guard against the same class of bug the m0029 migration was written to fix:
@@ -575,9 +579,19 @@ mod test {
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 		let serialised = r#"{"type": "spent"}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
+		let serialised = r#"{"type": "exited"}"#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
+		// Legacy locked shape: pre-holder records carry `movement_id` instead.
 		let serialised = r#"{"type": "locked", "movement_id": null}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 		let serialised = r#"{"type": "locked", "movement_id": 42}"#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
+		// Current locked shapes: `holder` is absent, null, or one of the VtxoLockHolder variants.
+		let serialised = r#"{"type": "locked", "holder": null}"#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
+		let serialised = r#"{"type": "locked", "holder": {"type": "movement", "id": 42}}"#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
+		let serialised = r#"{"type": "locked", "holder": {"type": "action", "id": "test-action-id"}}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 
 		// Round-attempt state — `AwaitingUnsignedVtxoTree`. Legacy
