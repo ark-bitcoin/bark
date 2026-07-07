@@ -8,7 +8,7 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{Keypair, PublicKey};
 
 use crate::{ProtocolDecodingError, ProtocolEncoding, VtxoPolicy};
-use crate::encode::{ReadExt, WriteExt};
+use crate::encode::{MAX_VEC_SIZE, ReadExt, WriteExt};
 use crate::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
 
 
@@ -247,16 +247,22 @@ impl Address {
 
 		let mut buf = Vec::new();
 		let policy = {
-			let len = reader.read_compact_size()? as usize;
-			buf.resize(len, 0);
+			let len = reader.read_compact_size()?;
+			if len > MAX_VEC_SIZE as u64 {
+				return Err(ParseAddressError::Invalid("policy field exceeds maximum length"));
+			}
+			buf.resize(len as usize, 0);
 			reader.read_slice(&mut buf[..])?;
 			VtxoPolicy::deserialize(&buf[..]).map_err(ParseAddressError::VtxoPolicy)?
 		};
 
 		let mut delivery = Vec::new();
 		while reader.0.peek().is_some() {
-			let len = reader.read_compact_size()? as usize;
-			buf.resize(len, 0);
+			let len = reader.read_compact_size()?;
+			if len > MAX_VEC_SIZE as u64 {
+				return Err(ParseAddressError::Invalid("delivery field exceeds maximum length"));
+			}
+			buf.resize(len as usize, 0);
 			reader.read_slice(&mut buf[..])?;
 			delivery.push(VtxoDelivery::decode(&buf[..])?);
 		}
@@ -626,5 +632,18 @@ mod test {
 			blinded, addr.policy().user_pubkey(), &server_mailbox_key);
 
 		assert_eq!(mailbox, unblinded);
+	}
+
+	#[test]
+	fn rejects_oversized_field_length() {
+		let mut bytes = vec![0u8; 4]; // ark_id
+		bytes.push(0xFF); // compact-size marker: a u64 length follows
+		bytes.extend_from_slice(&u64::MAX.to_le_bytes());
+
+		match Address::decode_payload(false, bytes.into_iter()) {
+			Err(ParseAddressError::Invalid(_)) => {},
+			Err(e) => panic!("expected Invalid error, got {:?}", e),
+			Ok(_) => panic!("expected error, got a parsed address"),
+		}
 	}
 }

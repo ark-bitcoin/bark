@@ -92,8 +92,8 @@ use bitcoin_ext::{fee, BlockDelta, BlockHeight, NonStandardOutput, TxOutExt};
 use crate::vtxo::policy::{check_block_delta, check_block_height, HarkForfeitVtxoPolicy};
 use crate::scripts;
 use crate::encode::{
-	LengthPrefixedVector, OversizedVectorError, ProtocolDecodingError, ProtocolEncoding, ReadExt,
-	WriteExt,
+	LengthPrefixedVector, MAX_VEC_SIZE, OversizedVectorError, ProtocolDecodingError,
+	ProtocolEncoding, ReadExt, WriteExt,
 };
 use crate::lightning::PaymentHash;
 use crate::tree::signed::{UnlockHash, UnlockPreimage};
@@ -621,10 +621,22 @@ impl<P: Policy> Vtxo<Bare, P> {
 	}
 }
 
+// Pins the invariant `exit_depth` relies on: `Full::decode` caps the genesis item
+// count at `MAX_VEC_SIZE / size_of::<GenesisItem>()` via `OversizedVectorError`, so
+// the count must stay within u16 or the cast below could panic.
+const _: () = assert!(
+	MAX_VEC_SIZE / core::mem::size_of::<GenesisItem>() <= u16::MAX as usize,
+	"genesis decode cap must keep items.len() within u16 for Vtxo::exit_depth",
+);
+
 impl<P: Policy> Vtxo<Full, P> {
 	/// Returns the total exit depth (including OOR depth) of the vtxo.
 	pub fn exit_depth(&self) -> u16 {
-		self.genesis.items.len() as u16
+		// The genesis item count is the VTXO's exit depth, bounded far below
+		// u16::MAX both by construction and, on decode, by the allocation cap
+		// enforced via OversizedVectorError on the genesis vector.
+		u16::try_from(self.genesis.items.len())
+			.expect("genesis item count fits in u16")
 	}
 
 	/// Iterate over all oor transitions in this VTXO

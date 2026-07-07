@@ -337,7 +337,7 @@ impl OffboardRequestAttestation {
 		let mut eng = sha256::Hash::engine();
 		eng.input(Self::CHALLENGE_MESSAGE_PREFIX);
 		req.to_txout().encode(&mut eng).unwrap();
-		eng.emit_u32(inputs.len() as u32).unwrap();
+		eng.emit_u32(u32::try_from(inputs.len()).expect("input count fits in u32")).unwrap();
 		for vtxo in inputs {
 			eng.input(&vtxo.to_bytes());
 		}
@@ -390,7 +390,7 @@ impl ArkoorCosignAttestation {
 		eng.input(Self::CHALLENGE_MESSAGE_PREFIX);
 		eng.input(&vtxo_id.to_bytes());
 
-		eng.emit_u32(outputs.len() as u32).unwrap();
+		eng.emit_u32(u32::try_from(outputs.len()).expect("output count fits in u32")).unwrap();
 		for output in outputs {
 			eng.emit_u64(output.total_amount.to_sat()).unwrap();
 			output.policy.encode(&mut eng).unwrap();

@@ -21,13 +21,14 @@ impl Node {
 	// Tree construction arithmetic on bounded leaf indices and a small RADIX.
 	#[allow(clippy::arithmetic_side_effects)]
 	fn new_leaf(idx: usize, nb_tree_leaves: usize) -> Node {
-		let idx = idx as u32;
+		let idx = u32::try_from(idx).expect("leaf index fits in u32");
+		let nb_tree_leaves = u32::try_from(nb_tree_leaves).expect("leaf count fits in u32");
 		Node {
 			idx,
 			parent: None,
 			children: [None; RADIX],
-			leaves: (idx, (idx+1) % nb_tree_leaves as u32),
-			nb_tree_leaves: nb_tree_leaves as u32,
+			leaves: (idx, (idx+1) % nb_tree_leaves),
+			nb_tree_leaves,
 			level: 0,
 		}
 	}
@@ -135,11 +136,11 @@ impl Tree {
 			let mut nb_children = 0;
 			let mut max_child_level = 0;
 			while cursor < nodes.len() && nb_children < RADIX {
-				children[nb_children] = Some(cursor as u32);
+				children[nb_children] = Some(u32::try_from(cursor).expect("node index fits in u32"));
 
 				let new_idx = nodes.len(); // idx of next node
 				let child = &mut nodes[cursor];
-				child.parent = Some(new_idx as u32);
+				child.parent = Some(u32::try_from(new_idx).expect("node index fits in u32"));
 
 				// adjust level and leaf indices
 				if child.level > max_child_level {
@@ -150,7 +151,7 @@ impl Tree {
 				nb_children += 1;
 			}
 			nodes.push(Node {
-				idx: nodes.len() as u32,
+				idx: u32::try_from(nodes.len()).expect("node index fits in u32"),
 				leaves: (
 					nodes[children.first().unwrap().unwrap() as usize].leaves.0,
 					nodes[children.iter().filter_map(|c| *c).last().unwrap() as usize].leaves.1,
@@ -158,7 +159,7 @@ impl Tree {
 				children,
 				level: max_child_level + 1,
 				parent: None,
-				nb_tree_leaves: nb_leaves as u32,
+				nb_tree_leaves: u32::try_from(nb_leaves).expect("leaf count fits in u32"),
 			});
 		}
 
@@ -245,7 +246,7 @@ impl Tree {
 	pub fn parent_idx_of_with_sibling_idx(&self, idx: usize) -> Option<(usize, usize)> {
 		self.nodes.get(idx).and_then(|n| n.parent).map(|parent_idx| {
 			let child_idx = self.nodes[parent_idx as usize].children.iter()
-				.position(|c| *c == Some(idx as u32))
+				.position(|c| *c == Some(u32::try_from(idx).expect("node index fits in u32")))
 				.expect("broken tree");
 			(self.nodes[parent_idx as usize].idx as usize, child_idx as usize)
 		})
