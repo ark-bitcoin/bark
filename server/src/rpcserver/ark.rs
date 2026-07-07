@@ -3,7 +3,6 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic;
-use std::time::Duration;
 use std::time::UNIX_EPOCH;
 
 use ark::attestations::DelegatedRoundParticipationAttestation;
@@ -28,7 +27,6 @@ use ark::mailbox::MailboxIdentifier;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmountExt, PaymentHash, Preimage};
 use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
-use ark::rounds::RoundId;
 use ark::vtxo::Full;
 use ark::vtxo::policy::check_block_height;
 use bitcoin_ext::{BlockDelta, BlockHeight};
@@ -110,49 +108,6 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::OffboardFeeRateResponse {
 			sat_vkb: feerate.to_sat_per_kwu() * 4,
 		}))
-	}
-
-	#[tracing::instrument(skip(self, req))]
-	async fn get_fresh_rounds(
-		&self,
-		req: tonic::Request<protos::FreshRoundsRequest>,
-	) -> Result<tonic::Response<protos::FreshRounds>, tonic::Status> {
-		let req = req.into_inner();
-
-		let txid = match req.last_round_txid {
-			Some(t) => Some(RoundId::from_str(&t).badarg("invalid last_round_txid")?),
-			None => None,
-		};
-		let lifetime = Duration::from_secs(10 * 60 * self.config.vtxo_lifetime as u64);
-		let ids = self.db.read(async |t| t.get_fresh_round_ids(txid, Some(lifetime)).await).await
-			.context("db error")?;
-
-		let response = protos::FreshRounds {
-			txids: ids.into_iter().map(|t| t.to_byte_array().to_vec()).collect(),
-		};
-
-		Ok(tonic::Response::new(response))
-	}
-
-	#[tracing::instrument(skip(self, req))]
-	async fn get_round(
-		&self,
-		req: tonic::Request<protos::RoundId>,
-	) -> Result<tonic::Response<protos::RoundInfo>, tonic::Status> {
-		let req = req.into_inner();
-
-		let id = RoundId::from_bytes(req.txid.as_slice())?;
-
-		let ret = self.db.read(async |t| t.get_round(id).await).await
-			.context("db error")?
-			.not_found([id], "round with txid {} not found")?;
-
-		let response = protos::RoundInfo {
-			funding_tx: bitcoin::consensus::serialize(&ret.funding_tx),
-			signed_vtxos: ret.signed_tree.serialize(),
-		};
-
-		Ok(tonic::Response::new(response))
 	}
 
 	#[tracing::instrument(skip(self, req))]

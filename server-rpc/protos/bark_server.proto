@@ -11,11 +11,6 @@ service ArkService {
 	rpc GetArkInfo(core.Empty) returns (ArkInfo) {}
 	rpc GetOffboardFeeRate(core.Empty) returns (OffboardFeeRateResponse) {}
 
-	// Get new round since the given round id
-	//
-	// If no round given, gives all rounds in the past 1.5 x the VTXO lifetime.
-	rpc GetFreshRounds(FreshRoundsRequest) returns (FreshRounds) {}
-	rpc GetRound(RoundId) returns (RoundInfo) {}
 	rpc GetVtxo(GetVtxoRequest) returns (GetVtxoResponse) {}
 	rpc GetVtxoStatus(GetVtxoStatusRequest) returns (GetVtxoStatusResponse) {}
 
@@ -161,23 +156,6 @@ message LightningSendFees {
 	uint64 min_fee_sat = 1;
 	uint64 base_fee_sat = 2;
 	repeated PpmExpiryFeeEntry ppm_expiry_table = 3;
-}
-
-message FreshRoundsRequest {
-	optional string last_round_txid = 1;
-}
-
-message FreshRounds {
-	repeated bytes txids = 1;
-}
-
-message RoundId {
-	bytes txid = 1;
-}
-
-message RoundInfo {
-	bytes funding_tx = 1;
-	bytes signed_vtxos = 2;
 }
 
 message GetVtxoRequest {
