@@ -39,7 +39,11 @@ OPTIONS:
     -l, --loop              Run continuously until killed (restarts after --time)
     -d, --daemon            Run in background, prints PID and exits
     -j, --jobs <N>          Number of CPUs/threads to use (default: honggfuzz default)
-    --minimize              Minimize corpus only
+    --minimize              Minimize corpus (honggfuzz -M). Panic-preserving:
+                            the same pass replays every input through the harness,
+                            so contained-panic reproducers are captured and
+                            re-injected after -M (which is otherwise blind to them
+                            and could prune a reproducer that adds no new coverage).
     --replay                Re-run the accumulated corpus under the current build
                             to flush latent panics (incl. the debug_assert!s the
                             release profile now compiles in). Short per-target run,
@@ -278,6 +282,23 @@ run_fuzzing() {
                 cp -n "$FUZZ_DIR/hfuzz_input/$target/input/"* "$ws_input/" 2>/dev/null || true
             fi
 
+            # Panic-preserving minimize: honggfuzz -M is blind to contained panics
+            # and can prune a reproducer that adds no coverage. Since -M executes
+            # every input (a replay), arm the harness's input sink
+            # (HFUZZ_CONTAINED_DIR) at a holdout dir outside the corpus and
+            # re-inject the saved reproducers afterwards.
+            if [ "$MINIMIZE" = "1" ]; then
+                if [ -n "$USE_CORPUS" ]; then
+                    minimize_corpus_dir="$USE_CORPUS/fuzz_corpora/$target/input"
+                else
+                    minimize_corpus_dir="$FUZZ_DIR/hfuzz_workspace/$target/input"
+                fi
+                holdout_dir="$FUZZ_DIR/hfuzz_workspace/$target/minimize_holdout"
+                rm -rf "$holdout_dir"
+                mkdir -p "$holdout_dir"
+                export HFUZZ_CONTAINED_DIR="$holdout_dir"
+            fi
+
             export HFUZZ_RUN_ARGS
             cd "$FUZZ_DIR"
 
@@ -306,6 +327,20 @@ run_fuzzing() {
                 if [ "$EXIT_ON_CRASH" = "1" ]; then
                     echo "=== Crash detected in $target, exiting ==="
                     exit 1
+                fi
+            fi
+
+            # Re-inject the reproducers held out during the -M pass so minimize is
+            # panic-preserving. cp -n keeps honggfuzz's own survivors; idempotent.
+            if [ "$MINIMIZE" = "1" ]; then
+                unset HFUZZ_CONTAINED_DIR
+                saved=$(find "$holdout_dir" -type f 2>/dev/null | wc -l)
+                if [ "$saved" -gt 0 ] && [ -d "$minimize_corpus_dir" ]; then
+                    cp -n "$holdout_dir"/* "$minimize_corpus_dir"/ 2>/dev/null || true
+                    echo "=== Panic-preserving minimize: re-injected $saved contained-panic reproducer(s) into $minimize_corpus_dir ==="
+                    grep -rl . "$holdout_dir" 2>/dev/null | xargs -r -n1 basename | sed 's/^/    - /' || true
+                else
+                    echo "=== Panic-preserving minimize: no contained panics observed this pass; nothing to re-inject ==="
                 fi
             fi
 

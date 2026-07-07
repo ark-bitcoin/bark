@@ -115,6 +115,27 @@ pub mod harness {
 				let _ = f.write_all(format!("CONTAINED\t{detail}\n").as_bytes());
 			}
 		}
+
+		// Input sink: honggfuzz -M is blind to contained panics and can prune a
+		// reproducer that adds no coverage. When HFUZZ_CONTAINED_DIR is set, save
+		// the triggering bytes once per distinct panic location so `fuzz.sh
+		// --minimize` can re-inject them. Best-effort, non-panicking; `create_new`
+		// gives first-writer-wins without locks.
+		if let Some(dir) = std::env::var_os("HFUZZ_CONTAINED_DIR") {
+			use std::io::Write as _;
+			// `detail` is "file:line:col: msg"; keep just the location for the name.
+			let loc = detail.split_once(": ").map(|(l, _)| l).unwrap_or(&detail);
+			let name: String = loc.chars()
+				.map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+				.collect();
+			if !name.is_empty() {
+				let mut path = std::path::PathBuf::from(dir);
+				path.push(name);
+				if let Ok(mut f) = std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+					let _ = f.write_all(data);
+				}
+			}
+		}
 	}
 
 	/// Total contained panics swallowed this process (for end-of-run reporting).
