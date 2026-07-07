@@ -37,6 +37,7 @@ mod m0036_pending_exit_movements;
 mod m0037_settled_lightning_receive;
 mod m0038_board_action_checkpoints;
 mod m0039_movement_action_id;
+mod m0040_unlock_failed_movement_vtxos_again;
 
 use anyhow::Context;
 use log::debug;
@@ -81,6 +82,7 @@ use m0036_pending_exit_movements::Migration0036;
 use m0037_settled_lightning_receive::Migration0037;
 use m0038_board_action_checkpoints::Migration0038;
 use m0039_movement_action_id::Migration0039;
+use m0040_unlock_failed_movement_vtxos_again::Migration0040;
 
 pub struct MigrationContext {}
 
@@ -137,6 +139,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0037{})?;
 		self.try_migration(conn, &Migration0038{})?;
 		self.try_migration(conn, &Migration0039{})?;
+		self.try_migration(conn, &Migration0040{})?;
 
 		Ok(())
 	}
@@ -291,7 +294,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 39).unwrap();
+		assert_current_version(&conn, 40).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
