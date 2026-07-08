@@ -34,7 +34,7 @@ thiserror = { workspace = true }
 
 # rpc
 bdk_bitcoind_rpc = { workspace = true, optional = true }
-jsonrpc = { version = "0.18", features = ["simple_http"], optional = true }
+jsonrpc = { version = "0.20.1", features = ["simple_http"], optional = true }
 ureq = { version = "3", features = ["socks-proxy"], optional = true }
 base64 = { version = "0.22", optional = true }
 reqwest = { version = "0.12.18", features = [ "rustls-tls" ], default-features = false, optional = true }
