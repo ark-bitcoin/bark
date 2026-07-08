@@ -9,57 +9,11 @@ use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use log::info;
 
-use bitcoin::hex::DisplayHex;
-use serde::Serialize;
-
 use ark::lightning::{PaymentHash, Preimage};
 use bark::Wallet;
-use bark::actions::lightning::pay::{LightningSendState, Progress};
-use bark_json::cli::{InvoiceInfo, LightningReceiveInfo};
+use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, LightningSendInfo};
 
 use bark_cli::util::output_json;
-
-#[derive(Serialize)]
-struct LightningSendStatus {
-	payment_hash: String,
-	state: &'static str,
-	invoice: Option<String>,
-	preimage: Option<String>,
-}
-
-impl LightningSendStatus {
-	fn from_state(hash: PaymentHash, state: &LightningSendState) -> Self {
-		match state {
-			LightningSendState::Unknown => LightningSendStatus {
-				payment_hash: hash.to_string(),
-				state: "unknown",
-				invoice: None,
-				preimage: None,
-			},
-			LightningSendState::Paid(paid) => LightningSendStatus {
-				payment_hash: paid.payment_hash.to_string(),
-				state: "paid",
-				invoice: None,
-				preimage: Some(paid.preimage.as_hex().to_string()),
-			},
-			LightningSendState::InProgress(send) => {
-				let phase = match send.progress {
-					Progress::Start => "start",
-					Progress::HtlcReceived(_) => "htlc-received",
-					Progress::PaymentInitiated(_) => "payment-initiated",
-					Progress::RevocableHtlcs { .. } => "revocable-htlcs",
-					Progress::RevocationStuck { .. } => "revocation-stuck",
-				};
-				LightningSendStatus {
-					payment_hash: send.invoice.payment_hash().to_string(),
-					state: phase,
-					invoice: Some(send.invoice.to_string()),
-					preimage: None,
-				}
-			},
-		}
-	}
-}
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {
@@ -294,7 +248,7 @@ async fn execute_pay_command(
 			};
 
 			let state = wallet.check_lightning_payment(payment_hash, false).await?;
-			output_json(&LightningSendStatus::from_state(payment_hash, &state));
+			output_json(&LightningSendInfo::from_state(payment_hash, &state));
 		},
 	}
 

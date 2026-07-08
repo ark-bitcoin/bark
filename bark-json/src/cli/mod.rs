@@ -14,6 +14,7 @@ use ark::VtxoId;
 use ark::lightning::{PaymentHash, Preimage};
 use bitcoin_ext::{AmountExt, BlockDelta};
 
+use bark::actions::lightning::pay::{LightningSendState, Progress as SendProgress};
 use bark::actions::lightning::receive::{
 	LightningReceive, LightningReceiveState, Progress as ReceiveProgress,
 };
@@ -422,6 +423,57 @@ impl LightningReceiveInfo {
 				preimage_revealed_at: None,
 				finished_at: Some(s.settled_at),
 				htlc_vtxos: vec![],
+			},
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct LightningSendInfo {
+	/// The payment hash of the outgoing lightning payment
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub payment_hash: PaymentHash,
+	/// Lifecycle phase of the send: `unknown`, `start`, `htlc-received`,
+	/// `payment-initiated`, `revocable-htlcs`, `revocation-stuck`, or `paid`.
+	pub state: String,
+	/// The invoice string, if known.
+	pub invoice: Option<String>,
+	/// The payment preimage, revealed once the payment succeeded.
+	#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
+	pub preimage: Option<Preimage>,
+}
+
+impl LightningSendInfo {
+	/// Render a triaged send state, mirroring the receive-side status.
+	pub fn from_state(hash: PaymentHash, state: &LightningSendState) -> Self {
+		match state {
+			LightningSendState::Unknown => LightningSendInfo {
+				payment_hash: hash,
+				state: "unknown".to_string(),
+				invoice: None,
+				preimage: None,
+			},
+			LightningSendState::Paid(paid) => LightningSendInfo {
+				payment_hash: paid.payment_hash,
+				state: "paid".to_string(),
+				invoice: None,
+				preimage: Some(paid.preimage),
+			},
+			LightningSendState::InProgress(send) => {
+				let phase = match send.progress {
+					SendProgress::Start => "start",
+					SendProgress::HtlcReceived(_) => "htlc-received",
+					SendProgress::PaymentInitiated(_) => "payment-initiated",
+					SendProgress::RevocableHtlcs { .. } => "revocable-htlcs",
+					SendProgress::RevocationStuck { .. } => "revocation-stuck",
+				};
+				LightningSendInfo {
+					payment_hash: send.invoice.payment_hash(),
+					state: phase.to_string(),
+					invoice: Some(send.invoice.to_string()),
+					preimage: None,
+				}
 			},
 		}
 	}
