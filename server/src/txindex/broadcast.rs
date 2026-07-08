@@ -168,7 +168,7 @@ impl Process {
 			return;
 		}
 
-		if let Err(e) = self.bitcoind.send_raw_transaction(&tx.tx).await {
+		if let Err(e) = self.bitcoind.send_raw_transaction(&tx.tx, None).await {
 			warn!("Error when re-broadcasting one of our txs: {}", e);
 			slog!(TxBroadcastError, txid: tx.txid, raw_tx: serialize(&tx.tx), error: e.to_string());
 		} else {

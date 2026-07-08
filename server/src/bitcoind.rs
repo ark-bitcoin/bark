@@ -130,7 +130,7 @@ pub async fn tx_status(client: &Client, txid: Txid) -> Result<TxStatus, ClientEr
 /// [`RPC_VERIFY_ALREADY_IN_UTXO_SET`] error so a re-broadcast of an
 /// already-mined tx is not surfaced as an error.
 pub async fn broadcast_tx(client: &Client, tx: &Transaction) -> Result<(), ClientError> {
-	match client.send_raw_transaction(tx).await {
+	match client.send_raw_transaction(tx, None).await {
 		Ok(_) => Ok(()),
 		Err(e) if e.is_in_utxo_set() => Ok(()),
 		Err(e) => Err(e),
