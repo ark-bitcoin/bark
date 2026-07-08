@@ -1,8 +1,73 @@
 pub(crate) mod json_patch;
 pub mod time;
 
+use std::time::Duration;
+
+use log::trace;
+
 use ark::VtxoId;
 use server_rpc::StatusExt;
+
+/// Base delay for the first reconnect of a dropped subscription stream.
+const RECONNECT_BACKOFF_BASE: Duration = Duration::from_secs(1);
+/// Cap on the reconnect delay so we keep probing a long-down server.
+const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(30);
+
+/// Exponential backoff for reconnecting a dropped server subscription stream.
+///
+/// The always-on subscriptions (round events, mailbox) reconnect whenever their
+/// stream ends or is reset. Without a delay, a server that closes the stream
+/// quickly — or that is actively rate-limiting us — turns the client into a
+/// tight resubscribe loop that opens and resets HTTP/2 streams as fast as it
+/// can. That is exactly the "rapid reset" pattern the server's h2 layer flags
+/// (and defends against by resetting our streams, which [`is_h2_stream_error`]
+/// would otherwise treat as a cue to reconnect *faster*).
+///
+/// Callers sleep via [`ReconnectBackoff::wait`] before every resubscribe and
+/// call [`ReconnectBackoff::reset`] once a stream has proven healthy, so the
+/// delay only grows while reconnects keep failing and healthy reconnects stay
+/// prompt.
+pub struct ReconnectBackoff {
+	attempts: u32,
+}
+
+impl ReconnectBackoff {
+	pub fn new() -> ReconnectBackoff {
+		ReconnectBackoff { attempts: 0 }
+	}
+
+	/// Reset after a healthy stream so the next disconnect reconnects promptly.
+	pub fn reset(&mut self) {
+		self.attempts = 0;
+	}
+
+	fn next_delay(&mut self) -> Duration {
+		// exponential: base * 2^attempts, saturating at the cap.
+		let factor = 1u32.checked_shl(self.attempts).unwrap_or(u32::MAX);
+		let delay = RECONNECT_BACKOFF_BASE
+			.checked_mul(factor)
+			.unwrap_or(RECONNECT_BACKOFF_MAX)
+			.min(RECONNECT_BACKOFF_MAX);
+		self.attempts = self.attempts.saturating_add(1);
+
+		// Equal jitter: sleep in [delay/2, delay]. The floor guarantees we
+		// never tight-loop (a bad RNG draw can't drive the delay to zero),
+		// while the random component keeps many clients from reconnecting in
+		// lockstep after a shared event like a server restart.
+		let half = delay / 2;
+		half + half.mul_f64(rand::random::<f64>())
+	}
+
+	/// Sleep for the next backoff interval before resubscribing.
+	///
+	/// This is not cancellation-aware on its own; callers that need to abort on
+	/// shutdown race it in their own `select!`.
+	pub async fn wait(&mut self) {
+		let delay = self.next_delay();
+		trace!("Reconnecting subscription stream in {:?}", delay);
+		crate::utils::time::sleep(delay).await;
+	}
+}
 
 /// Returns `true` if the error chain contains a tonic h2 protocol error,
 /// which typically indicates a server- or proxy-side issue (e.g. an idle
@@ -110,6 +175,34 @@ mod test {
 		status.metadata_mut().insert("identifiers", a.to_string().parse().unwrap());
 		let err = anyhow::Error::new(status).context("Ark server refused our payment submission");
 		assert_eq!(rejected_vtxos_from_error(&err), vec![a]);
+	}
+
+	#[test]
+	fn reconnect_backoff_bounds_and_reset() {
+		let mut b = ReconnectBackoff::new();
+
+		// First delays sit within the equal-jitter window [base/2, base] and
+		// never reach zero, so we can't tight-loop even on unlucky RNG draws.
+		for _ in 0..50 {
+			let mut fresh = ReconnectBackoff::new();
+			let d = fresh.next_delay();
+			assert!(d >= RECONNECT_BACKOFF_BASE / 2, "delay {d:?} below floor");
+			assert!(d <= RECONNECT_BACKOFF_BASE, "delay {d:?} above base");
+		}
+
+		// The delay grows and then saturates at the cap; it never exceeds it.
+		for _ in 0..40 {
+			let d = b.next_delay();
+			assert!(d <= RECONNECT_BACKOFF_MAX, "delay {d:?} above cap");
+		}
+		// Deep into the backoff we're pinned near the cap.
+		let capped = b.next_delay();
+		assert!(capped >= RECONNECT_BACKOFF_MAX / 2, "delay {capped:?} not near cap");
+
+		// Resetting returns us to the base window for a prompt reconnect.
+		b.reset();
+		let after_reset = b.next_delay();
+		assert!(after_reset <= RECONNECT_BACKOFF_BASE, "reset didn't shrink delay");
 	}
 
 	#[test]
