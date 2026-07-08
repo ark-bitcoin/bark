@@ -57,7 +57,7 @@ build:
         src="$(readlink target)/ci"
         rm target
         mkdir -p target/ci
-        cp -aL "$src/captaind" "$src/watchmand" "$src/bark" "$src/barkd" target/ci/
+        cp -aL "$src/captaind" "$src/watchmand" "$src/bark" "$src/bark-legacy" "$src/barkd" target/ci/
         cp -aL "$src/examples" target/ci/
       fi
   artifacts:
@@ -66,6 +66,7 @@ build:
       - target/ci/captaind
       - target/ci/watchmand
       - target/ci/bark
+      - target/ci/bark-legacy
       - target/ci/barkd
     expire_in: 1 day
 
@@ -255,7 +256,7 @@ bark-esplora:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
@@ -284,7 +285,7 @@ bark-mempool:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
@@ -310,7 +311,7 @@ bark-btc30:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
@@ -343,7 +344,7 @@ bark-filestore:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
@@ -392,7 +393,7 @@ core-server:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-core-prebuilt
 
@@ -445,7 +446,7 @@ bark-int-action-reentrancy:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-int-prebuilt
 
@@ -483,7 +484,7 @@ server-migrations-0.7.1:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - >-
       export OLD_CAPTAIND_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
@@ -711,7 +712,7 @@ upgrade-bark-0.7.1:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
     - >-
       export OLD_BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
@@ -758,7 +759,7 @@ upgrade-bark-0.7.1-filestore:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
     - >-
       export OLD_BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"

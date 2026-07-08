@@ -8,7 +8,11 @@ authors = [ "Team Second <hello@second.tech>" ]
 
 [[bin]]
 name = "bark"
-path = "src/bin/bark/main.rs"
+path = "src/bin/bark-legacy/main.rs"
+
+[[bin]]
+name = "bark-legacy"
+path = "src/bin/bark-legacy/main.rs"
 
 [[bin]]
 name = "barkd"

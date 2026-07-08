@@ -8,7 +8,7 @@ JUSTFILE_DIR := justfile_directory()
 HOST_TARGET := `rustc -vV | sed -n 's/^host: //p' | sed 's/-linux-gnu$/-linux-musl/'`
 export CAPTAIND_EXEC := env("CAPTAIND_EXEC", CARGO_TARGET / "debug" / "captaind")
 export WATCHMAND_EXEC := env("WATCHMAND_EXEC", CARGO_TARGET / "debug" / "watchmand")
-export BARK_EXEC := env("BARK_EXEC", CARGO_TARGET / "debug" / "bark")
+export BARK_EXEC := env("BARK_EXEC", CARGO_TARGET / "debug" / "bark-legacy")
 export BARKD_EXEC := env("BARKD_EXEC", CARGO_TARGET / "debug" / "barkd")
 export BITCOIND_SNAPSHOT_DIR := JUSTFILE_DIR / "test" / "_bitcoind_snapshot"
 
