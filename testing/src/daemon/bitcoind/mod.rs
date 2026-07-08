@@ -123,6 +123,20 @@ impl Bitcoind {
 		self.inner.rpc_cookie()
 	}
 
+	/// Restart the node, dropping every unconfirmed tx from its mempool
+	/// like a node that went down without persisting it. The node keeps
+	/// its ports, so its RPC url stays valid.
+	pub async fn restart_wiping_mempool(&self) {
+		self.stop().await.expect("stopping bitcoind");
+		let mempool_dat = self.inner.datadir().join("regtest").join("mempool.dat");
+		match std::fs::remove_file(&mempool_dat) {
+			Ok(()) => {},
+			Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+			Err(e) => panic!("failed to remove {}: {}", mempool_dat.display(), e),
+		}
+		self.start().await.expect("starting bitcoind");
+	}
+
 	pub fn rpc_url(&self) -> String {
 		self.inner.rpc_url()
 	}
@@ -349,10 +363,19 @@ impl DaemonHelper for BitcoindHelper {
 	}
 
 	async fn make_reservations(&self) -> anyhow::Result<()> {
+		// Keep the ports stable across restarts: bitcoind's RPC is plain
+		// HTTP, so daemons and wallets configured against this node keep
+		// working after a stop/start cycle.
 		let mut state = self.state.lock();
-		state.rpc_port = Some(portpicker::pick_unused_port().expect("A port is free"));
-		state.p2p_port = Some(portpicker::pick_unused_port().expect("A port is free"));
-		state.zmq_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+		if state.rpc_port.is_none() {
+			state.rpc_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+		}
+		if state.p2p_port.is_none() {
+			state.p2p_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+		}
+		if state.zmq_port.is_none() {
+			state.zmq_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+		}
 
 		Ok(())
 	}

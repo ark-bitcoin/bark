@@ -4,12 +4,13 @@ use std::sync::atomic::{self, AtomicUsize};
 use std::time::Duration;
 
 use bitcoin::{Amount, FeeRate};
+use bitcoin_ext::rpc::RpcApi;
 
 use bark::actions::offboard::Progress;
 use bark::movement::{Movement, MovementStatus, PaymentMethod};
 use server_rpc::protos;
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, constants, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::action_drive_factor;
 
@@ -198,6 +199,130 @@ async fn offboard_recovers_expired_session_by_repreparing() {
 	wallet.sync_pending_offboards().await.expect("sync pending offboards");
 	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Successful);
 	assert_ne!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO);
+}
+
+/// A broadcast offboard tx can drop out of the mempool, e.g. when the
+/// wallet's node restarts without persisting it. Within the lost-tx
+/// grace period the wallet just re-broadcasts it on the next sync.
+#[tokio::test]
+async fn offboard_rebroadcasts_evicted_tx_within_grace_period() {
+	let ctx = TestContext::new("bark_sdk/offboard_rebroadcasts_evicted_tx_within_grace_period").await;
+	let srv = ctx.captaind("server")
+		.funded(btc(10))
+		// The server re-broadcasts committed offboard txs on this interval;
+		// keep it out of the picture so the wallet's own re-broadcast is
+		// the only way the tx can come back. The check interval may not
+		// exceed the session timeout, so push that out too.
+		.cfg(|c| {
+			c.offboard_session_timeout = Duration::from_secs(3600);
+			c.offboard_check_interval = Duration::from_secs(3600);
+		})
+		.create().await;
+
+	// Give the wallet its own node, so evicting the tx from its mempool
+	// doesn't touch the server's chain source.
+	let bark_node = ctx.new_bitcoind("bark_bitcoind").await;
+	let node_url = bark_node.rpc_url();
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(move |c| {
+			c.esplora_address = None;
+			c.bitcoind_address = Some(node_url);
+			// Not the cookie file: it changes when the node restarts, the
+			// fixed rpcauth credentials don't.
+			c.bitcoind_cookiefile = None;
+			c.bitcoind_user = Some(constants::bitcoind::BITCOINRPC_TEST_USER.into());
+			c.bitcoind_pass = Some(constants::bitcoind::BITCOINRPC_TEST_PASSWORD.into());
+			c.offboard_required_confirmations = 1;
+			c.daemon_manual_sync = true;
+		})
+		.boarded(sat(800_000))
+		.create().await;
+
+	let address = ctx.bitcoind().get_new_address();
+	let txid = wallet.offboard_all(address.clone()).await.expect("offboard");
+	// Make sure the tx relayed to the mining node before evicting it.
+	ctx.bitcoind().await_transaction(txid).await;
+
+	// Evict the broadcast tx from the wallet node's mempool.
+	bark_node.restart_wiping_mempool().await;
+	assert!(!bark_node.sync_client().get_raw_mempool().expect("mempool").contains(&txid));
+
+	// Within the grace period (an hour by default), the next sync
+	// re-broadcasts the tx instead of reporting the offboard lost.
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	assert!(bark_node.sync_client().get_raw_mempool().expect("mempool").contains(&txid),
+		"the wallet should have re-broadcast the evicted offboard tx");
+
+	// From here the offboard settles like any other.
+	ctx.generate_blocks(1).await;
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Successful);
+	assert_ne!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO);
+}
+
+/// Past the grace period, a vanished offboard tx is reported as lost:
+/// the offboard parks with an error and keeps its vtxos locked — the
+/// server still holds the signed tx and the forfeits become valid the
+/// moment it confirms, so the inputs must not come back as spendable.
+#[tokio::test]
+async fn offboard_reports_lost_tx_after_grace_period() {
+	let ctx = TestContext::new("bark_sdk/offboard_reports_lost_tx_after_grace_period").await;
+	let srv = ctx.captaind("server")
+		.funded(btc(10))
+		// Keep the server from re-broadcasting the evicted tx. The check
+		// interval may not exceed the session timeout, so push that out too.
+		.cfg(|c| {
+			c.offboard_session_timeout = Duration::from_secs(3600);
+			c.offboard_check_interval = Duration::from_secs(3600);
+		})
+		.create().await;
+
+	// Give the wallet its own node, so evicting the tx from its mempool
+	// doesn't touch the server's chain source.
+	let bark_node = ctx.new_bitcoind("bark_bitcoind").await;
+	let node_url = bark_node.rpc_url();
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(move |c| {
+			c.esplora_address = None;
+			c.bitcoind_address = Some(node_url);
+			// Not the cookie file: it changes when the node restarts, the
+			// fixed rpcauth credentials don't.
+			c.bitcoind_cookiefile = None;
+			c.bitcoind_user = Some(constants::bitcoind::BITCOINRPC_TEST_USER.into());
+			c.bitcoind_pass = Some(constants::bitcoind::BITCOINRPC_TEST_PASSWORD.into());
+			c.offboard_required_confirmations = 1;
+			// Any tx missing from chain and mempool is immediately lost.
+			c.offboard_lost_tx_grace_period_secs = 0;
+			c.daemon_manual_sync = true;
+		})
+		.boarded(sat(800_000))
+		.create().await;
+
+	let address = ctx.bitcoind().get_new_address();
+	let txid = wallet.offboard_all(address.clone()).await.expect("offboard");
+
+	// While the tx sits in the mempool, syncs keep waiting patiently,
+	// even with a zero grace period.
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	let pending = wallet.pending_offboards().await.expect("pending offboards");
+	assert_eq!(pending.len(), 1);
+	assert!(matches!(pending[0].progress, Progress::AwaitingConfirmations { .. }));
+
+	// Evict the broadcast tx from the wallet node's mempool. The grace
+	// period has passed, so the next sync reports the offboard as lost:
+	// no re-broadcast, and the checkpoint and its locked vtxos stay
+	// exactly where they are.
+	bark_node.restart_wiping_mempool().await;
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+
+	assert!(!bark_node.sync_client().get_raw_mempool().expect("mempool").contains(&txid),
+		"a lost tx must not be re-broadcast");
+	let pending = wallet.pending_offboards().await.expect("pending offboards");
+	assert_eq!(pending.len(), 1);
+	assert!(matches!(pending[0].progress, Progress::AwaitingConfirmations { .. }));
+	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Pending);
+	assert_eq!(wallet.balance().await.expect("balance").spendable, Amount::ZERO,
+		"forfeited vtxos must never be released");
 }
 
 /// A wallet that loses the finish_offboard response and only comes back
