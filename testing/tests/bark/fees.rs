@@ -9,10 +9,10 @@ use ark::fees::{
 };
 use bark_json::movements::{MovementDestination, PaymentMethod};
 use bitcoin_ext::{FeeRateExt, P2TR_DUST};
-use ark_testing::{TestContext, btc, require_bark_version, sat};
+use ark_testing::{Bark, TestContext, btc, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::exit::complete_exit;
-use ark_testing::util::{FutureExt, ToAltString};
+use ark_testing::util::{BarkVersion, FutureExt, ToAltString};
 
 fn assert_eq_unordered<T: Ord + Clone + std::fmt::Debug>(a: &[T], b: &[T]) {
 	let mut a = a.to_vec();
@@ -422,29 +422,51 @@ async fn refresh_should_refresh_vtxos() {
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let vtxos = bark.vtxos().await;
-	assert_eq!(
-		vtxos.len(), 2, "Should have 2 VTXOs: 1 refresh output, 1 should-refresh consolidation",
-	);
-
-	let expected_fee = sat(6_500);
-	assert_eq!(
-		vtxos.iter().filter(|v| v.amount == sat(296_500)).count(), 1,
-		"One VTXO which was explicitly refreshed, includes base fee",
-	);
-	assert_eq!(
-		vtxos.iter().filter(|v| v.amount == sat(297_000)).count(), 1,
-		"One VTXO which is a consolidation of 100K and 200K VTXOs, excludes base fee",
-	);
-
-	// Balance = 296,500 + 297,000 = 593,500
-	assert_eq!(bark.spendable_balance().await, sat(600_000) - expected_fee);
-
-	// Verify movement
 	let movements = bark.history().await;
 	assert_eq!(movements.len(), 4); // 3 boards + 1 refresh
 	let refresh_mvt = movements.last().unwrap();
-	assert_eq!(refresh_mvt.offchain_fee, expected_fee);
-	assert_eq!(refresh_mvt.effective_balance, -expected_fee.to_signed().unwrap());
+
+	// Up to and including bark 0.3.0, a manual refresh also bundled in VTXOs that merely met
+	// the "should-refresh" criteria (here, VTXO B). Since 0.3.0 this is no longer desired as
+	// it was surprising for callers who hand-picked their inputs: only the explicitly
+	// requested VTXO C is refreshed, and A/B are left untouched.
+	let version = BarkVersion::parse(&Bark::version().await);
+	if version <= BarkVersion::parse("0.3.0") {
+		assert_eq!(
+			vtxos.len(), 2, "Should have 2 VTXOs: 1 refresh output, 1 should-refresh consolidation",
+		);
+
+		let expected_fee = sat(6_500);
+		assert_eq!(
+			vtxos.iter().filter(|v| v.amount == sat(296_500)).count(), 1,
+			"One VTXO which was explicitly refreshed, includes base fee",
+		);
+		assert_eq!(
+			vtxos.iter().filter(|v| v.amount == sat(297_000)).count(), 1,
+			"One VTXO which is a consolidation of 100K and 200K VTXOs, excludes base fee",
+		);
+
+		// Balance = 296,500 + 297,000 = 593,500
+		assert_eq!(bark.spendable_balance().await, sat(600_000) - expected_fee);
+		assert_eq!(refresh_mvt.offchain_fee, expected_fee);
+		assert_eq!(refresh_mvt.effective_balance, -expected_fee.to_signed().unwrap());
+	} else {
+		assert_eq!(vtxos.len(), 3, "A and B must stay untouched, C is replaced by its refresh output");
+		assert_eq!(vtxos.iter().filter(|v| v.amount == sat(100_000)).count(), 1, "VTXO A untouched");
+		assert_eq!(vtxos.iter().filter(|v| v.amount == sat(200_000)).count(), 1, "VTXO B untouched");
+
+		let expected_fee = sat(3_500);
+		assert_eq!(
+			vtxos.iter().filter(|v| v.amount == sat(296_500)).count(), 1,
+			"One VTXO which was explicitly refreshed, includes base fee",
+		);
+
+		// Balance = 100,000 + 200,000 + 296,500 = 596,500
+		assert_eq!(bark.spendable_balance().await, sat(600_000) - expected_fee);
+		assert_eq!(refresh_mvt.offchain_fee, expected_fee);
+		assert_eq!(refresh_mvt.effective_balance, -expected_fee.to_signed().unwrap());
+		assert_eq!(refresh_mvt.input_vtxos, vec![vtxo.id], "only C should be an input to the refresh");
+	}
 }
 
 #[tokio::test]
