@@ -2,8 +2,10 @@
 use std::fmt;
 
 use anyhow::Context;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -192,10 +194,36 @@ impl From<anyhow::Error> for ErrorResponse {
 	}
 }
 
+/// Response extension so [log_errors] can report the message without
+/// having to read the response body.
+#[derive(Clone)]
+struct ErrorMessage(String);
+
 impl IntoResponse for ErrorResponse {
-	fn into_response(self) -> axum::response::Response {
-		(self.status_code(), Json(self)).into_response()
+	fn into_response(self) -> Response {
+		let message = ErrorMessage(self.message().to_owned());
+		let mut response = (self.status_code(), Json(self)).into_response();
+		response.extensions_mut().insert(message);
+		response
 	}
+}
+
+/// Log requests that failed with a server error, as they are otherwise only
+/// visible to the caller.
+pub async fn log_errors(req: Request<Body>, next: Next) -> Response {
+	let method = req.method().clone();
+	let path = req.uri().path().to_owned();
+
+	let response = next.run(req).await;
+
+	if response.status().is_server_error() {
+		let message = response.extensions().get::<ErrorMessage>()
+			.map(|m| m.0.as_str())
+			.unwrap_or("no message");
+		log::warn!("{} {} failed with {}: {}", method, path, response.status(), message);
+	}
+
+	response
 }
 
 /// Extension trait for adding bark-server-specific error info.
