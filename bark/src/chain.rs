@@ -575,7 +575,7 @@ impl ChainSource {
 		match self.inner() {
 			#[cfg(feature = "bitcoind-rpc")]
 			ChainSourceClient::Bitcoind { rpc, .. } => {
-				match rpc.send_raw_transaction(tx).await {
+				match rpc.send_raw_transaction(tx, None).await {
 					Ok(_) => Ok(()),
 					Err(e) if is_in_utxo_set(&e) => Ok(()),
 					Err(e) => Err(e.into()),

@@ -329,7 +329,7 @@ dependencies = [
  "bdk_wallet",
  "bitcoin",
  "getrandom 0.2.17",
- "jsonrpc",
+ "jsonrpc 0.20.1",
  "lazy_static",
  "log",
  "reqwest",
@@ -704,9 +704,9 @@ dependencies = [
 
 [[package]]
 name = "bdk_wallet"
-version = "3.0.0"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67f3c4f9526d22374fca5b7ff1d6bf8d921ab56db2dac8df66a2c5561b31d4ef"
+checksum = "1284fb23acc3e3022673712b55f4d5ce7e38aadc2c49bbef830dc3935f0a3289"
 dependencies = [
  "bdk_chain",
  "bitcoin",
@@ -829,7 +829,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aedd23ae0fd321affb4bbbc36126c6f49a32818dc6b979395d24da8c9d4e80ee"
 dependencies = [
  "bitcoincore-rpc-json",
- "jsonrpc",
+ "jsonrpc 0.18.0",
  "log",
  "serde",
  "serde_json",
@@ -848,9 +848,9 @@ dependencies = [
 
 [[package]]
 name = "bitcoind-async-client"
-version = "0.13.1"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "043db5dcb3e7a9cdd72cbe28381d004e2dc5836eb8e36bf4972e600364450bf2"
+checksum = "42ed1d9a649ba17d17a5bba836ed68208667473ccec8478492cb83f3af28e9dc"
 dependencies = [
  "base64 0.22.1",
  "bitcoin",
@@ -2505,6 +2505,17 @@ checksum = "3662a38d341d77efecb73caf01420cfa5aa63c0253fd7bc05289ef9f6616e1bf"
 dependencies = [
  "base64 0.13.1",
  "minreq",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jsonrpc"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f106cca655869522988b976127096f0aa36e0f1a8ff1f1f425a5c85b61e59391"
+dependencies = [
+ "base64 0.22.1",
  "serde",
  "serde_json",
 ]
