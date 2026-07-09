@@ -31,6 +31,7 @@ use crate::actions::lightning::pay::Progress;
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
+use crate::utils::ReconnectBackoff;
 
 
 /// The maximum number of times we will call the fetch mailbox endpoint in one go
@@ -159,47 +160,59 @@ impl Wallet {
 		since_checkpoint: Option<u64>,
 		shutdown: CancellationToken,
 	) -> anyhow::Result<()> {
+		// Count consecutive reconnects that made no progress. A delivered
+		// message resets it (the connection is healthy); enough failures in a
+		// row means the server is unreachable, so we bail and let the daemon
+		// mark itself disconnected and back off a full sync interval.
 		let mut reconnect_count = 0;
 		const MAX_RECONNECT_ATTEMPTS: usize = 5;
+		let mut backoff = ReconnectBackoff::new();
 
-		'outer: loop {
+		loop {
 			let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
 			trace!("Connected to mailbox stream with server");
 
-			loop {
+			'stream: loop {
 				futures::select! {
 					message = stream.next().fuse() => {
 						match message {
 							Some(Ok(message)) => {
+								// A delivered message proves the connection is
+								// healthy, so stop counting reconnects as failures.
 								reconnect_count = 0;
 								if self.process_mailbox_message(message).await.is_break() {
 									// A message failed without advancing its
 									// checkpoint. Stop consuming this stream and
 									// resubscribe from the unadvanced checkpoint
 									// so it's redelivered before a later message
-									// can bury it.
+									// can bury it. We deliberately do NOT reset
+									// the backoff here: if the same message keeps
+									// failing, the growing delay keeps this from
+									// becoming a tight redeliver loop.
 									trace!("Halting mailbox stream after unadvanced message; resubscribing");
-									continue 'outer;
+									break 'stream;
 								}
+								// Progress made: reconnect promptly next time.
+								backoff.reset();
 							},
 							// A tonic h2 stream reset is almost always a
 							// proxy- or server-side idle timeout rather than
-							// a real failure; resubscribe quietly.
+							// a real failure; resubscribe quietly. Unlike before
+							// we count it toward the reconnect cap, so a server
+							// that keeps resetting us is treated as unreachable
+							// rather than triggering an unbounded resubscribe.
 							Some(Err(e)) if crate::utils::is_h2_stream_error(&e) => {
-								reconnect_count = 0;
+								reconnect_count += 1;
 								trace!("Mailbox stream reset by server, reconnecting: {e:#}");
-								continue 'outer;
+								break 'stream;
 							},
 							Some(Err(e)) => {
 								return Err(e).context("error on mailbox message stream");
 							},
-							None if reconnect_count >= MAX_RECONNECT_ATTEMPTS => {
-								bail!("Mailbox stream dropped by server, giving up to retry later");
-							},
 							None => {
 								reconnect_count += 1;
 								warn!("Mailbox stream dropped by server, reconnecting");
-								continue 'outer;
+								break 'stream;
 							},
 						}
 					},
@@ -208,6 +221,22 @@ impl Wallet {
 						return Ok(());
 					},
 				}
+			}
+
+			// Reached only by breaking out of 'stream to resubscribe.
+			if reconnect_count >= MAX_RECONNECT_ATTEMPTS {
+				bail!("Mailbox stream dropped by server, giving up to retry later");
+			}
+
+			// Back off before resubscribing so a fast-closing or rate-limited
+			// stream can't become a tight reconnect loop that floods the server
+			// with opened-then-reset streams.
+			futures::select! {
+				_ = backoff.wait().fuse() => {},
+				_ = shutdown.cancelled().fuse() => {
+					info!("Shutdown signal received! Shutting mailbox messages process...");
+					return Ok(());
+				},
 			}
 		}
 	}

@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Wallet;
 use crate::onchain::DaemonizableOnchainWallet;
+use crate::utils::ReconnectBackoff;
 use crate::utils::time::sleep;
 
 
@@ -184,7 +185,13 @@ impl DaemonProcess {
 
 	/// Subscribe to the round event stream and process events
 	/// until it closes or the daemon shuts down.
-	async fn process_round_event_stream(&self) -> anyhow::Result<()> {
+	///
+	/// `backoff` is reset whenever an event arrives, so a stream that stays
+	/// healthy for a while reconnects promptly after it eventually drops.
+	async fn process_round_event_stream(
+		&self,
+		backoff: &mut ReconnectBackoff,
+	) -> anyhow::Result<()> {
 		let mut events = self.wallet.subscribe_round_events().await?;
 
 		loop {
@@ -192,6 +199,7 @@ impl DaemonProcess {
 				res = events.next().fuse() => {
 					match res {
 						Some(Ok(event)) => {
+							backoff.reset();
 							if let Err(e) = self.handle_round_event(&event).await {
 								warn!("Error processing round event: {e:#}");
 							}
@@ -215,13 +223,14 @@ impl DaemonProcess {
 	/// Keep the round events subscription alive for the
 	/// lifetime of the daemon, reconnecting as needed.
 	async fn run_round_events_process(&self) {
+		let mut backoff = ReconnectBackoff::new();
 		loop {
 			if self.shutdown.is_cancelled() {
 				info!("Shutdown signal received! Shutting round events process...");
 				break;
 			}
 
-			match self.process_round_event_stream().await {
+			match self.process_round_event_stream(&mut backoff).await {
 				Ok(()) => {},
 				// A tonic h2 stream reset is almost always a
 				// proxy- or server-side idle timeout rather than
@@ -231,13 +240,20 @@ impl DaemonProcess {
 				},
 				Err(e) => {
 					warn!("An error occured while processing pending rounds: {e:#}");
-					futures::select! {
-						_ = sleep(self.sync_interval()).fuse() => {},
-						_ = self.shutdown.cancelled().fuse() => {
-							info!("Shutdown signal received! Shutting round events process...");
-							break;
-						},
-					}
+				},
+			}
+
+			// Always back off before resubscribing. Otherwise a stream the
+			// server keeps closing quickly — including when it is rate-limiting
+			// us by resetting our streams — becomes a tight reconnect loop that
+			// floods the server with opened-then-reset streams. The backoff
+			// resets itself once a stream delivers an event, so healthy
+			// reconnects stay prompt.
+			futures::select! {
+				_ = backoff.wait().fuse() => {},
+				_ = self.shutdown.cancelled().fuse() => {
+					info!("Shutdown signal received! Shutting round events process...");
+					break;
 				},
 			}
 		}
