@@ -332,7 +332,7 @@ impl VtxoTreeSpec {
 		for node in tree.iter().rev() {
 			let txid = txs[node.idx()].compute_txid();
 			for (i, child) in node.children().enumerate() {
-				let point = OutPoint::new(txid, i as u32);
+				let point = OutPoint::new(txid, u32::try_from(i).expect("tree child index fits in u32"));
 				txs[child].input[0].previous_output = point;
 			}
 		}
@@ -953,7 +953,7 @@ impl CachedSignedVtxoTree {
 		assert!(node_idx < tree.nb_nodes(), "node_idx out of range");
 
 		let mut genesis = tree.iter_branch_with_output(node_idx)
-			.map(|(idx, child_idx)| self.build_genesis_item_at(&tree, idx, child_idx as u8))
+			.map(|(idx, child_idx)| self.build_genesis_item_at(&tree, idx, u8::try_from(child_idx).expect("tree child index fits in u8")))
 			.collect::<Vec<_>>();
 		genesis.reverse();
 
@@ -963,7 +963,7 @@ impl CachedSignedVtxoTree {
 			None => (self.spec.utxo, spec.total_required_value()),
 			Some((parent_idx, child_idx)) => {
 				let parent_tx = self.txs.get(parent_idx).expect("parent tx exists");
-				let point = OutPoint::new(parent_tx.compute_txid(), child_idx as u32);
+				let point = OutPoint::new(parent_tx.compute_txid(), u32::try_from(child_idx).expect("tree child index fits in u32"));
 				(point, parent_tx.output[child_idx].value)
 			}
 		};
@@ -1002,7 +1002,7 @@ impl CachedSignedVtxoTree {
 			let leaf = self.build_genesis_item_at(&tree, leaf_idx, 0);
 			let internal = tree.iter_branch_with_output(leaf_idx)
 				.map(|(node_idx, child_idx)| {
-					self.build_genesis_item_at(&tree, node_idx, child_idx as u8)
+					self.build_genesis_item_at(&tree, node_idx, u8::try_from(child_idx).expect("tree child index fits in u8"))
 				});
 
 			let mut genesis = [leaf].into_iter().chain(internal).collect::<Vec<_>>();

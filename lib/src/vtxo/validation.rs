@@ -74,7 +74,7 @@ fn verify_transition<P: Policy>(
 		vtxo.policy.txout(vtxo.amount, vtxo.server_pubkey, vtxo.exit_delta, vtxo.expiry_height)
 	});
 
-	let prevout = OutPoint::new(prev_tx.compute_txid(), prev_vout as u32);
+	let prevout = OutPoint::new(prev_tx.compute_txid(), u32::try_from(prev_vout).expect("vout fits in u32"));
 	let tx = item.tx(prevout, next_output, vtxo.server_pubkey, vtxo.expiry_height);
 
 	if check_signatures {
@@ -165,7 +165,7 @@ fn validate_inner<P: Policy>(
 	}
 
 	// Verify the point field matches the computed exit outpoint
-	let expected_point = OutPoint::new(prev.0.compute_txid(), prev.1 as u32);
+	let expected_point = OutPoint::new(prev.0.compute_txid(), u32::try_from(prev.1).expect("vout fits in u32"));
 	if vtxo.point != expected_point {
 		return Err(VtxoValidationError::Invalid("point doesn't match computed exit outpoint"));
 	}

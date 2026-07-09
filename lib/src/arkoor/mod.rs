@@ -97,6 +97,8 @@ pub enum ArkoorConstructionError {
 	Dust,
 	#[error("At least one output is required")]
 	NoOutputs,
+	#[error("Too many outputs provided")]
+	TooManyOutputs,
 	#[error("Too many inputs provided")]
 	TooManyInputs,
 }
@@ -375,7 +377,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			expiry_height: self.input.expiry_height,
 			server_pubkey: self.input.server_pubkey,
 			exit_delta: self.input.exit_delta,
-			point: OutPoint::new(*checkpoint_txid, output_idx as u32),
+			point: OutPoint::new(*checkpoint_txid, u32::try_from(output_idx).expect("output index fits in u32")),
 			anchor_point: self.input.anchor_point,
 			genesis: Full {
 				items: self.input.genesis.items.clone().into_iter().chain([
@@ -389,11 +391,11 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 							).tap_tweak(),
 							checkpoint_sig,
 						),
-						output_idx: output_idx as u8,
+						output_idx: u8::try_from(output_idx).expect("arkoor output index fits in u8"),
 						other_outputs: checkpoint_tx.output
 							.iter().enumerate()
 							.filter_map(|(i, txout)| {
-								if i == (output_idx as usize) || txout.is_p2a_fee_anchor() {
+								if i == output_idx || txout.is_p2a_fee_anchor() {
 									None
 								} else {
 									Some(txout.clone())
@@ -439,11 +441,11 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								).tap_tweak(),
 								checkpoint_sig,
 							),
-							output_idx: output_idx as u8,
+							output_idx: u8::try_from(output_idx).expect("arkoor output index fits in u8"),
 							other_outputs: checkpoint_tx.output
 								.iter().enumerate()
 								.filter_map(|(i, txout)| {
-									if i == (output_idx as usize) || txout.is_p2a_fee_anchor() {
+									if i == output_idx || txout.is_p2a_fee_anchor() {
 										None
 									} else {
 										Some(txout.clone())
@@ -479,7 +481,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
 				exit_delta: self.input.exit_delta,
-				point: OutPoint::new(arkoor_tx.compute_txid(), output_idx as u32),
+				point: OutPoint::new(arkoor_tx.compute_txid(), u32::try_from(output_idx).expect("output index fits in u32")),
 				anchor_point: self.input.anchor_point,
 				genesis: Full {
 					items: self.input.genesis.items.iter().cloned().chain([
@@ -493,7 +495,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								).tap_tweak(),
 								arkoor_sig,
 							),
-							output_idx: output_idx as u8,
+							output_idx: u8::try_from(output_idx).expect("arkoor output index fits in u8"),
 							other_outputs: arkoor_tx.output
 								.iter().enumerate()
 								.filter_map(|(idx, txout)| {
@@ -542,7 +544,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
 				exit_delta: self.input.exit_delta,
-				point: OutPoint::new(fanout_tx.compute_txid(), isolated_idx as u32),
+				point: OutPoint::new(fanout_tx.compute_txid(), u32::try_from(isolated_idx).expect("output index fits in u32")),
 				anchor_point: self.input.anchor_point,
 				genesis: Full {
 					items: self.input.genesis.items.iter().cloned().chain([
@@ -557,7 +559,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								).tap_tweak(),
 								pre_fanout_tx_sig,
 							),
-							output_idx: dust_isolation_output_idx as u8,
+							output_idx: u8::try_from(dust_isolation_output_idx).expect("arkoor output index fits in u8"),
 							// other outputs are the normal outputs
 							// (we skip our combined dust output and fee anchor)
 							other_outputs: checkpoint_tx.output
@@ -584,7 +586,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								).tap_tweak(),
 								isolation_fanout_tx_sig,
 							),
-							output_idx: isolated_idx as u8,
+							output_idx: u8::try_from(isolated_idx).expect("arkoor output index fits in u8"),
 							// other outputs are the other isolated outputs
 							// (we skip our output and fee anchor)
 							other_outputs: fanout_tx.output
@@ -612,7 +614,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
 				exit_delta: self.input.exit_delta,
-				point: OutPoint::new(fanout_tx.compute_txid(), isolated_idx as u32),
+				point: OutPoint::new(fanout_tx.compute_txid(), u32::try_from(isolated_idx).expect("output index fits in u32")),
 				anchor_point: self.input.anchor_point,
 				genesis: Full {
 					items: self.input.genesis.items.iter().cloned().chain([
@@ -627,7 +629,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								).tap_tweak(),
 								pre_fanout_tx_sig,
 							),
-							output_idx: dust_isolation_output_idx as u8,
+							output_idx: u8::try_from(dust_isolation_output_idx).expect("arkoor output index fits in u8"),
 							other_outputs: arkoor_tx.output
 								.iter().enumerate()
 								.filter_map(|(idx, txout)| {
@@ -651,7 +653,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								).tap_tweak(),
 								isolation_fanout_tx_sig,
 							),
-							output_idx: isolated_idx as u8,
+							output_idx: u8::try_from(isolated_idx).expect("arkoor output index fits in u8"),
 							other_outputs: fanout_tx.output
 								.iter().enumerate()
 								.filter_map(|(idx, txout)| {
@@ -726,7 +728,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
 				exit_delta: self.input.exit_delta,
-				point: OutPoint::new(int_txid, output_idx as u32),
+				point: OutPoint::new(int_txid, u32::try_from(output_idx).expect("output index fits in u32")),
 				anchor_point: self.input.anchor_point,
 				genesis: Full {
 					items: self.input.genesis.items.clone().into_iter().chain([
@@ -736,7 +738,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								self.input_tweak,
 								intermediate_sig,
 							),
-							output_idx: output_idx as u8,
+							output_idx: u8::try_from(output_idx).expect("arkoor output index fits in u8"),
 							other_outputs: int_tx.output.iter().enumerate()
 								.filter_map(|(i, txout)| {
 									if i == output_idx || txout.is_p2a_fee_anchor() {
@@ -873,7 +875,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					version: bitcoin::transaction::Version(3),
 					lock_time: bitcoin::absolute::LockTime::ZERO,
 					input: vec![TxIn {
-						previous_output: OutPoint::new(checkpoint_txid, vout as u32),
+						previous_output: OutPoint::new(checkpoint_txid, u32::try_from(vout).expect("output index fits in u32")),
 						script_sig: ScriptBuf::new(),
 						sequence: Sequence::ZERO,
 						witness: Witness::new(),
@@ -989,6 +991,11 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		// We need at least one output in the outputs vec
 		if outputs.is_empty() {
 			return Err(ArkoorConstructionError::NoOutputs)
+		}
+
+		// Output vouts are encoded as u8 in the genesis chain, so the counts must fit u8.
+		if outputs.len() > u8::MAX as usize || isolation_outputs.len() > u8::MAX as usize {
+			return Err(ArkoorConstructionError::TooManyOutputs)
 		}
 
 		// If isolation is provided, the sum must be over dust threshold
@@ -1156,7 +1163,8 @@ impl ArkoorBuilder<state::Initial> {
 		let unsigned_isolation_fanout_tx = if !isolated_outputs.is_empty() {
 			// Combined dust isolation output is at index outputs.len()
 			// (after all normal outputs)
-			let dust_isolation_output_vout = outputs.len() as u32;
+			let dust_isolation_output_vout = u32::try_from(outputs.len())
+				.expect("output count fits in u32");
 
 			let parent_txid = if let Some((_tx, txid)) = &unsigned_checkpoint_tx {
 				*txid

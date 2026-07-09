@@ -238,7 +238,7 @@ where
 			};
 			let iter = self.input_vtxos.iter().zip(keys).zip(server_nonces);
 			for (i, ((vtxo, key), server_nonce)) in iter.enumerate() {
-				let connector = OutPoint::new(connector_txid, i as u32);
+				let connector = OutPoint::new(connector_txid, u32::try_from(i).expect("connector index fits in u32"));
 				let (nonce, sig) = user_sign_vtxo_forfeit_input(
 					vtxo.as_ref(), key.borrow(), connector, &connector_txout, server_nonce,
 				);
@@ -350,7 +350,7 @@ where
 				.zip(user_partial_sigs);
 			for (i, ((((vtxo, server_pub), server_sec), user_pub), user_part)) in iter.enumerate() {
 				let vtxo = vtxo.as_ref();
-				let connector = OutPoint::new(connector_txid, i as u32);
+				let connector = OutPoint::new(connector_txid, u32::try_from(i).expect("connector index fits in u32"));
 				let tx = server_check_finalize_forfeit_tx(
 					vtxo,
 					server_key,
@@ -448,7 +448,7 @@ fn construct_connector_vtxo_fanout_leaf<G>(
 	connector_txid: Txid,
 ) -> ServerVtxo<Bare> {
 	ServerVtxo {
-		point: OutPoint::new(connector_txid, input_idx as u32),
+		point: OutPoint::new(connector_txid, u32::try_from(input_idx).expect("input index fits in u32")),
 		anchor_point: OutPoint::new(offboard_txid, 1),
 		policy: ServerVtxoPolicy::ServerOwned,
 		amount: P2TR_DUST,
