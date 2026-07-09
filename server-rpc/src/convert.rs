@@ -185,7 +185,8 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 			htlc_expiry_delta: check_block_delta(v.htlc_expiry_delta)
 				.map_err(|_| "invalid htlc_expiry_delta")?,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| Amount::from_sat(v)),
-			required_board_confirmations: v.required_board_confirmations as usize,
+			required_board_confirmations: check_block_delta(v.required_board_confirmations)
+				.map_err(|_| "invalid required_board_confirmations")? as usize,
 			max_user_invoice_cltv_delta: check_block_delta(v.max_user_invoice_cltv_delta)
 				.map_err(|_| "invalid max_user_invoice_cltv_delta")?,
 			min_board_amount: Amount::from_sat(v.min_board_amount),
@@ -819,6 +820,15 @@ mod test {
 	fn ark_info_rejects_oversized_max_user_invoice_cltv_delta() {
 		let mut proto = baseline_ark_info_proto();
 		proto.max_user_invoice_cltv_delta = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
+		assert!(ark::ArkInfo::try_from(proto).is_err());
+	}
+
+	#[test]
+	fn ark_info_rejects_oversized_required_board_confirmations() {
+		// A malicious server could otherwise push this near u32::MAX and overflow
+		// the client's `current_height + required` board arithmetic.
+		let mut proto = baseline_ark_info_proto();
+		proto.required_board_confirmations = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
 		assert!(ark::ArkInfo::try_from(proto).is_err());
 	}
 
