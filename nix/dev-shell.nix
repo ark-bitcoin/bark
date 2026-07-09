@@ -4,7 +4,7 @@ let
 	bitcoinVersion = "31.0";
 	lightningVersion = "26.06.6";
 	holdPluginVersion = "0.3.3";
-	esploraElectrsRevision = "5852c0cf49380bed575d69d364d3cc0a47f00375";
+	esploraElectrsRevision = "ef4417921511610fe8c9663020ce7b835cb1f14a";
 	mempoolElectrsRevision = "v3.3.0";
 
 	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
@@ -54,7 +54,7 @@ let
 			owner = "Blockstream";
 			repo = "electrs";
 			rev = esploraElectrsRevision;
-			hash = "sha256-SW8+qK6fGwUkaZFaxktdnTIlQXqB+AOA9Ww5Z3nUjgY=";
+			hash = "sha256-EO5LXZANwIME0Y4XknQSSmx3X7dQ/ny9fp1ldkloPvk=";
 		};
 
 		nativeBuildInputs = [ rustPlatform.bindgenHook ];
