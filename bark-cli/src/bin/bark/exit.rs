@@ -181,18 +181,8 @@ pub async fn list_exits(
 		wallet.sync_exits().await?;
 	}
 
-	let exit_vtxos = wallet.exit_mgr().get_exit_vtxos().await;
-	let mut statuses = Vec::with_capacity(exit_vtxos.len());
-	for e in &exit_vtxos {
-		statuses.push(wallet.exit_mgr().get_exit_status(
-			e.id(),
-			args.history,
-			args.transactions,
-		).await?.unwrap());
-	}
-
-	let mut statuses = statuses.into_iter()
-		.map(ExitTransactionStatus::from).collect::<Vec<_>>();
+	let mut statuses = wallet.exit_mgr().list_live(args.history, args.transactions).await?
+		.into_iter().map(ExitTransactionStatus::from).collect::<Vec<_>>();
 
 	if args.include_finished {
 		statuses.extend(
