@@ -47,7 +47,7 @@ impl Wallet {
 
 			match status {
 				Ok(TxStatus::Confirmed(block_ref)) => {
-					let confs = current_height - (block_ref.height - 1);
+					let confs = current_height.saturating_sub(block_ref.height).saturating_add(1);
 					if confs < required_confs as BlockHeight {
 						trace!(
 							"Offboard tx {} has {}/{} confirmations, waiting...",
