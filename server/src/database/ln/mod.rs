@@ -867,6 +867,31 @@ impl<'t> Tx<'t> {
 		}
 	}
 
+	/// The sole sanctioned settlement gate for any fund-releasing path
+	/// (revocation, refund, re-issuing sender vtxos): errors with a
+	/// [`BadArgument`](crate::error::BadArgument) if the invoice was already paid.
+	///
+	/// The `htlc_settlement` table is the single source of truth for
+	/// settlement. A preimage here means the payment completed, regardless of
+	/// [`LightningPaymentStatus`]: the node can settle without the status write
+	/// committing (a lost optimistic-lock race, or a crash between recording the
+	/// preimage and updating the status), so the status may still read
+	/// `Submitted`/`Failed` for a payment that actually went through. Never gate
+	/// a fund-releasing decision on the status; call this instead.
+	///
+	/// Call this INSIDE the write transaction that releases the funds so a
+	/// settlement racing between an earlier read-check and the write cannot
+	/// slip through.
+	pub async fn ensure_not_settled(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<()> {
+		if let Some(preimage) = self.get_htlc_settlement_by_payment_hash(payment_hash).await? {
+			return badarg!("invoice has already been paid, preimage: {}", preimage);
+		}
+		Ok(())
+	}
+
 	/// Return a safe cursor to resume hold invoice settlement from.
 	///
 	/// Finds the checkpoint just before the earliest WAL entry whose

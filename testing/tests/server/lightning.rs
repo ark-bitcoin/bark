@@ -52,6 +52,51 @@ async fn assert_vtxopool_consistency(srv: &Captaind) {
 	assert_vtxopool_consistency_db(&db).await;
 }
 
+/// Build a "claim all" revocation request from the HTLC-send vtxos `client`
+/// still holds for `payment_hash`, send it straight to the server, and return
+/// the error the server responds with (the caller asserts on it).
+async fn request_htlc_revocation(
+	srv: &Captaind,
+	client: &Wallet,
+	payment_hash: ark::lightning::PaymentHash,
+) -> tonic::Status {
+	let htlc_vtxo_ids = client.all_vtxos().await.unwrap()
+		.into_iter()
+		.filter_map(|wv| {
+			let pol = wv.vtxo.policy().as_server_htlc_send()?;
+			(pol.payment_hash == payment_hash).then(|| wv.vtxo.id())
+		})
+		.collect::<Vec<ark::VtxoId>>();
+	assert!(
+		!htlc_vtxo_ids.is_empty(),
+		"expected HTLC vtxos to remain in DB after settlement",
+	);
+
+	let mut htlc_vtxos = Vec::with_capacity(htlc_vtxo_ids.len());
+	let mut keypairs = Vec::with_capacity(htlc_vtxo_ids.len());
+	for id in &htlc_vtxo_ids {
+		let vtxo = client.get_full_vtxo(*id).await.unwrap();
+		keypairs.push(client.get_vtxo_key(&vtxo).await.unwrap());
+		htlc_vtxos.push(vtxo);
+	}
+
+	// Any pubkey works for the revocation output; the tests never claim it.
+	let revocation_pubkey =
+		Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key();
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		htlc_vtxos.iter().cloned(),
+		ark::VtxoPolicy::new_pubkey(revocation_pubkey),
+	).unwrap().generate_user_nonces(&keypairs).unwrap();
+
+	let cosign_request =
+		protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
+
+	let mut srv_rpc = srv.get_public_rpc().await;
+	srv_rpc
+		.request_lightning_pay_htlc_revocation(cosign_request).await
+		.expect_err("server should refuse revocation for a settled payment")
+}
+
 
 /// Verify that the server extracts preimages from on-chain HTLC spends
 /// and uses them to settle invoices.
@@ -169,44 +214,71 @@ async fn reject_revocation_on_successful_lightning_payment() {
 		"payment should have settled",
 	);
 
-	// 3. Build a fresh revocation request from the (now-spent) HTLC
-	// vtxos still in bark's DB and send it directly to the server.
-	let htlc_vtxo_ids = client.all_vtxos().await.unwrap()
-		.into_iter()
-		.filter_map(|wv| {
-			let pol = wv.vtxo.policy().as_server_htlc_send()?;
-			(pol.payment_hash == payment_hash).then(|| wv.vtxo.id())
-		})
-		.collect::<Vec<ark::VtxoId>>();
+	// 3. Build a fresh revocation request from the (now-spent) HTLC vtxos
+	// still in bark's DB and send it directly to the server.
+	let status = request_htlc_revocation(&srv, &client, payment_hash).await;
+
+	assert_eq!(status.code(), tonic::Code::InvalidArgument);
 	assert!(
-		!htlc_vtxo_ids.is_empty(),
-		"expected HTLC vtxos to remain in DB after settlement",
+		status.message().contains("invoice has already been paid, preimage"),
+		"unexpected server response: {status:?}",
+	);
+}
+
+/// Revocation must be refused whenever the invoice is settled, even if the
+/// recorded payment-attempt status has diverged from the settlement. The
+/// settler (the `htlc_settlement` table) is the source of truth, not the
+/// status: the node can settle without the status write committing.
+///
+/// This locks the fix from commit 1c1613335. With the old code, a status that
+/// on its own permits revocation (here, `failed`) would let the server sign the
+/// revocation and refund a payment that actually went through: a double-pay.
+///
+/// Note this exercises the settler gate as a whole (the early `is_settled`
+/// bail fires first, since the settlement row is left intact): it pins that the
+/// settler, not the attempt status, decides. Isolating the in-write-tx recheck
+/// specifically would need a settlement committed between the two checks within
+/// a single request, which isn't reproducible without fault injection.
+#[tokio::test]
+async fn reject_revocation_when_settled_but_status_regressed() {
+	let ctx = TestContext::new("server/reject_revocation_when_settled_but_status_regressed").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
+
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(7)).create().await;
+	bark_1.board(btc(5)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let invoice = lightning.external.invoice(
+		Some(btc(2)), "test_payment", "A test payment",
+	).await;
+	lightning.sync().await;
+
+	bark_1.try_pay_lightning(&invoice, None, true).await.unwrap();
+	let payment_hash: ark::lightning::PaymentHash =
+		Bolt11Invoice::from_str(&invoice).unwrap().into();
+	let client = bark_1.client().await;
+	assert!(
+		client.is_invoice_paid(payment_hash).await.unwrap(),
+		"payment should have settled",
 	);
 
-	let mut htlc_vtxos = Vec::with_capacity(htlc_vtxo_ids.len());
-	let mut keypairs = Vec::with_capacity(htlc_vtxo_ids.len());
-	for id in &htlc_vtxo_ids {
-		let vtxo = client.get_full_vtxo(*id).await.unwrap();
-		keypairs.push(client.get_vtxo_key(&vtxo).await.unwrap());
-		htlc_vtxos.push(vtxo);
-	}
+	// Force the attempt status to diverge from the settlement: the preimage
+	// stays in htlc_settlement, but the status regresses to `failed`, which on
+	// its own would make the attempt eligible for revocation.
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	db.write(async |t| {
+		t.query(
+			"UPDATE lightning_payment_attempt SET status = 'failed', updated_at = NOW() WHERE payment_hash = $1",
+			&[&payment_hash.to_string()],
+		).await?;
+		Ok(())
+	}).await.unwrap();
 
-	// Any pubkey works for the revocation output; the test never
-	// claims it.
-	let revocation_pubkey =
-		Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key();
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
-		htlc_vtxos.iter().cloned(),
-		ark::VtxoPolicy::new_pubkey(revocation_pubkey),
-	).unwrap().generate_user_nonces(&keypairs).unwrap();
-
-	let cosign_request =
-		protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
-
-	let mut srv_rpc = srv.get_public_rpc().await;
-	let status = srv_rpc
-		.request_lightning_pay_htlc_revocation(cosign_request).await
-		.expect_err("server should refuse revocation for a completed payment");
+	// Build a fresh revocation request from the (now-spent) HTLC vtxos still in
+	// bark's DB and send it directly to the server.
+	let status = request_htlc_revocation(&srv, &client, payment_hash).await;
 
 	assert_eq!(status.code(), tonic::Code::InvalidArgument);
 	assert!(
