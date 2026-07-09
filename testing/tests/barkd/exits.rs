@@ -8,6 +8,7 @@ use bark_json::movements::MovementStatus;
 use bark_json::primitives::VtxoStateInfo;
 
 use ark_testing::{btc, require_bark_version, sat, TestContext};
+use bark_rest_client::apis::exits_api;
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 
 use super::helpers::{
@@ -375,10 +376,12 @@ async fn restart_exit_after_cancel_barkd() {
 	ctx.generate_blocks(1).await;
 	bark.exit_progress().await;
 
-	let statuses = bark.get_live_exit_status(None, None).await;
-	assert_eq!(statuses.len(), 1);
-	assert!(matches!(statuses[0].state, ExitState::Claimed(_)),
-		"restarted exit should reach Claimed, got {:?}", statuses[0].state);
+	// Claimed exits are finished, so they leave the live list.
+	assert!(bark.get_live_exit_status(None, None).await.is_empty());
+	let finished = bark.get_finished_exits(None, None).await;
+	assert_eq!(finished.len(), 1);
+	assert!(matches!(finished[0].state, ExitState::Claimed(_)),
+		"restarted exit should reach Claimed, got {:?}", finished[0].state);
 
 	// Two exit movements exist now (the canceled one and the restarted one); the restarted exit
 	// must have completed successfully. Don't rely on history ordering.
@@ -388,4 +391,65 @@ async fn restart_exit_after_cancel_barkd() {
 		.collect::<Vec<_>>();
 	assert!(exit_statuses.contains(&MovementStatus::Successful),
 		"a restarted exit movement should be Successful, got {:?}", exit_statuses);
+}
+
+/// The status endpoints split exits by liveness and the deprecated routes remain served.
+#[tokio::test]
+async fn exit_status_endpoints_barkd() {
+	require_bark_version!(> "0.3.0");
+
+	let ctx = TestContext::new("barkd/exit_status_endpoints_barkd").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let sender = ctx.barkd("sender", &srv).boarded(sat(500_000)).create().await;
+	// Manual sync so no exit transaction is broadcast, keeping cancellation available.
+	let bark = ctx.barkd("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(1_000_000))
+		.create().await;
+
+	sender.send(bark.ark_address().await, sat(200_000)).await;
+	sender.send(bark.ark_address().await, sat(100_000)).await;
+	bark.sync().await;
+	let vtxos = bark.vtxos(None).await;
+	assert_eq!(vtxos.len(), 2);
+	let live_id = vtxos[0].id.to_string();
+	let canceled_id = vtxos[1].id.to_string();
+
+	bark.exit_start_all().await;
+	bark.cancel_exit(&canceled_id).await;
+
+	// /status/live and /status/finished split the two exits.
+	let live = bark.get_live_exit_status(None, None).await;
+	assert_eq!(live.len(), 1);
+	assert_eq!(live[0].vtxo_id.to_string(), live_id);
+	let finished = bark.get_finished_exits(None, None).await;
+	assert_eq!(finished.len(), 1);
+	assert_eq!(finished[0].vtxo_id.to_string(), canceled_id);
+
+	// /status/all returns both.
+	let all = bark.get_all_exit_status(None, None).await;
+	let mut ids = all.iter().map(|s| s.vtxo_id.to_string()).collect::<Vec<_>>();
+	ids.sort();
+	let mut expected = vec![live_id.clone(), canceled_id.clone()];
+	expected.sort();
+	assert_eq!(ids, expected);
+
+	// /status/vtxo serves live and finished exits alike.
+	let status = bark.get_vtxo_exit_status(&live_id, None, None).await;
+	assert!(matches!(status.state, ExitState::Start(_)), "got {:?}", status.state);
+	let status = bark.get_vtxo_exit_status(&canceled_id, None, None).await;
+	assert!(matches!(status.state, ExitState::Canceled(_)), "got {:?}", status.state);
+
+	// Deprecated /status permanently redirects to /status/all.
+	let resp = bark.get_no_redirect("/api/v1/exits/status").await;
+	assert_eq!(resp.status(), 308);
+	assert_eq!(resp.headers()["location"], "/api/v1/exits/status/all");
+
+	// Deprecated /status/{vtxo_id} serves the same data as /status/vtxo/{vtxo_id}.
+	#[allow(deprecated)]
+	let deprecated = exits_api::get_exit_status_by_vtxo_id_deprecated(
+		&bark.client_config(), &canceled_id, None, None,
+	).await.expect("deprecated exit status endpoint failed");
+	assert_eq!(deprecated, status);
 }

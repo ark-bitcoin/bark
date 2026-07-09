@@ -432,11 +432,43 @@ impl Barkd {
 		}).await.expect("barkd exit_progress failed")
 	}
 
+	/// Return the status of every exit, live and finished.
+	pub async fn get_all_exit_status(&self, history: Option<bool>, transactions: Option<bool>) -> Vec<ExitTransactionStatus> {
+		let config = self.client_config();
+		exits_api::get_all_exit_status(&config, history, transactions).await
+			.expect("barkd get_all_exit_status failed")
+	}
+
 	/// Return the status of all live emergency exits.
 	pub async fn get_live_exit_status(&self, history: Option<bool>, transactions: Option<bool>) -> Vec<ExitTransactionStatus> {
 		let config = self.client_config();
 		exits_api::get_live_exit_status(&config, history, transactions).await
 			.expect("failed to get barkd exit status")
+	}
+
+	/// List exits that reached a terminal state (claimed, vtxo-already-spent, or canceled).
+	pub async fn get_finished_exits(&self, history: Option<bool>, transactions: Option<bool>) -> Vec<ExitTransactionStatus> {
+		let config = self.client_config();
+		exits_api::get_finished_exits(&config, history, transactions).await
+			.expect("barkd get_finished_exits failed")
+	}
+
+	/// Return the exit status of a single VTXO, live or finished.
+	pub async fn get_vtxo_exit_status(&self, vtxo: &str, history: Option<bool>, transactions: Option<bool>) -> ExitTransactionStatus {
+		let config = self.client_config();
+		exits_api::get_exit_status_by_vtxo_id(&config, vtxo, history, transactions).await
+			.expect("barkd get_vtxo_exit_status failed")
+	}
+
+	/// Perform an authenticated GET without following redirects.
+	pub async fn get_no_redirect(&self, path: &str) -> reqwest::Response {
+		reqwest::Client::builder()
+			.redirect(reqwest::redirect::Policy::none())
+			.build().unwrap()
+			.get(format!("{}{}", self.base_url(), path))
+			.bearer_auth(self.inner.auth_token.encode())
+			.send().await
+			.expect("barkd request failed")
 	}
 
 	/// Claim all claimable exit outputs to an on-chain address.
@@ -522,13 +554,6 @@ impl Barkd {
 		let config = self.client_config();
 		exits_api::exit_cancel(&config, vtxo_id).await
 			.map_err(|e| anyhow::anyhow!("barkd exit_cancel failed: {}", e))
-	}
-
-	/// List exits that reached a terminal state (claimed, vtxo-already-spent, or canceled).
-	pub async fn get_finished_exits(&self, history: Option<bool>, transactions: Option<bool>) -> Vec<ExitTransactionStatus> {
-		let config = self.client_config();
-		exits_api::get_finished_exits(&config, history, transactions).await
-			.expect("barkd get_finished_exits failed")
 	}
 }
 
