@@ -69,6 +69,10 @@ pub trait DaemonHelper {
 	}
 
 	async fn wait_for_init(&self) -> anyhow::Result<()>;
+
+	/// Clean up external resources that killing the child process doesn't
+	/// tear down (e.g. docker containers). Sync so it can run from [Drop].
+	fn cleanup_external(&self) {}
 }
 
 pub struct Daemon<T>
@@ -230,6 +234,7 @@ impl<T> Daemon<T>
 			let pid = nix::unistd::Pid::from_raw(pid as i32);
 			signal::kill(pid, signal::Signal::SIGKILL).expect("sending SIGKILL failed");
 		}
+		self.inner.cleanup_external();
 
 		info!("Stopped {}", self.name);
 		*state_lock = DaemonState::Stopped;
@@ -254,6 +259,9 @@ impl<T> Drop for Daemon<T>
 					.expect("error sending SIGKILL");
 			}
 		}
+		// Also covers the case where start failed and no child was stored,
+		// but a killed docker client left its container running.
+		self.inner.cleanup_external();
 	}
 }
 
