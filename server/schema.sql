@@ -398,6 +398,21 @@ $$;
 
 
 --
+-- Name: vtxo_late_sweeps(integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.vtxo_late_sweeps(chain_tip integer, margin integer DEFAULT 24) RETURNS TABLE(n bigint, volume bigint)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT COUNT(*)::bigint,
+           COALESCE(SUM(amount), 0)::bigint
+    FROM v_frontier_vtxos
+    WHERE NOT conflicted
+      AND expiry + margin <= chain_tip;
+$$;
+
+
+--
 -- Name: vtxo_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1189,32 +1204,6 @@ ALTER SEQUENCE public.sweep_id_seq OWNED BY public.sweep.id;
 
 
 --
--- Name: virtual_transaction; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.virtual_transaction (
-    txid text NOT NULL,
-    signed_tx bytea,
-    is_funding boolean NOT NULL,
-    created_at timestamp without time zone NOT NULL,
-    updated_at timestamp without time zone NOT NULL
-);
-
-
---
--- Name: virtual_transaction_history; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.virtual_transaction_history (
-    txid text,
-    signed_tx bytea,
-    is_funding boolean,
-    created_at timestamp without time zone,
-    updated_at timestamp without time zone
-);
-
-
---
 -- Name: vtxo; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1242,6 +1231,492 @@ CREATE TABLE public.vtxo (
     confirmed_height integer,
     onchain_spent_height integer,
     onchain_spent_txid text
+);
+
+
+--
+-- Name: v_cascade_roots; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_cascade_roots AS
+ WITH RECURSIVE conflicted_chain(txid, root_txid, depth) AS (
+         SELECT DISTINCT root.oor_spent_txid,
+            root.onchain_spent_txid,
+            1 AS "?column?"
+           FROM public.vtxo root
+          WHERE ((root.onchain_spent_txid IS NOT NULL) AND (root.oor_spent_txid IS NOT NULL) AND (root.oor_spent_txid <> root.onchain_spent_txid) AND (root.spend_state <> 'offboard-connector'::public.spend_state))
+        UNION ALL
+         SELECT child.oor_spent_txid,
+            cc.root_txid,
+            (cc.depth + 1)
+           FROM (conflicted_chain cc
+             CROSS JOIN LATERAL ( SELECT vtxo.oor_spent_txid,
+                    vtxo.spend_state
+                   FROM public.vtxo
+                  WHERE ((vtxo.vtxo_txid = cc.txid) AND (vtxo.oor_spent_txid IS NOT NULL))
+                 OFFSET 0) child)
+          WHERE ((child.spend_state <> 'offboard-connector'::public.spend_state) AND (cc.depth < 1000))
+        ), unique_conflicted_chain AS (
+         SELECT conflicted_chain.root_txid,
+            conflicted_chain.txid,
+            min(conflicted_chain.depth) AS depth
+           FROM conflicted_chain
+          GROUP BY conflicted_chain.root_txid, conflicted_chain.txid
+        ), descendants AS (
+         SELECT uc.root_txid,
+            count(*) AS conflicted_count,
+            (COALESCE(sum(v.amount), (0)::numeric))::bigint AS conflicted_volume,
+            max(uc.depth) AS max_depth
+           FROM (unique_conflicted_chain uc
+             JOIN public.vtxo v ON (((v.vtxo_txid = uc.txid) AND (v.onchain_spent_txid IS NULL) AND (v.spend_state <> 'offboard-connector'::public.spend_state))))
+          GROUP BY uc.root_txid
+        ), roots AS (
+         SELECT root.onchain_spent_txid AS txid,
+            min(root.onchain_spent_height) AS onchain_spent_height,
+            count(*) AS root_input_count,
+            (COALESCE(sum(root.amount), (0)::numeric))::bigint AS root_amount
+           FROM public.vtxo root
+          WHERE ((root.onchain_spent_txid IS NOT NULL) AND (root.oor_spent_txid IS NOT NULL) AND (root.oor_spent_txid <> root.onchain_spent_txid) AND (root.spend_state <> 'offboard-connector'::public.spend_state))
+          GROUP BY root.onchain_spent_txid
+        )
+ SELECT r.txid AS onchain_spent_txid,
+    r.onchain_spent_height,
+    r.root_input_count,
+    r.root_amount,
+    d.conflicted_count,
+    d.conflicted_volume,
+    d.max_depth
+   FROM (roots r
+     JOIN descendants d ON ((d.root_txid = r.txid)))
+  ORDER BY d.conflicted_volume DESC;
+
+
+--
+-- Name: v_conflicted_txids; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_conflicted_txids AS
+ WITH RECURSIVE conflicted(txid) AS (
+         SELECT DISTINCT root.oor_spent_txid
+           FROM public.vtxo root
+          WHERE ((root.onchain_spent_txid IS NOT NULL) AND (root.oor_spent_txid IS NOT NULL) AND (root.oor_spent_txid <> root.onchain_spent_txid) AND (root.spend_state <> 'offboard-connector'::public.spend_state))
+        UNION
+         SELECT child.oor_spent_txid
+           FROM (conflicted c
+             CROSS JOIN LATERAL ( SELECT vtxo.oor_spent_txid
+                   FROM public.vtxo
+                  WHERE ((vtxo.vtxo_txid = c.txid) AND (vtxo.oor_spent_txid IS NOT NULL))
+                 OFFSET 0) child)
+        )
+ SELECT txid
+   FROM conflicted;
+
+
+--
+-- Name: v_conflicted_vtxos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_conflicted_vtxos AS
+ SELECT v.id,
+    v.vtxo_id,
+    v.amount,
+    v.expiry,
+    v.spend_state,
+    v.vtxo_txid,
+    v.oor_spent_txid,
+    v.created_at,
+    v.updated_at
+   FROM (public.vtxo v
+     JOIN public.v_conflicted_txids ct ON ((v.vtxo_txid = ct.txid)))
+  WHERE ((v.onchain_spent_txid IS NULL) AND (v.spend_state <> 'offboard-connector'::public.spend_state));
+
+
+--
+-- Name: v_frontier_vtxos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_frontier_vtxos AS
+ SELECT id,
+    vtxo_id,
+    amount,
+    expiry,
+    spend_state,
+    vtxo_txid,
+    oor_spent_txid,
+    frontier_at,
+    confirmed_height,
+    created_at,
+    updated_at,
+    (EXISTS ( SELECT 1
+           FROM public.v_conflicted_txids ct
+          WHERE (ct.txid = v.vtxo_txid))) AS conflicted
+   FROM public.vtxo v
+  WHERE ((frontier_at IS NOT NULL) AND (onchain_spent_txid IS NULL) AND (spend_state <> 'offboard-connector'::public.spend_state));
+
+
+--
+-- Name: v_frontier_ownership_totals; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_frontier_ownership_totals AS
+ WITH RECURSIVE descendants(vtxo_id, vtxo_txid, oor_spent_txid, spend_state, amount) AS (
+         SELECT f.vtxo_id,
+            f.vtxo_txid,
+            f.oor_spent_txid,
+            f.spend_state,
+            f.amount
+           FROM public.v_frontier_vtxos f
+          WHERE (NOT f.conflicted)
+        UNION
+         SELECT c.vtxo_id,
+            c.vtxo_txid,
+            c.oor_spent_txid,
+            c.spend_state,
+            c.amount
+           FROM (descendants p
+             CROSS JOIN LATERAL ( SELECT vtxo.vtxo_id,
+                    vtxo.vtxo_txid,
+                    vtxo.oor_spent_txid,
+                    vtxo.spend_state,
+                    vtxo.amount,
+                    vtxo.onchain_spent_txid
+                   FROM public.vtxo
+                  WHERE (vtxo.vtxo_txid = p.oor_spent_txid)
+                 OFFSET 0) c)
+          WHERE ((p.oor_spent_txid IS NOT NULL) AND (c.onchain_spent_txid IS NULL) AND (c.spend_state <> 'offboard-connector'::public.spend_state) AND (NOT (EXISTS ( SELECT 1
+                   FROM public.v_conflicted_txids ct
+                  WHERE (ct.txid = c.vtxo_txid)))))
+        )
+ SELECT
+        CASE (spend_state)::text
+            WHEN 'spendable'::text THEN 'theirs'::text
+            WHEN 'unregistered'::text THEN 'theirs'::text
+            WHEN 'unclaimed'::text THEN 'theirs'::text
+            WHEN 'htlc-recv-unclaimed'::text THEN 'pending'::text
+            WHEN 'spent'::text THEN 'ours'::text
+            WHEN 'pool'::text THEN 'ours'::text
+            WHEN 'round-forfeit'::text THEN 'ours'::text
+            WHEN 'offboard-forfeit'::text THEN 'ours'::text
+            WHEN 'ln-spent'::text THEN 'ours'::text
+            ELSE 'unknown'::text
+        END AS ownership,
+    count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM descendants
+  WHERE ((oor_spent_txid IS NULL) OR (EXISTS ( SELECT 1
+           FROM public.v_conflicted_txids ct
+          WHERE (ct.txid = descendants.oor_spent_txid))))
+  GROUP BY
+        CASE (spend_state)::text
+            WHEN 'spendable'::text THEN 'theirs'::text
+            WHEN 'unregistered'::text THEN 'theirs'::text
+            WHEN 'unclaimed'::text THEN 'theirs'::text
+            WHEN 'htlc-recv-unclaimed'::text THEN 'pending'::text
+            WHEN 'spent'::text THEN 'ours'::text
+            WHEN 'pool'::text THEN 'ours'::text
+            WHEN 'round-forfeit'::text THEN 'ours'::text
+            WHEN 'offboard-forfeit'::text THEN 'ours'::text
+            WHEN 'ln-spent'::text THEN 'ours'::text
+            ELSE 'unknown'::text
+        END;
+
+
+--
+-- Name: v_vtxo_frontier_totals; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_frontier_totals AS
+ SELECT count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.v_frontier_vtxos
+  WHERE (NOT conflicted);
+
+
+--
+-- Name: v_frontier_reconciliation; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_frontier_reconciliation AS
+ SELECT ft.n AS frontier_n,
+    ft.volume AS frontier_volume,
+    COALESCE(ot.n, (0)::bigint) AS leaves_n,
+    COALESCE(ot.volume, (0)::bigint) AS leaves_volume,
+    (ft.volume - COALESCE(ot.volume, (0)::bigint)) AS diff_volume
+   FROM (public.v_vtxo_frontier_totals ft
+     CROSS JOIN ( SELECT (sum(v_frontier_ownership_totals.n))::bigint AS n,
+            (sum(v_frontier_ownership_totals.volume))::bigint AS volume
+           FROM public.v_frontier_ownership_totals) ot);
+
+
+--
+-- Name: virtual_transaction; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.virtual_transaction (
+    txid text NOT NULL,
+    signed_tx bytea,
+    is_funding boolean NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    updated_at timestamp without time zone NOT NULL
+);
+
+
+--
+-- Name: v_funding_no_frontier_outputs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_funding_no_frontier_outputs AS
+ SELECT vt.txid AS funding_txid,
+        CASE
+            WHEN (r.funding_txid IS NOT NULL) THEN 'round'::text
+            ELSE 'other'::text
+        END AS funding_kind,
+    string_agg(DISTINCT v.policy_type, ','::text ORDER BY v.policy_type) AS policy_types,
+    count(v.vtxo_id) AS output_vtxos,
+    (COALESCE(sum(v.amount), (0)::numeric))::bigint AS total_amount,
+    (vt.signed_tx IS NOT NULL) AS has_signed_bytes,
+    vt.created_at AS vt_created_at
+   FROM ((public.virtual_transaction vt
+     JOIN public.vtxo v ON ((v.vtxo_txid = vt.txid)))
+     LEFT JOIN public.round r ON ((r.funding_txid = vt.txid)))
+  WHERE (vt.is_funding AND (v.spend_state <> 'offboard-connector'::public.spend_state) AND (vt.created_at < (now() - '00:05:00'::interval)))
+  GROUP BY vt.txid,
+        CASE
+            WHEN (r.funding_txid IS NOT NULL) THEN 'round'::text
+            ELSE 'other'::text
+        END, vt.signed_tx, vt.created_at
+ HAVING (sum(
+        CASE
+            WHEN (v.frontier_at IS NOT NULL) THEN 1
+            ELSE 0
+        END) = 0)
+  ORDER BY vt.created_at;
+
+
+--
+-- Name: v_unconfirmed_funding_txs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_unconfirmed_funding_txs AS
+ SELECT vt.txid AS funding_txid,
+        CASE
+            WHEN (r.funding_txid IS NOT NULL) THEN 'round'::text
+            ELSE 'other'::text
+        END AS funding_kind,
+    string_agg(DISTINCT v.policy_type, ','::text ORDER BY v.policy_type) AS policy_types,
+    count(v.vtxo_id) AS output_vtxos,
+    (COALESCE(sum(v.amount), (0)::numeric))::bigint AS total_amount,
+    min(v.frontier_at) AS first_frontier_at,
+    (vt.signed_tx IS NOT NULL) AS has_signed_bytes,
+    vt.created_at AS vt_created_at
+   FROM ((public.virtual_transaction vt
+     JOIN public.vtxo v ON ((v.vtxo_txid = vt.txid)))
+     LEFT JOIN public.round r ON ((r.funding_txid = vt.txid)))
+  WHERE (vt.is_funding AND (v.confirmed_height IS NULL) AND (v.spend_state <> 'offboard-connector'::public.spend_state))
+  GROUP BY vt.txid,
+        CASE
+            WHEN (r.funding_txid IS NOT NULL) THEN 'round'::text
+            ELSE 'other'::text
+        END, vt.signed_tx, vt.created_at
+  ORDER BY (min(v.frontier_at));
+
+
+--
+-- Name: v_vtxo_by_onchain_spent_kind; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_by_onchain_spent_kind AS
+ SELECT
+        CASE
+            WHEN (offboarded_in = onchain_spent_txid) THEN 'offboard'::text
+            WHEN (oor_spent_txid IS NULL) THEN 'sweep_or_exit_no_oor'::text
+            WHEN (oor_spent_txid = onchain_spent_txid) THEN 'forfeit_broadcast'::text
+            ELSE 'sweep_or_exit_after_oor'::text
+        END AS kind,
+    count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.vtxo v
+  WHERE ((onchain_spent_height IS NOT NULL) AND (spend_state <> 'offboard-connector'::public.spend_state))
+  GROUP BY
+        CASE
+            WHEN (offboarded_in = onchain_spent_txid) THEN 'offboard'::text
+            WHEN (oor_spent_txid IS NULL) THEN 'sweep_or_exit_no_oor'::text
+            WHEN (oor_spent_txid = onchain_spent_txid) THEN 'forfeit_broadcast'::text
+            ELSE 'sweep_or_exit_after_oor'::text
+        END;
+
+
+--
+-- Name: v_vtxo_by_spend_state; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_by_spend_state AS
+ SELECT (spend_state)::text AS spend_state,
+    count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.vtxo v
+  WHERE (spend_state <> 'offboard-connector'::public.spend_state)
+  GROUP BY spend_state;
+
+
+--
+-- Name: v_vtxo_conflicted_by_expiry; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_conflicted_by_expiry AS
+ SELECT expiry,
+    count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.v_conflicted_vtxos
+  GROUP BY expiry
+  ORDER BY expiry;
+
+
+--
+-- Name: v_vtxo_conflicted_frontier_by_ownership; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_conflicted_frontier_by_ownership AS
+ SELECT
+        CASE (spend_state)::text
+            WHEN 'spendable'::text THEN 'theirs'::text
+            WHEN 'unregistered'::text THEN 'theirs'::text
+            WHEN 'unclaimed'::text THEN 'theirs'::text
+            WHEN 'htlc-recv-unclaimed'::text THEN 'pending'::text
+            WHEN 'spent'::text THEN 'ours'::text
+            WHEN 'pool'::text THEN 'ours'::text
+            WHEN 'round-forfeit'::text THEN 'ours'::text
+            WHEN 'offboard-forfeit'::text THEN 'ours'::text
+            WHEN 'ln-spent'::text THEN 'ours'::text
+            ELSE 'unknown'::text
+        END AS ownership,
+    count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.v_frontier_vtxos
+  WHERE conflicted
+  GROUP BY
+        CASE (spend_state)::text
+            WHEN 'spendable'::text THEN 'theirs'::text
+            WHEN 'unregistered'::text THEN 'theirs'::text
+            WHEN 'unclaimed'::text THEN 'theirs'::text
+            WHEN 'htlc-recv-unclaimed'::text THEN 'pending'::text
+            WHEN 'spent'::text THEN 'ours'::text
+            WHEN 'pool'::text THEN 'ours'::text
+            WHEN 'round-forfeit'::text THEN 'ours'::text
+            WHEN 'offboard-forfeit'::text THEN 'ours'::text
+            WHEN 'ln-spent'::text THEN 'ours'::text
+            ELSE 'unknown'::text
+        END;
+
+
+--
+-- Name: v_vtxo_conflicted_frontier_totals; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_conflicted_frontier_totals AS
+ SELECT count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.v_frontier_vtxos
+  WHERE conflicted;
+
+
+--
+-- Name: v_vtxo_frontier_by_expiry; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_frontier_by_expiry AS
+ SELECT expiry,
+    count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.v_frontier_vtxos
+  WHERE (NOT conflicted)
+  GROUP BY expiry
+  ORDER BY expiry;
+
+
+--
+-- Name: v_vtxo_frontier_by_state_by_expiry; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_frontier_by_state_by_expiry AS
+ SELECT expiry,
+    (spend_state)::text AS spend_state,
+    count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.v_frontier_vtxos
+  WHERE (NOT conflicted)
+  GROUP BY expiry, spend_state
+  ORDER BY expiry, (spend_state)::text;
+
+
+--
+-- Name: v_vtxo_onchain_spent_by_height; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_onchain_spent_by_height AS
+ SELECT onchain_spent_height,
+        CASE
+            WHEN (offboarded_in = onchain_spent_txid) THEN 'offboard'::text
+            WHEN (oor_spent_txid IS NULL) THEN 'sweep_or_exit_no_oor'::text
+            WHEN (oor_spent_txid = onchain_spent_txid) THEN 'forfeit_broadcast'::text
+            ELSE 'sweep_or_exit_after_oor'::text
+        END AS kind,
+    count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.vtxo v
+  WHERE ((onchain_spent_height IS NOT NULL) AND (spend_state <> 'offboard-connector'::public.spend_state))
+  GROUP BY onchain_spent_height,
+        CASE
+            WHEN (offboarded_in = onchain_spent_txid) THEN 'offboard'::text
+            WHEN (oor_spent_txid IS NULL) THEN 'sweep_or_exit_no_oor'::text
+            WHEN (oor_spent_txid = onchain_spent_txid) THEN 'forfeit_broadcast'::text
+            ELSE 'sweep_or_exit_after_oor'::text
+        END
+  ORDER BY onchain_spent_height;
+
+
+--
+-- Name: v_vtxo_onchain_spent_by_kind_by_expiry; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_vtxo_onchain_spent_by_kind_by_expiry AS
+ SELECT expiry,
+        CASE
+            WHEN (offboarded_in = onchain_spent_txid) THEN 'offboard'::text
+            WHEN (oor_spent_txid IS NULL) THEN 'sweep_or_exit_no_oor'::text
+            WHEN (oor_spent_txid = onchain_spent_txid) THEN 'forfeit_broadcast'::text
+            ELSE 'sweep_or_exit_after_oor'::text
+        END AS kind,
+    count(*) AS n,
+    (COALESCE(sum(amount), (0)::numeric))::bigint AS volume
+   FROM public.vtxo v
+  WHERE ((onchain_spent_height IS NOT NULL) AND (spend_state <> 'offboard-connector'::public.spend_state))
+  GROUP BY expiry,
+        CASE
+            WHEN (offboarded_in = onchain_spent_txid) THEN 'offboard'::text
+            WHEN (oor_spent_txid IS NULL) THEN 'sweep_or_exit_no_oor'::text
+            WHEN (oor_spent_txid = onchain_spent_txid) THEN 'forfeit_broadcast'::text
+            ELSE 'sweep_or_exit_after_oor'::text
+        END
+  ORDER BY expiry,
+        CASE
+            WHEN (offboarded_in = onchain_spent_txid) THEN 'offboard'::text
+            WHEN (oor_spent_txid IS NULL) THEN 'sweep_or_exit_no_oor'::text
+            WHEN (oor_spent_txid = onchain_spent_txid) THEN 'forfeit_broadcast'::text
+            ELSE 'sweep_or_exit_after_oor'::text
+        END;
+
+
+--
+-- Name: virtual_transaction_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.virtual_transaction_history (
+    txid text,
+    signed_tx bytea,
+    is_funding boolean,
+    created_at timestamp without time zone,
+    updated_at timestamp without time zone
 );
 
 
@@ -2003,6 +2478,20 @@ CREATE UNIQUE INDEX sweep_txid_pending_uix ON public.sweep USING btree (txid) IN
 
 
 --
+-- Name: virtual_transaction_funding_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX virtual_transaction_funding_ix ON public.virtual_transaction USING btree (txid) WHERE (is_funding = true);
+
+
+--
+-- Name: vtxo_conflict_seed_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_conflict_seed_ix ON public.vtxo USING btree (oor_spent_txid) WHERE ((onchain_spent_txid IS NOT NULL) AND (oor_spent_txid IS NOT NULL) AND (spend_state <> 'offboard-connector'::public.spend_state));
+
+
+--
 -- Name: vtxo_created_at_ix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2010,10 +2499,24 @@ CREATE INDEX vtxo_created_at_ix ON public.vtxo USING btree (created_at);
 
 
 --
+-- Name: vtxo_frontier_active_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_frontier_active_ix ON public.vtxo USING btree (expiry) WHERE ((frontier_at IS NOT NULL) AND (onchain_spent_txid IS NULL) AND (spend_state <> 'offboard-connector'::public.spend_state));
+
+
+--
 -- Name: vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix ON public.mailbox USING btree (unblinded_mailbox_id, checkpoint);
+
+
+--
+-- Name: vtxo_onchain_spent_active_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_onchain_spent_active_ix ON public.vtxo USING btree (onchain_spent_height) WHERE ((onchain_spent_height IS NOT NULL) AND (spend_state <> 'offboard-connector'::public.spend_state));
 
 
 --
