@@ -37,6 +37,7 @@ use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
 use ark::lightning::PaymentHash;
+use ark::vtxo::policy::{check_block_delta, check_block_height};
 use bitcoin_ext::BlockHeight;
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::plugins::hold::hold_client::HoldClient;
@@ -274,7 +275,20 @@ impl ClnHoldProcess {
 		};
 
 		let lowest_incoming_htlc_expiry = match accepted_invoice.htlcs.iter().map(|h| h.cltv_expiry).min() {
-			Some(Some(lowest_incoming_htlc_expiry)) => lowest_incoming_htlc_expiry as BlockHeight,
+			Some(Some(lowest_incoming_htlc_expiry)) => {
+				// CLN reports this as a u64; validate it fits a BlockHeight and is
+				// within the policy bounds rather than silently truncating.
+				match check_block_height(lowest_incoming_htlc_expiry) {
+					Ok(height) => height,
+					Err(_) => {
+						warn!("CLN returned out-of-range HTLC expiry height {} for accepted \
+							invoice of subscription {}",
+							lowest_incoming_htlc_expiry, htlc_subscription.id,
+						);
+						return Ok(false);
+					},
+				}
+			},
 			None | Some(None) => {
 				warn!("CLN returned no HTLC expiry height for accepted invoice of subscription {}",
 					htlc_subscription.id,
@@ -299,7 +313,12 @@ impl ClnHoldProcess {
 		let tip = self.sync_manager.chain_tip().height;
 
 		// NB: We subtract 1 to give some buffer for the lightning payment to be sent.
-		let required_min_htlc_expiry = tip + invoice.min_final_cltv_expiry_delta() as BlockHeight - 1;
+		let min_final_cltv_expiry_delta = check_block_delta(invoice.min_final_cltv_expiry_delta())
+			.context("invoice min_final_cltv_expiry_delta out of range")?;
+		let required_min_htlc_expiry = tip
+			.checked_add(BlockHeight::from(min_final_cltv_expiry_delta))
+			.and_then(|h| h.checked_sub(1))
+			.context("required_min_htlc_expiry overflows BlockHeight")?;
 
 		let (status, expiry) = if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
 			debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
