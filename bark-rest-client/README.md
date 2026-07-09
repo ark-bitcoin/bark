@@ -41,9 +41,12 @@ Class | Method | HTTP request | Description
 *ExitsApi* | [**exit_progress**](docs/ExitsApi.md#exit_progress) | **POST** /api/v1/exits/progress | Progress exits
 *ExitsApi* | [**exit_start_all**](docs/ExitsApi.md#exit_start_all) | **POST** /api/v1/exits/start/all | Start exit for all VTXOs
 *ExitsApi* | [**exit_start_vtxos**](docs/ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | Start exit for specific VTXOs
-*ExitsApi* | [**get_exit_status_by_vtxo_id**](docs/ExitsApi.md#get_exit_status_by_vtxo_id) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status
+*ExitsApi* | [**get_all_exit_status**](docs/ExitsApi.md#get_all_exit_status) | **GET** /api/v1/exits/status/all | List all exit statuses
+*ExitsApi* | [**get_all_exit_status_deprecated**](docs/ExitsApi.md#get_all_exit_status_deprecated) | **GET** /api/v1/exits/status | List all exit statuses (deprecated)
+*ExitsApi* | [**get_exit_status_by_vtxo_id**](docs/ExitsApi.md#get_exit_status_by_vtxo_id) | **GET** /api/v1/exits/status/vtxo/{vtxo_id} | Get VTXO exit status
+*ExitsApi* | [**get_exit_status_by_vtxo_id_deprecated**](docs/ExitsApi.md#get_exit_status_by_vtxo_id_deprecated) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status (deprecated)
 *ExitsApi* | [**get_finished_exits**](docs/ExitsApi.md#get_finished_exits) | **GET** /api/v1/exits/status/finished | List finished exits
-*ExitsApi* | [**get_live_exit_status**](docs/ExitsApi.md#get_live_exit_status) | **GET** /api/v1/exits/status | List live exit statuses
+*ExitsApi* | [**get_live_exit_status**](docs/ExitsApi.md#get_live_exit_status) | **GET** /api/v1/exits/status/live | List live exit statuses
 *FeesApi* | [**board_fee**](docs/FeesApi.md#board_fee) | **GET** /api/v1/fees/board | Estimate board fee
 *FeesApi* | [**lightning_receive_fee**](docs/FeesApi.md#lightning_receive_fee) | **GET** /api/v1/fees/lightning/receive | Estimate Lightning receive fee
 *FeesApi* | [**lightning_send_fee**](docs/FeesApi.md#lightning_send_fee) | **GET** /api/v1/fees/lightning/pay | Estimate Lightning send fee

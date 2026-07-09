@@ -69,10 +69,34 @@ pub enum ExitStartVtxosError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`get_all_exit_status`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetAllExitStatusError {
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`get_all_exit_status_deprecated`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetAllExitStatusDeprecatedError {
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`get_exit_status_by_vtxo_id`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetExitStatusByVtxoIdError {
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`get_exit_status_by_vtxo_id_deprecated`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetExitStatusByVtxoIdDeprecatedError {
     Status404(models::NotFoundError),
     Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
@@ -337,8 +361,132 @@ pub async fn exit_start_vtxos(configuration: &configuration::Configuration, exit
     }
 }
 
-/// Returns the current state of an emergency exit for the specified VTXO, including which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed). Optionally includes the full state transition history and the exit transaction packages with their CPFP children.
+/// Returns every exit, live and finished. Optionally includes each exit's state history and its transactions with their CPFP children.
+pub async fn get_all_exit_status(configuration: &configuration::Configuration, history: Option<bool>, transactions: Option<bool>) -> Result<Vec<models::ExitTransactionStatus>, Error<GetAllExitStatusError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_query_history = history;
+    let p_query_transactions = transactions;
+
+    let uri_str = format!("{}/api/v1/exits/status/all", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref param_value) = p_query_history {
+        req_builder = req_builder.query(&[("history", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_transactions {
+        req_builder = req_builder.query(&[("transactions", &param_value.to_string())]);
+    }
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `Vec&lt;models::ExitTransactionStatus&gt;`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `Vec&lt;models::ExitTransactionStatus&gt;`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetAllExitStatusError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Deprecated: redirects to `GET /exits/status/all`.
+#[deprecated]
+pub async fn get_all_exit_status_deprecated(configuration: &configuration::Configuration, ) -> Result<(), Error<GetAllExitStatusDeprecatedError>> {
+
+    let uri_str = format!("{}/api/v1/exits/status", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        Ok(())
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetAllExitStatusDeprecatedError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Returns the exit status for the given VTXO, live or finished. Optionally includes the state history and the exit transactions with their CPFP children.
 pub async fn get_exit_status_by_vtxo_id(configuration: &configuration::Configuration, vtxo_id: &str, history: Option<bool>, transactions: Option<bool>) -> Result<models::ExitTransactionStatus, Error<GetExitStatusByVtxoIdError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_path_vtxo_id = vtxo_id;
+    let p_query_history = history;
+    let p_query_transactions = transactions;
+
+    let uri_str = format!("{}/api/v1/exits/status/vtxo/{vtxo_id}", configuration.base_path, vtxo_id=crate::apis::urlencode(p_path_vtxo_id));
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref param_value) = p_query_history {
+        req_builder = req_builder.query(&[("history", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_transactions {
+        req_builder = req_builder.query(&[("transactions", &param_value.to_string())]);
+    }
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::ExitTransactionStatus`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::ExitTransactionStatus`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetExitStatusByVtxoIdError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Deprecated: use `GET /exits/status/vtxo/{vtxo_id}` instead.
+#[deprecated]
+pub async fn get_exit_status_by_vtxo_id_deprecated(configuration: &configuration::Configuration, vtxo_id: &str, history: Option<bool>, transactions: Option<bool>) -> Result<models::ExitTransactionStatus, Error<GetExitStatusByVtxoIdDeprecatedError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_path_vtxo_id = vtxo_id;
     let p_query_history = history;
@@ -380,7 +528,7 @@ pub async fn get_exit_status_by_vtxo_id(configuration: &configuration::Configura
         }
     } else {
         let content = resp.text().await?;
-        let entity: Option<GetExitStatusByVtxoIdError> = serde_json::from_str(&content).ok();
+        let entity: Option<GetExitStatusByVtxoIdDeprecatedError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }
@@ -432,13 +580,13 @@ pub async fn get_finished_exits(configuration: &configuration::Configuration, hi
     }
 }
 
-/// Returns the current state of live emergency exits in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable or claim-in-progress), and optionally the full state transition history and the exit transaction packages with their CPFP children.
+/// Returns exits that are still progressing. Optionally includes each exit's state history and its transactions with their CPFP children.
 pub async fn get_live_exit_status(configuration: &configuration::Configuration, history: Option<bool>, transactions: Option<bool>) -> Result<Vec<models::ExitTransactionStatus>, Error<GetLiveExitStatusError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_query_history = history;
     let p_query_transactions = transactions;
 
-    let uri_str = format!("{}/api/v1/exits/status", configuration.base_path);
+    let uri_str = format!("{}/api/v1/exits/status/live", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref param_value) = p_query_history {

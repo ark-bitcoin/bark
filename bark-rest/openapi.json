@@ -456,9 +456,25 @@
         "tags": [
           "exits"
         ],
-        "summary": "List live exit statuses",
-        "description": "Returns the current state of live emergency exits in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable or claim-in-progress), and optionally the full state transition history and the exit transaction packages with their CPFP children.",
-        "operationId": "get_live_exit_status",
+        "summary": "List all exit statuses (deprecated)",
+        "description": "Deprecated: redirects to `GET /exits/status/all`.",
+        "operationId": "get_all_exit_status_deprecated",
+        "responses": {
+          "308": {
+            "description": "Permanent redirect to `/exits/status/all`"
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/v1/exits/status/all": {
+      "get": {
+        "tags": [
+          "exits"
+        ],
+        "summary": "List all exit statuses",
+        "description": "Returns every exit, live and finished. Optionally includes each exit's state history and its transactions with their CPFP children.",
+        "operationId": "get_all_exit_status",
         "parameters": [
           {
             "name": "history",
@@ -561,13 +577,68 @@
         }
       }
     },
-    "/api/v1/exits/status/{vtxo_id}": {
+    "/api/v1/exits/status/live": {
       "get": {
         "tags": [
           "exits"
         ],
-        "summary": "Get exit status",
-        "description": "Returns the current state of an emergency exit for the specified VTXO, including which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed). Optionally includes the full state transition history and the exit transaction packages with their CPFP children.",
+        "summary": "List live exit statuses",
+        "description": "Returns exits that are still progressing. Optionally includes each exit's state history and its transactions with their CPFP children.",
+        "operationId": "get_live_exit_status",
+        "parameters": [
+          {
+            "name": "history",
+            "in": "query",
+            "description": "Whether to include the detailed history of the exit process",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "transactions",
+            "in": "query",
+            "description": "Whether to include the exit transactions and their CPFP children",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the live exit statuses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExitTransactionStatus"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exits/status/vtxo/{vtxo_id}": {
+      "get": {
+        "tags": [
+          "exits"
+        ],
+        "summary": "Get VTXO exit status",
+        "description": "Returns the exit status for the given VTXO, live or finished. Optionally includes the state history and the exit transactions with their CPFP children.",
         "operationId": "get_exit_status_by_vtxo_id",
         "parameters": [
           {
@@ -630,6 +701,78 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/exits/status/{vtxo_id}": {
+      "get": {
+        "tags": [
+          "exits"
+        ],
+        "summary": "Get exit status (deprecated)",
+        "description": "Deprecated: use `GET /exits/status/vtxo/{vtxo_id}` instead.",
+        "operationId": "get_exit_status_by_vtxo_id_deprecated",
+        "parameters": [
+          {
+            "name": "vtxo_id",
+            "in": "path",
+            "description": "The VTXO to check the exit status of",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "history",
+            "in": "query",
+            "description": "Whether to include the detailed history of the exit process",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "transactions",
+            "in": "query",
+            "description": "Whether to include the exit transactions and their CPFP children",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the exit status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitTransactionStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "VTXO wasn't found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
       }
     },
     "/api/v1/fees/board": {
