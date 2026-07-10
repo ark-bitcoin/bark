@@ -84,12 +84,33 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<protos::HandshakeResponse>, tonic::Status> {
 		let req = req.into_inner();
 
-		telemetry::count_bark_version(req.bark_version);
+		// Don't refuse unknown versions: attach a PSA nudge instead so
+		// we don't lock out existing users.
+		let class = telemetry::classify_bark_version(req.bark_version.as_deref());
+		telemetry::count_bark_version(class);
+		let version_psa = match class {
+			telemetry::BarkVersionClass::Known(_) => None,
+			telemetry::BarkVersionClass::Missing => Some(
+				"Your bark client did not identify its version to this Ark server. \
+				 You may be running an outdated build; please update your bark client \
+				 or contact support if the problem persists.".to_string()
+			),
+			telemetry::BarkVersionClass::Unknown => Some(
+				"Your bark client version is not recognised by this Ark server. \
+				 You may be running an outdated or unofficial build; please update \
+				 your bark client or contact support if the problem persists.".to_string()
+			),
+		};
+		let psa = match (version_psa, self.config.handshake_psa.clone()) {
+			(None, op) => op,
+			(Some(v), None) => Some(v),
+			(Some(v), Some(op)) => Some(format!("{}\n\n{}", v, op)),
+		};
 
 		let ret = protos::HandshakeResponse {
 			min_protocol_version: MIN_PROTOCOL_VERSION,
 			max_protocol_version: MAX_PROTOCOL_VERSION,
-			psa: self.config.handshake_psa.clone(),
+			psa,
 		};
 		Ok(tonic::Response::new(ret))
 	}

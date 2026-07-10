@@ -425,7 +425,7 @@ pub struct ServerConnection {
 impl ServerConnection {
 	fn handshake_req() -> protos::HandshakeRequest {
 		protos::HandshakeRequest {
-			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
+			bark_version: Some(crate::BARK_CRATE_VERSION.into()),
 		}
 	}
 

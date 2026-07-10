@@ -118,6 +118,11 @@ pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_BASE;
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES;
 
+/// The bark client version sent in HandshakeRequest. Exposed so
+/// alternate callers (e.g. integration tests) send the same string a
+/// real client would.
+pub const BARK_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// The string used in the gRPC HTTP header for the protocol version.
 pub const PROTOCOL_VERSION_HEADER: &str = "pver";
 
