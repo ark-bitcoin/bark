@@ -28,7 +28,11 @@ use crate::util::resolve_path;
 pub type Lightningd = Daemon<LightningDHelper>;
 
 impl Lightningd {
-	pub fn command(config: &LightningdConfig, grpc_port: u16) -> anyhow::Result<Command> {
+	pub fn command(
+		config: &LightningdConfig,
+		grpc_port: u16,
+		container_name: &str,
+	) -> anyhow::Result<Command> {
 		let (docker_exec, docker_image) = Self::docker();
 		let lightningd_exec = Self::exec();
 		if docker_exec.is_some() && docker_image.is_some() {
@@ -38,6 +42,7 @@ impl Lightningd {
 			cmd.args([
 				"run",
 				"--rm",
+				"--name", container_name,
 				"--mount", &format!("type=bind,source={},target=/data/.lightning", &config.lightning_dir.to_string_lossy()),
 				"--mount", &format!("type=bind,source={},target=/data/.bitcoin", &config.bitcoin_dir.to_string_lossy()),
 				"--user", &format!("{}:{}", uid, gid),
@@ -89,6 +94,49 @@ impl Lightningd {
 			_ => false,
 		}
 	}
+
+	/// Human-readable container name prefix derived from the datadir. A
+	/// random suffix is appended so identical datadir paths on a shared
+	/// docker daemon never clash on `--name`.
+	fn container_name_prefix(config: &LightningdConfig) -> String {
+		let sanitized = config.lightning_dir.to_string_lossy()
+			.chars()
+			.map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') { c } else { '-' })
+			.collect::<String>();
+		format!("cln{}", sanitized)
+	}
+
+	/// Force-remove a container by exact name, ignoring failure (e.g. it
+	/// doesn't exist). Sync because it must also run from [Drop].
+	fn remove_container(container_name: &str) {
+		if let (Some(docker_exec), Some(_)) = Self::docker() {
+			let _ = std::process::Command::new(docker_exec)
+				.args(["rm", "-f", container_name])
+				.output();
+		}
+	}
+
+	/// Remove any container still bind-mounting this datadir, left behind by
+	/// a previously killed run (docker only honors `--rm` on graceful
+	/// termination; SIGKILLing the docker client leaves the container
+	/// running). Matched by exact mount source, never by name, so concurrent
+	/// containers of the same test are unaffected. A stale container keeps
+	/// the datadir's PID file locked, which would wedge this startup.
+	fn remove_stale_containers(config: &LightningdConfig) {
+		if let (Some(docker_exec), Some(_)) = Self::docker() {
+			let filter = format!("volume={}", config.lightning_dir.to_string_lossy());
+			let stale = std::process::Command::new(&docker_exec)
+				.args(["ps", "-aq", "--filter", &filter])
+				.output();
+			if let Ok(out) = stale {
+				for id in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+					let _ = std::process::Command::new(&docker_exec)
+						.args(["rm", "-f", id])
+						.output();
+				}
+			}
+		}
+	}
 }
 
 #[derive(Default)]
@@ -109,6 +157,7 @@ pub struct LightningDHelper {
 	name: String,
 	config: LightningdConfig,
 	bitcoind: Arc<Bitcoind>,
+	container_name: String,
 	state: Arc<Mutex<LightningDHelperState>>
 }
 
@@ -335,21 +384,34 @@ impl DaemonHelper for LightningDHelper {
 		if !self.config.lightning_dir.exists() {
 			fs::create_dir_all(&self.config.lightning_dir).await?;
 		}
+		Lightningd::remove_stale_containers(&self.config);
 		self.write_config_file().await;
 		Ok(())
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
-		Lightningd::command(&self.config, self.state.lock().await.grpc_port.unwrap())
+		Lightningd::command(
+			&self.config,
+			self.state.lock().await.grpc_port.unwrap(),
+			&self.container_name,
+		)
+	}
+
+	fn cleanup_external(&self) {
+		Lightningd::remove_container(&self.container_name);
 	}
 }
 
 impl Lightningd {
 	pub fn new(name: impl AsRef<str>, bitcoind: Arc<Bitcoind>, config: LightningdConfig) -> Self {
+		let container_name = format!("{}-{:08x}",
+			Self::container_name_prefix(&config), rand::random::<u32>(),
+		);
 		let inner = LightningDHelper {
 			name: name.as_ref().to_owned(),
 			config,
 			bitcoind,
+			container_name,
 			state: Arc::new(Mutex::new(LightningDHelperState::default()))
 		};
 		Daemon::wrap(inner)
