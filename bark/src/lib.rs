@@ -342,7 +342,6 @@ pub use self::utils::time;
 
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::iter;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1918,78 +1917,6 @@ impl Wallet {
 		Ok(!my_clause.is_some())
 	}
 
-	/// If there are any VTXOs that match the "must-refresh" and "should-refresh" criteria with a
-	/// total value over the P2TR dust limit, they are added to the round participation and an
-	/// additional output is also created.
-	///
-	/// Note: This assumes that the base refresh fee has already been paid.
-	async fn add_should_refresh_vtxos<V: VtxoRef>(
-		&self,
-		participation: &mut RoundParticipation,
-		exclude: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<()> {
-		// Get VTXOs that need and should be refreshed, then filter out any duplicates before
-		// adjusting the round participation.
-		let tip = self.inner.chain.tip().await?;
-		let mut vtxos_to_refresh = self.spendable_vtxos_with(
-			&RefreshStrategy::should_refresh(self, tip, self.inner.chain.fee_rates().await.fast),
-		).await?;
-		if vtxos_to_refresh.is_empty() {
-			return Ok(());
-		}
-
-		let excluded_ids = participation.inputs.iter()
-			.map(|v| v.vtxo_id())
-			.chain(exclude.into_iter().map(|v| v.vtxo_id()))
-			.collect::<HashSet<_>>();
-		let mut total_amount = Amount::ZERO;
-		for i in (0..vtxos_to_refresh.len()).rev() {
-			let vtxo = &vtxos_to_refresh[i];
-			if excluded_ids.contains(&vtxo.id()) {
-				vtxos_to_refresh.swap_remove(i);
-				continue;
-			}
-			total_amount += vtxo.amount();
-		}
-		if vtxos_to_refresh.is_empty() {
-			// VTXOs are already included in the round participation.
-			return Ok(());
-		}
-
-		// We need to verify that the output we add won't end up below the dust limit when fees are
-		// applied. We can assume the base fee has been paid by the current refresh participation.
-		let (_, ark_info) = self.require_server().await?;
-		let fee = ark_info.fees.refresh.calculate_no_base_fee(
-			vtxos_to_refresh.iter().map(|wv| VtxoFeeInfo::from_vtxo_and_tip(&wv.vtxo, tip)),
-		).context("fee overflowed")?;
-
-		// Only add these VTXOs if the output amount would be above dust after fees.
-		let output_amount = match validate_and_subtract_fee_min_dust(total_amount, fee) {
-			Ok(amount) => amount,
-			Err(e) => {
-				trace!("Cannot add should-refresh VTXOs: {}", e);
-				return Ok(());
-			},
-		};
-		info!(
-			"Adding {} extra VTXOs to round participation total = {}, fee = {}, output = {}",
-			vtxos_to_refresh.len(), total_amount, fee, output_amount,
-		);
-		let (user_keypair, _) = self.derive_store_next_keypair().await?;
-		let req = VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
-			amount: output_amount,
-		};
-		let extra_ids = vtxos_to_refresh.into_iter().map(|wv| wv.id()).collect::<Vec<_>>();
-		let extra_full = self.inner.db.get_full_vtxos(&extra_ids).await
-			.context("failed to hydrate refresh candidates")?;
-		participation.inputs.reserve(extra_full.len());
-		participation.inputs.extend(extra_full);
-		participation.outputs.push(req);
-
-		Ok(())
-	}
-
 	pub async fn build_refresh_participation<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
@@ -2063,16 +1990,10 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<Option<RoundStatus>> {
-		let mut participation = match self.build_refresh_participation(vtxos).await? {
+		let participation = match self.build_refresh_participation(vtxos).await? {
 			Some(participation) => participation,
 			None => return Ok(None),
 		};
-
-		if let Err(e) = self.add_should_refresh_vtxos(
-			&mut participation, iter::empty::<VtxoId>(),
-		).await {
-			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
-		}
 
 		Ok(Some(self.participate_round(participation, Some(RoundMovement::Refresh)).await?))
 	}
@@ -2086,14 +2007,10 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<Option<StoredRoundState<Unlocked>>> {
-		let mut part = match self.build_refresh_participation(vtxos).await? {
+		let part = match self.build_refresh_participation(vtxos).await? {
 			Some(participation) => participation,
 			None => return Ok(None),
 		};
-
-		if let Err(e) = self.add_should_refresh_vtxos(&mut part, iter::empty::<VtxoId>()).await {
-			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
-		}
 
 		Ok(Some(self.join_next_round_delegated(part, Some(RoundMovement::Refresh)).await?))
 	}
