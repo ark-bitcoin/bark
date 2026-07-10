@@ -282,6 +282,18 @@ run_fuzzing() {
                 cp -n "$FUZZ_DIR/hfuzz_input/$target/input/"* "$ws_input/" 2>/dev/null || true
             fi
 
+            # Replay also re-executes the saved contained-panic reproducers, so
+            # value-dependent panics that never entered the coverage corpus are
+            # surfaced (and summarized) too.
+            if [ "$REPLAY" = "1" ] && [ -z "$USE_CORPUS" ]; then
+                saved_dir="$FUZZ_DIR/hfuzz_workspace/$target/contained"
+                if [ -d "$saved_dir" ]; then
+                    ws_input="$FUZZ_DIR/hfuzz_workspace/$target/input"
+                    mkdir -p "$ws_input"
+                    cp -n "$saved_dir"/* "$ws_input/" 2>/dev/null || true
+                fi
+            fi
+
             # Panic-preserving minimize: honggfuzz -M is blind to contained panics
             # and can prune a reproducer that adds no coverage. Since -M executes
             # every input (a replay), arm the harness's input sink
@@ -297,6 +309,16 @@ run_fuzzing() {
                 rm -rf "$holdout_dir"
                 mkdir -p "$holdout_dir"
                 export HFUZZ_CONTAINED_DIR="$holdout_dir"
+            else
+                # Normal runs: arm the input sink too. honggfuzz only keeps an
+                # input that adds coverage, so a value-dependent contained panic
+                # (overflow-checks, debug_assert!) at an already-covered site
+                # would otherwise leave no reproducer behind. One file per
+                # distinct panic location, persistent across runs.
+                contained_dir="$FUZZ_DIR/hfuzz_workspace/$target/contained"
+                mkdir -p "$contained_dir"
+                export HFUZZ_CONTAINED_DIR="$contained_dir"
+                contained_stamp=$(mktemp)
             fi
 
             export HFUZZ_RUN_ARGS
@@ -341,6 +363,15 @@ run_fuzzing() {
                     grep -rl . "$holdout_dir" 2>/dev/null | xargs -r -n1 basename | sed 's/^/    - /' || true
                 else
                     echo "=== Panic-preserving minimize: no contained panics observed this pass; nothing to re-inject ==="
+                fi
+            else
+                unset HFUZZ_CONTAINED_DIR
+                # The dir persists across runs; split new finds from the backlog.
+                new=$(find "$contained_dir" -type f -newer "$contained_stamp" 2>/dev/null | wc -l)
+                total=$(find "$contained_dir" -type f 2>/dev/null | wc -l)
+                rm -f "$contained_stamp"
+                if [ "$total" -gt 0 ]; then
+                    echo "=== contained-panic reproducer(s) in $contained_dir: $new new, $total total (inspect with --replay) ==="
                 fi
             fi
 
