@@ -209,6 +209,24 @@ pub const RPC_CLIENT: &str = "rpc.client";
 /// of the gRPC request.
 pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attribute::RPC_GRPC_STATUS_CODE;
 
+tokio::task_local! {
+	/// The bucketed client name (parsed from `x-user-agent` by
+	/// `rpcserver::middleware::bucket_client`) for the currently-serving RPC.
+	/// Set by the telemetry middleware around each request's future; read by
+	/// business-metric emitters that want a per-integrator label. Outside a
+	/// scope [current_client] returns `"unknown"`.
+	pub static CLIENT: &'static str;
+}
+
+/// Return the bucketed client name for the currently-serving RPC, or
+/// `"unknown"` when called outside an RPC context (background workers,
+/// startup, tests). Safe to sprinkle onto any metric attribute list; the
+/// underlying `&'static str` is bounded by [rpcserver::middleware::bucket_client]
+/// so cardinality stays capped.
+pub fn current_client() -> &'static str {
+	CLIENT.try_with(|c| *c).unwrap_or("unknown")
+}
+
 /// The global open-telemetry context to register metrics.
 static TELEMETRY: tokio::sync::OnceCell<Metrics> = tokio::sync::OnceCell::const_new();
 static BLOCK_HEIGHT_TIP: AtomicU64 = AtomicU64::new(0);
@@ -832,22 +850,35 @@ pub fn add_round(input_volume: Amount) {
 /// One interactive round participation by a user: existing VTXOs being
 /// recycled (refreshed) into a new round. Non-interactive settlements
 /// (board/LN) are excluded; those are counted by their own metrics.
-pub fn add_refresh(input_volume_sats: u64) {
+///
+/// `client` is the bucketed integrator name captured at SubmitPayment RPC
+/// time (see `rpcserver::middleware::bucket_client`) and stashed on the
+/// [`crate::round::InteractiveParticipation`] until the round finalizes.
+/// We can't read `current_client()` here because emission happens on the
+/// round-processing task, not on any user's RPC task.
+pub fn add_refresh(input_volume_sats: u64, client: &'static str) {
 	if let Some(m) = TELEMETRY.get() {
-		let global_labels = m.global_labels();
-		m.refresh_counter.add(1, global_labels);
-		m.refresh_volume.add(input_volume_sats, global_labels);
+		let attrs = m.with_global_labels([KeyValue::new(RPC_CLIENT, client)]);
+		m.refresh_counter.add(1, &attrs);
+		m.refresh_volume.add(input_volume_sats, &attrs);
 	}
 }
 
 /// One delegated round participation: the server submitted inputs into the
 /// round on behalf of a user (typically an LN HTLC settlement). Volume is
 /// the sum of input VTXO amounts consumed by this participation.
-pub fn add_delegated_participation(input_volume_sats: u64) {
+///
+/// Delegated participations are persisted to `round_participation` before
+/// the round picks them up, and we don't yet store the originating client
+/// alongside them, so `client` is currently always `"delegated"` (kept
+/// distinct from `"unknown"`, which specifically means "no x-user-agent
+/// header on the RPC"). Add a column and thread it through if
+/// per-integrator delegated attribution is wanted later.
+pub fn add_delegated_participation(input_volume_sats: u64, client: &'static str) {
 	if let Some(m) = TELEMETRY.get() {
-		let global_labels = m.global_labels();
-		m.delegated_participation_counter.add(1, global_labels);
-		m.delegated_participation_volume.add(input_volume_sats, global_labels);
+		let attrs = m.with_global_labels([KeyValue::new(RPC_CLIENT, client)]);
+		m.delegated_participation_counter.add(1, &attrs);
+		m.delegated_participation_volume.add(input_volume_sats, &attrs);
 	}
 }
 
@@ -978,7 +1009,7 @@ pub fn set_lightning_node_state(
 
 pub fn add_board(volume_sats: u64) {
 	if let Some(m) = TELEMETRY.get() {
-		let attrs = m.with_global_labels([] as [KeyValue; 0]);
+		let attrs = m.with_global_labels([KeyValue::new(RPC_CLIENT, current_client())]);
 		m.board_counter.add(1, &attrs);
 		m.board_volume.add(volume_sats, &attrs);
 	}
@@ -986,7 +1017,7 @@ pub fn add_board(volume_sats: u64) {
 
 pub fn add_offboard(volume_sats: u64) {
 	if let Some(m) = TELEMETRY.get() {
-		let attrs = m.with_global_labels([] as [KeyValue; 0]);
+		let attrs = m.with_global_labels([KeyValue::new(RPC_CLIENT, current_client())]);
 		m.offboard_counter.add(1, &attrs);
 		m.offboard_volume.add(volume_sats, &attrs);
 	}
@@ -994,12 +1025,18 @@ pub fn add_offboard(volume_sats: u64) {
 
 pub fn add_arkoor_payment(volume_sats: u64) {
 	if let Some(m) = TELEMETRY.get() {
-		let attrs = m.with_global_labels([] as [KeyValue; 0]);
+		let attrs = m.with_global_labels([KeyValue::new(RPC_CLIENT, current_client())]);
 		m.arkoor_payment_counter.add(1, &attrs);
 		m.arkoor_payment_volume.add(volume_sats, &attrs);
 	}
 }
 
+/// The `client` label is best-effort: for status transitions fired from the
+/// original RPC handler (typically Requested→Submitted) it's the true
+/// integrator; for transitions emitted from the background `sync_payment_attempt_status`
+/// worker in `ln::cln::xpay` it degrades to `"unknown"`. Store the
+/// originating client on `lightning_payment_attempt` if accurate
+/// per-integrator LN attribution is wanted later.
 pub fn add_lightning_payment(
 	lightning_node_id: i64,
 	amount_msat: u64,
@@ -1009,6 +1046,7 @@ pub fn add_lightning_payment(
 		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
 			KeyValue::new(ATTRIBUTE_STATUS, status.to_string()),
+			KeyValue::new(RPC_CLIENT, current_client()),
 		]);
 		m.lightning_payment_counter.add(1, &attrs);
 		m.lightning_payment_volume.add(amount_msat / 1000, &attrs);

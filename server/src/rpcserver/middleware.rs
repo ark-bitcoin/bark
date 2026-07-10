@@ -441,7 +441,12 @@ where
 		);
 		let future = self.inner.call(req);
 
-		Box::pin(async move {
+		// Scope the bucketed client name onto a task-local so
+		// business-metric emitters deep in the handler (e.g. add_arkoor_payment
+		// in server/src/arkoor.rs, add_board in server/src/lib.rs) can label
+		// their counters with the originating integrator without threading the
+		// value through every function signature.
+		Box::pin(telemetry::CLIENT.scope(client, async move {
 			let res = future.instrument(grpc_span.clone()).await;
 			let _enter = grpc_span.enter();
 
@@ -487,7 +492,7 @@ where
 					Ok(http::Response::from_parts(parts, wrapped))
 				}
 			}
-		})
+		}))
 	}
 }
 
