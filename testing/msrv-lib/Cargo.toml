@@ -7,3 +7,4 @@ edition = "2018"
 
 [dependencies]
 ark-lib = { path = "../../lib" }
+bark-shinigami = { path = "../../shinigami" }

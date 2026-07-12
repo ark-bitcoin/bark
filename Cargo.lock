@@ -553,6 +553,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bark-shinigami"
+version = "0.1.0"
+dependencies = [
+ "ark-lib",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "bark-wallet"
 version = "0.3.0"
 dependencies = [

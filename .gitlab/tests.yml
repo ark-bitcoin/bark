@@ -157,6 +157,8 @@ bark-wasm:
         cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
           -p ark-lib --features wasm-web &&
         cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
+          -p bark-shinigami --features wasm-web &&
+        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
           -p bark-bitcoin-ext --features wasm-web &&
         cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
           -p bark-server-rpc --features tonic-web &&

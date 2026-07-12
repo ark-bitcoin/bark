@@ -10,6 +10,7 @@ members = [
   "server",
   "server-log",
   "server-rpc",
+  "shinigami",
   "testing",
   "cln-rpc",
   "bark-rest-client",
