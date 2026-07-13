@@ -30,7 +30,7 @@ check:
 	cargo check --all --tests --examples
 
 check-lib-arithmetic:
-	cargo clippy -p ark-lib --tests
+	cargo clippy -p ark-lib -p bark-shinigami --tests
 
 checks: prechecks check check-lib-arithmetic
 

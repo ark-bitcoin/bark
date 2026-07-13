@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "ark-lib"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bark-bitcoin-ext",
@@ -55,12 +55,20 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "bark-bitcoin-ext"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "bitcoin",
  "lazy_static",
  "serde",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "bark-shinigami"
+version = "0.1.0"
+dependencies = [
+ "ark-lib",
  "thiserror",
 ]
 
@@ -364,6 +372,7 @@ name = "msrv-lib"
 version = "0.0.0"
 dependencies = [
  "ark-lib",
+ "bark-shinigami",
 ]
 
 [[package]]

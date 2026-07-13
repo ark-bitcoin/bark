@@ -1,3 +1,5 @@
 bark-rest/openapi.json linguist-generated gitlab-generated
 bark-rest-client/** linguist-generated gitlab-generated
 Cargo.lock -linguist-generated -gitlab-generated
+shinigami/tests/fixtures/*.cairo text eol=lf
+shinigami/tests/execute-cairo-vectors.sh text eol=lf
