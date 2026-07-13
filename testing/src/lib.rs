@@ -64,6 +64,23 @@ macro_rules! assert_eq {
 	};
 }
 
+/// Check if the bark binary version satisfies the requirement.
+///
+/// Usage:
+/// ```ignore
+/// is_bark_version!(>= "0.1.0-beta.8");
+/// ```
+///
+#[macro_export]
+macro_rules! is_bark_version {
+	($op:tt $version:expr) => {{
+		let actual = $crate::bark::Bark::version().await;
+		let actual = $crate::util::BarkVersion::parse(&actual);
+		let required = $crate::util::BarkVersion::parse($version);
+		actual $op required
+	}};
+}
+
 /// Skip the current test if the bark binary version doesn't satisfy the requirement.
 ///
 /// Usage (as the first line in an async test):
@@ -75,13 +92,11 @@ macro_rules! assert_eq {
 #[macro_export]
 macro_rules! require_bark_version {
 	($op:tt $version:literal) => {
-		let actual = $crate::bark::Bark::version().await;
-		let actual = $crate::util::BarkVersion::parse(&actual);
-		let required = $crate::util::BarkVersion::parse($version);
-		if !(actual $op required) {
+		if !$crate::is_bark_version!($op $version) {
+			let actual = $crate::bark::Bark::version().await;
 			log::info!(
 				"skipping test: bark {} does not satisfy {} {}",
-				actual, stringify!($op), required,
+				actual, stringify!($op), $version,
 			);
 			return;
 		}
