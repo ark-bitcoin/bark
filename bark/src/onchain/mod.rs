@@ -107,12 +107,6 @@ pub trait OnchainWalletTrait: std::any::Any + Send + Sync {
 	/// Sync the wallet with the onchain network.
 	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()>;
 
-	/// Retrieve the wallet [Transaction] for the given [Txid] if any
-	async fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>>;
-
-	/// Retrieve information about the block, if any, a given wallet transaction was confirmed in
-	async fn get_wallet_tx_confirmed_block(&self, txid: Txid) -> anyhow::Result<Option<BlockRef>>;
-
 	/// Returns `true` if the given script pubkey belongs to the wallet's keychains.
 	async fn is_mine(&self, spk: &Script) -> anyhow::Result<bool>;
 
@@ -141,12 +135,6 @@ pub trait OnchainWalletTrait: std::any::Any + Send + Sync {
 	/// Wallets should apply all necessary signatures and finalize inputs according
 	/// to their internal key management and policies.
 	async fn finish_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt>;
-
-	/// Search the wallet and look for any [Transaction] that spends the given [OutPoint]
-	///
-	/// The intent of the function is to only look at spends which happen in the wallet
-	/// itself.
-	async fn get_spending_tx(&self, outpoint: OutPoint) -> Option<Arc<Transaction>>;
 
 	/// Creates a signed Child Pays for Parent (CPFP) transaction using a Pay-to-Anchor (P2A) output
 	/// to broadcast unilateral exits and other TRUC transactions.

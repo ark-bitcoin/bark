@@ -8,13 +8,13 @@ use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bdk_wallet::{Balance, KeychainKind, LocalOutput, TxBuilder, TxOrdering};
 use bitcoin::{
-	Address, Amount, FeeRate, Network, OutPoint, Psbt, Script, Sequence, Transaction, TxOut,
+	Address, Amount, FeeRate, Network, Psbt, Script, Sequence, Transaction, TxOut,
 	Txid, Weight, bip32, psbt,
 };
 use log::{debug, error, info, trace, warn};
 
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, BlockRef, DEEPLY_CONFIRMED};
+use bitcoin_ext::{BlockHeight, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
 
@@ -169,20 +169,6 @@ impl OnchainWalletTrait for OnchainWallet {
 		OnchainWallet::sync(self, chain).await
 	}
 
-	async fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
-		self.inner.get_tx(txid).map(|tx| tx.tx_node.tx)
-	}
-
-	async fn get_wallet_tx_confirmed_block(&self, txid: Txid) -> anyhow::Result<Option<BlockRef>> {
-		match self.inner.get_tx(txid) {
-			Some(tx) => match tx.chain_position {
-				ChainPosition::Confirmed { anchor, .. } => Ok(Some(anchor.block_id.into())),
-				ChainPosition::Unconfirmed { .. } => Ok(None),
-			},
-			None => Err(anyhow!("Tx {} does not exist in the wallet", txid)),
-		}
-	}
-
 	async fn is_mine(&self, spk: &Script) -> anyhow::Result<bool> {
 		Ok(self.inner.is_mine(spk.to_owned()))
 	}
@@ -230,15 +216,6 @@ impl OnchainWalletTrait for OnchainWallet {
 		self.inner.apply_unconfirmed_txs([(tx, timestamp_secs())]);
 		self.persist().await?;
 		Ok(psbt)
-	}
-
-	async fn get_spending_tx(&self, outpoint: OutPoint) -> Option<Arc<Transaction>> {
-		for transaction in self.inner.transactions() {
-			if transaction.tx_node.tx.input.iter().any(|i| i.previous_output == outpoint) {
-				return Some(transaction.tx_node.tx);
-			}
-		}
-		None
 	}
 
 	async fn make_signed_p2a_cpfp(
