@@ -202,7 +202,7 @@ where
 
 // 404 handler for unmatched routes
 pub async fn route_not_found(path: String) -> (StatusCode, Json<String>) {
-	(StatusCode::NOT_FOUND, Json(format!("path not round: {}", path)))
+	(StatusCode::NOT_FOUND, Json(format!("path not found: {}", path)))
 }
 
 // Convenience type alias for handlers that return anyhow::Result
