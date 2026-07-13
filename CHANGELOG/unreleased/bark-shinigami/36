@@ -1,0 +1,4 @@
+- Add experimental Bark/Cairo manifest-binding interoperability
+  The unpublished `bark-shinigami` crate encodes versioned Cairo inputs for
+  pubkey-policy VTXO owner exits without executing Script or verifying proofs.
+  [#36](https://github.com/ark-bitcoin/bark/pull/36)
