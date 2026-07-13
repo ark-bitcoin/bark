@@ -2,6 +2,7 @@
 use std::convert::Infallible;
 
 use bitcoin::{Transaction, Txid};
+use bitcoin::amount::CheckedSum;
 use bitcoin::secp256k1::Keypair;
 
 use crate::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo, Amount};
@@ -112,7 +113,10 @@ impl ArkoorPackageBuilder<state::Initial> {
 		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		outputs: Vec<ArkoorDestination>,
 	) -> Result<Vec<(Vtxo<Full>, Vec<ArkoorDestination>)>, ArkoorConstructionError> {
-		let total_output = outputs.iter().map(|r| r.total_amount).sum::<Amount>();
+		// Output amounts are client-supplied and uncapped, so perform checked sum to avoid overflow.
+		let total_output = outputs.iter().map(|r| r.total_amount)
+			.checked_sum()
+			.ok_or(ArkoorConstructionError::Overflow)?;
 		if outputs.is_empty() || total_output == Amount::ZERO {
 			return Err(ArkoorConstructionError::NoOutputs);
 		}
@@ -127,7 +131,8 @@ impl ArkoorPackageBuilder<state::Initial> {
 		let mut total_input = Amount::ZERO;
 		'inputs:
 		for input in inputs {
-			total_input += input.amount();
+			total_input = total_input.checked_add(input.amount())
+				.ok_or(ArkoorConstructionError::Overflow)?;
 
 			let mut input_remaining = input.amount();
 			let mut input_allocation: Vec<ArkoorDestination> = Vec::new();
@@ -1388,5 +1393,25 @@ mod test {
 			expected_vtxo_ids.len(),
 			"spend_info contains unexpected entries"
 		);
+	}
+
+	#[test]
+	fn output_sum_overflow_rejected() {
+		// Output amounts come straight off the wire uncapped; two near-
+		// `u64::MAX` amounts must be rejected, not panic the `Amount` sum.
+		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(10_000));
+		let outputs = vec![
+			ArkoorDestination {
+				total_amount: Amount::from_sat(u64::MAX),
+				policy: VtxoPolicy::new_pubkey(bob_public_key()),
+			},
+			ArkoorDestination {
+				total_amount: Amount::from_sat(u64::MAX),
+				policy: VtxoPolicy::new_pubkey(bob_public_key()),
+			},
+		];
+
+		let result = ArkoorPackageBuilder::new_with_checkpoints([alice_vtxo], outputs);
+		assert_eq!(result.err(), Some(ArkoorConstructionError::Overflow));
 	}
 }
