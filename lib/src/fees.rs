@@ -116,7 +116,15 @@ impl BoardFees {
 	/// Returns the maximum of the calculated fee (base_fee + ppm) and the minimum fee. `None` if an
 	/// overflow occurs.
 	pub fn calculate(&self, amount: Amount) -> Option<Amount> {
-		let fee = self.ppm.checked_mul(amount)?.checked_add(self.base_fee)?;
+		let fee = (amount * self.ppm).to_amount_ceil()?.checked_add(self.base_fee)?;
+		Some(fee.max(self.min_fee))
+	}
+
+	/// [BoardFees::calculate] for clients on protocol versions that round the ppm fee down.
+	#[deprecated(note = "only for protocol versions <= 3")]
+	pub fn calculate_legacy(&self, amount: Amount) -> Option<Amount> {
+		let numerator = amount.to_sat().checked_mul(self.ppm.0)?;
+		let fee = Amount::from_sat(numerator / 1_000_000).checked_add(self.base_fee)?;
 		Some(fee.max(self.min_fee))
 	}
 }
@@ -157,6 +165,24 @@ impl OffboardFees {
 		let ppm_fee = calc_ppm_expiry_fee(Some(amount), &self.ppm_expiry_table, vtxos)?;
 		self.base_fee.checked_add(weight_fee)?.checked_add(ppm_fee)
 	}
+
+	/// [OffboardFees::calculate] for clients on protocol versions that calculate ppm fees
+	/// per VTXO.
+	#[deprecated(note = "only for protocol versions <= 3")]
+	#[allow(deprecated)]
+	pub fn calculate_legacy(
+		&self,
+		destination: &ScriptBuf,
+		amount: Amount,
+		fee_rate: FeeRate,
+		vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
+	) -> Option<Amount> {
+		let weight_fee = self.fixed_additional_vb.checked_add(destination.as_script().len() as u64)
+			.and_then(Weight::from_vb)
+			.and_then(|w| fee_rate.checked_mul_by_weight(w))?;
+		let ppm_fee = calc_ppm_expiry_fee_legacy(Some(amount), &self.ppm_expiry_table, vtxos)?;
+		self.base_fee.checked_add(weight_fee)?.checked_add(ppm_fee)
+	}
 }
 
 /// Fees for refresh operations.
@@ -190,6 +216,18 @@ impl RefreshFees {
 	) -> Option<Amount> {
 		calc_ppm_expiry_fee(None, &self.ppm_expiry_table, vtxos)
 	}
+
+	/// [RefreshFees::calculate] for clients on protocol versions that calculate ppm fees
+	/// per VTXO.
+	#[deprecated(note = "only for protocol versions <= 3")]
+	#[allow(deprecated)]
+	pub fn calculate_legacy(
+		&self,
+		vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
+	) -> Option<Amount> {
+		let fee = calc_ppm_expiry_fee_legacy(None, &self.ppm_expiry_table, vtxos)?;
+		self.base_fee.checked_add(fee)
+	}
 }
 
 /// Fees for lightning receive operations.
@@ -207,7 +245,15 @@ impl LightningReceiveFees {
 	///
 	/// Returns `None` if an overflow occurs.
 	pub fn calculate(&self, amount: Amount) -> Option<Amount> {
-		self.base_fee.checked_add(self.ppm.checked_mul(amount)?)
+		self.base_fee.checked_add((amount * self.ppm).to_amount_ceil()?)
+	}
+
+	/// [LightningReceiveFees::calculate] for clients on protocol versions that round the ppm
+	/// fee down.
+	#[deprecated(note = "only for protocol versions <= 3")]
+	pub fn calculate_legacy(&self, amount: Amount) -> Option<Amount> {
+		let numerator = amount.to_sat().checked_mul(self.ppm.0)?;
+		self.base_fee.checked_add(Amount::from_sat(numerator / 1_000_000))
 	}
 }
 
@@ -235,6 +281,19 @@ impl LightningSendFees {
 		vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
 	) -> Option<Amount> {
 		let ppm = calc_ppm_expiry_fee(Some(amount), &self.ppm_expiry_table, vtxos)?;
+		Some(self.base_fee.checked_add(ppm)?.max(self.min_fee))
+	}
+
+	/// [LightningSendFees::calculate] for clients on protocol versions that calculate ppm fees
+	/// per VTXO.
+	#[deprecated(note = "only for protocol versions <= 3")]
+	#[allow(deprecated)]
+	pub fn calculate_legacy(
+		&self,
+		amount: Amount,
+		vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
+	) -> Option<Amount> {
+		let ppm = calc_ppm_expiry_fee_legacy(Some(amount), &self.ppm_expiry_table, vtxos)?;
 		Some(self.base_fee.checked_add(ppm)?.max(self.min_fee))
 	}
 }
@@ -267,11 +326,6 @@ impl PpmFeeRate {
 	/// Represents a fee rate of 1%.
 	pub const ONE_PERCENT: PpmFeeRate = PpmFeeRate(10_000);
 
-	/// Multiplies the given amount by this fee rate. Returns `None` if the result overflows.
-	pub fn checked_mul(self, other: Amount) -> Option<Amount> {
-		let numerator = other.to_sat().checked_mul(self.0)?;
-		Some(Amount::from_sat(numerator / 1_000_000))
-	}
 }
 
 /// A fee with sub-satoshi precision: the undivided numerator of a ppm fee calculation, in
@@ -599,6 +653,15 @@ mod tests {
 		// base (100) + (10,000 * 1,000) / 1,000,000 = 100 + 10 = MAX(110, 330) = 330
 		assert_eq!(fee, Amount::from_sat(330));
 
+		// Fractional fees round up, the legacy calculation rounds down.
+		fees.min_fee = Amount::ZERO;
+		let amount = Amount::from_sat(10_500);
+		// base (100) + ceil(10.5) = 111
+		assert_eq!(fees.calculate(amount), Some(Amount::from_sat(111)));
+		#[allow(deprecated)]
+		let fee = fees.calculate_legacy(amount);
+		// base (100) + floor(10.5) = 110
+		assert_eq!(fee, Some(Amount::from_sat(110)));
 	}
 
 	#[test]
@@ -788,6 +851,14 @@ mod tests {
 		// base (100) + (10,000 * 2,000) / 1,000,000 = 100 + 20 = 120
 		assert_eq!(fee, Amount::from_sat(120));
 
+		// Fractional fees round up, the legacy calculation rounds down.
+		let amount = Amount::from_sat(10_400);
+		// base (100) + ceil(20.8) = 121
+		assert_eq!(fees.calculate(amount), Some(Amount::from_sat(121)));
+		#[allow(deprecated)]
+		let fee = fees.calculate_legacy(amount);
+		// base (100) + floor(20.8) = 120
+		assert_eq!(fee, Some(Amount::from_sat(120)));
 	}
 
 	#[test]
