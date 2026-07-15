@@ -9,10 +9,10 @@ use ark::fees::{
 };
 use bark_json::movements::{MovementDestination, PaymentMethod};
 use bitcoin_ext::{FeeRateExt, P2TR_DUST};
-use ark_testing::{Bark, TestContext, btc, require_bark_version, sat};
+use ark_testing::{TestContext, btc, is_bark_version, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::exit::complete_exit;
-use ark_testing::util::{BarkVersion, FutureExt, ToAltString};
+use ark_testing::util::{FutureExt, ToAltString};
 
 fn assert_eq_unordered<T: Ord + Clone + std::fmt::Debug>(a: &[T], b: &[T]) {
 	let mut a = a.to_vec();
@@ -430,8 +430,7 @@ async fn refresh_should_refresh_vtxos() {
 	// the "should-refresh" criteria (here, VTXO B). Since 0.3.0 this is no longer desired as
 	// it was surprising for callers who hand-picked their inputs: only the explicitly
 	// requested VTXO C is refreshed, and A/B are left untouched.
-	let version = BarkVersion::parse(&Bark::version().await);
-	if version <= BarkVersion::parse("0.3.0") {
+	if is_bark_version!(<= "0.3.0") {
 		assert_eq!(
 			vtxos.len(), 2, "Should have 2 VTXOs: 1 refresh output, 1 should-refresh consolidation",
 		);

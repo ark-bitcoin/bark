@@ -16,11 +16,11 @@ use server_log::{
 	ProgressCpfpFailure,
 };
 
-use ark_testing::{Bark, TestContext, btc, require_bark_version, sat};
+use ark_testing::{TestContext, btc, is_bark_version, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::SlogHandler;
 use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
-use ark_testing::util::{BarkVersion, FutureExt};
+use ark_testing::util::FutureExt;
 
 /// Struct that captures all watchman related failures so that we
 /// can ensure our tests don't produce any
@@ -785,8 +785,7 @@ async fn watchman_force_exit_lightning_vtxo_blocks_refresh() {
 	// The fix (bark >= 0.2.6, incl. DIRTY working-tree builds) checkpoints the claim, so the
 	// watchman stops at the checkpoint and never broadcasts the victim's leaf; older bark builds
 	// the checkpoint-free claim and the watchman force-exits the leaf.
-	let version = BarkVersion::parse(&Bark::version().await);
-	if version >= BarkVersion::parse("0.2.6") {
+	if is_bark_version!(>= "0.2.6") {
 		// Fixed: the leaf was not force-exited and stays a refreshable off-chain VTXO.
 		// Guard against a vacuous pass: the watchman must have actually progressed the
 		// dragged-on-chain tree (up to the checkpoint), otherwise `!forced` proves nothing.
