@@ -549,15 +549,7 @@ impl Bark {
 		let destination = destination.to_string();
 		let amount_str = amount.map(|a| a.to_string());
 
-		// In 0.1.0-beta.8 and before the command was `lightning pay <invoice>`.
-		// Since 0.1.0-beta.9 and onwards it is `lightning pay invoice <invoice>`.
-		let version = crate::util::BarkVersion::parse(&Bark::version().await);
-		let cutoff = crate::util::BarkVersion::parse("0.1.0-beta.8");
-		let mut args = if version > cutoff {
-			vec!["lightning", "pay", "invoice", &destination, "--verbose"]
-		} else {
-			vec!["lightning", "pay", &destination, "--verbose"]
-		};
+		let mut args = vec!["lightning", "pay", "invoice", &destination, "--verbose"];
 		if let Some(amount) = amount_str.as_ref() {
 			args.push(amount);
 		}
@@ -672,16 +664,8 @@ impl Bark {
 	pub async fn lightning_receive_status(&self, filter: impl fmt::Display)
 		-> Option<LightningReceiveInfo>
 	{
-		// In 0.1.0-beta.8 and before the command was `lightning status <filter>`.
-		// Since 0.1.0-beta.9 and onwards it is `lightning receive status <filter>`.
-		let version = crate::util::BarkVersion::parse(&Bark::version().await);
-		let cutoff = crate::util::BarkVersion::parse("0.1.0-beta.8");
 		let filter = filter.to_string();
-		let args: Vec<&str> = if version > cutoff {
-			vec!["lightning", "receive", "status", &filter]
-		} else {
-			vec!["lightning", "status", &filter]
-		};
+		let args = vec!["lightning", "receive", "status", &filter];
 		let res = self.run(args).await;
 		if res.is_empty() { return None; }
 		let info = serde_json::from_str::<LightningReceiveInfo>(&res).expect("json error");
