@@ -26,6 +26,7 @@ use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
 use server::filters;
 use server::filters::Filters;
+use server::secret::Secret;
 use server::wallet::WalletKind;
 
 use ark_testing::{sat, TestContext};
@@ -1423,13 +1424,15 @@ async fn round_participation_same_vtxo_multiple_pending() {
 	// First participation succeeds
 	db.write(async |t| t.try_store_round_participation(0, preimage1, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
 
-	// Second participation with same vtxo as input is allowed at the DB level;
-	// deduplication happens when a round is finalized (no unique constraint on vtxo_id).
+	// Second participation with same vtxo as input should remove the first participation
 	db.write(async |t| t.try_store_round_participation(0, preimage2, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
 
-	// Both are stored as pending participations
-	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
-	assert_eq!(pending.len(), 2, "both participations are pending");
+	// Only the second participation should be stored as pending
+	let [pending] = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap()
+		.try_into().expect("Should have exactly one pending participation");
+	assert_eq!(pending.unlock_preimage, Secret::from(preimage2));
+	let [input] = pending.inputs.try_into().expect("Should have exactly one input");
+	assert_eq!(input.vtxo_id, vtxo.id(), "The input vtxo should be the same as the one in the second participation");
 }
 
 const DUMMY_PUBKEY: &str = "038f47dcd43ba6d97fc9ed2e3bba09b175a45fac55f0683e8cf771e8ced4572354";
