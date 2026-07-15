@@ -856,10 +856,11 @@ fn validate_payment_amounts(
 	let mut in_set = HashSet::with_capacity(inputs.len());
 	let mut in_sum = Amount::ZERO;
 	for input in inputs {
-		in_sum += input.amount();
-		if in_sum > Amount::MAX_MONEY{
-			return badarg!("total input amount overflow");
-		}
+		// checked_add: bitcoin::Amount addition panics on overflow, so never feed it
+		// an untrusted running total. See the output loop below for the client-facing case.
+		in_sum = in_sum.checked_add(input.amount())
+			.filter(|s| *s <= Amount::MAX_MONEY)
+			.ok_or_else(|| badarg_err!("total input amount overflow"))?;
 		if !in_set.insert(input.id()) {
 			return badarg!("duplicate input");
 		}
@@ -881,7 +882,12 @@ fn validate_payment_amounts(
 				return badarg!("invalid vtxo policy: {:?}", output.policy);
 			},
 			VtxoPolicy::Pubkey { .. } => {
-				out_sum += output.amount;
+				// Output amounts are attacker-controlled and unbounded (decoded via
+				// Amount::from_sat with no cap). checked_add avoids the overflow panic
+				// that bitcoin::Amount's `+` would otherwise trigger; the `out_sum >
+				// in_sum` check below still enforces value conservation.
+				out_sum = out_sum.checked_add(output.amount)
+					.ok_or_else(|| badarg_err!("total output amount overflow"))?;
 			},
 		}
 
@@ -1994,6 +2000,35 @@ mod tests {
 			inputs[0].amount().to_sat() + 100, &state.round_data,
 		)];
 
+		state.validate_payment_data(&input_ids, &outputs).unwrap();
+		validate_payment_amounts(
+			&inputs, &outputs, &FeeSchedule::default().refresh, 0, PROTOCOL_VERSION_PPM_FEE_TOTAL,
+		).unwrap_err();
+	}
+
+	// A malicious client can request an output amount near u64::MAX. With
+	// max_vtxo_amount unset nothing upstream rejects it, so it reaches the amount
+	// accumulation. The running total must be rejected with an error rather than
+	// overflowing: bitcoin::Amount addition panics on overflow, and a panic here
+	// takes down the (critical) round coordinator.
+	#[test]
+	fn test_register_payment_output_amount_overflow() {
+		let state = create_collecting_payments(2);
+
+		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone()];
+		let input_ids = inputs
+			.iter()
+			.map(|v| SelfSignedInput { vtxo_id: v.id(), attestation: *TEST_ATTESTATION })
+			.collect::<Vec<_>>();
+
+		// The first output equals the whole input so it passes the output <= input
+		// check; the second pushes the running total past u64::MAX.
+		let outputs = vec![
+			create_signed_req(inputs[0].amount().to_sat(), &state.round_data),
+			create_signed_req(u64::MAX, &state.round_data),
+		];
+
+		// Nothing upstream bounds the amount when max_vtxo_amount is None.
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
 		validate_payment_amounts(
 			&inputs, &outputs, &FeeSchedule::default().refresh, 0, PROTOCOL_VERSION_PPM_FEE_TOTAL,
