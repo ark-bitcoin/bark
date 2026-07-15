@@ -11,7 +11,7 @@
 //! [`Progress`] enum.
 
 use anyhow::Context;
-use bitcoin::{Amount, OutPoint, Transaction};
+use bitcoin::{Amount, OutPoint, SignedAmount, Transaction};
 use log::{error, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo};
@@ -22,9 +22,10 @@ use server_rpc::protos;
 
 use crate::Wallet;
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId};
+use crate::chain::BroadcastError;
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
-use crate::vtxo::{VtxoLockHolder, VtxoStateKind};
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
 
 /// An in-flight board, persisted as a single checkpoint row and driven across
 /// crashes by the executor.
@@ -158,9 +159,9 @@ async fn run_broadcast(
 
 /// `Confirming`. Mirrors the pre-action `sync_pending_boards` loop body, run
 /// once per drive: tear down if the vtxo has exited, re-broadcast if the funding
-/// tx dropped, register once sufficiently confirmed, and kick off an exit near
-/// expiry (keeping the board around so registration can still win while the exit
-/// is abortable).
+/// tx dropped (or fail the board if it was double-spent), register once
+/// sufficiently confirmed, and kick off an exit near expiry (keeping the board
+/// around so registration can still win while the exit is abortable).
 async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, AdvanceError> {
 	let (_, ark_info) = wallet.require_server().await?;
 	let current_height = wallet.inner.chain.tip().await?;
@@ -176,20 +177,63 @@ async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, Ad
 		return Ok(Advance::Done);
 	}
 
+	// A previous drive already observed a confirmed double-spend of a funding
+	// tx input and marked the vtxo spent (see the `Fatal` arm below), but was
+	// interrupted before tearing the board down: finish the teardown.
+	if vtxo.state.kind() == VtxoStateKind::Spent {
+		wallet.inner.movements.finish_movement_with_update(
+			board.movement_id, MovementStatus::Failed,
+			MovementUpdate::new().effective_balance(SignedAmount::ZERO),
+		).await.context("failed to finalize double-spent board movement")?;
+		return Ok(Advance::Done);
+	}
+
+	let mut last_park_error = None;
 	let anchor = vtxo.chain_anchor();
 	let confs = match wallet.inner.chain.tx_status(anchor.txid).await {
 		Ok(TxStatus::Confirmed(block_ref)) => Some(current_height - (block_ref.height - 1)),
 		Ok(TxStatus::Mempool) => Some(0),
-		// Dropped from the mempool before confirming: re-broadcast so a single
-		// eviction doesn't strand the board forever (the old flow never did).
+		// Dropped from the mempool before confirming. Probe for a conflicting
+		// spend of the funding inputs: if one has confirmed the funding tx can
+		// never confirm, so the board is dead and re-broadcasting would strand
+		// it in a park-and-retry loop forever.
 		Ok(TxStatus::NotFound) => {
-			wallet.inner.chain.broadcast_tx(&board.funding_tx).await?;
-			Some(0)
+			match funding_conflict(wallet, &board).await? {
+				FundingConflict::Fatal => {
+					warn!("Board {} funding input was spent by a confirmed \
+						conflicting tx, failing the board", board.id);
+					wallet.inner.db.update_vtxo_state_checked(
+						board.vtxo_id, VtxoState::Spent, &[VtxoStateKind::Locked],
+					).await.context("failed to mark double-spent board vtxo as spent")?;
+					wallet.inner.movements.finish_movement_with_update(
+						board.movement_id, MovementStatus::Failed,
+						MovementUpdate::new().effective_balance(SignedAmount::ZERO),
+					).await.context("failed to finalize double-spent board movement")?;
+					return Ok(Advance::Done);
+				},
+				// The funding tx may still confirm: park and re-check next
+				// drive.
+				FundingConflict::Undecided(reason) => {
+					return Ok(Advance::Park {
+						state: Board {
+							progress: Progress::Confirming {
+								last_park_error: Some(reason),
+							},
+							..board
+						},
+						wake_after: None,
+						error: None,
+					});
+				},
+				// Nothing conflicts: the probe already put the funding tx back
+				// in the mempool, so a single eviction doesn't strand the board
+				// forever (the old flow never did).
+				FundingConflict::None => Some(0),
+			}
 		},
 		Err(_) => None,
 	};
 
-	let mut last_park_error = None;
 	if confs.is_some_and(|c| c >= required) {
 		// Attempt registration inline. A failure here (the server can't see
 		// enough confirmations yet, or refuses) is not terminal: leave the vtxo
@@ -260,4 +304,51 @@ async fn run_register(wallet: &Wallet, board: &Board) -> anyhow::Result<()> {
 
 	info!("Registered board {}", vtxo.id());
 	Ok(())
+}
+
+/// How the board funding tx fares after being dropped from the mempool.
+enum FundingConflict {
+	/// Nothing conflicts: the re-broadcast probe put the funding tx back into
+	/// the mempool.
+	None,
+	/// The outcome is still open (a parent tx isn't visible yet, a competing
+	/// unconfirmed spend is in the way, or the node rejected the re-broadcast
+	/// transiently), so the funding tx may still confirm. Carries the park
+	/// reason.
+	Undecided(String),
+	/// A funding input was spent by a confirmed conflicting tx, so the funding
+	/// tx can never confirm: the board is dead.
+	Fatal,
+}
+
+/// Classify the board funding tx after it dropped out of the mempool, without
+/// scanning the chain (a full block scan from the vtxo's creation height is
+/// prohibitively slow against Bitcoin Core).
+///
+/// First confirm every funding input's parent tx is visible on-chain or in the
+/// mempool. A missing parent is not fatal: an evicted ancestor can re-enter the
+/// mempool once a cluster/package limit clears, so we park and wait. Once all
+/// parents are present, re-broadcasting the funding tx reveals whether its
+/// inputs are still spendable: a `missing or spent inputs` rejection then means
+/// a confirmed conflict consumed one of them and the board is dead. Any other
+/// rejection (a competing unconfirmed spend, an RBF fee shortfall, or a
+/// transient node error) leaves the outcome open, so we park.
+async fn funding_conflict(wallet: &Wallet, board: &Board) -> anyhow::Result<FundingConflict> {
+	for input in &board.funding_tx.input {
+		let parent = input.previous_output.txid;
+		match wallet.inner.chain.tx_status(parent).await? {
+			TxStatus::Confirmed(_) | TxStatus::Mempool => {},
+			TxStatus::NotFound => return Ok(FundingConflict::Undecided(format!(
+				"funding input parent tx {} not yet visible on chain", parent,
+			))),
+		}
+	}
+
+	match wallet.inner.chain.broadcast_package(std::slice::from_ref(&board.funding_tx)).await {
+		Ok(()) | Err(BroadcastError::AlreadyKnown) => Ok(FundingConflict::None),
+		Err(BroadcastError::MissingOrSpentInputs) => Ok(FundingConflict::Fatal),
+		Err(e) => Ok(FundingConflict::Undecided(
+			format!("funding tx re-broadcast rejected: {}", e),
+		)),
+	}
 }
