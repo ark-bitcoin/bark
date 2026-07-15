@@ -193,7 +193,8 @@ impl ExitInner {
 				// Pre-flight check: Prevent exiting dust, which causes "zombie" states
 				if vtxo.amount() < P2TR_DUST {
 					return Err(ExitError::DustLimit {
-						vtxo: vtxo.amount(),
+						vtxo: vtxo_id,
+						amount: vtxo.amount(),
 						dust: P2TR_DUST,
 					}.into());
 				}

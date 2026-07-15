@@ -56,9 +56,10 @@ pub enum ExitError {
 	#[error("Database Store Failure: Unable to store child tx: {error}")]
 	DatabaseChildStoreFailure { error: String },
 
-	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but the balance is only {vtxo}")]
+	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but vtxo {vtxo} is only {amount}")]
 	DustLimit {
-		vtxo: Amount,
+		vtxo: VtxoId,
+		amount: Amount,
 		dust: Amount
 	},
 

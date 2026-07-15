@@ -69,10 +69,12 @@ pub enum ExitError {
 	#[error("Database Store Failure: Unable to store child tx: {error}")]
 	DatabaseChildStoreFailure { error: String },
 
-	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but the balance is only {vtxo}")]
+	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but vtxo {vtxo} is only {amount}")]
 	DustLimit {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		vtxo: VtxoId,
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		vtxo: Amount,
+		amount: Amount,
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		dust: Amount
 	},
@@ -192,8 +194,8 @@ impl From<bark::exit::ExitError> for ExitError {
 			bark::exit::ExitError::DatabaseChildStoreFailure { error } => {
 				ExitError::DatabaseChildStoreFailure { error }
 			},
-			bark::exit::ExitError::DustLimit { vtxo, dust } => {
-				ExitError::DustLimit { vtxo, dust }
+			bark::exit::ExitError::DustLimit { vtxo, amount, dust } => {
+				ExitError::DustLimit { vtxo, amount, dust }
 			},
 			bark::exit::ExitError::ExitPackageBroadcastFailure { txid, error } => {
 				ExitError::ExitPackageBroadcastFailure { txid, error: error.to_string() }
