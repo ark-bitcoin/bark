@@ -274,15 +274,41 @@ impl PpmFeeRate {
 	}
 }
 
-impl ops::Mul<PpmFeeRate> for Amount {
-	type Output = Amount;
+/// A fee with sub-satoshi precision: the undivided numerator of a ppm fee calculation, in
+/// millionths of a satoshi.
+///
+/// Produced by `Amount * PpmFeeRate`. To be usable as money it must be rounded to whole
+/// satoshis with [PpmFee::to_amount_ceil]; keeping the numerator exact until then lets sums
+/// of fees round once on the total instead of once per term.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PpmFee(u128);
 
-	/// Calculates a fee value for the current amount using a parts-per-million (PPM) rate.
-	///
-	/// # Returns
-	///
-	/// Returns the calculated fee as an `Amount`. The result is truncated using integer division,
-	/// and any overflow is capped with u64::MAX.
+impl PpmFee {
+	/// The zero amount.
+	pub const ZERO: PpmFee = PpmFee(0);
+
+	/// The fee in satoshis, rounded up to the next whole satoshi.
+	/// Returns `None` if the result exceeds `u64::MAX`.
+	pub fn to_sat_ceil(self) -> Option<u64> {
+		u64::try_from(self.0.div_ceil(1_000_000)).ok()
+	}
+
+	/// The fee rounded up to the next whole satoshi.
+	/// Returns `None` if the result exceeds `u64::MAX` satoshis.
+	pub fn to_amount_ceil(self) -> Option<Amount> {
+		Some(Amount::from_sat(self.to_sat_ceil()?))
+	}
+
+	/// Returns `None` if the sum overflows.
+	pub fn checked_add(self, other: PpmFee) -> Option<PpmFee> {
+		Some(PpmFee(self.0.checked_add(other.0)?))
+	}
+}
+
+impl ops::Mul<PpmFeeRate> for Amount {
+	type Output = PpmFee;
+
+	/// Calculates a fee for the current amount using a parts-per-million (PPM) rate.
 	///
 	/// # Example
 	///
@@ -292,12 +318,12 @@ impl ops::Mul<PpmFeeRate> for Amount {
 	///
 	/// let fee_chargeable_amount = Amount::from_sat(10_000);
 	/// let ppm = PpmFeeRate(5_000); // 0.5%
-	/// let fee = fee_chargeable_amount * ppm;
+	/// let fee = (fee_chargeable_amount * ppm).to_amount_ceil().unwrap();
 	/// assert_eq!(fee, Amount::from_sat(50)); // 10,000 * 5,000 / 1,000,000 = 50
 	/// ```
 	fn mul(self, ppm: PpmFeeRate) -> Self::Output {
-		let numerator = self.to_sat().saturating_mul(ppm.0);
-		Amount::from_sat(numerator / 1_000_000)
+		PpmFee((self.to_sat() as u128).checked_mul(ppm.0 as u128)
+			.expect("widening u64 * u64 to u128 is exact and cannot overflow"))
 	}
 }
 
@@ -455,8 +481,8 @@ pub fn validate_and_subtract_fee_min_dust(
 ///
 /// # Returns
 ///
-/// Returns an `Amount` representing the total calculated fee based on the provided inputs. `None`
-/// if an overflow occurs.
+/// Returns an `Amount` representing the total calculated fee based on the provided inputs,
+/// rounded up to the next satoshi. `None` if an overflow occurs.
 ///
 /// # Example Usage
 ///
@@ -483,6 +509,43 @@ pub fn calc_ppm_expiry_fee(
 	ppm_expiry_table: &Vec<PpmExpiryFeeEntry>,
 	vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
 ) -> Option<Amount> {
+	// We use the PpmFee type to accumulate sub-satoshi fee values which we can later round up
+	// to the nearest satoshi.
+	let mut total_fee = PpmFee::ZERO;
+	let mut remaining = fee_chargeable_amount;
+	for v in vtxos {
+		// If a fee_chargeable_amount was provided, we should only account for that amount, else we
+		// should assume every VTXO will be fully spent.
+		let fee_chargeable_amount = if let Some(ref mut remaining) = remaining {
+			let amount = v.amount.min(*remaining);
+			*remaining -= amount;
+			amount
+		} else {
+			v.amount
+		};
+
+		// We assume the table is sorted by expiry_blocks_threshold in ascending order
+		let entry = ppm_expiry_table
+			.iter()
+			.rev()
+			.find(|entry| v.expiry_blocks >= entry.expiry_blocks_threshold);
+
+		// If we can't find an entry that is suitable, we assume no fee is necessary
+		if let Some(entry) = entry {
+			total_fee = total_fee.checked_add(fee_chargeable_amount * entry.ppm)?;
+		}
+	}
+	total_fee.to_amount_ceil()
+}
+
+/// [calc_ppm_expiry_fee] as calculated by clients on protocol versions that apply the fee rate
+/// to each VTXO separately rather than to the total.
+#[deprecated(note = "only for protocol versions <= 3")]
+pub fn calc_ppm_expiry_fee_legacy(
+	fee_chargeable_amount: Option<Amount>,
+	ppm_expiry_table: &Vec<PpmExpiryFeeEntry>,
+	vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
+) -> Option<Amount> {
 	let mut total_fee = Amount::ZERO;
 	let mut remaining = fee_chargeable_amount;
 	for v in vtxos {
@@ -504,7 +567,8 @@ pub fn calc_ppm_expiry_fee(
 
 		// If we can't find an entry that is suitable, we assume no fee is necessary
 		if let Some(entry) = entry {
-			total_fee = total_fee.checked_add(entry.ppm.checked_mul(fee_chargeable_amount)?)?;
+			let numerator = fee_chargeable_amount.to_sat().checked_mul(entry.ppm.0)?;
+			total_fee = total_fee.checked_add(Amount::from_sat(numerator / 1_000_000))?;
 		}
 	}
 	Some(total_fee)
@@ -534,6 +598,7 @@ mod tests {
 		let fee = fees.calculate(amount).unwrap();
 		// base (100) + (10,000 * 1,000) / 1,000,000 = 100 + 10 = MAX(110, 330) = 330
 		assert_eq!(fee, Amount::from_sat(330));
+
 	}
 
 	#[test]
@@ -722,6 +787,7 @@ mod tests {
 		let fee = fees.calculate(amount).unwrap();
 		// base (100) + (10,000 * 2,000) / 1,000,000 = 100 + 20 = 120
 		assert_eq!(fee, Amount::from_sat(120));
+
 	}
 
 	#[test]
@@ -753,7 +819,7 @@ mod tests {
 		fees.min_fee = Amount::from_sat(330);
 		let vtxo = VtxoFeeInfo { amount: Amount::from_sat(1_000), expiry_blocks: 150 };
 		let fee = fees.calculate(amount, vec![vtxo]).unwrap();
-		// base (75) + (1,000 * 750) / 1,000,000 = 75 + 0 = MAX(75, 330) = 330
+		// base (75) + ceil((1,000 * 750) / 1,000,000) = 75 + 1 = MAX(76, 330) = 330
 		assert_eq!(fee, Amount::from_sat(330));
 	}
 
@@ -785,5 +851,85 @@ mod tests {
 		// - Third VTXO: only need 100,000 at 1,500 ppm -> fee = 100,000 * 1,500 / 1,000,000 = 150
 		// Total: base (25) + 100 + 375 + 150 = 650
 		assert_eq!(fee, Amount::from_sat(650));
+	}
+
+	#[test]
+	#[allow(deprecated)]
+	fn test_ppm_expiry_fee_totals() {
+		let table = vec![
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 1_008, ppm: PpmFeeRate(2_000) },
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 2_016, ppm: PpmFeeRate(4_000) },
+		];
+
+		// Small amounts truncate to zero per VTXO but not on the total.
+		let vtxos = vec![VtxoFeeInfo { amount: Amount::from_sat(330), expiry_blocks: 1_500 }; 100];
+		let fee = calc_ppm_expiry_fee_legacy(None, &table, vtxos.clone());
+		// floor(330 * 2,000 / 1,000,000) = 0 per VTXO
+		assert_eq!(fee, Some(Amount::ZERO));
+		let fee = calc_ppm_expiry_fee(None, &table, vtxos);
+		// 100 * 330 = 33,000; 33,000 * 2,000 / 1,000,000 = 66
+		assert_eq!(fee, Some(Amount::from_sat(66)));
+
+		// The fee is rounded once on the total across entries.
+		let vtxos = vec![
+			VtxoFeeInfo { amount: Amount::from_sat(900), expiry_blocks: 1_100 },
+			VtxoFeeInfo { amount: Amount::from_sat(900), expiry_blocks: 1_200 },
+			VtxoFeeInfo { amount: Amount::from_sat(1_300), expiry_blocks: 2_500 },
+		];
+		let fee = calc_ppm_expiry_fee_legacy(None, &table, vtxos.clone());
+		// floor(1.8) + floor(1.8) + floor(5.2) = 1 + 1 + 5 = 7
+		assert_eq!(fee, Some(Amount::from_sat(7)));
+		let fee = calc_ppm_expiry_fee(None, &table, vtxos);
+		// ceil((1,800 * 2,000 + 1,300 * 4,000) / 1,000,000) = ceil(8.8) = 9
+		assert_eq!(fee, Some(Amount::from_sat(9)));
+
+		// A capped chargeable amount is allocated to VTXOs in order in both variants.
+		let vtxos = vec![
+			VtxoFeeInfo { amount: Amount::from_sat(900), expiry_blocks: 1_100 },
+			VtxoFeeInfo { amount: Amount::from_sat(900), expiry_blocks: 1_200 },
+			VtxoFeeInfo { amount: Amount::from_sat(900), expiry_blocks: 2_500 },
+		];
+		let cap = Some(Amount::from_sat(1_500));
+		let fee = calc_ppm_expiry_fee_legacy(cap, &table, vtxos.clone());
+		// Chargeable 900 + 600 + 0: floor(1.8) + floor(1.2) = 2
+		assert_eq!(fee, Some(Amount::from_sat(2)));
+		let fee = calc_ppm_expiry_fee(cap, &table, vtxos);
+		// Chargeable 900 + 600 + 0: ceil(1,500 * 2,000 / 1,000,000) = 3
+		assert_eq!(fee, Some(Amount::from_sat(3)));
+
+		// VTXOs below every threshold are free in both variants.
+		let vtxos = vec![VtxoFeeInfo { amount: Amount::from_sat(100_000), expiry_blocks: 500 }; 10];
+		let fee = calc_ppm_expiry_fee_legacy(None, &table, vtxos.clone());
+		assert_eq!(fee, Some(Amount::ZERO));
+		let fee = calc_ppm_expiry_fee(None, &table, vtxos);
+		assert_eq!(fee, Some(Amount::ZERO));
+	}
+
+	#[test]
+	fn test_ppm_expiry_fee_lagging_tip_pays_at_least_ours() {
+		let table = vec![
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 0, ppm: PpmFeeRate::ZERO },
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 1_008, ppm: PpmFeeRate(2_000) },
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 2_016, ppm: PpmFeeRate(4_000) },
+		];
+
+		// A party one block behind charges threshold-straddling VTXOs at the next entry.
+		// The single rounding on the total keeps its fee monotone in the entry rates, so
+		// it always covers our own calculation.
+		let ours = vec![
+			VtxoFeeInfo { amount: Amount::from_sat(100), expiry_blocks: 2_015 },
+			VtxoFeeInfo { amount: Amount::from_sat(900), expiry_blocks: 1_500 },
+		];
+		let theirs = vec![
+			VtxoFeeInfo { amount: Amount::from_sat(100), expiry_blocks: 2_016 },
+			VtxoFeeInfo { amount: Amount::from_sat(900), expiry_blocks: 1_501 },
+		];
+		// ceil((100 * 2,000 + 900 * 2,000) / 1,000,000) = ceil(2.0) = 2
+		let ours = calc_ppm_expiry_fee(None, &table, ours).unwrap();
+		assert_eq!(ours, Amount::from_sat(2));
+		// ceil((100 * 4,000 + 900 * 2,000) / 1,000,000) = ceil(2.2) = 3
+		let theirs = calc_ppm_expiry_fee(None, &table, theirs).unwrap();
+		assert_eq!(theirs, Amount::from_sat(3));
+		assert!(theirs >= ours);
 	}
 }

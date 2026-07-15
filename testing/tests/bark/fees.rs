@@ -520,7 +520,7 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 	let vtxos = bark2.vtxos().await;
 	assert_eq!(vtxos.len(), 2, "Should have 2 VTXOs: 1 refresh output, 1 expired VTXO");
 
-	let expected_fee = sat(200_000) * PpmFeeRate::ONE_PERCENT;
+	let expected_fee = (sat(200_000) * PpmFeeRate::ONE_PERCENT).to_amount_ceil().unwrap();
 	assert_eq!(
 		vtxos.iter().filter(|v| v.amount == sat(198_000)).count(), 1,
 		"One VTXO which was explicitly refreshed",
