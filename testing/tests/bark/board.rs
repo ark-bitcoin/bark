@@ -6,7 +6,7 @@ use bitcoin::absolute::LockTime;
 use bitcoin::hashes::Hash;
 use bitcoin_ext::P2TR_DUST_SAT;
 
-use bark::onchain::{ChainSync, PreparePsbt, SignPsbt};
+use bark::onchain::OnchainWalletTrait;
 use bark_json::movements::MovementStatus;
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin_ext::rpc::RpcApi;
@@ -118,9 +118,12 @@ async fn board_fails_when_funding_tx_double_spent() {
 	onchain.sync(wallet.chain()).await.unwrap();
 	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let conflict_addr = ctx.bitcoind().get_new_address();
-	let conflict_psbt = onchain.prepare_drain_tx(conflict_addr, fee_rate).unwrap();
-	let conflict_tx = onchain.inner.finish_psbt(conflict_psbt).await.unwrap()
-		.extract_tx().unwrap();
+	let mut conflict_psbt = onchain.prepare_drain_tx(conflict_addr, fee_rate).await.unwrap();
+	// Not onchain.finish_psbt(): that persists the signed tx to the wallet db.
+	#[allow(deprecated)]
+	let opts = bdk_wallet::SignOptions { trust_witness_utxo: true, ..Default::default() };
+	assert!(onchain.inner.sign(&mut conflict_psbt, opts).unwrap(), "conflict psbt must finalize");
+	let conflict_tx = conflict_psbt.extract_tx().unwrap();
 	drop(onchain);
 
 	let board = bark1.board(sat(90_000)).await;
@@ -311,7 +314,7 @@ async fn board_tx_rejects_wrong_expiry_height() {
 
 	let board_amount = sat(90_000);
 	let fee_rate = wallet.chain().fee_rates().await.regular;
-	let psbt = onchain.prepare_tx(&[(board_addr, board_amount)], fee_rate).unwrap();
+	let psbt = onchain.prepare_tx(&[(board_addr, board_amount)], fee_rate).await.unwrap();
 	let signed_psbt = onchain.finish_psbt(psbt).await.unwrap();
 
 	let err = wallet
@@ -386,7 +389,7 @@ async fn board_tx_full_flow() {
 
 	// Build and sign the funding PSBT using the onchain wallet
 	let fee_rate = wallet.chain().fee_rates().await.regular;
-	let board_psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).unwrap();
+	let board_psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
 	let signed_psbt = onchain.finish_psbt(board_psbt).await.unwrap();
 
 	let board = wallet.board_tx(signed_psbt, keypair, expiry_height).await.unwrap();

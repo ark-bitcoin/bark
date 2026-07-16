@@ -6,10 +6,10 @@
 //! - Reads a BIP-39 `mnemonic` file from the provided directory
 //! - Parses `config.toml` into a [`bark::Config`]
 //! - Opens `db.sqlite` as a [`bark::persist::sqlite::SqliteClient`] and loads persisted properties
-//! - Loads or creates the [`bark::onchain::OnchainWallet`]
-//! - Opens the [`bark::Wallet`] bound to the on-chain wallet
-//! - Returns `(bark::Wallet, bark::onchain::OnchainWallet)`
-//!
+//! - Loads or creates the [`bark::onchain::OnchainWallet`], wraps it in
+//!   `Arc<RwLock<_>>`, and stores it inside the [`bark::Wallet`] via
+//!   [`bark::OpenWalletArgs::onchain`] — BDK-specific methods are accessed
+//!   via downcasting through [`bark::Wallet::onchain`]
 //! ## Errors
 //! Returns an [`anyhow::Error`] with context describing the failing step (I/O, parsing,
 //! database access, or wallet initialization).
@@ -22,8 +22,8 @@
 //! # use bark_cli::wallet::open_wallet;
 //! # async fn example() -> anyhow::Result<()> {
 //!     let datadir = Path::new("./bark_data");
-//!     let (bark_wallet, onchain_wallet) = open_wallet(datadir, "myapp/1.0").await?.unwrap();
-//!     // Use the wallets...
+//!     let bark_wallet = open_wallet(datadir, "myapp/1.0").await?.unwrap();
+//!     // Use the wallet...
 //!     Ok(())
 //! # }
 //! ```
@@ -466,12 +466,8 @@ pub async fn read_mnemonic(datadir: &Path) -> anyhow::Result<String> {
 	Ok(s.trim().to_string())
 }
 
-pub async fn open_wallet(
-	datadir: &Path,
-	user_agent: &str,
-) -> anyhow::Result<Option<(BarkWallet, OnchainWallet)>> {
+pub async fn open_wallet(datadir: &Path, user_agent: &str) -> anyhow::Result<Option<BarkWallet>> {
 	debug!("Opening bark wallet in {}", datadir.display());
-
 
 	// read mnemonic file
 	let mnemonic_path = datadir.join(MNEMONIC_FILE);
@@ -517,6 +513,7 @@ pub async fn open_wallet(
 	}
 
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
+	let onchain = Arc::new(tokio::sync::RwLock::new(bdk_wallet));
 	let lock_manager = open_lock_manager(datadir)?;
 	let bark_wallet = BarkWallet::open(
 		properties.network,
@@ -525,11 +522,12 @@ pub async fn open_wallet(
 		OpenWalletArgs {
 			persister: Some(db),
 			lock_manager: Some(lock_manager),
+			onchain: Some(onchain.clone()),
 			run_daemon: false,
 			..Default::default()
 		},
 	).await?;
 
-	Ok(Some((bark_wallet, bdk_wallet)))
+	Ok(Some(bark_wallet))
 }
 

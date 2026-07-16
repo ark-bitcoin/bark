@@ -9,7 +9,6 @@ use bitcoin::FeeRate;
 use tracing::info;
 use utoipa::OpenApi;
 
-use bark::onchain::ChainSync;
 use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
@@ -251,15 +250,12 @@ pub async fn exit_progress(
 ) -> HandlerResult<Json<bark_json::cli::ExitProgressResponse>> {
 	let wallet = state.require_wallet()?;
 
-	let onchain = state.require_onchain()?;
-	let mut onchain_lock = onchain.write().await;
-
 	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
-	onchain_lock.sync(wallet.chain()).await
+	wallet.sync_onchain().await
 		.context("error syncing on-chain wallet")?;
 
-	let result = wallet.exit_mgr().progress_exits_with_bdk(&wallet, &mut *onchain_lock, fee_rate).await
+	let result = wallet.exit_mgr().progress_exits_with_cpfp(&wallet, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !wallet.exit_mgr().has_pending_exits().await;
@@ -281,7 +277,6 @@ async fn inner_claim_vtxos(
 	fee_rate: Option<FeeRate>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
 	let wallet = state.require_wallet()?;
-	let onchain = state.require_onchain()?;
 
 	let address_spk = address.script_pubkey();
 	let psbt = wallet.exit_mgr().drain_exits(vtxos, &wallet, address, fee_rate).await
@@ -292,12 +287,13 @@ async fn inner_claim_vtxos(
 		.context("Failed to broadcast transaction")?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
 
-	let mut onchain_lock = onchain.write().await;
-
 	// Commit the transaction to the wallet if the claim destination is ours
-	if onchain_lock.is_mine(address_spk) {
-		info!("Adding claim transaction to wallet: {}", tx.compute_txid());
-		onchain_lock.apply_unconfirmed_txs([(tx, bark::time::timestamp_secs())]);
+	if let Some(w) = wallet.onchain() {
+		let mut g = w.write().await;
+		if g.is_mine(&address_spk).await.context("wallet error: is_mine")? {
+			info!("Adding claim transaction to wallet: {}", tx.compute_txid());
+			g.register_tx(&tx).await.context("failed to register claim tx in onchain wallet")?;
+		}
 	}
 
 	Ok(axum::Json(bark_json::web::ExitClaimResponse {

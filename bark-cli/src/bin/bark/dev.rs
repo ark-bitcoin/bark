@@ -99,7 +99,7 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 				bail!("You must acknowledge the danger. Run again with --dangerous")
 			}
 
-			let (wallet, _onchain) = open_wallet(&datadir, crate::USER_AGENT).await
+			let wallet = open_wallet(&datadir, crate::USER_AGENT).await
 				.context("Failed to open wallet")?
 				.context("No wallet found")?;
 
@@ -120,7 +120,7 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 				bail!("No VTXOs provided. Use --vtxo <hex> to specify VTXOs to import");
 			}
 
-			let (wallet, _onchain) = open_wallet(&datadir, crate::USER_AGENT).await
+			let wallet = open_wallet(&datadir, crate::USER_AGENT).await
 				.context("Failed to open wallet")?
 				.context("No wallet found")?;
 

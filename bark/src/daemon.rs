@@ -1,17 +1,14 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ark::rounds::RoundEvent;
 use futures::{FutureExt, StreamExt};
 use log::{info, trace, warn};
-use tokio::sync::RwLock;
 #[cfg(not(feature = "wasm-web"))]
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::Wallet;
-use crate::onchain::DaemonizableOnchainWallet;
 use crate::utils::ReconnectBackoff;
 use crate::utils::time::sleep;
 
@@ -47,10 +44,9 @@ impl DaemonHandle {
 
 pub(crate) fn start_daemon(
 	wallet: Wallet,
-	onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 ) -> DaemonHandle {
 	let shutdown = CancellationToken::new();
-	let proc = DaemonProcess::new(shutdown.clone(), wallet, onchain);
+	let proc = DaemonProcess::new(shutdown.clone(), wallet);
 
 	#[cfg(not(feature = "wasm-web"))]
 	{
@@ -71,20 +67,17 @@ struct DaemonProcess {
 
 	connected: AtomicBool,
 	wallet: Wallet,
-	onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 }
 
 impl DaemonProcess {
 	fn new(
 		shutdown: CancellationToken,
 		wallet: Wallet,
-		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 	) -> DaemonProcess {
 		DaemonProcess {
 			connected: AtomicBool::new(false),
 			shutdown,
 			wallet,
-			onchain,
 		}
 	}
 
@@ -149,20 +142,20 @@ impl DaemonProcess {
 
 	/// Sync onchain wallet
 	async fn run_onchain_sync(&self) {
-		if let Some(onchain) = &self.onchain {
-			let mut onchain = onchain.write().await;
-			if let Err(e) = onchain.sync(self.wallet.chain()).await {
-				warn!("An error occured while syncing onchain: {e:#}");
-			}
+		if let Err(e) = self.wallet.sync_onchain().await {
+			warn!("An error occured while syncing onchain: {e:#}");
 		}
 	}
 
 	/// Progress any ongoing unilateral exits and sync the exit statuses
 	async fn run_exits(&self) {
-		if let Some(onchain) = &self.onchain {
-			let mut onchain = onchain.write().await;
-			if let Err(e) = self.wallet.exit_mgr().progress_exits_with_bdk(&self.wallet, &mut *onchain, None).await {
-				warn!("An error occurred while progressing exits: {e:#}");
+		if self.wallet.inner.onchain.is_some() {
+			if let Err(e) = self.wallet.exit_mgr().progress_exits_with_cpfp(&self.wallet, None).await {
+				warn!("An error occurred while progressing exits: {:#}", e);
+			}
+		} else {
+			if let Err(e) = self.wallet.exit_mgr().progress_exits(&self.wallet).await {
+				warn!("An error occurred while progressing exits: {:#}", e);
 			}
 		}
 	}
@@ -342,6 +335,8 @@ impl DaemonProcess {
 		} else {
 			#[cfg(not(feature = "wasm-web"))]
 			{
+				use std::sync::Arc;
+
 				// Each loop runs in its own tokio task so that a panic in one
 				// (e.g. from a crafted round proposal) cannot silently kill the
 				// others — in particular exit monitoring / CPFP fee-bumping.

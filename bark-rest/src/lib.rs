@@ -20,7 +20,6 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::routing::get;
 use log::{error, warn, info};
-use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use axum::http::{header, Method, HeaderValue};
@@ -30,14 +29,14 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
 
 use bark::Wallet;
-use bark::onchain::OnchainWallet;
+use bark::onchain::OnchainWalletTrait;
 use bark_json::web::CreateWalletRequest;
 
 type BoxFuture<T> =
 	Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 pub type OnWalletCreate = dyn Fn(CreateWalletRequest)
-	-> BoxFuture<anyhow::Result<ServerWallet>> + Send + Sync;
+	-> BoxFuture<anyhow::Result<Wallet>> + Send + Sync;
 
 pub type OnWalletDelete = dyn Fn()
 	-> BoxFuture<anyhow::Result<()>> + Send + Sync;
@@ -128,29 +127,16 @@ pub struct RestServer {
 	jh: JoinHandle<()>,
 }
 
-/// A simple wrapper around a [Wallet] and an [OnchainWallet] hold by
-/// the [RestServer]
-pub struct ServerWallet {
-	pub wallet: Wallet,
-	pub onchain: Arc<RwLock<OnchainWallet>>,
-}
-
-impl ServerWallet {
-	pub fn new(wallet: Wallet, onchain: Arc<RwLock<OnchainWallet>>) -> Self {
-		Self { wallet, onchain }
-	}
-}
-
 /// Shared state held by the REST server.
 ///
 /// Construct via [`ServerState::builder`].
 #[derive(Clone)]
 pub struct ServerState {
-	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
+	wallet: Arc<parking_lot::RwLock<Option<Wallet>>>,
 	auth_token: Option<AuthToken>,
 
 	/// A hook to be called when a wallet is created, returning a
-	/// [ServerWallet] to be added to the server state
+	/// [Wallet] to be added to the server state
 	on_wallet_create: Option<Arc<OnWalletCreate>>,
 	/// A hook to be called when a wallet is deleted,
 	///in addition to removing the wallet from the server state
@@ -163,7 +149,7 @@ pub struct ServerState {
 	///
 	/// Note: this map is only stored in memory and not persisted
 	/// to the database, any server restart will clear the map.
-	websocket_tickets: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
+	websocket_tickets: Arc<tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>>,
 }
 
 /// Builder for [`ServerState`].
@@ -176,7 +162,7 @@ pub struct ServerState {
 ///     .build();
 /// ```
 pub struct ServerStateBuilder {
-	wallet: Option<ServerWallet>,
+	wallet: Option<Wallet>,
 	auth_token: Option<AuthToken>,
 	on_wallet_create: Option<Arc<OnWalletCreate>>,
 	on_wallet_delete: Option<Arc<OnWalletDelete>>,
@@ -194,7 +180,7 @@ impl ServerStateBuilder {
 		}
 	}
 
-	pub fn wallet(mut self, wallet: impl Into<Option<ServerWallet>>) -> Self {
+	pub fn wallet(mut self, wallet: impl Into<Option<Wallet>>) -> Self {
 		self.wallet = wallet.into();
 		self
 	}
@@ -226,7 +212,7 @@ impl ServerStateBuilder {
 			on_wallet_create: self.on_wallet_create,
 			on_wallet_delete: self.on_wallet_delete,
 			on_get_mnemonic: self.on_get_mnemonic,
-			websocket_tickets: Arc::new(RwLock::new(HashMap::new())),
+			websocket_tickets: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
 		}
 	}
 }
@@ -243,15 +229,12 @@ impl ServerState {
 	}
 
 	pub fn require_wallet(&self) -> anyhow::Result<Wallet> {
-		let wallet = self.wallet.read().as_ref()
-			.ok_or_else(|| anyhow!("No wallet set"))?.wallet.clone();
-		Ok(wallet)
+		self.wallet.read().clone().context("No wallet set")
 	}
 
-	pub fn require_onchain(&self) -> anyhow::Result<Arc<RwLock<OnchainWallet>>> {
-		let onchain = self.wallet.read().as_ref()
-			.ok_or_else(|| anyhow!("No onchain set"))?.onchain.clone();
-		Ok(onchain)
+	pub fn require_onchain(&self) -> anyhow::Result<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>> {
+		self.wallet.read().as_ref().context("No wallet set")?
+			.onchain().context("No onchain wallet configured")
 	}
 
 	pub fn auth_token(&self) -> Option<&AuthToken> {

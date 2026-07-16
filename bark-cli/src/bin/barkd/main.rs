@@ -8,10 +8,9 @@ use bitcoin::secp256k1::rand::{self, RngCore};
 use clap::{Parser, Subcommand};
 use clap::builder::BoolishValueParser;
 use log::{info, warn};
-use tokio::sync::RwLock;
 
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
-use bark_rest::{Config, OnGetMnemonic, OnWalletCreate, OnWalletDelete, RestServer, ServerState, ServerWallet};
+use bark_rest::{Config, OnGetMnemonic, OnWalletCreate, OnWalletDelete, RestServer, ServerState};
 use bark_rest::http::HeaderValue;
 use bark_rest::error::ContextExt;
 use bark_rest::auth::AuthToken;
@@ -357,14 +356,10 @@ async fn main() -> anyhow::Result<()>{
 		Some(token)
 	};
 
-	let wallet_opt = if let Some((wallet, onchain)) = open_wallet(&datadir, USER_AGENT).await? {
-		let onchain = Arc::new(RwLock::new(onchain));
-
-		wallet.start_daemon(Some(onchain.clone()))?;
+	let wallet_opt = if let Some(wallet) = open_wallet(&datadir, USER_AGENT).await? {
+		wallet.start_daemon()?;
 		info!("Wallet loaded and daemon started");
-		let server_wallet = bark_rest::ServerWallet::new(wallet, onchain);
-
-		Some(server_wallet)
+		Some(wallet)
 	} else {
 		warn!("No wallet found. Starting rest server without daemon");
 		None
@@ -379,10 +374,8 @@ async fn main() -> anyhow::Result<()>{
 			Box::pin(async move {
 				let create_opts = wallet_create_request_to_create_opts(req)?;
 				create_wallet(&datadir, USER_AGENT, create_opts).await?;
-				let (wallet, onchain) = open_wallet(&datadir, USER_AGENT).await?
+				let wallet = open_wallet(&datadir, USER_AGENT).await?
 					.expect("Wallet should exist");
-
-				let onchain = Arc::new(RwLock::new(onchain));
 
 				// Warm up `wallet.server` before spawning the daemon so
 				// that subsequent REST requests don't race with the daemon's
@@ -391,10 +384,9 @@ async fn main() -> anyhow::Result<()>{
 					warn!("Ark server handshake failed on wallet creation: {:#}", e);
 				}
 
-				wallet.start_daemon(Some(onchain.clone()))?;
+				wallet.start_daemon()?;
 
-				let handle = ServerWallet::new(wallet, onchain);
-				Ok::<_, anyhow::Error>(handle)
+				Ok::<_, anyhow::Error>(wallet)
 			})
 		}
 	});
@@ -427,7 +419,7 @@ async fn main() -> anyhow::Result<()>{
 		None
 	};
 
-	let inner_wallet = wallet_opt.as_ref().map(|w| w.wallet.clone());
+	let inner_wallet = wallet_opt.as_ref().map(|w| w.clone());
 	let state = ServerState::builder()
 		.wallet(wallet_opt)
 		.auth_token(auth_token)

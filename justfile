@@ -29,10 +29,16 @@ check:
 	cargo version
 	cargo check --all --tests --examples
 
+check-wasm-tests:
+	ARK_CONTROL_URL="" ARK_ESPLORA_URL="" ARK_SERVER_URL="" \
+		cargo check -p wasm-testing --tests \
+		--no-default-features --features wasm \
+		--target wasm32-unknown-unknown
+
 check-lib-arithmetic:
 	cargo clippy -p ark-lib --tests
 
-checks: prechecks check check-lib-arithmetic
+checks: prechecks check-lib-arithmetic check-wasm-tests check
 
 check-commits:
 	bash contrib/check-commits.sh
@@ -196,7 +202,7 @@ test-all-codecov:
 test: test-unit test-integration test-integration-esplora test-integration-mempool
 
 wasm-tests TEST="": ensure-build-bins docker-pull
-	CHAIN_SOURCE=esplora cargo run -p wasm-testing --bin wasm-test-suite
+	CHAIN_SOURCE=esplora cargo run -p wasm-testing --bin wasm-test-suite --features=bin
 
 codecov-report:
 	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"

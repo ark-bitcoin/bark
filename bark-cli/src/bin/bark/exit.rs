@@ -9,7 +9,6 @@ use log::{warn, info};
 
 use ark::VtxoId;
 use bark::Wallet;
-use bark::onchain::{ChainSync, OnchainWallet};
 use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bark_json::cli::{ExitProgressStatus, ExitTransactionStatus};
 use bitcoin_ext::FeeRateExt;
@@ -107,7 +106,6 @@ pub struct ProgressExitOpts {
 pub async fn execute_exit_command(
 	exit_command: ExitCommand,
 	wallet: &mut Wallet,
-	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	match exit_command {
 		ExitCommand::Status(opts) => {
@@ -117,13 +115,13 @@ pub async fn execute_exit_command(
 			list_exits(opts, wallet).await
 		},
 		ExitCommand::Start(opts) => {
-			start_exit(opts, wallet, onchain).await
+			start_exit(opts, wallet).await
 		},
 		ExitCommand::Progress(opts) => {
-			progress_exit(opts, wallet, onchain).await
+			progress_exit(opts, wallet).await
 		},
 		ExitCommand::Claim { destination, no_sync, vtxos, all } => {
-			claim_exits(destination, no_sync, vtxos, all, wallet, onchain).await
+			claim_exits(destination, no_sync, vtxos, all, wallet).await
 		},
 	}
 }
@@ -173,14 +171,13 @@ pub async fn list_exits(
 pub async fn start_exit(
 	args: StartExitOpts,
 	wallet: &mut Wallet,
-	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	if !args.all && args.vtxos.is_empty() {
 		bail!("No exit to start. Use either the --vtxo or --all flag.")
 	}
 	info!("Starting onchain sync");
-	if let Err(err) = onchain.sync(wallet.chain()).await {
-		warn!("Failed to perform onchain sync: {}", err.to_string());
+	if let Err(err) = wallet.sync_onchain().await {
+		warn!("Failed to perform onchain sync: {}", err);
 	}
 	info!("Starting offchain sync");
 	wallet.sync().await;
@@ -209,12 +206,11 @@ pub async fn start_exit(
 pub async fn progress_exit(
 	args: ProgressExitOpts,
 	wallet: &mut Wallet,
-	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	let fee_rate = args.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 	let exit_status = if args.wait {
 		loop {
-			let exit_status = progress_once(wallet, onchain, fee_rate).await?;
+			let exit_status = progress_once(wallet, fee_rate).await?;
 			if exit_status.done {
 				break exit_status
 			} else {
@@ -223,7 +219,7 @@ pub async fn progress_exit(
 			}
 		}
 	} else {
-		progress_once(wallet, onchain, fee_rate).await?
+		progress_once(wallet, fee_rate).await?
 	};
 	output_json(&exit_status);
 	Ok(())
@@ -231,11 +227,10 @@ pub async fn progress_exit(
 
 async fn progress_once(
 	wallet: &mut Wallet,
-	onchain: &mut OnchainWallet,
 	fee_rate: Option<FeeRate>,
 ) -> anyhow::Result<bark_json::cli::ExitProgressResponse> {
 	info!("Starting onchain sync");
-	if let Err(error) = onchain.sync(wallet.chain()).await {
+	if let Err(error) = wallet.sync_onchain().await {
 		warn!("Failed to perform onchain sync: {}", error)
 	}
 	info!("Wallet sync completed");
@@ -246,7 +241,7 @@ async fn progress_once(
 	// with a plain stderr message. Callers that scrape the JSON output (tests, scripts)
 	// can then react to known transient errors and retry.
 	let progress_result = wallet.exit_mgr()
-		.progress_exits_with_bdk(wallet, onchain, fee_rate).await;
+		.progress_exits_with_cpfp(wallet, fee_rate).await;
 
 	let done = !wallet.exit_mgr().has_pending_exits().await;
 	let claimable_height = wallet.exit_mgr().all_claimable_at_height().await;
@@ -281,12 +276,11 @@ pub async fn claim_exits(
 	vtxos: Option<Vec<String>>,
 	all: bool,
 	wallet: &mut Wallet,
-	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	if !no_sync {
 		info!("Syncing wallet...");
 		wallet.sync().await;
-		if let Err(e) = onchain.sync(wallet.chain()).await {
+		if let Err(e) = wallet.sync_onchain().await {
 			warn!("Sync error: {}", e)
 		}
 	}
@@ -316,7 +310,6 @@ pub async fn claim_exits(
 	};
 
 	let address_spk = address.script_pubkey();
-
 	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let psbt = wallet.exit_mgr().drain_exits(&vtxos, &wallet, address, Some(fee_rate)).await.unwrap();
 	let tx = psbt.extract_tx()?;
@@ -324,9 +317,12 @@ pub async fn claim_exits(
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
 
 	// Commit the transaction to the wallet if the claim destination is ours
-	if onchain.is_mine(address_spk) {
-		info!("Adding claim transaction to wallet: {}", tx.compute_txid());
-		onchain.apply_unconfirmed_txs([(tx, bark::time::timestamp_secs())]);
+	if let Some(w) = wallet.onchain() {
+		let mut g = w.write().await;
+		if g.is_mine(&address_spk).await.context("wallet error: is_mine")? {
+			info!("Adding claim transaction to wallet: {}", tx.compute_txid());
+			g.register_tx(&tx).await.context("failed to register claim tx in onchain wallet")?;
+		}
 	}
 	Ok(())
 }

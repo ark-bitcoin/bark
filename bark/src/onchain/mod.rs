@@ -9,12 +9,8 @@
 //! Key concepts exposed here:
 //! - [Utxo], [LocalUtxo] & [SpendableExit]: lightweight types representing wallet UTXOs and
 //!   spendable exit outputs.
-//! - [PreparePsbt] & [SignPsbt]: funding and signing interfaces for building transactions.
-//! - [GetBalance], [GetWalletTx], [GetSpendingTx]: read-access to wallet state for balance
-//!   and [Transaction] lookups required by various parts of the library.
-//! - [MakeCpfp]: CPFP construction interfaces used for create child transactions.
-//! - [ExitUnilaterally]: a convenience trait that aggregates the required capabilities a
-//!   wallet must provide to support unilateral exits.
+//! - [OnchainWalletTrait]: unified interface covering balance, address, PSBT construction and signing,
+//!   transaction lookups, and CPFP fee-bumping for unilateral exits.
 //!
 //! A reference implementation based on BDK is available behind the `onchain-bdk`
 //! cargo feature. Enable it to use the provided [OnchainWallet] implementation.
@@ -37,7 +33,7 @@ pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
 use std::sync::Arc;
 
 use bitcoin::{
-	Address, Amount, FeeRate, OutPoint, Psbt, SignedAmount, Transaction, Txid
+	Address, Amount, FeeRate, OutPoint, Psbt, Script, SignedAmount, Transaction, Txid,
 };
 
 use ark::Vtxo;
@@ -45,6 +41,7 @@ use ark::vtxo::Full;
 use bitcoin_ext::{BlockHeight, BlockRef};
 
 use crate::chain::ChainSource;
+
 
 /// Summary of a wallet transaction produced by [OnchainWallet::list_transaction_infos].
 #[derive(Debug, Clone)]
@@ -98,81 +95,47 @@ pub struct SpendableExit {
 	pub height: BlockHeight,
 }
 
-/// Ability to finalize a [Psbt] into a fully signed [Transaction].
-///
-/// Wallets should apply all necessary signatures and finalize inputs according
-/// to their internal key management and policies.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-pub trait SignPsbt {
-	/// Consume a [Psbt] and return a fully signed [Psbt] with all witnesses filled in.
-	///
-	/// Useful when the signed [Psbt] is needed after signing, e.g. to compute fees
-	/// via [Psbt::fee] before extracting the final [Transaction].
-	async fn finish_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt>;
-}
+pub trait OnchainWalletTrait: std::any::Any + Send + Sync {
+	/// Get the total balance of the wallet
+	async fn balance(&self) -> Amount;
 
-/// Ability to get the next onchain address from the wallet.
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-pub trait GetAddress {
+	/// Get an onchain receive address from the wallet
 	async fn address(&mut self) -> anyhow::Result<Address>;
-}
 
-/// Ability to query the wallets' total balance.
-///
-/// This is used by higher-level flows to decide when onchain funds are available for boarding or
-/// fee bumping, and to present balance information to users.
-pub trait GetBalance {
-	/// Get the total balance of the wallet.
-	fn get_balance(&self) -> Amount;
-}
+	/// Sync the wallet with the onchain network.
+	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()>;
 
-/// Ability to look up transactions known to the wallet.
-///
-/// Implementations should return wallet-related transactions and, when possible,
-/// the block information those transactions confirmed in.
-pub trait GetWalletTx {
-	/// Retrieve the wallet [Transaction] for the given [Txid] if any.
-	fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>>;
+	/// Returns `true` if the given script pubkey belongs to the wallet's keychains.
+	async fn is_mine(&self, spk: &Script) -> anyhow::Result<bool>;
 
-	/// Retrieve information about the block, if any, a given wallet transaction was confirmed in.
-	fn get_wallet_tx_confirmed_block(&self, txid: Txid) -> anyhow::Result<Option<BlockRef>>;
-}
+	/// Register an unconfirmed transaction relevant to the wallet
+	async fn register_tx(&mut self, tx: &Transaction) -> anyhow::Result<()>;
 
-/// Ability to construct funded PSBTs for specific destinations or to drain the wallet.
-///
-/// These methods are used to build transactions for boarding, exits, and fee bumping.
-pub trait PreparePsbt {
-	/// Prepare a [Transaction] which will send to the given destinations.
-	fn prepare_tx(
+	/// Prepare a [Transaction] which will send to the given destinations
+	async fn prepare_tx(
 		&mut self,
 		destinations: &[(Address, Amount)],
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Psbt>;
 
-	/// Prepare a [Transaction] for sending all wallet funds to the given destination.
-	fn prepare_drain_tx(
+	/// Prepare a [Transaction] for sending all wallet funds to the given destination
+	async fn prepare_drain_tx(
 		&mut self,
 		destination: Address,
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Psbt>;
-}
 
-/// Ability to find wallet-local spends of a specific [OutPoint].
-///
-/// This helps identify if the wallet has already spent an exit or parent [Transaction].
-pub trait GetSpendingTx {
-	/// This should search the wallet and look for any [Transaction] that spends the given
-	/// [OutPoint]. The intent of the function is to only look at spends which happen in the wallet
-	/// itself.
-	fn get_spending_tx(&self, outpoint: OutPoint) -> Option<Arc<Transaction>>;
-}
+	/// Consume a [Psbt] and return a fully signed [Psbt] with all witnesses filled in
+	///
+	/// Useful when the signed [Psbt] is needed after signing, e.g. to compute fees
+	/// via [Psbt::fee] before extracting the final [Transaction].
+	///
+	/// Wallets should apply all necessary signatures and finalize inputs according
+	/// to their internal key management and policies.
+	async fn finish_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt>;
 
-/// Ability to create and persist CPFP transactions for spending P2A outputs.
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-pub trait MakeCpfp {
 	/// Creates a signed Child Pays for Parent (CPFP) transaction using a Pay-to-Anchor (P2A) output
 	/// to broadcast unilateral exits and other TRUC transactions.
 	///
@@ -195,7 +158,7 @@ pub trait MakeCpfp {
 	/// * `CpfpError` - An error indicating the reason for failure in constructing the CPFP
 	///                 transaction (e.g., insufficient funds, invalid parent transaction, or
 	///                 signing failure).
-	fn make_signed_p2a_cpfp(
+	async fn make_signed_p2a_cpfp(
 		&mut self,
 		tx: &Transaction,
 		fees: MakeCpfpFees,
@@ -204,57 +167,3 @@ pub trait MakeCpfp {
 	/// Persist the signed CPFP transaction so it can be rebroadcast or retrieved as needed.
 	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError>;
 }
-
-/// Trait alias for wallets that support boarding.
-///
-/// Any wallet type implementing these component traits automatically implements
-/// `Board`. The trait requires Send + Sync because boarding flows may be
-/// executed from async tasks and across threads.
-///
-/// Required capabilities:
-/// - [SignPsbt]: to finalize transactions
-/// - [GetWalletTx]: to query related transactions and their confirmations
-/// - [PreparePsbt]: to prepare transactions for boarding
-pub trait Board: PreparePsbt + SignPsbt + GetWalletTx + Send + Sync {}
-
-impl <W: PreparePsbt + SignPsbt + GetWalletTx + Send + Sync> Board for W {}
-
-/// Trait alias for wallets that support unilateral exit end-to-end.
-///
-/// Any wallet type implementing these component traits automatically implements
-/// `ExitUnilaterally`. The trait requires Send + Sync because exit flows may be
-/// executed from async tasks and across threads.
-///
-/// Required capabilities:
-/// - [GetBalance]: to evaluate available funds
-/// - [GetWalletTx]: to query related transactions and their confirmations
-/// - [MakeCpfp]: to accelerate slow/pinned exits
-/// - [SignPsbt]: to finalize transactions
-/// - [GetSpendingTx]: to detect local spends relevant to exit coordination
-pub trait ExitUnilaterally:
-	GetBalance +
-	GetWalletTx +
-	MakeCpfp +
-	SignPsbt +
-	GetSpendingTx +
-	Send + Sync + {}
-
-impl <W: GetBalance +
-	GetWalletTx +
-	MakeCpfp +
-	SignPsbt +
-	GetSpendingTx +
-	Send + Sync> ExitUnilaterally for W {}
-
-/// Ability to sync the wallet with the onchain network.
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-pub trait ChainSync {
-	/// Sync the wallet with the onchain network.
-	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()>;
-}
-
-/// Trait that covers the requirements to use an onchain wallet with
-/// [Wallet::run_daemon](crate::Wallet::run_daemon).
-pub trait DaemonizableOnchainWallet: ExitUnilaterally + ChainSync {}
-impl <W: ExitUnilaterally + ChainSync> DaemonizableOnchainWallet for W {}

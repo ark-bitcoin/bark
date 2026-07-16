@@ -50,16 +50,8 @@ pub async fn board_amount(
 	Json(body): Json<bark_json::web::BoardRequest>,
 ) -> HandlerResult<Json<bark_json::cli::PendingBoardInfo>> {
 	let wallet = state.require_wallet()?;
-	let onchain = state.require_onchain()?;
-
-	let mut onchain_lock = onchain.write().await;
 	let amount = Amount::from_sat(body.amount_sat);
-
-	let board = wallet.board_amount(
-		&mut *onchain_lock,
-		amount,
-	).await?;
-
+	let board = wallet.board_amount(amount).await?;
 	Ok(axum::Json(board.into()))
 }
 
@@ -83,12 +75,7 @@ pub async fn board_all(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::cli::PendingBoardInfo>> {
 	let wallet = state.require_wallet()?;
-	let onchain = state.require_onchain()?;
-
-	let mut onchain_lock = onchain.write().await;
-
-	let board = wallet.board_all(&mut *onchain_lock).await?;
-
+	let board = wallet.board_all().await?;
 	Ok(axum::Json(board.into()))
 }
 

@@ -12,9 +12,9 @@ use utoipa::OpenApi;
 use ark::VtxoId;
 use ark::lightning::{Bolt11Invoice, Offer};
 use ark::ProtocolEncoding;
+
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::lnurllib::lnurl::LnUrl;
-use bark::onchain::GetAddress;
 use bark::payment_request::ArkAddressType;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;
@@ -158,7 +158,7 @@ pub async fn connected(State(state): State<ServerState>) -> HandlerResult<Json<b
 pub async fn wallet_exists(State(state): State<ServerState>) -> HandlerResult<Json<bark_json::web::WalletExistsResponse>> {
 	let wallet = state.wallet.read();
 	Ok(Json(bark_json::web::WalletExistsResponse {
-		fingerprint: wallet.as_ref().map(|w| w.wallet.fingerprint().to_string()),
+		fingerprint: wallet.as_ref().map(|w| w.fingerprint().to_string()),
 	}))
 }
 
@@ -187,7 +187,7 @@ pub async fn wallet_delete(State(state): State<ServerState>, Json(req): Json<bar
 				message: "No wallet to delete".to_string(),
 			}));
 		};
-		if w.wallet.fingerprint().to_string() != req.fingerprint {
+		if w.fingerprint().to_string() != req.fingerprint {
 			badarg!("Fingerprint does not match the loaded wallet");
 		}
 	}
@@ -228,7 +228,7 @@ pub async fn create_wallet(
 
 	if let Some(on_wallet_create) = state.on_wallet_create.as_ref() {
 		let wallet = on_wallet_create(req).await?;
-		let fingerprint = wallet.wallet.fingerprint().to_string();
+		let fingerprint = wallet.fingerprint().to_string();
 		let _ = state.wallet.write().insert(wallet);
 
 		Ok(axum::Json(bark_json::web::CreateWalletResponse { fingerprint }))
