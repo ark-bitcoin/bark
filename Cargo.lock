@@ -332,6 +332,7 @@ dependencies = [
  "jsonrpc 0.20.1",
  "lazy_static",
  "log",
+ "rand_core 0.6.4",
  "reqwest",
  "rmp-serde",
  "serde",
@@ -708,12 +709,14 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1284fb23acc3e3022673712b55f4d5ce7e38aadc2c49bbef830dc3935f0a3289"
 dependencies = [
+ "anyhow",
  "bdk_chain",
  "bitcoin",
  "miniscript",
  "rand_core 0.6.4",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

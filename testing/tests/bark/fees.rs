@@ -117,7 +117,8 @@ async fn exit_fee_anchor_no_dust_change_error() {
 	assert_eq!(bark.vtxos().await.len(), 0);
 	let utxos = bark.utxos().await;
 	assert_eq!(utxos.len(), 2);
-	assert!(utxos.iter().any(|u| u.amount == sat(99_999))); // Unboarded + fee anchor change
+	// TODO: switch to 100 302 sats on 0.4.0
+	assert!(utxos.iter().any(|u| u.amount >= sat(99_999))); // Unboarded + fee anchor change
 	assert!(utxos.iter().any(|u| u.amount == sat(99_657))); // Exited amount
 }
 
