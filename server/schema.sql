@@ -1126,7 +1126,8 @@ CREATE TABLE public.round_participation (
     unlock_preimage text,
     round_id text,
     created_at timestamp without time zone NOT NULL,
-    forfeited_at timestamp with time zone
+    forfeited_at timestamp with time zone,
+    scheduled_height integer
 );
 
 

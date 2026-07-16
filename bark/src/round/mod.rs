@@ -1515,6 +1515,7 @@ impl Wallet {
 			input_vtxos,
 			vtxo_requests,
 			unblinded_mailbox_id: Some(unblinded_mailbox_id.serialize()),
+			scheduled_height: None,
 		}).await.context("error submitting round participation to server")?.into_inner();
 
 		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)

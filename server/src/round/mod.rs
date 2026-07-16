@@ -728,7 +728,8 @@ impl CollectingPayments {
 		srv: &Server,
 	) {
 		//TODO(stevenroose) do this streamingly to avoid allocation
-		let parts = match srv.db.read(async |t| t.get_all_pending_round_participations().await).await {
+		let tip = srv.sync_manager.chain_tip().height;
+		let parts = match srv.db.read(async |t| t.get_all_pending_round_participations(tip).await).await {
 			Ok(p) => p,
 			Err(e) => {
 				error!("Error loading pending hArk participations: {}", e);
@@ -1840,6 +1841,7 @@ impl Server {
 		&self,
 		inputs: Vec<DelegatedInput>,
 		outputs: Vec<StoredRoundOutput>,
+		scheduled_height: Option<BlockHeight>,
 		pver: u64,
 	) -> anyhow::Result<UnlockHash> {
 		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
@@ -1858,6 +1860,31 @@ impl Server {
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 
 		let chain_tip = self.chain_tip().height;
+
+		if let Some(height) = scheduled_height {
+			for vtxo in &vtxos {
+				if vtxo.vtxo.expiry_height() <= height {
+					return badarg!(
+						"input vtxo {} expires at height {}, before the scheduled \
+						refresh height {}",
+						vtxo.vtxo_id, vtxo.vtxo.expiry_height(), height,
+					);
+				}
+			}
+		}
+
+		// Validate the amounts and fee now, when the client can still see the
+		// error, as if the refresh happens at the scheduled height. Once the
+		// participation is stored, the server has agreed to it and follows
+		// through in the round without re-checking the fee: fees only decrease
+		// as the tip advances, so a stored participation always still covers
+		// them.
+		let input_vtxos = vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>();
+		let refresh_height = scheduled_height.unwrap_or(chain_tip);
+		validate_payment_amounts(&input_vtxos, outputs.iter())?;
+		validate_refresh_fee(
+			&input_vtxos, outputs.iter(), &self.config.fees.refresh, refresh_height, pver,
+		).badarg("refresh fee check failed")?;
 
 		// Validate inputs up-front so the client gets a structured error listing
 		// every unusable input (spent or exited) and can drop them and retry.
@@ -1880,23 +1907,14 @@ impl Server {
 				.unusable_inputs(unusable);
 		}
 
-		// Validate the amounts and fees here, when the client can still see the
-		// error. Once the participation is stored, the server has agreed to it
-		// and follows through in the round without re-checking the fee: fees
-		// only decrease as the tip advances, so a stored participation always
-		// still covers them.
-		let input_vtxos = vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>();
-		validate_payment_amounts(&input_vtxos, outputs.iter())?;
-		validate_refresh_fee(
-			&input_vtxos, outputs.iter(), &self.config.fees.refresh, chain_tip, pver,
-		)?;
-
 		self.db.write(async |t| {
-			t.try_store_round_participation(chain_tip, unlock_preimage, &input_ids, &outputs).await
+			t.try_store_round_participation(
+				chain_tip, unlock_preimage, &input_ids, &outputs, scheduled_height,
+			).await
 		}).await?;
 
 		slog!(DelegatedRoundParticipationRegistered,
-			input_vtxos: input_ids, unlock_hash,
+			input_vtxos: input_ids, unlock_hash, scheduled_height,
 		);
 
 		Ok(unlock_hash)
@@ -2111,6 +2129,45 @@ mod tests {
 		validate_refresh_fee(
 			&inputs, &outputs, &fees, 1_000, PROTOCOL_VERSION_BASE,
 		).unwrap_err();
+	}
+
+	#[test]
+	fn test_refresh_fee_at_scheduled_height() {
+		let state = create_collecting_payments(2);
+
+		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone()];
+		let fees = RefreshFees {
+			base_fee: Amount::from_sat(100),
+			ppm_expiry_table: vec![
+				PpmExpiryFeeEntry {
+					expiry_blocks_threshold: 25_025,
+					ppm: PpmFeeRate(500),
+				},
+				PpmExpiryFeeEntry {
+					expiry_blocks_threshold: 50_505,
+					ppm: PpmFeeRate(1_000),
+				},
+			],
+		};
+
+		let current_height = 1_000;
+		// close enough to expiry that only the base fee remains
+		let scheduled_height = inputs[0].expiry_height() - 25_000;
+
+		let fee_at = |height: BlockHeight| fees.calculate(
+			inputs.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, height)),
+		).unwrap();
+		assert!(fee_at(scheduled_height) < fee_at(current_height));
+
+		// an output that only leaves room for the fee at the scheduled height
+		let output_amount = inputs[0].amount() - fee_at(scheduled_height);
+		let outputs = vec![create_signed_req(output_amount.to_sat(), &state.round_data)];
+		validate_refresh_fee(
+			&inputs, &outputs, &fees, current_height, PROTOCOL_VERSION_PPM_FEE_TOTAL,
+		).unwrap_err();
+		validate_refresh_fee(
+			&inputs, &outputs, &fees, scheduled_height, PROTOCOL_VERSION_PPM_FEE_TOTAL,
+		).unwrap();
 	}
 
 	#[test]
