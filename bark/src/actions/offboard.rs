@@ -714,7 +714,7 @@ async fn finish_offboard(
 	wallet: &Wallet,
 	offboard_vtxo_ids: Vec<VtxoId>,
 	offboard_tx: Transaction,
-	forfeit_cosign_nonces: Vec<musig::PublicNonce>,
+	server_forfeit_cosign_nonces: Vec<musig::PublicNonce>,
 	movement_id: MovementId,
 ) -> Result<Progress, AdvanceError> {
 	let (mut srv, _) = wallet.require_server().await?;
@@ -730,7 +730,7 @@ async fn finish_offboard(
 		vtxo_keys.push(wallet.get_vtxo_key(v).await?);
 	}
 	let ctx = OffboardForfeitContext::new(&full_inputs, &offboard_tx);
-	let sigs = ctx.user_sign_forfeits(&vtxo_keys, &forfeit_cosign_nonces);
+	let sigs = ctx.user_sign_forfeits(&vtxo_keys, &server_forfeit_cosign_nonces);
 
 	let offboard_txid = offboard_tx.compute_txid();
 	let finish_resp = srv.client.finish_offboard(protos::FinishOffboardRequest {
@@ -752,6 +752,15 @@ async fn finish_offboard(
 		return Err(anyhow!("Signed offboard tx received from server is different from \
 			unsigned tx we forfeited for: unsigned={}, signed={}",
 			serialize_hex(&offboard_tx), finish_resp.signed_offboard_tx.as_hex(),
+		).into());
+	}
+	// The txid pins everything except the witnesses, so checking every
+	// input carries one is all that remains to prove the server signed
+	// the tx. The signatures themselves can't be validated: the inputs
+	// spend the server's own wallet utxos, whose prevouts we don't have.
+	if signed_offboard_tx.input.iter().any(|i| i.witness.is_empty() && i.script_sig.is_empty()) {
+		return Err(anyhow!("Signed offboard tx received from server has an unsigned input: {}",
+			finish_resp.signed_offboard_tx.as_hex(),
 		).into());
 	}
 
