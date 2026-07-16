@@ -18,6 +18,7 @@ use bark::payment_request::ArkAddressType;
 use bark::secret::Secret;
 use bark_cli::VERSION_DIRTY;
 use bitcoin::{Amount};
+use bitcoin::secp256k1;
 use clap::builder::BoolishValueParser;
 use clap::Parser;
 use futures::StreamExt;
@@ -95,12 +96,46 @@ struct AddressLookupFilter {
 	index: Option<u32>,
 }
 
+#[derive(clap::Args)]
+#[group(required = true, multiple = false)]
+struct VerifyMessageKey {
+	/// The public key to verify the signature against
+	#[arg(long)]
+	pubkey: Option<secp256k1::PublicKey>,
+	/// The Ark address whose user pubkey to verify the signature against
+	#[arg(long)]
+	address: Option<ark::Address>,
+}
+
 #[derive(clap::Subcommand)]
 enum AddressCommand {
 	/// Look up receives for an Ark address
 	Lookup {
 		#[clap(flatten)]
 		filter: AddressLookupFilter,
+	},
+}
+
+#[derive(clap::Subcommand)]
+enum MessageCommand {
+	/// Sign an arbitrary message with the key of the provided Ark address
+	Sign {
+		/// The message to sign
+		message: String,
+		/// The Ark address to sign the message with
+		address: ark::Address,
+	},
+
+	/// Verify a signed message
+	///
+	/// Exits with an error if the signature is not valid.
+	Verify {
+		/// The message that was signed
+		message: String,
+		/// The signature, in hex
+		signature: secp256k1::schnorr::Signature,
+		#[clap(flatten)]
+		key: VerifyMessageKey,
 	},
 }
 
@@ -131,6 +166,10 @@ enum Command {
 		#[command(subcommand)]
 		subcommand: Option<AddressCommand>,
 	},
+
+	/// Sign and verify messages
+	#[command(subcommand)]
+	Message(MessageCommand),
 
 	/// Get the wallet balance
 	#[command()]
@@ -330,6 +369,22 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		return dev::execute_dev_command(cmd, datadir).await;
 	}
 
+	// Message verification is stateless, so it doesn't need a wallet.
+	if let Command::Message(MessageCommand::Verify { message, signature, key }) = cli.command {
+		let pubkey = if let Some(pubkey) = key.pubkey {
+			pubkey
+		} else if let Some(address) = key.address {
+			address.policy().user_pubkey()
+		} else {
+			unreachable!("clap requires --pubkey or --address");
+		};
+		if !ark::message::verify(pubkey, message.as_bytes(), &signature) {
+			bail!("invalid signature");
+		}
+		output_json(&json::cli::MessageVerification { valid: true });
+		return Ok(())
+	}
+
 	let mut wallet = open_wallet(&datadir, USER_AGENT).await
 		.context("error opening wallet")?
 		.context("No wallet found")?;
@@ -337,7 +392,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	let net = wallet.network().await?;
 
 	match cli.command {
-		Command::Create { .. } | Command::Dev(_) => unreachable!("handled earlier"),
+		Command::Create { .. } | Command::Dev(_) | Command::Message(MessageCommand::Verify { .. }) => {
+			unreachable!("handled earlier")
+		},
 		Command::Config => {
 			let mut config = wallet.config().clone();
 			// The Secret wrapper only redacts Debug output; JSON
@@ -376,6 +433,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 				},
 			}
+		},
+		Command::Message(MessageCommand::Sign { message, address }) => {
+			let signature = wallet.sign_message(message.as_bytes(), &address).await?
+				.context("address does not belong to this wallet or its key has not been derived")?;
+			output_json(&json::cli::SignedMessage { signature });
 		},
 		Command::Balance { no_sync } => {
 			if !no_sync {

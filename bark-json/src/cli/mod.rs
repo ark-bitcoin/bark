@@ -5,7 +5,7 @@ pub mod onchain;
 use std::borrow::Borrow;
 use std::time::Duration;
 
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{Amount, Txid};
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
@@ -197,6 +197,24 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			tos_link: v.tos_link.clone(),
 		}
 	}
+}
+
+/// A signature over a message
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct SignedMessage {
+	/// The BIP-340 Schnorr signature over the message digest
+	/// `SHA256("bark/message" || message)`
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub signature: schnorr::Signature,
+}
+
+/// The result of verifying a signed message
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct MessageVerification {
+	/// Whether the signature is valid for the given message and key
+	pub valid: bool,
 }
 
 /// The different balances of a Bark wallet, broken down by state.
