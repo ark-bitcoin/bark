@@ -70,6 +70,7 @@ use std::marker::PhantomData;
 
 use bitcoin::hashes::Hash;
 use bitcoin::sighash::{self, SighashCache};
+use bitcoin::amount::CheckedSum;
 use bitcoin::{
 	Amount, OutPoint, ScriptBuf, Sequence, TapSighash, TapSighashType, Transaction, TxIn, TxOut, Txid, Witness
 };
@@ -101,6 +102,8 @@ pub enum ArkoorConstructionError {
 	TooManyOutputs,
 	#[error("Too many inputs provided")]
 	TooManyInputs,
+	#[error("Total amount overflowed while allocating outputs to inputs")]
+	Overflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
@@ -978,8 +981,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		// to ensure our transaction with an ephemeral anchor is standard.
 		// We need `==` for standardness and we can't be lenient
 		let input_amount = input.amount();
+
+		// `output_amount` is client-supplied and uncapped. Checked sum is needed to prevent overflow.
 		let output_amount = outputs.iter().chain(isolation_outputs.iter())
-			.map(|o| o.total_amount).sum::<Amount>();
+			.map(|o| o.total_amount)
+			.checked_sum()
+			.ok_or(ArkoorConstructionError::Overflow)?;
 
 		if input_amount != output_amount {
 			return Err(ArkoorConstructionError::Unbalanced {
@@ -2629,5 +2636,39 @@ mod test {
 		assert_eq!(builder.outputs[0].total_amount, Amount::from_sat(660));
 		assert_eq!(builder.isolated_outputs[0].total_amount, Amount::from_sat(170));
 		assert_eq!(builder.isolated_outputs[1].total_amount, Amount::from_sat(170));
+	}
+
+	#[test]
+	fn validate_amounts_output_sum_overflow_rejected() {
+		// This is the path captaind runs on every arkoor cosign request
+		// (from_cosign_request -> ArkoorBuilder::new -> validate_amounts).
+		// Client output amounts are uncapped, so two near-`u64::MAX` amounts
+		// must be rejected, not panic the `Amount` sum.
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (_funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(10_330),
+			fee: Amount::from_sat(330),
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: alice_keypair,
+			server_keypair,
+		}.build();
+
+		let outputs = vec![
+			ArkoorDestination {
+				total_amount: Amount::from_sat(u64::MAX),
+				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key()),
+			},
+			ArkoorDestination {
+				total_amount: Amount::from_sat(u64::MAX),
+				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key()),
+			},
+		];
+
+		let result = ArkoorBuilder::new_with_checkpoint(alice_vtxo, outputs, vec![]);
+		assert_eq!(result.err(), Some(ArkoorConstructionError::Overflow));
 	}
 }
