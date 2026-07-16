@@ -352,7 +352,9 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - state: Slice of `VtxoStateKind` filters.
 	///
 	/// Returns:
-	/// - `Ok(Vec<WalletVtxo>)` possibly empty.
+	/// - `Ok(Vec<WalletVtxo>)` possibly empty, sorted by expiry height
+	///   ascending, then by amount descending. Callers rely on this order
+	///   to prioritize VTXOs that expire sooner and are larger.
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
