@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Amount, FeeRate, OutPoint, Psbt, ScriptBuf, Transaction, Txid};
+use bitcoin::{Amount, FeeRate, OutPoint, Psbt, ScriptBuf, SignedAmount, Transaction, Txid};
 use bitcoin::secp256k1::Keypair;
 use tracing::{error, warn};
 
@@ -35,6 +35,7 @@ pub struct PendingOffboard {
 	/// The request this session was created for, kept so that identical
 	/// retries of [Server::prepare_offboard] can be recognized and replayed.
 	request: OffboardRequest,
+	server_fee: SignedAmount,
 	offboard_tx: Psbt,
 	input_vtxos_guard: OwnedVtxoFluxGuard,
 	wallet_input_guard: WalletUtxosGuard,
@@ -181,7 +182,7 @@ impl Server {
 
 		// If the user is trying to perform a send-onchain then we add fees onto the request amount.
 		// If the user is performing an offboard then we deduct fees from the total VTXO sum.
-		let net_amount = if request.deduct_fees_from_gross_amount {
+		let (net_amount, fee) = if request.deduct_fees_from_gross_amount {
 			let fee = self.config.fees.offboard.calculate(
 				&request.script_pubkey,
 				gross_amount,
@@ -195,7 +196,7 @@ impl Server {
 					net_amount, request.net_amount,
 				);
 			}
-			net_amount
+			(net_amount, fee)
 		} else {
 			let fee = self.config.fees.offboard.calculate(
 				&request.script_pubkey,
@@ -210,7 +211,7 @@ impl Server {
 					total, fee, gross_amount,
 				);
 			}
-			request.net_amount
+			(request.net_amount, fee)
 		};
 
 		// check attestations
@@ -257,13 +258,20 @@ impl Server {
 		};
 
 		let offboard_txid = offboard_tx.unsigned_tx.compute_txid();
-		slog!(PreparedOffboard, offboard_txid, input_vtxos, net_amount, gross_amount,
+		let onchain_fee = offboard_tx.fee().unwrap_or_else(|e| {
+			warn!("Error getting fee from offboard tx PSBT: {:#}", e);
+			Amount::ZERO
+		});
+		let server_fee = SignedAmount::try_from(fee).expect("fee can't overflow")
+			- SignedAmount::try_from(onchain_fee).expect("onchain fee can't overflow");
+		slog!(PreparedOffboard, offboard_txid, input_vtxos, net_amount, gross_amount, onchain_fee,
 			fee_rate: request.fee_rate, wallet_utxos: wallet_input_guard.utxos().to_vec(),
+			fee: server_fee, user_fee: fee,
 		);
 
 		let state = PendingOffboard {
 			input_vtxos_guard: input_vtxos_guard.into_owned(),
-			request, connector_key, forfeit_pub_nonces, forfeit_sec_nonces, offboard_tx,
+			request, server_fee, connector_key, forfeit_pub_nonces, forfeit_sec_nonces, offboard_tx,
 			wallet_input_guard,
 		};
 		assert!(self.pending_offboards.lock().insert_some(offboard_txid, state).is_none(),
@@ -369,6 +377,10 @@ impl Server {
 		).badarg("invalid partial forfeit signatures")?;
 
 		let mut wallet_guard = self.rounds_wallet.lock().await;
+		let onchain_fee = state.offboard_tx.fee().unwrap_or_else(|e| {
+			warn!("Error getting fee from offboard tx PSBT: {:#}", e);
+			Amount::ZERO
+		});
 		let signed_tx = wallet_guard.finish_tx(state.offboard_tx)
 			.context("error signing offboard tx")?;
 
@@ -387,8 +399,12 @@ impl Server {
 		// broadcast the tx and then mark the offboard as committed
 
 		slog!(SignedOffboard, offboard_txid, input_vtxos: input_vtxos.to_vec(),
-			wallet_utxos: state.wallet_input_guard.utxos().to_vec(),
-			amount: state.request.net_amount,
+			wallet_utxos: state.wallet_input_guard.utxos().to_vec(), onchain_fee,
+			amount: state.request.net_amount, fee: state.server_fee,
+			user_fee: Amount::try_from(
+				state.server_fee
+					+ SignedAmount::try_from(onchain_fee).expect("onchain fee can't overflow")
+			).expect("always positive"),
 		);
 
 		// nb catch the error and don't return it, as it might contain the signed offboard tx
