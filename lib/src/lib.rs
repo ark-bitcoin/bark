@@ -20,6 +20,7 @@ pub mod mailbox;
 pub mod musig;
 pub mod offboard;
 pub mod rounds;
+pub mod message;
 pub mod tree;
 pub mod vtxo;
 pub mod integration;

@@ -1,0 +1,5 @@
+- Add the `message` module for signing and verifying arbitrary messages
+  Messages are signed with a BIP-340 Schnorr signature over a hash of
+  the message bytes. Verification is stateless and can be done against
+  a public key or against the user public key of an Ark address.
+  [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)
