@@ -1,12 +1,14 @@
 use honggfuzz::fuzz;
 
+use bark_fuzz::harness::OracleResultExt;
+
 use ark::encode::{ProtocolDecodingError, ProtocolEncoding};
 use ark::tree::signed::SignedVtxoTreeSpec;
 
 fn main() {
 	loop {
 		fuzz!(|data| {
-			do_test(data);
+			bark_fuzz::harness::guard("signed_vtxo_tree_decode", data, do_test);
 		});
 	}
 }
@@ -20,10 +22,10 @@ fn do_test(data: &[u8]) {
 
 		let tree2: SignedVtxoTreeSpec =
 			SignedVtxoTreeSpec::deserialize(&mut serialized.as_slice())
-				.expect("re-serialization should succeed");
+				.oracle("re-serialization should succeed");
 
 		let serialized2 = tree2.serialize();
-		assert_eq!(
+		bark_fuzz::oracle_assert_eq!(
 			serialized, serialized2,
 			"serialization should be deterministic"
 		);

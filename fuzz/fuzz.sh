@@ -13,6 +13,8 @@ DAEMON=0
 USE_CORPUS=""
 JOBS=""
 MINIMIZE=0
+REPLAY=0
+T_GIVEN=0
 
 usage() {
     cat <<EOF
@@ -37,7 +39,16 @@ OPTIONS:
     -l, --loop              Run continuously until killed (restarts after --time)
     -d, --daemon            Run in background, prints PID and exits
     -j, --jobs <N>          Number of CPUs/threads to use (default: honggfuzz default)
-    --minimize              Minimize corpus only
+    --minimize              Minimize corpus (honggfuzz -M). Panic-preserving:
+                            the same pass replays every input through the harness,
+                            so contained-panic reproducers are captured and
+                            re-injected after -M (which is otherwise blind to them
+                            and could prune a reproducer that adds no new coverage).
+    --replay                Re-run the accumulated corpus under the current build
+                            to flush latent panics (incl. the debug_assert!s the
+                            release profile now compiles in). Short per-target run,
+                            does not exit on crash, and logs + summarizes the
+                            contained (unwind-isolated) panics it hits.
     --use-corpus <PATH>     Use corpus from a cloned bark-qa repo at PATH
 
 ENVIRONMENT VARIABLES:
@@ -75,6 +86,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -t|--time)
             RUN_TIME="$2"
+            T_GIVEN=1
             shift 2
             ;;
         -c|--continue)
@@ -99,6 +111,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --minimize)
             MINIMIZE=1
+            shift
+            ;;
+        --replay)
+            REPLAY=1
             shift
             ;;
         --use-corpus)
@@ -134,6 +150,49 @@ fi
 
 trap 'exit 130' INT
 
+# Replay mode: re-run the accumulated corpus under the current build to surface
+# latent contained panics (honggfuzz replays every corpus input at startup, so a
+# short run suffices). Don't abort on crash, and default to a short per-target run.
+if [ "$REPLAY" = "1" ]; then
+    EXIT_ON_CRASH=0
+    if [ "$T_GIVEN" = "0" ]; then
+        RUN_TIME=20
+    fi
+fi
+
+# Summarize the contained panics the harness wrote to $HFUZZ_CONTAINED_FILE
+# during a replay run: a total count plus a frequency-ranked list of source
+# locations. Emits CONTAINED-SUMMARY / CONTAINED-LOC lines for the daily report.
+summarize_contained() {
+    local target="$1" cfile="$2"
+    local total locs unique
+    # Only count/parse well-formed sentinel lines ("CONTAINED\t<file:line:col>: msg"),
+    # so any torn write is dropped rather than mis-parsed into a bogus location.
+    if [ -f "$cfile" ]; then
+        total=$(grep -cE '^CONTAINED'$'\t' "$cfile" 2>/dev/null) || total=0
+    else
+        total=0
+    fi
+    echo "=== Contained-panic summary: $target ==="
+    if [ "${total:-0}" -gt 0 ]; then
+        # A counted line may still lack a parseable location (e.g. a panic with
+        # a non-string payload), so these can come up empty under pipefail.
+        locs=$(grep -E '^CONTAINED'$'\t' "$cfile" \
+            | grep -oE '[A-Za-z0-9_./-]+\.rs:[0-9]+:[0-9]+' \
+            | sort | uniq -c | sort -rn) || locs=""
+        unique=$(printf '%s\n' "$locs" | grep -c .) || unique=0
+        echo "CONTAINED-SUMMARY target=$target total=$total unique=$unique"
+        printf '%s\n' "$locs" | while read -r count loc; do
+            if [ -n "$loc" ]; then
+                echo "CONTAINED-LOC $target $count $loc"
+            fi
+        done
+    else
+        echo "CONTAINED-SUMMARY target=$target total=0 unique=0"
+    fi
+    echo "=== End contained-panic summary: $target ==="
+}
+
 run_fuzzing() {
     # Enable command tracing if verbose
     if [ "$VERBOSE" = "1" ]; then
@@ -147,6 +206,14 @@ run_fuzzing() {
     # sccache doesn't work with honggfuzz's sanitizer flags; bypass it entirely
     unset RUSTC_WRAPPER
     unset RUSTC_WORKSPACE_WRAPPER
+
+    # Replay mode surfaces contained (unwind-isolated) panics — including the
+    # debug_assert!s now compiled into the release profile — which the harness
+    # otherwise only counts. Kept off for normal campaigns: a contained panic
+    # can fire millions of times and would flood the log (see fuzz/src/lib.rs).
+    if [ "$REPLAY" = "1" ]; then
+        export HFUZZ_LOG_CONTAINED=1
+    fi
 
     echo "cargo $(cargo --version)"
     echo "rustc $(rustc --version)"
@@ -206,15 +273,105 @@ run_fuzzing() {
                     echo "Warning: No corpus found for target '$target' at $corpus_dir" >&2
                 fi
             elif [ -d "$FUZZ_DIR/hfuzz_input/$target" ]; then
-                HFUZZ_RUN_ARGS="$HFUZZ_RUN_ARGS -f $FUZZ_DIR/hfuzz_input/$target/input"
+                # Seed honggfuzz's gitignored workspace corpus from the tracked,
+                # read-only seed dir. Do NOT point honggfuzz (-f) at hfuzz_input:
+                # it owns its -f dir and a `--minimize` (-M) pass rewrites it to
+                # hash-named units, deleting the committed seeds.
+                ws_input="$FUZZ_DIR/hfuzz_workspace/$target/input"
+                mkdir -p "$ws_input"
+                cp -n "$FUZZ_DIR/hfuzz_input/$target/input/"* "$ws_input/" 2>/dev/null || true
+            fi
+
+            # Replay also re-executes the saved contained-panic reproducers, so
+            # value-dependent panics that never entered the coverage corpus are
+            # surfaced (and summarized) too.
+            if [ "$REPLAY" = "1" ] && [ -z "$USE_CORPUS" ]; then
+                saved_dir="$FUZZ_DIR/hfuzz_workspace/$target/contained"
+                if [ -d "$saved_dir" ]; then
+                    ws_input="$FUZZ_DIR/hfuzz_workspace/$target/input"
+                    mkdir -p "$ws_input"
+                    cp -n "$saved_dir"/* "$ws_input/" 2>/dev/null || true
+                fi
+            fi
+
+            # Panic-preserving minimize: honggfuzz -M is blind to contained panics
+            # and can prune a reproducer that adds no coverage. Since -M executes
+            # every input (a replay), arm the harness's input sink
+            # (HFUZZ_CONTAINED_DIR) at a holdout dir outside the corpus and
+            # re-inject the saved reproducers afterwards.
+            if [ "$MINIMIZE" = "1" ]; then
+                if [ -n "$USE_CORPUS" ]; then
+                    minimize_corpus_dir="$USE_CORPUS/fuzz_corpora/$target/input"
+                else
+                    minimize_corpus_dir="$FUZZ_DIR/hfuzz_workspace/$target/input"
+                fi
+                holdout_dir="$FUZZ_DIR/hfuzz_workspace/$target/minimize_holdout"
+                rm -rf "$holdout_dir"
+                mkdir -p "$holdout_dir"
+                export HFUZZ_CONTAINED_DIR="$holdout_dir"
+            else
+                # Normal runs: arm the input sink too. honggfuzz only keeps an
+                # input that adds coverage, so a value-dependent contained panic
+                # (overflow-checks, debug_assert!) at an already-covered site
+                # would otherwise leave no reproducer behind. One file per
+                # distinct panic location, persistent across runs.
+                contained_dir="$FUZZ_DIR/hfuzz_workspace/$target/contained"
+                mkdir -p "$contained_dir"
+                export HFUZZ_CONTAINED_DIR="$contained_dir"
+                contained_stamp=$(mktemp)
             fi
 
             export HFUZZ_RUN_ARGS
             cd "$FUZZ_DIR"
-            if ! cargo hfuzz run "$target"; then
+
+            # In replay mode, point the harness's contained-panic file sink at a
+            # fresh per-target file, run, then summarize from it. honggfuzz
+            # swallows the child's stderr, so the file is the only reliable
+            # channel for contained panics (see fuzz/src/lib.rs).
+            if [ "$REPLAY" = "1" ]; then
+                contained_file=$(mktemp)
+                export HFUZZ_CONTAINED_FILE="$contained_file"
+                set +e
+                cargo hfuzz run "$target"
+                run_status=$?
+                set -e
+                unset HFUZZ_CONTAINED_FILE
+                summarize_contained "$target" "$contained_file"
+                rm -f "$contained_file"
+            else
+                set +e
+                cargo hfuzz run "$target"
+                run_status=$?
+                set -e
+            fi
+
+            if [ "$run_status" -ne 0 ]; then
                 if [ "$EXIT_ON_CRASH" = "1" ]; then
                     echo "=== Crash detected in $target, exiting ==="
                     exit 1
+                fi
+            fi
+
+            # Re-inject the reproducers held out during the -M pass so minimize is
+            # panic-preserving. cp -n keeps honggfuzz's own survivors; idempotent.
+            if [ "$MINIMIZE" = "1" ]; then
+                unset HFUZZ_CONTAINED_DIR
+                saved=$(find "$holdout_dir" -type f 2>/dev/null | wc -l)
+                if [ "$saved" -gt 0 ] && [ -d "$minimize_corpus_dir" ]; then
+                    cp -n "$holdout_dir"/* "$minimize_corpus_dir"/ 2>/dev/null || true
+                    echo "=== Panic-preserving minimize: re-injected $saved contained-panic reproducer(s) into $minimize_corpus_dir ==="
+                    grep -rl . "$holdout_dir" 2>/dev/null | xargs -r -n1 basename | sed 's/^/    - /' || true
+                else
+                    echo "=== Panic-preserving minimize: no contained panics observed this pass; nothing to re-inject ==="
+                fi
+            else
+                unset HFUZZ_CONTAINED_DIR
+                # The dir persists across runs; split new finds from the backlog.
+                new=$(find "$contained_dir" -type f -newer "$contained_stamp" 2>/dev/null | wc -l)
+                total=$(find "$contained_dir" -type f 2>/dev/null | wc -l)
+                rm -f "$contained_stamp"
+                if [ "$total" -gt 0 ]; then
+                    echo "=== contained-panic reproducer(s) in $contained_dir: $new new, $total total (inspect with --replay) ==="
                 fi
             fi
 
