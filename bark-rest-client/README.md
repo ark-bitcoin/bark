@@ -63,6 +63,8 @@ Class | Method | HTTP request | Description
 *LightningApi* | [**get_send_status**](docs/LightningApi.md#get_send_status) | **GET** /api/v1/lightning/sends/{identifier} | Get send status
 *LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses
 *LightningApi* | [**pay**](docs/LightningApi.md#pay) | **POST** /api/v1/lightning/pay | Send a Lightning payment
+*MessageApi* | [**sign_message**](docs/MessageApi.md#sign_message) | **POST** /api/v1/message/sign | Sign a message
+*MessageApi* | [**verify_message**](docs/MessageApi.md#verify_message) | **POST** /api/v1/message/verify | Verify a signed message
 *NotificationsApi* | [**wait_notification**](docs/NotificationsApi.md#wait_notification) | **GET** /api/v1/notifications/wait | Long-poll for wallet notifications
 *NotificationsApi* | [**websocket_ticket**](docs/NotificationsApi.md#websocket_ticket) | **GET** /api/v1/notifications/ws/ticket | Create a websocket ticket
 *OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | Generate on-chain address
@@ -221,6 +223,7 @@ Class | Method | HTTP request | Description
  - [LightningSendFees](docs/LightningSendFees.md)
  - [LightningSendInfo](docs/LightningSendInfo.md)
  - [MailboxSyncResponse](docs/MailboxSyncResponse.md)
+ - [MessageVerification](docs/MessageVerification.md)
  - [MnemonicResponse](docs/MnemonicResponse.md)
  - [Movement](docs/Movement.md)
  - [MovementDestination](docs/MovementDestination.md)
@@ -259,9 +262,12 @@ Class | Method | HTTP request | Description
  - [SendOnchainRequest](docs/SendOnchainRequest.md)
  - [SendRequest](docs/SendRequest.md)
  - [SendResponse](docs/SendResponse.md)
+ - [SignMessageRequest](docs/SignMessageRequest.md)
+ - [SignedMessage](docs/SignedMessage.md)
  - [TipResponse](docs/TipResponse.md)
  - [TransactionInfo](docs/TransactionInfo.md)
  - [UtxoInfo](docs/UtxoInfo.md)
+ - [VerifyMessageRequest](docs/VerifyMessageRequest.md)
  - [VtxoInfo](docs/VtxoInfo.md)
  - [VtxoRequestInfo](docs/VtxoRequestInfo.md)
  - [VtxoStateInfo](docs/VtxoStateInfo.md)

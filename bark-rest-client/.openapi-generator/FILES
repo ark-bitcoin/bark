@@ -126,6 +126,8 @@ docs/LightningReceiveInfo.md
 docs/LightningSendFees.md
 docs/LightningSendInfo.md
 docs/MailboxSyncResponse.md
+docs/MessageApi.md
+docs/MessageVerification.md
 docs/MnemonicResponse.md
 docs/Movement.md
 docs/MovementDestination.md
@@ -166,9 +168,12 @@ docs/SendOnchainFeeEstimateQuery.md
 docs/SendOnchainRequest.md
 docs/SendRequest.md
 docs/SendResponse.md
+docs/SignMessageRequest.md
+docs/SignedMessage.md
 docs/TipResponse.md
 docs/TransactionInfo.md
 docs/UtxoInfo.md
+docs/VerifyMessageRequest.md
 docs/VtxoInfo.md
 docs/VtxoRequestInfo.md
 docs/VtxoStateInfo.md
@@ -197,6 +202,7 @@ src/apis/exits_api.rs
 src/apis/fees_api.rs
 src/apis/history_api.rs
 src/apis/lightning_api.rs
+src/apis/message_api.rs
 src/apis/mod.rs
 src/apis/notifications_api.rs
 src/apis/onchain_api.rs
@@ -318,6 +324,7 @@ src/models/lightning_receive_info.rs
 src/models/lightning_send_fees.rs
 src/models/lightning_send_info.rs
 src/models/mailbox_sync_response.rs
+src/models/message_verification.rs
 src/models/mnemonic_response.rs
 src/models/mod.rs
 src/models/movement.rs
@@ -357,9 +364,12 @@ src/models/send_onchain_fee_estimate_query.rs
 src/models/send_onchain_request.rs
 src/models/send_request.rs
 src/models/send_response.rs
+src/models/sign_message_request.rs
+src/models/signed_message.rs
 src/models/tip_response.rs
 src/models/transaction_info.rs
 src/models/utxo_info.rs
+src/models/verify_message_request.rs
 src/models/vtxo_info.rs
 src/models/vtxo_request_info.rs
 src/models/vtxo_state_info.rs
