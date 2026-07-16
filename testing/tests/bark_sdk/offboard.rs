@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicUsize};
 use std::time::Duration;
 
-use bitcoin::{Amount, FeeRate};
+use bitcoin::{Amount, FeeRate, Transaction, Witness};
 use bitcoin_ext::rpc::RpcApi;
 
 use bark::actions::offboard::Progress;
@@ -35,6 +35,41 @@ impl captaind::proxy::ArkRpcProxy for ReplayPrepareOffboardProxy {
 			)));
 		}
 		Ok(retry)
+	}
+}
+
+/// Strips the witnesses from the first `action_drive_factor()`
+/// finish_offboard responses, like a server that returns the unsigned tx
+/// instead of the signed one (the double-drive reentrancy mode runs each
+/// advance step twice, so both calls of the first step must behave the
+/// same). Later calls pass through.
+#[derive(Clone)]
+struct UnsignedFinishResponseProxy(Arc<AtomicUsize>);
+
+impl UnsignedFinishResponseProxy {
+	fn new() -> Self {
+		Self(Arc::new(AtomicUsize::new(action_drive_factor())))
+	}
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for UnsignedFinishResponseProxy {
+	async fn finish_offboard(
+		&self, upstream: &mut ArkClient, req: protos::FinishOffboardRequest,
+	) -> Result<protos::FinishOffboardResponse, tonic::Status> {
+		let mut resp = upstream.finish_offboard(req).await?.into_inner();
+		let strip = self.0.fetch_update(
+			atomic::Ordering::Relaxed, atomic::Ordering::Relaxed, |n| n.checked_sub(1),
+		).is_ok();
+		if strip {
+			let mut tx = bitcoin::consensus::deserialize::<Transaction>(&resp.signed_offboard_tx)
+				.expect("server sent a valid tx");
+			for input in &mut tx.input {
+				input.witness = Witness::new();
+			}
+			resp.signed_offboard_tx = bitcoin::consensus::serialize(&tx);
+		}
+		Ok(resp)
 	}
 }
 
@@ -139,6 +174,49 @@ async fn offboard_replays_identical_prepare_request() {
 
 	// And the destination address received the funds onchain.
 	assert_eq!(ctx.bitcoind().get_received_by_address(&address), sent.amount);
+}
+
+/// A finish response whose tx matches the session txid but carries no
+/// signatures must be rejected: the txid doesn't commit to the witnesses,
+/// so an unsigned tx would sail through the txid check and strand the
+/// action at broadcast. The server's session is still intact, so the
+/// finish retry replays the real signed tx and the offboard completes.
+#[tokio::test]
+async fn offboard_rejects_unsigned_finish_response() {
+	let ctx = TestContext::new("bark_sdk/offboard_rejects_unsigned_finish_response").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let proxy = srv.start_proxy_no_mailbox(UnsignedFinishResponseProxy::new()).await;
+
+	// Manual sync only, so the test controls the finish retry.
+	let wallet = ctx.bark_sdk("bark", &proxy)
+		.cfg(|c| {
+			c.offboard_required_confirmations = 1;
+			c.daemon_manual_sync = true;
+		})
+		.boarded(sat(800_000))
+		.create().await;
+
+	let address = ctx.bitcoind().get_new_address();
+	let err = wallet.offboard_all(address.clone()).await
+		.expect_err("the unsigned finish response should be rejected");
+	let err = format!("{err:#}");
+	assert!(err.contains("unsigned input"), "unexpected error: {err}");
+
+	// The rejected response must not have advanced the checkpoint.
+	let pending = wallet.pending_offboards().await.expect("pending offboards");
+	assert_eq!(pending.len(), 1);
+	assert!(
+		matches!(pending[0].progress, Progress::OffboardTxPrepared { .. }),
+		"expected the offboard to stay at the finish step: {:?}", pending[0].progress,
+	);
+
+	// The retry replays the stored response, now unmangled, and the
+	// offboard settles like any other.
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	ctx.generate_blocks(1).await;
+	wallet.sync_pending_offboards().await.expect("sync pending offboards");
+	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Successful);
+	assert_ne!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO);
 }
 
 /// A wallet whose finish_offboard request never reached the server comes
