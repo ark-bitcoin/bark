@@ -28,7 +28,7 @@ use crate::persist::models::{SerdeRoundState, StoredExit, StoredRoundState, Unlo
 use crate::lock_manager::LockManager;
 use crate::lock_manager::memory::MemoryLockManager;
 use crate::round::{RoundFlowState, RoundParticipation, RoundState};
-use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 use crate::WalletProperties;
 
 // ---------------------------------------------------------------------------
@@ -298,8 +298,12 @@ mod vtxo_lifecycle {
 	}
 
 	async fn test_get_vtxos_by_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let spendable = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
-		let spent = &VTXO_VECTORS.arkoor2_vtxo;
+		// All vectors share the same expiry height, so amount decides the order.
+		// The spent vtxo (9000 sat) sorts between the board vtxo (10_330 sat,
+		// spendable, stored by the previous test) and the spendable one here
+		// (8000 sat), so results grouped by state would fail the order check.
+		let spendable = &VTXO_VECTORS.arkoor2_vtxo;
+		let spent = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 
 		let ra = a.store_vtxos(&[
 			(spendable, &VtxoState::Spendable),
@@ -315,9 +319,27 @@ mod vtxo_lifecycle {
 			.expect("a: get_vtxos_by_state");
 		let mut rb = b.get_vtxos_by_state(&[VtxoStateKind::Spendable]).await
 			.expect("b: get_vtxos_by_state");
+		assert_vtxo_order(&ra, "a: get_vtxos_by_state (spendable)");
+		assert_vtxo_order(&rb, "b: get_vtxos_by_state (spendable)");
 		ra.sort_by_key(|v| v.vtxo.id());
 		rb.sort_by_key(|v| v.vtxo.id());
 		assert_eq!(ra, rb, "get_vtxos_by_state mismatch");
+
+		// Multi-state queries must be globally ordered, not grouped by state.
+		let states = [VtxoStateKind::Spendable, VtxoStateKind::Spent];
+		let ra = a.get_vtxos_by_state(&states).await.expect("a: get_vtxos_by_state");
+		let rb = b.get_vtxos_by_state(&states).await.expect("b: get_vtxos_by_state");
+		assert_vtxo_order(&ra, "a: get_vtxos_by_state (multi-state)");
+		assert_vtxo_order(&rb, "b: get_vtxos_by_state (multi-state)");
+	}
+
+	/// Asserts the documented order: expiry height ASC, then amount DESC.
+	fn assert_vtxo_order(vtxos: &[WalletVtxo], ctx: &str) {
+		let ordered = vtxos.is_sorted_by(|a, b| {
+			a.vtxo.expiry_height().cmp(&b.vtxo.expiry_height())
+				.then(b.vtxo.amount().cmp(&a.vtxo.amount())) != std::cmp::Ordering::Greater
+		});
+		assert!(ordered, "{ctx}: not sorted by expiry_height ASC, amount DESC");
 	}
 
 	async fn test_vtxo_state_transition_ok<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
@@ -382,7 +404,7 @@ mod vtxo_lifecycle {
 	}
 
 	async fn test_has_spent_vtxo<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let spent = &VTXO_VECTORS.arkoor2_vtxo;
+		let spent = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 
 		// Ensure the vtxo is in Spent state before querying.  store_vtxos uses
 		// INSERT OR IGNORE semantics, so this is a no-op if the vtxo was already

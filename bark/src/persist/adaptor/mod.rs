@@ -733,6 +733,14 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			}
 		}
 
+		// Each per-state range comes back in sort-key order, but
+		// concatenating the ranges groups results by state. Re-sort to the
+		// order the trait documents: expiry height ASC, amount DESC.
+		records.sort_by(|a, b| {
+			a.vtxo.expiry_height().cmp(&b.vtxo.expiry_height())
+				.then(b.vtxo.amount().cmp(&a.vtxo.amount()))
+		});
+
 		Ok(records)
 	}
 
