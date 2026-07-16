@@ -26,7 +26,7 @@ use ark_testing::{
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
-
+use ark_testing::util::BarkVersion;
 
 #[tokio::test]
 async fn simple_exit() {
@@ -1293,7 +1293,16 @@ async fn vtxo_remains_spendable_while_exit_pending() {
 	// abort to the VtxoAlreadySpent terminal state.
 	bark.progress_exit().await;
 
-	let exits = bark.list_exits().await;
+	// Terminal exits drop out of the default listing and surface via --include-finished.
+	let version = BarkVersion::parse(&Bark::version().await);
+	let cutoff = BarkVersion::parse("0.3.0");	
+	let exits = if version > cutoff {
+		assert!(bark.list_exits().await.is_empty(),
+			"finished exit should not appear in the default exit list");
+		bark.list_exits_including_finished().await
+	} else {
+		bark.list_exits().await
+	};
 	assert_eq!(exits.len(), 1);
 	assert_eq!(exits[0].vtxo_id, original_id);
 	assert!(matches!(exits[0].state, ExitState::VtxoAlreadySpent(_)),
@@ -1367,7 +1376,16 @@ async fn exited_vtxo_is_not_spendable() {
 	ctx.generate_blocks(1).await;
 	bark.progress_exit().await;
 
-	let exits = bark.list_exits().await;
+	// Terminal exits drop out of the default listing and surface via --include-finished.
+	let version = BarkVersion::parse(&Bark::version().await);
+	let cutoff = BarkVersion::parse("0.3.0");
+	let exits = if version > cutoff {
+		assert!(bark.list_exits().await.is_empty(),
+			"finished exit should not appear in the default exit list");
+		bark.list_exits_including_finished().await
+	} else {
+		bark.list_exits().await
+	};
 	assert_eq!(exits.len(), 1);
 	assert_eq!(exits[0].vtxo_id, exited_id);
 	assert!(matches!(exits[0].state, ExitState::Claimed(_)),

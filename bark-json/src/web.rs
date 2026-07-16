@@ -494,6 +494,12 @@ pub struct ExitClaimResponse {
 	pub message: String,
 }
 
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct ExitCancelResponse {
+	pub message: String,
+}
+
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]

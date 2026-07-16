@@ -5,6 +5,7 @@ use bitcoin_ext::{BlockDelta, P2TR_DUST, TxStatus};
 use crate::exit::models::{
 	ExitError, ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
 	ExitClaimedState, ExitState, ExitStartState, ExitTx, ExitTxStatus, ExitVtxoAlreadySpentState,
+	ExitCanceledState,
 };
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
 use crate::exit::progress::util::{count_broadcast, count_confirmed};
@@ -37,6 +38,7 @@ impl ExitStateProgress for ExitState {
 			ExitState::ClaimInProgress(s) => s.progress(ctx).await,
 			ExitState::Claimed(s) => s.progress(ctx).await,
 			ExitState::VtxoAlreadySpent(s) => s.progress(ctx).await,
+			ExitState::Canceled(s) => s.progress(ctx).await,
 		}
 	}
 }
@@ -352,6 +354,18 @@ impl ExitStateProgress for ExitVtxoAlreadySpentState {
 		ctx: &mut ProgressContext<'_>,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		trace!("Exit for VTXO {} cannot proceed: VTXO was already spent.", ctx.vtxo.id());
+		Ok(self.into())
+	}
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl ExitStateProgress for ExitCanceledState {
+	async fn progress(
+		self,
+		ctx: &mut ProgressContext<'_>,
+	) -> anyhow::Result<ExitState, ExitProgressError> {
+		trace!("Exit for VTXO {} was canceled; nothing to progress.", ctx.vtxo.id());
 		Ok(self.into())
 	}
 }

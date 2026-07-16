@@ -849,6 +849,10 @@ impl Bark {
 		self.run_json(["exit", "list", "--no-sync"]).await
 	}
 
+	pub async fn list_exits_including_finished(&self) -> Vec<json::cli::ExitTransactionStatus> {
+		self.run_json(["exit", "list", "--include-finished"]).await
+	}
+
 	pub async fn list_exits_with_txs(&self) -> Vec<json::cli::ExitTransactionStatus> {
 		self.run_json(["exit", "list", "--transactions"]).await
 	}

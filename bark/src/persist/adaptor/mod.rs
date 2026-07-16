@@ -65,7 +65,7 @@ use ark::{Vtxo, VtxoId};
 use ark::vtxo::Full;
 
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
-use crate::exit::ExitTxOrigin;
+use crate::exit::{ExitStateKind, ExitTxOrigin};
 use crate::movement::{
 	Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod,
 };
@@ -1015,6 +1015,26 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	async fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
 		let records = self.inner.read().await.get_all(partition::EXIT_VTXO).await?;
 		records.into_iter().map(|r| r.to_data()).collect()
+	}
+
+	async fn get_exit_vtxo_entries_with_states(
+		&self,
+		states: &[ExitStateKind],
+	) -> anyhow::Result<Vec<StoredExit>> {
+		// The state lives inside the serialized record and adaptors only key by primary/sort key,
+		// so there's no filter to push down — read the partition and filter here.
+		let records = self.inner.read().await.get_all(partition::EXIT_VTXO).await?;
+		records.into_iter()
+			.map(|r| r.to_data::<StoredExit>())
+			.filter(|e| e.as_ref().map_or(true, |e| states.contains(&e.state.kind())))
+			.collect()
+	}
+
+	async fn get_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<Option<StoredExit>> {
+		match self.inner.read().await.get(partition::EXIT_VTXO, &id.to_bytes()).await? {
+			Some(record) => Ok(Some(record.to_data::<StoredExit>()?)),
+			None => Ok(None),
+		}
 	}
 
 	async fn store_exit_child_tx(

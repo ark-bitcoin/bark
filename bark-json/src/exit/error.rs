@@ -6,6 +6,7 @@ use bitcoin_ext::BlockHeight;
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
 
+use crate::exit::ExitStateKind;
 use crate::exit::states::ExitTxStatus;
 
 #[derive(Clone, Debug, Error, PartialEq, Eq, Deserialize, Serialize)]
@@ -21,6 +22,13 @@ pub enum ExitError {
 
 	#[error("Block Retrieval Failure: Unable to retrieve a block at height {height}: {error}")]
 	BlockRetrievalFailure { height: BlockHeight, error: String },
+
+	#[error("Cannot Cancel Exit: The exit for VTXO {vtxo} can no longer be canceled (state: {state})")]
+	CannotCancelExit {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		vtxo: VtxoId,
+		state: ExitStateKind,
+	},
 
 	#[error("Claim Missing Inputs: No inputs given to claim")]
 	ClaimMissingInputs,
@@ -86,6 +94,14 @@ pub enum ExitError {
 		error: String
 	},
 
+	#[error("Exit Tx Already Broadcast: Cannot cancel the exit for VTXO {vtxo}, its final exit tx {txid} has already been broadcast")]
+	ExitTxAlreadyBroadcast {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		vtxo: VtxoId,
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		txid: Txid,
+	},
+
 	#[error("Insufficient Confirmed Funds: {needed} is needed but only {available} is available")]
 	InsufficientConfirmedFunds {
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
@@ -126,6 +142,9 @@ pub enum ExitError {
 
 	#[error("Movement Registration Failure: {error}")]
 	MovementRegistrationFailure { error: String },
+
+	#[error("Not Exiting: VTXO {vtxo} has no unilateral exit")]
+	NotExiting { #[cfg_attr(feature = "utoipa", schema(value_type = String))] vtxo: VtxoId },
 
 	#[error("Tip Retrieval Failure: Unable to retrieve the blockchain tip height: {error}")]
 	TipRetrievalFailure { error: String },
@@ -185,6 +204,9 @@ impl From<bark::exit::ExitError> for ExitError {
 			bark::exit::ExitError::ExitPackageStoreFailure { txid, error } => {
 				ExitError::ExitPackageStoreFailure { txid, error }
 			},
+			bark::exit::ExitError::ExitTxAlreadyBroadcast { vtxo, txid } => {
+				ExitError::ExitTxAlreadyBroadcast { vtxo, txid }
+			},
 			bark::exit::ExitError::InsufficientConfirmedFunds { needed, available } => {
 				ExitError::InsufficientConfirmedFunds { needed, available }
 			},
@@ -211,6 +233,12 @@ impl From<bark::exit::ExitError> for ExitError {
 			},
 			bark::exit::ExitError::MovementRegistrationFailure { error } => {
 				ExitError::MovementRegistrationFailure { error }
+			},
+			bark::exit::ExitError::CannotCancelExit { vtxo, state } => {
+				ExitError::CannotCancelExit { vtxo, state: state.into() }
+			},
+			bark::exit::ExitError::NotExiting { vtxo } => {
+				ExitError::NotExiting { vtxo }
 			},
 			bark::exit::ExitError::TipRetrievalFailure { error } => {
 				ExitError::TipRetrievalFailure { error }

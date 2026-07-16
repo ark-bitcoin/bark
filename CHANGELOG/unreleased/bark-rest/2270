@@ -1,0 +1,11 @@
+- Add endpoints to cancel an exit and list finished exits
+  `POST /api/v1/exits/cancel/{vtxo_id}` aborts a unilateral exit while its
+  final transaction is still unbroadcast; canceling an already-canceled exit
+  is a no-op. It returns 404 if the VTXO has no exit and 400 once the exit
+  can no longer be canceled. Finished exits (claimed, aborted because the
+  VTXO was spent, or canceled) drop out of `GET /exits/status` and are served
+  by the new `GET /api/v1/exits/status/finished` instead.
+  [#2270](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2270)
+  - **BREAKING:** `GET /exits/status` now returns only live exits and its
+    OpenAPI operation was renamed from `get_all_exit_status` to
+    `get_live_exit_status`, renaming the method in generated clients.

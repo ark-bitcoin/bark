@@ -19,12 +19,14 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 #[openapi(
 	paths(
 		get_exit_status_by_vtxo_id,
-		get_all_exit_status,
+		get_live_exit_status,
+		get_finished_exits,
 		exit_start_vtxos,
 		exit_start_all,
 		exit_progress,
 		exit_claim_vtxos,
 		exit_claim_all,
+		exit_cancel,
 	),
 	components(schemas(
 		bark_json::web::ExitStatusRequest,
@@ -36,6 +38,7 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 		bark_json::web::ExitClaimAllRequest,
 		bark_json::web::ExitClaimVtxosRequest,
 		bark_json::web::ExitClaimResponse,
+		bark_json::web::ExitCancelResponse,
 	)),
 	tags((name = "exits", description = "Move bitcoin back on-chain without server cooperation."))
 )]
@@ -44,12 +47,14 @@ pub struct ExitsApiDoc;
 pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/status/{vtxo_id}", get(get_exit_status_by_vtxo_id))
-		.route("/status", get(get_all_exit_status))
+		.route("/status", get(get_live_exit_status))
+		.route("/status/finished", get(get_finished_exits))
 		.route("/start/vtxos", post(exit_start_vtxos))
 		.route("/start/all", post(exit_start_all))
 		.route("/progress", post(exit_progress))
 		.route("/claim/vtxos", post(exit_claim_vtxos))
 		.route("/claim/all", post(exit_claim_all))
+		.route("/cancel/{vtxo_id}", post(exit_cancel))
 }
 
 #[utoipa::path(
@@ -97,7 +102,7 @@ pub async fn get_exit_status_by_vtxo_id(
 #[utoipa::path(
 	get,
 	path = "/status",
-	summary = "List all exit statuses",
+	summary = "List live exit statuses",
 	params(
 		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
 		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children")
@@ -106,14 +111,14 @@ pub async fn get_exit_status_by_vtxo_id(
 		(status = 200, description = "Returns all exit statuses", body = Vec<bark_json::cli::ExitTransactionStatus>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the current state of every emergency exit in the wallet. Each \
+	description = "Returns the current state of live emergency exits in the wallet. Each \
 		entry includes which phase the exit is in (start, processing, awaiting-delta, \
-		claimable, claim-in-progress, or claimed), and optionally the full state \
-		transition history and the exit transaction packages with their CPFP children.",
+		claimable or claim-in-progress), and optionally the full state transition history \
+		and the exit transaction packages with their CPFP children.",
 	tag = "exits"
 )]
 #[debug_handler]
-pub async fn get_all_exit_status(
+pub async fn get_live_exit_status(
 	State(state): State<ServerState>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
@@ -394,4 +399,94 @@ pub async fn exit_claim_all(
 	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
 	inner_claim_vtxos(&state, address, &vtxos, fee_rate).await
+}
+
+#[utoipa::path(
+	post,
+	path = "/cancel/{vtxo_id}",
+	summary = "Cancel an exit",
+	params(
+		("vtxo_id" = String, Path, description = "The VTXO whose unilateral exit should be canceled"),
+	),
+	responses(
+		(status = 200, description = "Exit canceled successfully", body = bark_json::web::ExitCancelResponse),
+		(status = 400, description = "The VTXO ID is invalid, or the exit can no longer be \
+			canceled because its final transaction has already been broadcast", body = error::BadRequestError),
+		(status = 404, description = "The VTXO has no exit", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Aborts an in-progress emergency exit while it is still safe to do so—before \
+		its final transaction has been broadcast. Exit transactions are ordered topologically and \
+		only the final one moves the VTXO on-chain, so an exit can still be canceled even after its \
+		shared ancestor transactions are in the mempool or a block. Canceling leaves the VTXO \
+		spendable, so a fresh exit can be started for it later. Before canceling, the endpoint \
+		verifies directly against the chain that the final transaction hasn't been broadcast; \
+		nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a \
+		no-op, so retries are safe. Note the daemon auto-progresses exits at the cadence defined \
+		by `SLOW_INTERVAL`, so cancel promptly once an exit reaches a state you no longer wish \
+		to pursue.",
+	tag = "exits"
+)]
+#[debug_handler]
+pub async fn exit_cancel(
+	State(state): State<ServerState>,
+	Path(vtxo): Path<String>,
+) -> HandlerResult<Json<bark_json::web::ExitCancelResponse>> {
+	let wallet = state.require_wallet()?;
+
+	let vtxo_id = ark::VtxoId::from_str(&vtxo).badarg("Invalid VTXO ID")?;
+
+	if let Err(e) = wallet.exit_mgr().cancel_exit(vtxo_id).await {
+		match e {
+			bark::exit::ExitError::NotExiting { .. } => {
+				not_found!([vtxo_id], "No exit found for VTXO");
+			},
+			bark::exit::ExitError::CannotCancelExit { state, .. } => {
+				badarg!("Exit can no longer be canceled (state: {})", state);
+			},
+			bark::exit::ExitError::ExitTxAlreadyBroadcast { txid, .. } => {
+				badarg!("Exit can no longer be canceled (final exit tx {} has already been broadcast)", txid);
+			},
+			other => {
+				return Err(anyhow::Error::from(other)
+					.context("Failed to cancel exit").into());
+			},
+		}
+	}
+
+	Ok(axum::Json(bark_json::web::ExitCancelResponse {
+		message: "Exit canceled successfully".to_string(),
+	}))
+}
+
+#[utoipa::path(
+	get,
+	path = "/status/finished",
+	summary = "List finished exits",
+	params(
+		("history" = Option<bool>, Query, description = "Whether to include the detailed state history of each finished exit"),
+		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children"),
+	),
+	responses(
+		(status = 200, description = "Returns the finished exits", body = Vec<bark_json::cli::ExitTransactionStatus>),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns exits that reached a terminal state: claimed, aborted because the \
+		VTXO was already spent, or canceled. Finished exits are dropped from active tracking—\
+		they are never progressed—but they're retained for auditing and surfaced here.",
+	tag = "exits"
+)]
+#[debug_handler]
+pub async fn get_finished_exits(
+	State(state): State<ServerState>,
+	Query(query): Query<bark_json::web::ExitStatusRequest>,
+) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
+	let wallet = state.require_wallet()?;
+
+	let statuses = wallet.exit_mgr().list_finished(
+		query.history.unwrap_or(false),
+		query.transactions.unwrap_or(false),
+	).await.context("Failed to list finished exits")?;
+
+	Ok(axum::Json(statuses.into_iter().map(Into::into).collect()))
 }

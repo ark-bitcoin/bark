@@ -7,6 +7,7 @@ use ark::vtxo::VtxoStandardnessError;
 use bitcoin_ext::BlockHeight;
 
 use crate::chain::BroadcastError;
+use crate::exit::models::ExitStateKind;
 use crate::exit::models::states::ExitTxStatus;
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -19,6 +20,9 @@ pub enum ExitError {
 
 	#[error("Block Retrieval Failure: Unable to retrieve a block at height {height}: {error}")]
 	BlockRetrievalFailure { height: BlockHeight, error: String },
+
+	#[error("Cannot Cancel Exit: The exit for VTXO {vtxo} can no longer be canceled (state: {state})")]
+	CannotCancelExit { vtxo: VtxoId, state: ExitStateKind },
 
 	#[error("Claim Missing Inputs: No inputs given to claim")]
 	ClaimMissingInputs,
@@ -73,6 +77,9 @@ pub enum ExitError {
 		error: String
 	},
 
+	#[error("Exit Tx Already Broadcast: Cannot cancel the exit for VTXO {vtxo}, its final exit tx {txid} has already been broadcast")]
+	ExitTxAlreadyBroadcast { vtxo: VtxoId, txid: Txid },
+
 	#[error("Insufficient Confirmed Funds: {needed} is needed but only {available} is available")]
 	InsufficientConfirmedFunds {
 		needed: Amount,
@@ -109,6 +116,9 @@ pub enum ExitError {
 
 	#[error("Movement Registration Failure: {error}")]
 	MovementRegistrationFailure { error: String },
+
+	#[error("Not Exiting: VTXO {vtxo} has no unilateral exit")]
+	NotExiting { vtxo: VtxoId },
 
 	#[error("Tip Retrieval Failure: Unable to retrieve the blockchain tip height: {error}")]
 	TipRetrievalFailure { error: String },

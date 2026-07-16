@@ -43,7 +43,7 @@ use ark::vtxo::Full;
 
 use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
-use crate::exit::ExitTxOrigin;
+use crate::exit::{ExitTxOrigin, ExitStateKind};
 use crate::persist::models::{
 	PaidInvoice, RoundStateId, SettledLightningReceive,
 	StoredExit, StoredRoundState, Unlocked, PendingOffboard,
@@ -548,6 +548,24 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the query fails.
 	async fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>>;
+
+	/// List exit entries whose current state matches one of the given [ExitStateKind]s.
+	///
+	/// Errors:
+	/// - Returns an error if the underlying query fails.
+	async fn get_exit_vtxo_entries_with_states(
+		&self,
+		states: &[ExitStateKind],
+	) -> anyhow::Result<Vec<StoredExit>>;
+
+	/// Fetch the exit entry for a single [Vtxo] ID, if any.
+	///
+	/// Returns:
+	/// - `Ok(Some(StoredExit))` if the VTXO has an exit entry, `Ok(None)` otherwise.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	async fn get_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<Option<StoredExit>>;
 
 	/// Store a child transaction related to an exit transaction.
 	///

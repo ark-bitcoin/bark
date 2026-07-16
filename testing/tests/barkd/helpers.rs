@@ -97,7 +97,7 @@ pub async fn wait_for_exits_claimable(ctx: &TestContext, barkd: &Barkd) {
 	loop {
 		ctx.generate_blocks(1).await;
 
-		let statuses = barkd.get_all_exit_status(None, None).await;
+		let statuses = barkd.get_live_exit_status(None, None).await;
 		let all_claimable = !statuses.is_empty() && statuses.iter().all(|s|
 			matches!(s.state, ExitState::Claimable(_) | ExitState::Claimed(_))
 		);

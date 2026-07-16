@@ -30,7 +30,7 @@ use bark_rest_client::apis::{
 };
 use bark_rest_client::models::{
 	BoardRequest, ExitClaimAllRequest, ExitClaimVtxosRequest, ExitProgressRequest,
-	ExitStartRequest, LightningInvoiceRequest, RefreshRequest,
+	ExitStartRequest, LightningInvoiceRequest, RefreshRequest, SendRequest,
 };
 use futures::{Stream, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
@@ -432,10 +432,10 @@ impl Barkd {
 		}).await.expect("barkd exit_progress failed")
 	}
 
-	/// Return the status of all emergency exits.
-	pub async fn get_all_exit_status(&self, history: Option<bool>, transactions: Option<bool>) -> Vec<ExitTransactionStatus> {
+	/// Return the status of all live emergency exits.
+	pub async fn get_live_exit_status(&self, history: Option<bool>, transactions: Option<bool>) -> Vec<ExitTransactionStatus> {
 		let config = self.client_config();
-		exits_api::get_all_exit_status(&config, history, transactions).await
+		exits_api::get_live_exit_status(&config, history, transactions).await
 			.expect("failed to get barkd exit status")
 	}
 
@@ -496,6 +496,39 @@ impl Barkd {
 		let config = self.client_config();
 		lightning_api::list_receive_statuses(&config).await
 			.expect("failed to list pending lightning receives via barkd")
+	}
+
+	/// Send off-chain (arkoor) to an Ark address.
+	pub async fn send(&self, destination: impl Into<String>, amount: Amount) {
+		let config = self.client_config();
+		let req = SendRequest {
+			destination: destination.into(),
+			amount_sat: Some(amount.to_sat()),
+			comment: None,
+		};
+		wallet_api::send(&config, req).await.expect("barkd send failed");
+	}
+
+	/// Cancel the unilateral exit for the given VTXO.
+	pub async fn cancel_exit(&self, vtxo_id: &str) -> bark_json::web::ExitCancelResponse {
+		self.try_cancel_exit(vtxo_id).await.expect("barkd exit_cancel failed")
+	}
+
+	/// Cancel the unilateral exit for the given VTXO, surfacing the REST error if it fails.
+	pub async fn try_cancel_exit(
+		&self,
+		vtxo_id: &str,
+	) -> anyhow::Result<bark_json::web::ExitCancelResponse> {
+		let config = self.client_config();
+		exits_api::exit_cancel(&config, vtxo_id).await
+			.map_err(|e| anyhow::anyhow!("barkd exit_cancel failed: {}", e))
+	}
+
+	/// List exits that reached a terminal state (claimed, vtxo-already-spent, or canceled).
+	pub async fn get_finished_exits(&self, history: Option<bool>, transactions: Option<bool>) -> Vec<ExitTransactionStatus> {
+		let config = self.client_config();
+		exits_api::get_finished_exits(&config, history, transactions).await
+			.expect("barkd get_finished_exits failed")
 	}
 }
 

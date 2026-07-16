@@ -148,6 +148,69 @@
         }
       }
     },
+    "/api/v1/exits/cancel/{vtxo_id}": {
+      "post": {
+        "tags": [
+          "exits"
+        ],
+        "summary": "Cancel an exit",
+        "description": "Aborts an in-progress emergency exit while it is still safe to do so—before its final transaction has been broadcast. Exit transactions are ordered topologically and only the final one moves the VTXO on-chain, so an exit can still be canceled even after its shared ancestor transactions are in the mempool or a block. Canceling leaves the VTXO spendable, so a fresh exit can be started for it later. Before canceling, the endpoint verifies directly against the chain that the final transaction hasn't been broadcast; nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a no-op, so retries are safe. Note the daemon auto-progresses exits at the cadence defined by `SLOW_INTERVAL`, so cancel promptly once an exit reaches a state you no longer wish to pursue.",
+        "operationId": "exit_cancel",
+        "parameters": [
+          {
+            "name": "vtxo_id",
+            "in": "path",
+            "description": "The VTXO whose unilateral exit should be canceled",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exit canceled successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitCancelResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The VTXO ID is invalid, or the exit can no longer be canceled because its final transaction has already been broadcast",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The VTXO has no exit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/exits/claim/all": {
       "post": {
         "tags": [
@@ -393,9 +456,9 @@
         "tags": [
           "exits"
         ],
-        "summary": "List all exit statuses",
-        "description": "Returns the current state of every emergency exit in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed), and optionally the full state transition history and the exit transaction packages with their CPFP children.",
-        "operationId": "get_all_exit_status",
+        "summary": "List live exit statuses",
+        "description": "Returns the current state of live emergency exits in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable or claim-in-progress), and optionally the full state transition history and the exit transaction packages with their CPFP children.",
+        "operationId": "get_live_exit_status",
         "parameters": [
           {
             "name": "history",
@@ -419,6 +482,61 @@
         "responses": {
           "200": {
             "description": "Returns all exit statuses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExitTransactionStatus"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exits/status/finished": {
+      "get": {
+        "tags": [
+          "exits"
+        ],
+        "summary": "List finished exits",
+        "description": "Returns exits that reached a terminal state: claimed, aborted because the VTXO was already spent, or canceled. Finished exits are dropped from active tracking—they are never progressed—but they're retained for auditing and surfaced here.",
+        "operationId": "get_finished_exits",
+        "parameters": [
+          {
+            "name": "history",
+            "in": "query",
+            "description": "Whether to include the detailed state history of each finished exit",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "transactions",
+            "in": "query",
+            "description": "Whether to include the exit transactions and their CPFP children",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the finished exits",
             "content": {
               "application/json": {
                 "schema": {
@@ -3328,6 +3446,29 @@
           }
         }
       },
+      "ExitCancelResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ExitCanceledState": {
+        "type": "object",
+        "description": "JSON mirror of [bark::exit::ExitCanceledState].",
+        "required": [
+          "tip_height"
+        ],
+        "properties": {
+          "tip_height": {
+            "$ref": "#/components/schemas/u32"
+          }
+        }
+      },
       "ExitClaimAllRequest": {
         "type": "object",
         "required": [
@@ -3495,6 +3636,28 @@
                 "enum": [
                   "block-retrieval-failure"
                 ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "vtxo",
+              "state",
+              "type"
+            ],
+            "properties": {
+              "state": {
+                "$ref": "#/components/schemas/ExitStateKind"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "cannot-cancel-exit"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
               }
             }
           },
@@ -3741,6 +3904,28 @@
           {
             "type": "object",
             "required": [
+              "vtxo",
+              "txid",
+              "type"
+            ],
+            "properties": {
+              "txid": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exit-tx-already-broadcast"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "needed",
               "available",
               "type"
@@ -3921,6 +4106,24 @@
                 "enum": [
                   "movement-registration-failure"
                 ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "vtxo",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "not-exiting"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
               }
             }
           },
@@ -4294,9 +4497,44 @@
                 }
               }
             ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExitCanceledState"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "canceled"
+                    ]
+                  }
+                }
+              }
+            ]
           }
         ],
         "description": "A utility type to wrap ExitState children so they can be easily serialized. This also helps with\ndebugging a lot!"
+      },
+      "ExitStateKind": {
+        "type": "string",
+        "description": "A flat, data-free discriminator for [ExitState]. The serde representation matches\n[ExitState]'s `type` tag (kebab-case).",
+        "enum": [
+          "start",
+          "processing",
+          "awaiting-delta",
+          "claimable",
+          "claim-in-progress",
+          "claimed",
+          "vtxo-already-spent",
+          "canceled"
+        ]
       },
       "ExitStatusRequest": {
         "type": "object",

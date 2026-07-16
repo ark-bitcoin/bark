@@ -1,0 +1,7 @@
+- Add `bark exit cancel` to abort an exit that hasn't committed on-chain
+  `bark exit cancel <vtxo>` cancels a unilateral exit while its final
+  transaction is still unbroadcast; the VTXO stays spendable and a fresh
+  exit can be started later. Exits in a terminal state (claimed, aborted
+  because the VTXO was spent, or canceled) disappear from `bark exit list`
+  and remain queryable with the new `--include-finished` flag.
+  [#2270](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2270)

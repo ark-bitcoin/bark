@@ -123,7 +123,8 @@ pub use self::models::{
 	ExitCpfpRequest, ExitTransactionPackage, FeeInfo, RbfRequirement, TransactionInfo,
 	ChildTransactionInfo, ExitError, ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState,
 	ExitProcessingState, ExitAwaitingDeltaState, ExitClaimableState, ExitClaimInProgressState,
-	ExitClaimedState, ExitVtxoAlreadySpentState, ExitProgressStatus, ExitTransactionStatus,
+	ExitClaimedState, ExitVtxoAlreadySpentState, ExitCanceledState, ExitStateKind,
+	ExitProgressStatus, ExitTransactionStatus,
 };
 pub use self::vtxo::ExitVtxo;
 
@@ -142,7 +143,7 @@ use log::{error, info, trace, warn};
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::Bare;
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 
 use crate::Wallet;
 use crate::chain::ChainSource;
@@ -328,7 +329,10 @@ impl Exit {
 	pub(crate) async fn load(&self) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
 		let inner = &mut *guard;
-		let exit_vtxo_entries = inner.persister.get_exit_vtxo_entries().await?;
+
+		// Finished exits never progress again, so don't track them.
+		let exit_vtxo_entries = inner.persister
+			.get_exit_vtxo_entries_with_states(ExitStateKind::LIVE_STATES).await?;
 		inner.exit_vtxos.reserve(exit_vtxo_entries.len());
 
 		for entry in exit_vtxo_entries {
@@ -411,6 +415,56 @@ impl Exit {
 		guard.exit_vtxos.clone()
 	}
 
+	/// Returns statuses for exits in a terminal state: claimed, aborted because the VTXO was
+	/// already spent, or canceled.
+	pub async fn list_finished(
+		&self,
+		include_history: bool,
+		include_transactions: bool,
+	) -> anyhow::Result<Vec<ExitTransactionStatus>> {
+		let guard = self.inner.read().await;
+		let entries = guard.persister
+			.get_exit_vtxo_entries_with_states(ExitStateKind::FINISHED_STATES).await?;
+		let mut statuses = Vec::with_capacity(entries.len());
+		for entry in entries {
+			let transactions = {
+				let mut transactions = Vec::new();
+				if include_transactions {
+					let vtxo = guard.persister.get_full_vtxo(entry.vtxo_id).await
+						.context("failed to retrieve VTXO for exit")?
+						.with_context(|| format!("failed to retrieve VTXO for exit {}", entry.vtxo_id))?;
+					for tx in vtxo.transactions() {
+						let txid = tx.tx.compute_txid();
+						let child = guard.persister.get_exit_child_tx(txid).await
+							.context("failed to retrieve child tx for exit")?;
+						transactions.push(ExitTransactionPackage {
+							exit: TransactionInfo {
+								txid,
+								tx: tx.tx,
+							},
+							child: child.map(|(tx, origin)| ChildTransactionInfo {
+								origin,
+								info: TransactionInfo {
+									txid: tx.compute_txid(),
+									tx,
+								},
+								fee_info: None,
+							}),
+						});
+					}
+				}
+				transactions
+			};
+			statuses.push(ExitTransactionStatus {
+				vtxo_id: entry.vtxo_id,
+				state: entry.state,
+				history: if include_history { Some(entry.history) } else { None },
+				transactions,
+			});
+		}
+		Ok(statuses)
+	}
+
 	/// Returns whether a VTXO has an active or completed unilateral exit.
 	pub async fn is_exiting(&self, vtxo_id: VtxoId) -> bool {
 		let guard = self.inner.read().await;
@@ -423,6 +477,7 @@ impl Exit {
 			Some(ExitState::ClaimInProgress(_)) => true,
 			Some(ExitState::Claimed(_)) => true,
 			Some(ExitState::VtxoAlreadySpent(_)) => false,
+			Some(ExitState::Canceled(_)) => false,
 			None => false,
 		}
 	}
@@ -529,6 +584,80 @@ impl Exit {
 	) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
 		guard.start_exit_for_vtxos(vtxos, true).await
+	}
+
+	/// Cancels the unilateral exit for the given VTXO.
+	///
+	/// Only exits still in their abortable window can be canceled — i.e. before the *final* exit
+	/// transaction has been broadcast (see [ExitState::is_cancelable]); shared ancestor
+	/// transactions may already be on-chain. Because starting an exit never touches the VTXO,
+	/// there's nothing to undo on the VTXO side: it stays spendable and a fresh exit can be
+	/// started for it later.
+	///
+	/// Canceling an already-canceled exit is a no-op, so retries are safe.
+	///
+	/// # Errors
+	/// - [ExitError::NotExiting] if the VTXO never had an exit.
+	/// - [ExitError::CannotCancelExit] if the exit has progressed past its abortable window.
+	/// - [ExitError::ExitTxAlreadyBroadcast] if the final exit tx is already on the network.
+	pub async fn cancel_exit(&self, vtxo_id: VtxoId) -> anyhow::Result<(), ExitError> {
+		let mut guard = self.inner.write().await;
+		let inner = &mut *guard;
+
+		let idx = match inner.exit_vtxos.iter().position(|ev| ev.id() == vtxo_id) {
+			Some(idx) => idx,
+			None => {
+				// Only live exits are in memory; check the store for a finished one.
+				let entry = inner.persister.get_exit_vtxo_entry(&vtxo_id).await
+					.map_err(|e| ExitError::InternalError { error: e.to_string() })?;
+				return match entry.map(|e| e.state.kind()) {
+					Some(ExitStateKind::Canceled) => Ok(()),
+					Some(kind) => Err(ExitError::CannotCancelExit { vtxo: vtxo_id, state: kind }),
+					None => Err(ExitError::NotExiting { vtxo: vtxo_id }),
+				};
+			},
+		};
+
+		if !inner.exit_vtxos[idx].state().is_cancelable() {
+			return Err(ExitError::CannotCancelExit {
+				vtxo: vtxo_id,
+				state: inner.exit_vtxos[idx].state().kind(),
+			});
+		}
+
+		// Double check with the network first before canceling the exit.
+		let leaf_txid = inner.exit_vtxos[idx].get_vtxo(&*inner.persister).await?.point().txid;
+		match inner.tx_manager.sync_exit_tx(leaf_txid).await? {
+			TxStatus::NotFound => {},
+			TxStatus::Mempool | TxStatus::Confirmed(_) => {
+				return Err(ExitError::ExitTxAlreadyBroadcast { vtxo: vtxo_id, txid: leaf_txid });
+			},
+		}
+
+		let tip = inner.chain_source.tip().await
+			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })?;
+
+		// Record the cancellation first, so it survives even if a later best-effort step fails.
+		inner.exit_vtxos[idx].cancel(tip, &*inner.persister).await?;
+
+		// Stop syncing this exit's transactions. Ancestor txs shared with sibling exits stay.
+		if let Some(txids) = inner.exit_vtxos[idx].txids() {
+			inner.tx_manager.untrack_vtxo_exits(&txids).await;
+		}
+
+		// Finalize the associated movement as Canceled (best-effort, like the other reconcilers).
+		if let Some(movement_id) = inner.exit_vtxos[idx].movement_id() {
+			if let Err(e) = inner.movement_manager
+				.finish_movement(movement_id, MovementStatus::Canceled).await
+			{
+				error!("Failed to finalize exit movement {} as Canceled: {:#}", movement_id, e);
+			}
+		}
+
+		// Drop it from the active set; the canceled row remains on disk for auditing.
+		inner.exit_vtxos.swap_remove(idx);
+		info!("Canceled unilateral exit for VTXO {}", vtxo_id);
+		Ok(())
 	}
 
 	/// Reset exit to an empty state. Should be called when dropping VTXOs
@@ -677,7 +806,6 @@ impl Exit {
 		guard.exit_vtxos = exit_vtxos;
 		Ok(())
 	}
-
 
 	/// Returns one [ExitCpfpRequest] for each exit transaction that needs a CPFP child.
 	///

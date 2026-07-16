@@ -35,13 +35,15 @@ Class | Method | HTTP request | Description
 *BoardsApi* | [**board_amount**](docs/BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | Board a specific amount
 *BoardsApi* | [**get_pending_boards**](docs/BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/pending | List pending boards
 *DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | Ping
+*ExitsApi* | [**exit_cancel**](docs/ExitsApi.md#exit_cancel) | **POST** /api/v1/exits/cancel/{vtxo_id} | Cancel an exit
 *ExitsApi* | [**exit_claim_all**](docs/ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | Claim all exited VTXOs
 *ExitsApi* | [**exit_claim_vtxos**](docs/ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | Claim specific exited VTXOs
 *ExitsApi* | [**exit_progress**](docs/ExitsApi.md#exit_progress) | **POST** /api/v1/exits/progress | Progress exits
 *ExitsApi* | [**exit_start_all**](docs/ExitsApi.md#exit_start_all) | **POST** /api/v1/exits/start/all | Start exit for all VTXOs
 *ExitsApi* | [**exit_start_vtxos**](docs/ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | Start exit for specific VTXOs
-*ExitsApi* | [**get_all_exit_status**](docs/ExitsApi.md#get_all_exit_status) | **GET** /api/v1/exits/status | List all exit statuses
 *ExitsApi* | [**get_exit_status_by_vtxo_id**](docs/ExitsApi.md#get_exit_status_by_vtxo_id) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status
+*ExitsApi* | [**get_finished_exits**](docs/ExitsApi.md#get_finished_exits) | **GET** /api/v1/exits/status/finished | List finished exits
+*ExitsApi* | [**get_live_exit_status**](docs/ExitsApi.md#get_live_exit_status) | **GET** /api/v1/exits/status | List live exit statuses
 *FeesApi* | [**board_fee**](docs/FeesApi.md#board_fee) | **GET** /api/v1/fees/board | Estimate board fee
 *FeesApi* | [**lightning_receive_fee**](docs/FeesApi.md#lightning_receive_fee) | **GET** /api/v1/fees/lightning/receive | Estimate Lightning receive fee
 *FeesApi* | [**lightning_send_fee**](docs/FeesApi.md#lightning_send_fee) | **GET** /api/v1/fees/lightning/pay | Estimate Lightning send fee
@@ -124,6 +126,8 @@ Class | Method | HTTP request | Description
  - [CreateWalletResponse](docs/CreateWalletResponse.md)
  - [EncodedVtxoResponse](docs/EncodedVtxoResponse.md)
  - [ExitAwaitingDeltaState](docs/ExitAwaitingDeltaState.md)
+ - [ExitCancelResponse](docs/ExitCancelResponse.md)
+ - [ExitCanceledState](docs/ExitCanceledState.md)
  - [ExitClaimAllRequest](docs/ExitClaimAllRequest.md)
  - [ExitClaimInProgressState](docs/ExitClaimInProgressState.md)
  - [ExitClaimResponse](docs/ExitClaimResponse.md)
@@ -151,6 +155,9 @@ Class | Method | HTTP request | Description
  - [ExitErrorOneOf24](docs/ExitErrorOneOf24.md)
  - [ExitErrorOneOf25](docs/ExitErrorOneOf25.md)
  - [ExitErrorOneOf26](docs/ExitErrorOneOf26.md)
+ - [ExitErrorOneOf27](docs/ExitErrorOneOf27.md)
+ - [ExitErrorOneOf28](docs/ExitErrorOneOf28.md)
+ - [ExitErrorOneOf29](docs/ExitErrorOneOf29.md)
  - [ExitErrorOneOf3](docs/ExitErrorOneOf3.md)
  - [ExitErrorOneOf4](docs/ExitErrorOneOf4.md)
  - [ExitErrorOneOf5](docs/ExitErrorOneOf5.md)
@@ -166,6 +173,7 @@ Class | Method | HTTP request | Description
  - [ExitStartResponse](docs/ExitStartResponse.md)
  - [ExitStartState](docs/ExitStartState.md)
  - [ExitState](docs/ExitState.md)
+ - [ExitStateKind](docs/ExitStateKind.md)
  - [ExitStateOneOf](docs/ExitStateOneOf.md)
  - [ExitStateOneOf1](docs/ExitStateOneOf1.md)
  - [ExitStateOneOf2](docs/ExitStateOneOf2.md)
@@ -173,6 +181,7 @@ Class | Method | HTTP request | Description
  - [ExitStateOneOf4](docs/ExitStateOneOf4.md)
  - [ExitStateOneOf5](docs/ExitStateOneOf5.md)
  - [ExitStateOneOf6](docs/ExitStateOneOf6.md)
+ - [ExitStateOneOf7](docs/ExitStateOneOf7.md)
  - [ExitStatusRequest](docs/ExitStatusRequest.md)
  - [ExitTransactionPackage](docs/ExitTransactionPackage.md)
  - [ExitTransactionStatus](docs/ExitTransactionStatus.md)

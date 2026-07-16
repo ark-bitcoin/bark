@@ -144,6 +144,13 @@ pub struct ExitVtxoAlreadySpentState {
 	pub tip_height: BlockHeight,
 }
 
+/// Resumable state for the current exit attempt: the user explicitly canceled the exit while
+/// it was still in its abortable window (before any exit transaction was broadcast).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExitCanceledState {
+	pub tip_height: BlockHeight,
+}
+
 impl Into<ExitState> for ExitStartState {
 	fn into(self) -> ExitState {
 		ExitState::Start(self)
@@ -183,5 +190,11 @@ impl Into<ExitState> for ExitClaimedState {
 impl Into<ExitState> for ExitVtxoAlreadySpentState {
 	fn into(self) -> ExitState {
 		ExitState::VtxoAlreadySpent(self)
+	}
+}
+
+impl Into<ExitState> for ExitCanceledState {
+	fn into(self) -> ExitState {
+		ExitState::Canceled(self)
 	}
 }
