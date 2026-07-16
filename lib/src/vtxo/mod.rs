@@ -1198,6 +1198,11 @@ impl ProtocolEncoding for GenesisTransition {
 			GENESIS_TRANSITION_TYPE_ARKOOR => {
 				let cosigners = LengthPrefixedVector::decode(r)?.into_inner();
 				let taptweak = TapTweakHash::decode(r)?;
+				if bitcoin::secp256k1::Scalar::from_be_bytes(taptweak.to_byte_array()).is_err() {
+					return Err(ProtocolDecodingError::invalid(
+						"arkoor genesis tap tweak is not a valid secp256k1 scalar",
+					));
+				}
 				let signature = Option::<schnorr::Signature>::decode(r)?;
 				Ok(Self::new_arkoor(cosigners, taptweak, signature))
 			},
@@ -1862,6 +1867,31 @@ mod test {
 				signature: None,
 			});
 			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn arkoor_out_of_range_tweak_rejected() {
+			// A tap tweak at or above the secp256k1 curve order is not a valid
+			// musig scalar and would panic in `musig::tweaked_key_agg` during
+			// validation; decoding must reject it at the untrusted-input boundary.
+			let valid = GenesisTransition::Arkoor(ArkoorGenesis {
+				client_cosigners: vec![test_pubkey()],
+				tap_tweak: TapTweakHash::from_slice(&[0xabu8; 32]).unwrap(),
+				signature: None,
+			});
+			let mut bytes = valid.serialize();
+			// Trailing layout is [tap_tweak: 32 bytes][signature: 64 bytes];
+			// overwrite the tweak with all-ones, which exceeds the curve order.
+			let n = bytes.len();
+			for b in &mut bytes[n - 96 .. n - 64] {
+				*b = 0xff;
+			}
+			let err = GenesisTransition::deserialize(&mut bytes.as_slice())
+				.expect_err("out-of-range tap tweak must be rejected");
+			assert!(
+				format!("{err}").contains("not a valid secp256k1 scalar"),
+				"got: {err}",
+			);
 		}
 	}
 }
