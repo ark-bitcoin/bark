@@ -172,7 +172,7 @@ impl ExitTransactionManager {
 			let status = self.status.get(&txid).unwrap();
 			if let TxStatus::Confirmed(block) = status {
 				trace!("Skipping deeply confirmed exit tx {}", txid);
-				if block.height <= (tip - DEEPLY_CONFIRMED) {
+				if block.height <= tip.saturating_sub(DEEPLY_CONFIRMED) {
 					continue;
 				}
 			}

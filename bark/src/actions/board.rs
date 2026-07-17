@@ -191,7 +191,8 @@ async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, Ad
 	let mut last_park_error = None;
 	let anchor = vtxo.chain_anchor();
 	let confs = match wallet.inner.chain.tx_status(anchor.txid).await {
-		Ok(TxStatus::Confirmed(block_ref)) => Some(current_height - (block_ref.height - 1)),
+		Ok(TxStatus::Confirmed(block_ref)) =>
+			Some(current_height.saturating_sub(block_ref.height).saturating_add(1)),
 		Ok(TxStatus::Mempool) => Some(0),
 		// Dropped from the mempool before confirming. Probe for a conflicting
 		// spend of the funding inputs: if one has confirmed the funding tx can
@@ -255,7 +256,7 @@ async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, Ad
 	// the exit commits.
 	//
 	// I know this if is collapsible, but it reads better like this...
-	if vtxo.expiry_height() < current_height + required {
+	if vtxo.expiry_height() < current_height.saturating_add(required) {
 		if !wallet.exit_mgr().is_exiting(vtxo.id()).await {
 			warn!("Board {} expired before confirmation, marking VTXO for exit", board.id);
 			wallet.inner.exit.start_exit_for_vtxos(&[vtxo.vtxo.clone()]).await?;

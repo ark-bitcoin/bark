@@ -263,11 +263,12 @@ pub(crate) async fn start_lightning_receive(
 	// - vtxo exit delta + htlc expiry delta (time to exit the vtxo before the htlc expires)
 	// - vtxo exit margin (time to exit the vtxo before the htlc expires)
 	// - htlc recv claim delta (time to claim the htlc before it expires)
-	let requested_min_cltv_delta = ark_info.vtxo_exit_delta +
-		ark_info.htlc_expiry_delta +
-		config.vtxo_exit_margin +
-		config.htlc_recv_claim_delta +
-		LIGHTNING_PREPARE_CLAIM_DELTA;
+	let requested_min_cltv_delta = ark_info.vtxo_exit_delta
+		.checked_add(ark_info.htlc_expiry_delta)
+		.and_then(|v| v.checked_add(config.vtxo_exit_margin))
+		.and_then(|v| v.checked_add(config.htlc_recv_claim_delta))
+		.and_then(|v| v.checked_add(LIGHTNING_PREPARE_CLAIM_DELTA))
+		.context("HTLC CLTV delta components sum overflows")?;
 
 	if requested_min_cltv_delta > ark_info.max_user_invoice_cltv_delta {
 		bail!("HTLC CLTV delta ({}) is greater than Server's max HTLC recv CLTV delta: {}",

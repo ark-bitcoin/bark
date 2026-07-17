@@ -1,0 +1,5 @@
+- Validate CLN HTLC expiry heights instead of truncating
+  The hold-plugin boundary now bounds the incoming HTLC expiry and final
+  CLTV delta rather than silently truncating them into the accept/cancel
+  settlement decision.
+  [#2276](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2276)
