@@ -429,6 +429,17 @@ impl ExitTransactionManager {
 				trace!("Refreshing child {} for exit {}: origin {:?} -> {:?}",
 					new_txid, outpoint.txid, c.origin, updated_origin,
 				);
+				// Persist transitions so a wallet reload reports the correct
+				// confirmation state before its first successful chain sync.
+				if updated_origin != c.origin {
+					let store_result = self.persister
+						.store_exit_child_tx(outpoint.txid, &c.info.tx, updated_origin).await;
+					if let Err(e) = store_result {
+						// Not fatal: the in-memory origin is correct and the row will be
+						// refreshed by a later transition or child adoption.
+						error!("Failed to store updated exit child transaction: {:#}", e);
+					}
+				}
 				c.origin = updated_origin;
 				if status.confirmed_in().is_none() && c.fee_info.is_none() {
 					c.fee_info = self.try_calculate_fee_params(*new_txid).await;
