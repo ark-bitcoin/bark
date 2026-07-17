@@ -26,6 +26,7 @@ use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
 use server::filters;
 use server::filters::Filters;
+use server::secret::Secret;
 use server::wallet::WalletKind;
 
 use ark_testing::{sat, TestContext};
@@ -1090,6 +1091,51 @@ async fn round_participation() {
 }
 
 #[tokio::test]
+async fn round_participation_supersedes_on_same_input() {
+	let mut ctx = TestContext::new_minimal("postgresd/round_participation_supersedes_on_same_input").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
+
+	let output = StoredRoundOutput {
+		vtxo_request: VtxoRequest {
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			amount: bitcoin::Amount::from_sat(1000),
+		},
+		unblinded_mailbox_id: None,
+	};
+
+	// First (old) delegated refresh on the vtxo.
+	let old_preimage: UnlockPreimage = [1u8; 32];
+	db.write(async |t| t.try_store_round_participation(0, old_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+	let old_hash = UnlockHash::hash(&old_preimage);
+
+	// A new request for the same vtxo supersedes the old one.
+	let new_preimage: UnlockPreimage = [2u8; 32];
+	db.write(async |t| t.try_store_round_participation(0, new_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+	let new_hash = UnlockHash::hash(&new_preimage);
+
+	// Only the new participation remains pending; the old one was dropped.
+	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
+	assert_eq!(pending.len(), 1, "old delegated refresh should have been dropped");
+	assert_eq!(pending[0].unlock_hash, new_hash);
+
+	assert!(
+		db.read(async |t| t.get_round_participation_by_unlock_hash(old_hash).await).await.unwrap().is_none(),
+		"old participation should be gone",
+	);
+	assert!(
+		db.read(async |t| t.get_round_participation_by_unlock_hash(new_hash).await).await.unwrap().is_some(),
+		"new participation should be present",
+	);
+}
+
+#[tokio::test]
 async fn round_participation_forfeited_at() {
 	let mut ctx = TestContext::new_minimal("postgresd/round_part_forfeited_at").await;
 	ctx.init_central_postgres().await;
@@ -1378,13 +1424,15 @@ async fn round_participation_same_vtxo_multiple_pending() {
 	// First participation succeeds
 	db.write(async |t| t.try_store_round_participation(0, preimage1, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
 
-	// Second participation with same vtxo as input is allowed at the DB level;
-	// deduplication happens when a round is finalized (no unique constraint on vtxo_id).
+	// Second participation with same vtxo as input should remove the first participation
 	db.write(async |t| t.try_store_round_participation(0, preimage2, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
 
-	// Both are stored as pending participations
-	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
-	assert_eq!(pending.len(), 2, "both participations are pending");
+	// Only the second participation should be stored as pending
+	let [pending] = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap()
+		.try_into().expect("Should have exactly one pending participation");
+	assert_eq!(pending.unlock_preimage, Secret::from(preimage2));
+	let [input] = pending.inputs.try_into().expect("Should have exactly one input");
+	assert_eq!(input.vtxo_id, vtxo.id(), "The input vtxo should be the same as the one in the second participation");
 }
 
 const DUMMY_PUBKEY: &str = "038f47dcd43ba6d97fc9ed2e3bba09b175a45fac55f0683e8cf771e8ced4572354";

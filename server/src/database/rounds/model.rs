@@ -28,6 +28,7 @@ impl AsRef<VtxoRequest> for StoredRoundOutput {
 	}
 }
 
+#[derive(Debug)]
 pub struct StoredRoundInput {
 	pub vtxo_id: VtxoId,
 	pub signed_forfeit_tx: Option<Transaction>,
@@ -40,6 +41,7 @@ impl StoredRoundInput {
 	}
 }
 
+#[derive(Debug)]
 pub struct StoredRoundParticipation {
 	pub unlock_hash: UnlockHash,
 	pub unlock_preimage: Secret<UnlockPreimage>,
