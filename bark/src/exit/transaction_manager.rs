@@ -275,6 +275,11 @@ impl ExitTransactionManager {
 		}
 	}
 
+	/// Returns the package for an exit tx if the manager is tracking it.
+	pub fn try_get_package(&self, exit_txid: Txid) -> Option<Arc<RwLock<ExitTransactionPackage>>> {
+		self.index.get(&exit_txid)?.upgrade()
+	}
+
 	pub fn get_package(
 		&self,
 		exit_txid: Txid,

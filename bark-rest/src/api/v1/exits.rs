@@ -4,6 +4,7 @@ use std::str::FromStr;
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
+use axum::response::Redirect;
 use anyhow::Context;
 use bitcoin::FeeRate;
 use tracing::info;
@@ -19,6 +20,9 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 #[openapi(
 	paths(
 		get_exit_status_by_vtxo_id,
+		get_exit_status_by_vtxo_id_deprecated,
+		get_all_exit_status,
+		get_all_exit_status_deprecated,
 		get_live_exit_status,
 		get_finished_exits,
 		exit_start_vtxos,
@@ -44,11 +48,16 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 )]
 pub struct ExitsApiDoc;
 
+// The deprecated status routes stay registered until they're removed in a future release.
+#[allow(deprecated)]
 pub fn router() -> Router<ServerState> {
 	Router::new()
-		.route("/status/{vtxo_id}", get(get_exit_status_by_vtxo_id))
-		.route("/status", get(get_live_exit_status))
+		.route("/status", get(get_all_exit_status_deprecated))
+		.route("/status/all", get(get_all_exit_status))
+		.route("/status/live", get(get_live_exit_status))
 		.route("/status/finished", get(get_finished_exits))
+		.route("/status/vtxo/{vtxo_id}", get(get_exit_status_by_vtxo_id))
+		.route("/status/{vtxo_id}", get(get_exit_status_by_vtxo_id_deprecated))
 		.route("/start/vtxos", post(exit_start_vtxos))
 		.route("/start/all", post(exit_start_all))
 		.route("/progress", post(exit_progress))
@@ -57,31 +66,10 @@ pub fn router() -> Router<ServerState> {
 		.route("/cancel/{vtxo_id}", post(exit_cancel))
 }
 
-#[utoipa::path(
-	get,
-	path = "/status/{vtxo_id}",
-	summary = "Get exit status",
-	params(
-		("vtxo_id" = String, Path, description = "The VTXO to check the exit status of"),
-		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
-		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children")
-	),
-	responses(
-		(status = 200, description = "Returns the exit status", body = bark_json::cli::ExitTransactionStatus),
-		(status = 404, description = "VTXO wasn't found", body = error::NotFoundError),
-		(status = 500, description = "Internal server error", body = error::InternalServerError)
-	),
-	description = "Returns the current state of an emergency exit for the specified VTXO, \
-		including which phase the exit is in (start, processing, awaiting-delta, \
-		claimable, claim-in-progress, or claimed). Optionally includes the full state \
-		transition history and the exit transaction packages with their CPFP children.",
-	tag = "exits"
-)]
-#[debug_handler]
-pub async fn get_exit_status_by_vtxo_id(
-	State(state): State<ServerState>,
-	Path(vtxo): Path<String>,
-	Query(query): Query<bark_json::web::ExitStatusRequest>,
+async fn inner_vtxo_exit_status(
+	state: &ServerState,
+	vtxo: String,
+	query: bark_json::web::ExitStatusRequest,
 ) -> HandlerResult<Json<bark_json::cli::ExitTransactionStatus>> {
 	let wallet = state.require_wallet()?;
 
@@ -101,8 +89,62 @@ pub async fn get_exit_status_by_vtxo_id(
 
 #[utoipa::path(
 	get,
-	path = "/status",
-	summary = "List live exit statuses",
+	path = "/status/vtxo/{vtxo_id}",
+	summary = "Get VTXO exit status",
+	params(
+		("vtxo_id" = String, Path, description = "The VTXO to check the exit status of"),
+		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
+		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children")
+	),
+	responses(
+		(status = 200, description = "Returns the exit status", body = bark_json::cli::ExitTransactionStatus),
+		(status = 404, description = "VTXO wasn't found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns the exit status for the given VTXO, live or finished. Optionally \
+		includes the state history and the exit transactions with their CPFP children.",
+	tag = "exits"
+)]
+#[debug_handler]
+pub async fn get_exit_status_by_vtxo_id(
+	State(state): State<ServerState>,
+	Path(vtxo): Path<String>,
+	Query(query): Query<bark_json::web::ExitStatusRequest>,
+) -> HandlerResult<Json<bark_json::cli::ExitTransactionStatus>> {
+	inner_vtxo_exit_status(&state, vtxo, query).await
+}
+
+#[utoipa::path(
+	get,
+	path = "/status/{vtxo_id}",
+	summary = "Get exit status (deprecated)",
+	params(
+		("vtxo_id" = String, Path, description = "The VTXO to check the exit status of"),
+		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
+		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children")
+	),
+	responses(
+		(status = 200, description = "Returns the exit status", body = bark_json::cli::ExitTransactionStatus),
+		(status = 404, description = "VTXO wasn't found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Deprecated: use `GET /exits/status/vtxo/{vtxo_id}` instead.",
+	tag = "exits"
+)]
+#[debug_handler]
+#[deprecated = "use GET /exits/status/vtxo/{vtxo_id} instead"]
+pub async fn get_exit_status_by_vtxo_id_deprecated(
+	State(state): State<ServerState>,
+	Path(vtxo): Path<String>,
+	Query(query): Query<bark_json::web::ExitStatusRequest>,
+) -> HandlerResult<Json<bark_json::cli::ExitTransactionStatus>> {
+	inner_vtxo_exit_status(&state, vtxo, query).await
+}
+
+#[utoipa::path(
+	get,
+	path = "/status/all",
+	summary = "List all exit statuses",
 	params(
 		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
 		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children")
@@ -111,10 +153,55 @@ pub async fn get_exit_status_by_vtxo_id(
 		(status = 200, description = "Returns all exit statuses", body = Vec<bark_json::cli::ExitTransactionStatus>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the current state of live emergency exits in the wallet. Each \
-		entry includes which phase the exit is in (start, processing, awaiting-delta, \
-		claimable or claim-in-progress), and optionally the full state transition history \
-		and the exit transaction packages with their CPFP children.",
+	description = "Returns every exit, live and finished. Optionally includes each exit's \
+		state history and its transactions with their CPFP children.",
+	tag = "exits"
+)]
+#[debug_handler]
+pub async fn get_all_exit_status(
+	State(state): State<ServerState>,
+	Query(query): Query<bark_json::web::ExitStatusRequest>,
+) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
+	let wallet = state.require_wallet()?;
+
+	let statuses = wallet.exit_mgr().list_all(
+		query.history.unwrap_or(false),
+		query.transactions.unwrap_or(false),
+	).await.context("Failed to list exits")?;
+
+	Ok(axum::Json(statuses.into_iter().map(Into::into).collect()))
+}
+
+#[utoipa::path(
+	get,
+	path = "/status",
+	summary = "List all exit statuses (deprecated)",
+	responses(
+		(status = 308, description = "Permanent redirect to `/exits/status/all`"),
+	),
+	description = "Deprecated: redirects to `GET /exits/status/all`.",
+	tag = "exits"
+)]
+#[debug_handler]
+#[deprecated = "use GET /exits/status/all instead"]
+pub async fn get_all_exit_status_deprecated() -> Redirect {
+	Redirect::permanent("/api/v1/exits/status/all")
+}
+
+#[utoipa::path(
+	get,
+	path = "/status/live",
+	summary = "List live exit statuses",
+	params(
+		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
+		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children")
+	),
+	responses(
+		(status = 200, description = "Returns the live exit statuses", body = Vec<bark_json::cli::ExitTransactionStatus>),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns exits that are still progressing. Optionally includes each exit's \
+		state history and its transactions with their CPFP children.",
 	tag = "exits"
 )]
 #[debug_handler]
@@ -124,20 +211,12 @@ pub async fn get_live_exit_status(
 ) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
 	let wallet = state.require_wallet()?;
 
-	let exit_vtxos = wallet.exit_mgr().get_exit_vtxos().await;
-	let mut statuses = Vec::with_capacity(exit_vtxos.len());
+	let statuses = wallet.exit_mgr().list_live(
+		query.history.unwrap_or(false),
+		query.transactions.unwrap_or(false),
+	).await.context("Failed to list live exits")?;
 
-	for e in &exit_vtxos {
-		let status = wallet.exit_mgr().get_exit_status(
-			e.id(),
-			query.history.unwrap_or(false),
-			query.transactions.unwrap_or(false)
-		).await.badarg("Failed to get exit status")?.unwrap();
-
-		statuses.push(bark_json::cli::ExitTransactionStatus::from(status));
-	}
-
-	Ok(axum::Json(statuses))
+	Ok(axum::Json(statuses.into_iter().map(Into::into).collect()))
 }
 
 #[utoipa::path(

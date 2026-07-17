@@ -301,6 +301,65 @@ impl ExitInner {
 
 		Ok(())
 	}
+
+	/// Builds the status for a stored exit. Transactions are taken from the transaction manager
+	/// when tracked (which includes fee data), falling back to the stored child transactions.
+	async fn exit_status(
+		&self,
+		entry: StoredExit,
+		include_history: bool,
+		include_transactions: bool,
+	) -> anyhow::Result<ExitTransactionStatus> {
+		let mut transactions = Vec::new();
+		if include_transactions {
+			let vtxo = self.persister.get_full_vtxo(entry.vtxo_id).await
+				.context("failed to retrieve VTXO for exit")?
+				.with_context(|| format!("failed to retrieve VTXO for exit {}", entry.vtxo_id))?;
+			for tx in vtxo.transactions() {
+				let txid = tx.tx.compute_txid();
+				if let Some(package) = self.tx_manager.try_get_package(txid) {
+					transactions.push(package.read().await.clone());
+					continue;
+				}
+				let child = self.persister.get_exit_child_tx(txid).await
+					.context("failed to retrieve child tx for exit")?;
+				transactions.push(ExitTransactionPackage {
+					exit: TransactionInfo {
+						txid,
+						tx: tx.tx,
+					},
+					child: child.map(|(tx, origin)| ChildTransactionInfo {
+						origin,
+						info: TransactionInfo {
+							txid: tx.compute_txid(),
+							tx,
+						},
+						fee_info: None,
+					}),
+				});
+			}
+		}
+		Ok(ExitTransactionStatus {
+			vtxo_id: entry.vtxo_id,
+			state: entry.state,
+			history: if include_history { Some(entry.history) } else { None },
+			transactions,
+		})
+	}
+
+	/// Builds statuses for the given stored exits.
+	async fn exit_statuses(
+		&self,
+		entries: Vec<StoredExit>,
+		include_history: bool,
+		include_transactions: bool,
+	) -> anyhow::Result<Vec<ExitTransactionStatus>> {
+		let mut statuses = Vec::with_capacity(entries.len());
+		for entry in entries {
+			statuses.push(self.exit_status(entry, include_history, include_transactions).await?);
+		}
+		Ok(statuses)
+	}
 }
 
 /// Public handle to the exit subsystem. Wraps `ExitInner` in an `Arc<RwLock>` so all
@@ -347,52 +406,18 @@ impl Exit {
 		Ok(())
 	}
 
-	/// Returns the unilateral exit status for a given VTXO, if any.
-	///
-	/// # Parameters
-	/// - vtxo_id: The ID of the VTXO to check.
-	/// - include_history: Whether to include the full state machine history of the exit
-	/// - include_transactions: Whether to include the full set of transactions related to the exit.
+	/// Returns the unilateral exit status for a given VTXO, live or finished, if any.
 	pub async fn get_exit_status(
 		&self,
 		vtxo_id: VtxoId,
 		include_history: bool,
 		include_transactions: bool,
-	) -> Result<Option<ExitTransactionStatus>, ExitError> {
+	) -> anyhow::Result<Option<ExitTransactionStatus>> {
 		let guard = self.inner.read().await;
-		match guard.exit_vtxos.iter().find(|ev| ev.id() == vtxo_id) {
+		match guard.persister.get_exit_vtxo_entry(&vtxo_id).await? {
 			None => Ok(None),
-			Some(exit) => {
-				let mut txs = Vec::new();
-				if include_transactions {
-					if let Some(txids) = exit.txids() {
-						txs.reserve(txids.len());
-						for txid in txids {
-							txs.push(guard.tx_manager.get_package(*txid)?.read().await.clone());
-						}
-					} else {
-						// Realistically, the only way an exit isn't initialized is if it has been
-						// marked for exit, and we haven't synced the exit system yet. On this basis
-						// we can just return the VTXO transactions since there shouldn't be any
-						// children. We need the full VTXO here for `transactions()`.
-						let exit_vtxo = exit.get_full_vtxo(&*guard.persister).await?;
-						for tx in exit_vtxo.transactions() {
-							txs.push(ExitTransactionPackage {
-								exit: TransactionInfo {
-									txid: tx.tx.compute_txid(),
-									tx: tx.tx,
-								},
-								child: None,
-							})
-						}
-					}
-				}
-				Ok(Some(ExitTransactionStatus {
-					vtxo_id: exit.id(),
-					state: exit.state().clone(),
-					history: if include_history { Some(exit.history().clone()) } else { None },
-					transactions: txs,
-				}))
+			Some(entry) => {
+				Ok(Some(guard.exit_status(entry, include_history, include_transactions).await?))
 			},
 		}
 	}
@@ -415,6 +440,29 @@ impl Exit {
 		guard.exit_vtxos.clone()
 	}
 
+	/// Returns statuses for every exit, live and finished.
+	pub async fn list_all(
+		&self,
+		include_history: bool,
+		include_transactions: bool,
+	) -> anyhow::Result<Vec<ExitTransactionStatus>> {
+		let guard = self.inner.read().await;
+		let entries = guard.persister.get_exit_vtxo_entries().await?;
+		guard.exit_statuses(entries, include_history, include_transactions).await
+	}
+
+	/// Returns statuses for exits that are still progressing.
+	pub async fn list_live(
+		&self,
+		include_history: bool,
+		include_transactions: bool,
+	) -> anyhow::Result<Vec<ExitTransactionStatus>> {
+		let guard = self.inner.read().await;
+		let entries = guard.persister
+			.get_exit_vtxo_entries_with_states(ExitStateKind::LIVE_STATES).await?;
+		guard.exit_statuses(entries, include_history, include_transactions).await
+	}
+
 	/// Returns statuses for exits in a terminal state: claimed, aborted because the VTXO was
 	/// already spent, or canceled.
 	pub async fn list_finished(
@@ -425,44 +473,7 @@ impl Exit {
 		let guard = self.inner.read().await;
 		let entries = guard.persister
 			.get_exit_vtxo_entries_with_states(ExitStateKind::FINISHED_STATES).await?;
-		let mut statuses = Vec::with_capacity(entries.len());
-		for entry in entries {
-			let transactions = {
-				let mut transactions = Vec::new();
-				if include_transactions {
-					let vtxo = guard.persister.get_full_vtxo(entry.vtxo_id).await
-						.context("failed to retrieve VTXO for exit")?
-						.with_context(|| format!("failed to retrieve VTXO for exit {}", entry.vtxo_id))?;
-					for tx in vtxo.transactions() {
-						let txid = tx.tx.compute_txid();
-						let child = guard.persister.get_exit_child_tx(txid).await
-							.context("failed to retrieve child tx for exit")?;
-						transactions.push(ExitTransactionPackage {
-							exit: TransactionInfo {
-								txid,
-								tx: tx.tx,
-							},
-							child: child.map(|(tx, origin)| ChildTransactionInfo {
-								origin,
-								info: TransactionInfo {
-									txid: tx.compute_txid(),
-									tx,
-								},
-								fee_info: None,
-							}),
-						});
-					}
-				}
-				transactions
-			};
-			statuses.push(ExitTransactionStatus {
-				vtxo_id: entry.vtxo_id,
-				state: entry.state,
-				history: if include_history { Some(entry.history) } else { None },
-				transactions,
-			});
-		}
-		Ok(statuses)
+		guard.exit_statuses(entries, include_history, include_transactions).await
 	}
 
 	/// Returns whether a VTXO has an active or completed unilateral exit.
