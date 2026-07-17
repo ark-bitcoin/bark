@@ -12,6 +12,7 @@ use anyhow::Context;
 use bitcoin::{Amount, SignedAmount};
 use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
+use rand::seq::IteratorRandom;
 
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::attestations::LightningReceiveAttestation;
@@ -322,10 +323,14 @@ pub(crate) async fn compute_lightning_receive_anti_dos(
 	Ok(if let Some(token) = token {
 		LightningReceiveAntiDos::Token(token.to_string())
 	} else {
-		let vtxo = wallet.select_any_vtxos_to_cover(Amount::ONE_SAT).await
-			.and_then(|vtxos| vtxos.into_iter().next()
-				.context("have no spendable vtxo to prove ownership of")
-			)?;
+		let tip = wallet.inner.chain.tip().await?;
+		// The proof vtxo isn't spent, so any unexpired one will do; pick at
+		// random but keep a 2-block margin: better no proof than one that
+		// expires while the claim is in flight.
+		let vtxo = wallet.spendable_vtxos().await?.into_iter()
+			.filter(|v| v.expiry_height() > tip + 2)
+			.choose(&mut rand::rng())
+			.context("have no spendable vtxo with sufficient expiry margin to prove ownership of")?;
 		let vtxo_keypair = wallet.get_vtxo_key(&vtxo).await
 			.expect("owned vtxo should be in database");
 		let attestation = LightningReceiveAttestation::new(payment_hash, vtxo.id(), &vtxo_keypair);
