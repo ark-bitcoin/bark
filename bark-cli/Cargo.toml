@@ -54,6 +54,7 @@ toml.workspace = true
 tonic.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["macros", "fs", "signal", "rt-multi-thread"] }
+tokio-util.workspace = true
 
 home = "=0.5.9"
 

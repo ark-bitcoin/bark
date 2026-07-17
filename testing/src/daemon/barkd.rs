@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::{Amount, Network};
 use bitcoin::secp256k1::rand::{self, RngCore};
+use chrono::{DateTime, Utc};
 use log::info;
 use tokio::process::Command;
 
@@ -25,12 +26,13 @@ use bark_json::web::{
 use bark_rest::auth::AuthToken;
 use bark_rest_client::apis::configuration::Configuration;
 use bark_rest_client::apis::{
-	bitcoin_api, boards_api, default_api, exits_api, fees_api, history_api, lightning_api,
-	onchain_api, wallet_api,
+	bitcoin_api, boards_api, default_api, exits_api, fees_api, history_api,
+	lightning_api, notifications_api, onchain_api, wallet_api,
 };
 use bark_rest_client::models::{
 	BoardRequest, ExitClaimAllRequest, ExitClaimVtxosRequest, ExitProgressRequest,
 	ExitStartRequest, LightningInvoiceRequest, RefreshRequest, SendRequest,
+	WaitNotificationResponse,
 };
 use futures::{Stream, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
@@ -237,6 +239,20 @@ impl Barkd {
 				_ => None,
 			}
 		}))
+	}
+
+	/// Long-poll the `/notifications/wait` endpoint once and return whatever
+	/// the server produces — either notifications newer than `since`, or an
+	/// empty batch if the server-side timeout elapses first.
+	///
+	/// Unlike [`notification_websocket`](Self::notification_websocket), the
+	/// long-poll endpoint reads from a server-side buffer, so notifications
+	/// emitted before the request arrived can still be retrieved by omitting
+	/// `since` (or using a timestamp from before the event).
+	pub async fn wait_notification(&self, since: Option<DateTime<Utc>>) -> WaitNotificationResponse {
+		let config = self.client_config();
+		notifications_api::wait_notification(&config, since.map(|t| t.to_rfc3339())).await
+			.expect("barkd wait_notification failed")
 	}
 
 	/// Ping the barkd REST server.

@@ -1509,6 +1509,60 @@
         }
       }
     },
+    "/api/v1/notifications/wait": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Long-poll for wallet notifications",
+        "description": "Long-polls for wallet notifications. Returns all notifications received since the given timestamp. If no timestamp is provided, returns all notifications in the buffer. Returned notifications are sorted by timestamp in ascending order.",
+        "operationId": "wait_notification",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "The timestamp to start waiting for notifications from. If not provided, returns all notifications in the buffer.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns notifications received during the long-poll window if any. Otherwise returns an empty array with provided `since` argument as `last_pushed_at` field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitNotificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/notifications/ws/ticket": {
       "get": {
         "tags": [
@@ -6360,6 +6414,30 @@
               "null"
             ],
             "description": "Return all VTXOs regardless of their state (including spent ones)"
+          }
+        }
+      },
+      "WaitNotificationResponse": {
+        "type": "object",
+        "description": "Response payload for the long-poll `wait` endpoint.",
+        "required": [
+          "notifications"
+        ],
+        "properties": {
+          "last_pushed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The timestamp of the last notification pushed to the client."
+          },
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalletNotification"
+            },
+            "description": "Notifications received during the long-poll window. Empty if the\ntimeout elapsed without any notifications. Sorted by timestamp\nin ascending order."
           }
         }
       },

@@ -99,6 +99,20 @@ macro_rules! badarg {
 }
 pub(crate) use badarg;
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UnprocessableEntityError {
+	pub message: String,
+}
+
+macro_rules! unprocessable {
+	($($arg:tt)*) => {
+		return Err($crate::error::ErrorResponse::UnprocessableEntity($crate::error::UnprocessableEntityError {
+			message: format!($($arg)*),
+		}))
+	};
+}
+pub(crate) use unprocessable;
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UnauthorizedError {
@@ -126,6 +140,7 @@ pub struct InternalServerError {
 pub enum ErrorResponse {
 	Unauthorized(UnauthorizedError),
 	BadRequest(BadRequestError),
+	UnprocessableEntity(UnprocessableEntityError),
 	NotFound(NotFoundError),
 	Internal(InternalServerError),
 }
@@ -135,9 +150,26 @@ impl ErrorResponse {
 		match self {
 			Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
 			Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+			Self::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
 			Self::NotFound(_) => StatusCode::NOT_FOUND,
 			Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
 		}
+	}
+
+	pub fn message(&self) -> &str {
+		match self {
+			Self::Unauthorized(e) => &e.message,
+			Self::BadRequest(e) => &e.message,
+			Self::UnprocessableEntity(e) => &e.message,
+			Self::NotFound(e) => &e.message,
+			Self::Internal(e) => &e.message,
+		}
+	}
+}
+
+impl fmt::Display for ErrorResponse {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{}: {}", self.status_code(), self.message())
 	}
 }
 

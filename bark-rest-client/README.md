@@ -61,6 +61,7 @@ Class | Method | HTTP request | Description
 *LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
 *LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses
 *LightningApi* | [**pay**](docs/LightningApi.md#pay) | **POST** /api/v1/lightning/pay | Send a Lightning payment
+*NotificationsApi* | [**wait_notification**](docs/NotificationsApi.md#wait_notification) | **GET** /api/v1/notifications/wait | Long-poll for wallet notifications
 *NotificationsApi* | [**websocket_ticket**](docs/NotificationsApi.md#websocket_ticket) | **GET** /api/v1/notifications/ws/ticket | Create a websocket ticket
 *OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | Generate on-chain address
 *OnchainApi* | [**onchain_balance**](docs/OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | Get on-chain balance
@@ -263,6 +264,7 @@ Class | Method | HTTP request | Description
  - [VtxoStateInfoOneOf2](docs/VtxoStateInfoOneOf2.md)
  - [VtxoStateInfoOneOf3](docs/VtxoStateInfoOneOf3.md)
  - [VtxosQuery](docs/VtxosQuery.md)
+ - [WaitNotificationResponse](docs/WaitNotificationResponse.md)
  - [WalletDeleteRequest](docs/WalletDeleteRequest.md)
  - [WalletDeleteResponse](docs/WalletDeleteResponse.md)
  - [WalletExistsResponse](docs/WalletExistsResponse.md)

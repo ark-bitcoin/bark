@@ -7,18 +7,22 @@ pub mod auth;
 pub mod config;
 pub mod error;
 
-use crate::auth::AuthToken;
+mod notifications;
+
 pub use crate::config::Config;
+use crate::notifications::NotificationManager;
 pub use axum::http;
-use chrono::{DateTime, Utc};
 
+use crate::auth::AuthToken;
+use crate::error::{ErrorResponse, unprocessable};
 
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Context;
 use axum::routing::get;
+use chrono::{DateTime, Utc};
 use log::{error, warn, info};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -69,7 +73,7 @@ All endpoints return JSON. Amounts are denominated in satoshis.";
 		(path = "/api/v1/onchain", api = api::v1::onchain::OnchainApiDoc),
 		(path = "/api/v1/wallet", api = api::v1::wallet::WalletApiDoc),
 		(path = "/api/v1/bitcoin", api = api::v1::bitcoin::BitcoinApiDoc),
-		(path = "/api/v1/notifications", api = api::v1::notifications::NotificationApiDoc),
+		(path = "/api/v1/notifications", api = api::v1::notifications::NotificationsApiDoc),
 	),
 	info(
 		title = "barkd REST API",
@@ -133,6 +137,8 @@ pub struct RestServer {
 #[derive(Clone)]
 pub struct ServerState {
 	wallet: Arc<parking_lot::RwLock<Option<Wallet>>>,
+	notification_mngr: Arc<parking_lot::RwLock<Option<NotificationManager>>>,
+	shutdown: CancellationToken,
 	auth_token: Option<AuthToken>,
 
 	/// A hook to be called when a wallet is created, returning a
@@ -205,9 +211,16 @@ impl ServerStateBuilder {
 		self
 	}
 
-	pub fn build(self) -> ServerState {
+	pub fn build(self, shutdown: CancellationToken) -> ServerState {
+		let notification_mngr = match &self.wallet {
+			Some(wallet) => Some(NotificationManager::start(wallet.clone(), shutdown.clone())),
+			None => None,
+		};
+
 		ServerState {
 			wallet: Arc::new(parking_lot::RwLock::new(self.wallet)),
+			notification_mngr: Arc::new(parking_lot::RwLock::new(notification_mngr)),
+			shutdown: shutdown,
 			auth_token: self.auth_token,
 			on_wallet_create: self.on_wallet_create,
 			on_wallet_delete: self.on_wallet_delete,
@@ -228,13 +241,28 @@ impl ServerState {
 		ServerStateBuilder::new()
 	}
 
-	pub fn require_wallet(&self) -> anyhow::Result<Wallet> {
-		self.wallet.read().clone().context("No wallet set")
+	pub fn require_wallet(&self) -> Result<Wallet, ErrorResponse> {
+		let wallet_opt = self.wallet.read();
+		let Some(wallet) = wallet_opt.as_ref() else {
+			unprocessable!("No wallet set");
+		};
+		Ok(wallet.clone())
 	}
 
-	pub fn require_onchain(&self) -> anyhow::Result<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>> {
-		self.wallet.read().as_ref().context("No wallet set")?
-			.onchain().context("No onchain wallet configured")
+	pub fn require_onchain(&self) -> Result<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>, ErrorResponse> {
+		let onchain_opt = self.require_wallet()?.onchain();
+		let Some(onchain) = onchain_opt.as_ref() else {
+			unprocessable!("No onchain wallet configured");
+		};
+		Ok(onchain.clone())
+	}
+
+	pub fn require_notifications(&self) -> Result<NotificationManager, ErrorResponse> {
+		let notification_mngr_opt = self.notification_mngr.read();
+		let Some(notification_mngr) = notification_mngr_opt.as_ref() else {
+			unprocessable!("No notification manager set")
+		};
+		Ok(notification_mngr.clone())
 	}
 
 	pub fn auth_token(&self) -> Option<&AuthToken> {
@@ -246,7 +274,7 @@ impl RestServer {
 	/// Start a new [RestServer] with the given config and [ServerState].
 	///
 	/// Build the state via [`ServerState::builder`].
-	pub async fn start(config: &Config, state: ServerState) -> anyhow::Result<Self> {
+	pub async fn start(config: &Config, state: ServerState, shutdown: CancellationToken) -> anyhow::Result<Self> {
 		let (router, _api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
 
@@ -274,8 +302,6 @@ impl RestServer {
 
 		let listener = tokio::net::TcpListener::bind(socket_addr).await
 			.context("Failed to bind to address")?;
-
-		let shutdown = CancellationToken::new();
 
 		let shutdown2 = shutdown.clone();
 		let jh = tokio::spawn(async move {
