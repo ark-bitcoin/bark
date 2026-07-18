@@ -1217,5 +1217,46 @@ mod exit {
 			rb.as_ref().map(|(_, o)| o),
 			"get_exit_child_tx origin mismatch",
 		);
+
+		// Re-storing the same child must update the origin in place; the exit sync
+		// relies on this to persist confirmation transitions.
+		let confirmed_origin = ExitTxOrigin::Wallet {
+			confirmed_in: Some(BlockRef {
+				height: 54_321,
+				hash: bitcoin::BlockHash::from_slice(&[0xabu8; 32]).unwrap(),
+			}),
+		};
+		a.store_exit_child_tx(txid, &child_tx, confirmed_origin).await
+			.expect("a: store_exit_child_tx origin update");
+		b.store_exit_child_tx(txid, &child_tx, confirmed_origin).await
+			.expect("b: store_exit_child_tx origin update");
+
+		let ra = a.get_exit_child_tx(txid).await.expect("a: get_exit_child_tx after origin update");
+		let rb = b.get_exit_child_tx(txid).await.expect("b: get_exit_child_tx after origin update");
+		assert_eq!(ra, rb, "get_exit_child_tx after origin update mismatch");
+		assert_eq!(
+			ra.map(|(_, o)| o),
+			Some(confirmed_origin),
+			"store_exit_child_tx should update the origin of an existing child",
+		);
+
+		// Re-storing a different child must replace the transaction as well.
+		let replacement_tx = Transaction {
+			lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(1),
+			..empty_tx()
+		};
+		a.store_exit_child_tx(txid, &replacement_tx, ExitTxOrigin::Mempool).await
+			.expect("a: store_exit_child_tx replacement");
+		b.store_exit_child_tx(txid, &replacement_tx, ExitTxOrigin::Mempool).await
+			.expect("b: store_exit_child_tx replacement");
+
+		let ra = a.get_exit_child_tx(txid).await.expect("a: get_exit_child_tx after replacement");
+		let rb = b.get_exit_child_tx(txid).await.expect("b: get_exit_child_tx after replacement");
+		assert_eq!(ra, rb, "get_exit_child_tx after replacement mismatch");
+		assert_eq!(
+			ra,
+			Some((replacement_tx, ExitTxOrigin::Mempool)),
+			"store_exit_child_tx should replace the child of an existing exit",
+		);
 	}
 }
