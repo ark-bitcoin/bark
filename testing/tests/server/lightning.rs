@@ -967,7 +967,9 @@ async fn check_lightning_receive_poll_interval_fallback() {
 	let payment_hash = preimage.compute_payment_hash();
 
 	// Create a hold invoice on the server.
-	let resp = srv.start_lightning_receive(payment_hash, btc(1), 18, None, None).await.unwrap();
+	let resp = srv.start_lightning_receive(
+		payment_hash, btc(1), 18, None, None, server_rpc::MAX_PROTOCOL_VERSION,
+	).await.unwrap();
 
 	// Create a disconnected receiver: the sender is kept alive so
 	// recv() blocks forever instead of returning Closed.

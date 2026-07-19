@@ -29,6 +29,8 @@
 //! * `2`: fixed the offboard sighash for multi-input offboards
 //! * `3`: checkpoint the lightning-receive claim so the watchman can't
 //!   force-exit a freshly claimed VTXO
+//! * `4`: ppm fees round up to a satoshi instead of down; ppm expiry fees
+//!   are calculated on the exact total across all VTXOs
 
 #[cfg(all(any(target_os = "android", target_os = "ios"), feature = "tls-native-roots"))]
 compile_error!("feature `tls-native-roots` can't be used on Android or iOS, use `tls-webpki-roots` instead");
@@ -114,7 +116,7 @@ pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_BASE;
 /// The maximum protocol version supported by the client.
 ///
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
-pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_LN_RECEIVE_CHECKPOINT;
+pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_PPM_FEE_TOTAL;
 
 /// The string used in the gRPC HTTP header for the protocol version.
 pub const PROTOCOL_VERSION_HEADER: &str = "pver";

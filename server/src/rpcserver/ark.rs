@@ -172,6 +172,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::BoardCosignRequest>,
 	) -> Result<tonic::Response<protos::BoardCosignResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
 
 		let amount = Amount::from_sat(req.amount);
@@ -182,7 +183,7 @@ impl rpc::server::ArkService for Server {
 		let pub_nonce = musig::PublicNonce::from_bytes(&req.pub_nonce)?;
 
 		let resp = self.cosign_board(
-			amount, user_pubkey, expiry_height, utxo, pub_nonce,
+			amount, user_pubkey, expiry_height, utxo, pub_nonce, pver,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp.into()))
@@ -279,6 +280,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
 
 		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
@@ -293,7 +295,9 @@ impl rpc::server::ArkService for Server {
 			.transpose()
 			.map_err(|_| tonic::Status::invalid_argument("invalid mailbox_id"))?;
 
-		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids, mailbox_id).await.to_status()?;
+		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids, mailbox_id, pver)
+			.await
+			.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
@@ -363,6 +367,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::StartLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::StartLightningReceiveResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
@@ -379,6 +384,7 @@ impl rpc::server::ArkService for Server {
 			req.min_cltv_delta as BlockDelta,
 			mailbox_id,
 			req.description,
+			pver,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))
@@ -402,6 +408,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>
 	) -> Result<tonic::Response<protos::PrepareLightningReceiveClaimResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
@@ -410,7 +417,7 @@ impl rpc::server::ArkService for Server {
 		let htlc_recv_expiry = req.htlc_recv_expiry as BlockHeight;
 
 		let (sub, htlcs) = self.prepare_lightning_claim(
-			payment_hash, user_pubkey, htlc_recv_expiry, req.lightning_receive_anti_dos,
+			payment_hash, user_pubkey, htlc_recv_expiry, req.lightning_receive_anti_dos, pver,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::PrepareLightningReceiveClaimResponse {
@@ -508,6 +515,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::SubmitPaymentRequest>,
 	) -> Result<tonic::Response<protos::SubmitPaymentResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
@@ -534,7 +542,7 @@ impl rpc::server::ArkService for Server {
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 
 		let (tx, rx) = oneshot::channel();
-		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests, unlock_preimage };
+		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests, unlock_preimage, pver };
 
 		self.rounds.round_input_tx.send((inp, tx))
 			.expect("input channel closed");
@@ -578,6 +586,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::RoundParticipationRequest>,
 	) -> Result<tonic::Response<protos::RoundParticipationResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
@@ -601,7 +610,7 @@ impl rpc::server::ArkService for Server {
 			});
 		}
 
-		let unlock_hash = self.register_delegated_round_participation(inputs, outputs).await
+		let unlock_hash = self.register_delegated_round_participation(inputs, outputs, pver).await
 			.to_status()?;
 
 		Ok(tonic::Response::new(protos::RoundParticipationResponse {
@@ -738,7 +747,9 @@ impl rpc::server::ArkService for Server {
 		let attestation = req.attestation.iter()
 			.map(|v| OffboardRequestAttestation::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
-		let resp = self.prepare_offboard(request, input_vtxos, attestation).await.to_status()?;
+		let resp = self.prepare_offboard(
+			request, input_vtxos, attestation, pver,
+		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::PrepareOffboardResponse {
 			offboard_tx: serialize(&resp.offboard_tx),
