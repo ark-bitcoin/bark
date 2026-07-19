@@ -231,68 +231,6 @@ impl CollectingPayments {
 		self.round_step
 	}
 
-	fn validate_payment_amounts(
-		&self,
-		inputs: &[Vtxo<Full>],
-		outputs: impl IntoIterator<Item = impl AsRef<VtxoRequest>>,
-		fees: &RefreshFees,
-		current_height: BlockHeight,
-	) -> anyhow::Result<()> {
-		let mut in_set = HashSet::with_capacity(inputs.len());
-		let mut in_sum = Amount::ZERO;
-		for input in inputs {
-			in_sum += input.amount();
-			if in_sum > Amount::MAX_MONEY{
-				return badarg!("total input amount overflow");
-			}
-			if !in_set.insert(input.id()) {
-				return badarg!("duplicate input");
-			}
-		}
-
-		let mut out_sum = Amount::ZERO;
-		for output in outputs {
-			let output = output.as_ref();
-
-			if output.amount < P2TR_DUST {
-				return badarg!("vtxo amount must be at least {}", P2TR_DUST);
-			}
-
-			match output.policy {
-				VtxoPolicy::ServerHtlcRecv { .. } => {
-					return badarg!("invalid vtxo policy: {:?}", output.policy);
-				},
-				VtxoPolicy::ServerHtlcSend { .. } => {
-					return badarg!("invalid vtxo policy: {:?}", output.policy);
-				},
-				VtxoPolicy::Pubkey { .. } => {
-					out_sum += output.amount;
-				},
-			}
-
-			if out_sum > in_sum {
-				return badarg!("total output amount ({out_sum}) exceeds total input amount ({in_sum})");
-			}
-		}
-
-		// Validate refresh fees
-		let vtxo_fee_infos = inputs.iter()
-			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, current_height));
-		let expected_fee = fees.calculate(vtxo_fee_infos).context("fee overflowed")?;
-
-		debug_assert!(in_sum >= out_sum, "This should be guaranteed by the previous loop");
-		let actual_fee = in_sum - out_sum;
-		if actual_fee < expected_fee {
-			return badarg!(
-				"insufficient refresh fee: expected at least {}, got {}",
-				expected_fee,
-				actual_fee
-			);
-		}
-
-		Ok(())
-	}
-
 	/// This method does checks on the user input that can be done fast and without
 	/// the need to fetch the input vtxos.
 	fn validate_payment_data(
@@ -554,7 +492,7 @@ impl CollectingPayments {
 		}
 
 		let current_height = srv.sync_manager.chain_tip().height;
-		if let Err(e) = self.validate_payment_amounts(
+		if let Err(e) = validate_payment_amounts(
 			&input_vtxos, &vtxo_requests, &srv.config.fees.refresh, current_height,
 		) {
 			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
@@ -658,18 +596,6 @@ impl CollectingPayments {
 			Ok(i) => i,
 			Err(e) => return Err(ProcessHarkParticipationError::BadParticipation(e)),
 		};
-
-		let current_height = srv.sync_manager.chain_tip().height;
-		if let Err(e) = self.validate_payment_amounts(
-			&input_vtxos, participation.outputs.iter(), &srv.config.fees.refresh, current_height,
-		) {
-			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
-				error: e.to_string(),
-			);
-			return Err(ProcessHarkParticipationError::BadParticipation(
-				e.context("amount  check failed"),
-			));
-		}
 
 		let exited = match srv.find_exited_vtxos(&input_vtxos).await {
 			Ok(e) => e,
@@ -914,6 +840,67 @@ impl CollectingPayments {
 			.map(|vtxo| vtxo.amount())
 			.sum()
 	}
+}
+
+fn validate_payment_amounts(
+	inputs: &[Vtxo<Full>],
+	outputs: impl IntoIterator<Item = impl AsRef<VtxoRequest>>,
+	fees: &RefreshFees,
+	current_height: BlockHeight,
+) -> anyhow::Result<()> {
+	let mut in_set = HashSet::with_capacity(inputs.len());
+	let mut in_sum = Amount::ZERO;
+	for input in inputs {
+		in_sum += input.amount();
+		if in_sum > Amount::MAX_MONEY{
+			return badarg!("total input amount overflow");
+		}
+		if !in_set.insert(input.id()) {
+			return badarg!("duplicate input");
+		}
+	}
+
+	let mut out_sum = Amount::ZERO;
+	for output in outputs {
+		let output = output.as_ref();
+
+		if output.amount < P2TR_DUST {
+			return badarg!("vtxo amount must be at least {}", P2TR_DUST);
+		}
+
+		match output.policy {
+			VtxoPolicy::ServerHtlcRecv { .. } => {
+				return badarg!("invalid vtxo policy: {:?}", output.policy);
+			},
+			VtxoPolicy::ServerHtlcSend { .. } => {
+				return badarg!("invalid vtxo policy: {:?}", output.policy);
+			},
+			VtxoPolicy::Pubkey { .. } => {
+				out_sum += output.amount;
+			},
+		}
+
+		if out_sum > in_sum {
+			return badarg!("total output amount ({out_sum}) exceeds total input amount ({in_sum})");
+		}
+	}
+
+	// Validate refresh fees
+	let vtxo_fee_infos = inputs.iter()
+		.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, current_height));
+	let expected_fee = fees.calculate(vtxo_fee_infos).context("fee overflowed")?;
+
+	debug_assert!(in_sum >= out_sum, "This should be guaranteed by the previous loop");
+	let actual_fee = in_sum - out_sum;
+	if actual_fee < expected_fee {
+		return badarg!(
+			"insufficient refresh fee: expected at least {}, got {}",
+			expected_fee,
+			actual_fee
+		);
+	}
+
+	Ok(())
 }
 
 enum ProcessHarkParticipationError {
@@ -1858,6 +1845,16 @@ impl Server {
 				.unusable_inputs(unusable);
 		}
 
+		// Validate the amounts and fees here, when the client can still see the
+		// error. Once the participation is stored, the server has agreed to it
+		// and follows through in the round without re-checking the fee: fees
+		// only decrease as the tip advances, so a stored participation always
+		// still covers them.
+		let input_vtxos = vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>();
+		validate_payment_amounts(
+			&input_vtxos, outputs.iter(), &self.config.fees.refresh, chain_tip,
+		)?;
+
 		self.db.write(async |t| {
 			t.try_store_round_participation(chain_tip, unlock_preimage, &input_ids, &outputs).await
 		}).await?;
@@ -1957,7 +1954,7 @@ mod tests {
 		let outputs = vec![create_signed_req(output_amount.to_sat(), &state.round_data)];
 
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		state.validate_payment_amounts(&inputs, &outputs, &fees, 1000).unwrap();
+		validate_payment_amounts(&inputs, &outputs, &fees, 1000).unwrap();
 
 		let flux = VtxosInFlux::new();
 		state.register_interactive_participation(flux.empty_guard(), inputs, outputs.clone(), pre);
@@ -1982,7 +1979,7 @@ mod tests {
 		)];
 
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		state.validate_payment_amounts(&inputs, &outputs, &FeeSchedule::default().refresh, 0).unwrap_err();
+		validate_payment_amounts(&inputs, &outputs, &FeeSchedule::default().refresh, 0).unwrap_err();
 	}
 
 	#[test]
@@ -2008,7 +2005,7 @@ mod tests {
 			],
 		};
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		state.validate_payment_amounts(&inputs, &outputs, &fees, 1_000).unwrap_err();
+		validate_payment_amounts(&inputs, &outputs, &fees, 1_000).unwrap_err();
 	}
 
 	#[test]
