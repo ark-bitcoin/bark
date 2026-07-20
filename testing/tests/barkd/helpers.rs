@@ -4,6 +4,7 @@ use std::time::Duration;
 use bitcoin::Amount;
 
 use bark_json::exit::ExitState;
+use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
 
 use ark_testing::TestContext;
 use ark_testing::daemon::barkd::Barkd;
@@ -117,4 +118,48 @@ pub async fn wait_for_exits_claimable(ctx: &TestContext, barkd: &Barkd) {
 
 		tokio::time::sleep(poll_interval).await;
 	}
+}
+
+/// Drive `sync` until the wallet's VTXO set satisfies `predicate`, returning it.
+///
+/// For flows that resolve asynchronously after the REST call returns (e.g. a
+/// Lightning send resolving to change, or a failed send being revoked). Panics
+/// with the last-seen set on timeout.
+#[allow(dead_code)]
+pub async fn wait_for_vtxos(
+	barkd: &Barkd,
+	predicate: impl Fn(&[WalletVtxoInfo]) -> bool,
+) -> Vec<WalletVtxoInfo> {
+	let timeout = Duration::from_secs(15);
+	let poll_interval = Duration::from_millis(500);
+	let start = std::time::Instant::now();
+
+	loop {
+		barkd.sync().await;
+		let vtxos = barkd.vtxos(None).await;
+		if predicate(&vtxos) {
+			return vtxos;
+		}
+		if start.elapsed() > timeout {
+			panic!(
+				"wallet VTXO set did not reach the expected state within {:?}: {:?}",
+				timeout, vtxos,
+			);
+		}
+		tokio::time::sleep(poll_interval).await;
+	}
+}
+
+/// Drive `sync` until the wallet holds exactly `count` VTXOs that are all
+/// spendable, returning them.
+///
+/// Gating on the spendable state (not just the count) skips transient
+/// intermediates: an in-flight Lightning HTLC or offboard change is briefly
+/// present as a locked VTXO the server already considers spent, so a bare count
+/// can capture a VTXO the recovered wallet will never rediscover.
+#[allow(dead_code)]
+pub async fn wait_for_spendable_vtxos(barkd: &Barkd, count: usize) -> Vec<WalletVtxoInfo> {
+	wait_for_vtxos(barkd, |vtxos| {
+		vtxos.len() == count && vtxos.iter().all(|v| v.state == VtxoStateInfo::Spendable)
+	}).await
 }
