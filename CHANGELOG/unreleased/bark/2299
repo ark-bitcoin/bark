@@ -1,8 +1,0 @@
-- Persist the confirmation state of an exit CPFP child transaction
-  The stored `ExitTxOrigin` was only written when the child was first
-  broadcast or adopted, so it never recorded a later confirmation. A wallet
-  reload then reported the child as unconfirmed until the first successful
-  chain sync. The origin is now re-persisted whenever its `confirmed_in`
-  changes, so exit status is correct immediately after a restart, even
-  offline.
-  [#2299](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2299)

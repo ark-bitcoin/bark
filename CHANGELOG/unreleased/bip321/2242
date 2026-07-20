@@ -1,5 +1,0 @@
-- Add `Bip321Uri::checked_uppercase`
-  Renders an all-upper-case URI for compact QR encoding; returns `None` when
-  case-sensitive data (label, message, `pop`, custom param, base58 address)
-  would be corrupted.
-  [#2242](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2242)

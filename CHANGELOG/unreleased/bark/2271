@@ -1,6 +1,0 @@
-- No longer bundle extra VTXOs with refreshes
-  When manually refreshing specific VTXOs, `bark` no longer adds other VTXOs that
-  merely meet the "should-refresh" criteria into the same round. Callers now get
-  exactly the inputs and outputs they asked for, since the maintenance flow already
-  handles should-refresh VTXOs on its own.
-  [#2271](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2271)

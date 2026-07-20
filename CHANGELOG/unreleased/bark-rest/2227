@@ -1,7 +1,0 @@
-- Filter wallet history by payment method
-  `GET /api/v1/history` now accepts optional `type` and `value` query
-  parameters that mirror a payment method's serialized form. Supplying both
-  restricts the result to movements involving that single payment method (e.g.
-  all payments sent to one address), so integrators no longer have to fetch the
-  full history and filter client-side.
-  [#2227](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2227)

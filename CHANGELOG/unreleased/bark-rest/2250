@@ -1,7 +1,0 @@
-- Add `POST /v1/fees/offboard` endpoint to estimate offboard fees
-  Callers can now estimate the fee for offboarding a specific set of VTXOs to a
-  given on-chain address before committing to the operation. The response reports
-  the gross amount (total value of the selected VTXOs) and the net amount the user
-  receives on-chain after fees, which depend on the destination address type,
-  current fee rates, and VTXO expiry.
-  [#2250](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2250)

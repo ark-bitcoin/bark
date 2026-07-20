@@ -1,8 +1,0 @@
-- Long-poll endpoint for wallet notifications
-  Clients that cannot hold a persistent websocket can now call
-  `GET /api/v1/notifications/wait` to receive buffered `WalletNotification`
-  events, optionally filtered by a `since` timestamp. The server holds the
-  request open until a notification arrives or the server-side timeout
-  elapses, and returns the timestamp of the last pushed event so clients
-  can resume polling without gaps.
-  [#1960](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1960)

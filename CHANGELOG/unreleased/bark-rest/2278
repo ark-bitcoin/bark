@@ -1,9 +1,0 @@
-- Rework the exit status endpoints
-  Adds `GET /exits/status/all`, `GET /exits/status/live` and
-  `GET /exits/status/vtxo/{vtxo_id}`. `GET /exits/status` is deprecated and
-  permanently redirects to `/exits/status/all`; `GET /exits/status/{vtxo_id}`
-  is deprecated but still served. Both will be removed in a future release.
-  The by-VTXO endpoints now also serve finished exits. The previously
-  released operation IDs move to the new endpoints, so regenerated clients
-  keep working unchanged.
-  [#2278](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2278)
