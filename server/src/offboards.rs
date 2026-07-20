@@ -18,6 +18,7 @@ use crate::bitcoind as bcd;
 use crate::error::ContextExt;
 use crate::fee_estimator::OffboardFeeRateError;
 use crate::flux::OwnedVtxoFluxGuard;
+use crate::nursery::NurseryTxKind;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxosGuard};
 
 
@@ -395,7 +396,9 @@ impl Server {
 		wallet.commit_tx(offboard_tx);
 		wallet.persist().await
 			.context("persisting wallet")?;
-		self.tx_nursery.broadcast_tx(offboard_tx.clone(), self.nursery_confirm_target()).await
+		self.tx_nursery.broadcast_tx(
+			offboard_tx.clone(), NurseryTxKind::Offboard, self.nursery_confirm_target(),
+		).await
 			.context("broadcasting tx")?;
 		let newly_committed = self.db.write(async |t| t.mark_offboard_committed(offboard_txid).await).await
 			.context("marking offboard committed")?;

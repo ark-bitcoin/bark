@@ -9,6 +9,7 @@ use tokio_postgres::types::Type;
 use bitcoin_ext::BlockHeight;
 
 use crate::database::Tx;
+use crate::nursery::NurseryTxKind;
 
 /// Convert a [BlockHeight] into the INT4 stored in postgres.
 fn height_to_sql(height: BlockHeight) -> anyhow::Result<i32> {
@@ -25,6 +26,7 @@ fn height_from_sql(height: i32) -> BlockHeight {
 #[derive(Debug, Clone)]
 pub struct NurseryTx {
 	pub txid: Txid,
+	pub kind: NurseryTxKind,
 	pub confirm_target_height: BlockHeight,
 	pub confirmed_at_height: Option<BlockHeight>,
 }
@@ -37,16 +39,17 @@ impl<'t> Tx<'t> {
 	pub async fn upsert_nursery_tx(
 		&self,
 		tx: &Transaction,
+		kind: NurseryTxKind,
 		confirm_target_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		let stmt = self.prepare_typed("
-			INSERT INTO nursery_tx (txid, tx, confirm_target_height, created_at, updated_at)
-			VALUES ($1, $2, $3, NOW(), NOW())
+			INSERT INTO nursery_tx (txid, kind, tx, confirm_target_height, created_at, updated_at)
+			VALUES ($1, $2::TEXT::nursery_tx_kind, $3, $4, NOW(), NOW())
 			ON CONFLICT (txid) DO NOTHING
-		", &[Type::TEXT, Type::BYTEA, Type::INT4]).await?;
+		", &[Type::TEXT, Type::TEXT, Type::BYTEA, Type::INT4]).await?;
 
 		self.execute(&stmt, &[
-			&tx.compute_txid().to_string(), &serialize(tx),
+			&tx.compute_txid().to_string(), &kind.name(), &serialize(tx),
 			&height_to_sql(confirm_target_height)?,
 		]).await?;
 
@@ -73,7 +76,7 @@ impl<'t> Tx<'t> {
 		deeply_confirmed_height: BlockHeight,
 	) -> anyhow::Result<Vec<NurseryTx>> {
 		let stmt = self.prepare_typed("
-			SELECT txid, confirm_target_height, confirmed_at_height
+			SELECT txid, kind::TEXT, confirm_target_height, confirmed_at_height
 			FROM nursery_tx
 			WHERE abandoned_at IS NULL
 			AND (confirmed_at_height IS NULL OR confirmed_at_height > $1)
@@ -84,11 +87,13 @@ impl<'t> Tx<'t> {
 		Ok(rows.into_iter().map(|row| {
 			let txid = Txid::from_str(row.get("txid"))
 				.expect("corrupt db: invalid txid");
+			let kind = NurseryTxKind::from_str(row.get("kind"))
+				.expect("corrupt db: invalid nursery tx kind");
 			let confirm_target_height =
 				height_from_sql(row.get("confirm_target_height"));
 			let confirmed_at_height = row.get::<_, Option<i32>>("confirmed_at_height")
 				.map(height_from_sql);
-			NurseryTx { txid, confirm_target_height, confirmed_at_height }
+			NurseryTx { txid, kind, confirm_target_height, confirmed_at_height }
 		}).collect())
 	}
 

@@ -34,6 +34,50 @@ use crate::bitcoind as bcd;
 use crate::database::Db;
 use crate::sync::{BlockData, ChainEventListener, RawMempool};
 
+/// What a nursery tx is for; shown in the operator's report and later
+/// used to pick per-kind fee bump behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NurseryTxKind {
+	/// A round funding tx; the signed vtxo tree commits to its txid.
+	Round,
+	/// A collaborative offboard tx.
+	Offboard,
+	/// A vtxo pool issuance funding tx.
+	VtxoPool,
+	/// An internal wallet tx, e.g. a rounds-to-watchman wallet top-up.
+	Internal,
+}
+
+impl NurseryTxKind {
+	pub fn name(&self) -> &'static str {
+		match self {
+			Self::Round => "round",
+			Self::Offboard => "offboard",
+			Self::VtxoPool => "vtxopool",
+			Self::Internal => "internal",
+		}
+	}
+}
+
+impl std::str::FromStr for NurseryTxKind {
+	type Err = anyhow::Error;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s {
+			"round" => Ok(Self::Round),
+			"offboard" => Ok(Self::Offboard),
+			"vtxopool" => Ok(Self::VtxoPool),
+			"internal" => Ok(Self::Internal),
+			other => Err(anyhow::anyhow!("unknown nursery tx kind: {}", other)),
+		}
+	}
+}
+
+impl std::fmt::Display for NurseryTxKind {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+		f.write_str(self.name())
+	}
+}
+
 #[derive(Clone)]
 pub struct TxNursery {
 	db: Db,
@@ -57,11 +101,12 @@ impl TxNursery {
 	pub async fn broadcast_tx(
 		&self,
 		tx: Transaction,
+		kind: NurseryTxKind,
 		confirm_target: BlockHeight,
 	) -> anyhow::Result<()> {
 		let txid = tx.compute_txid();
 		self.db.write(async |t| {
-			t.upsert_nursery_tx(&tx, confirm_target).await
+			t.upsert_nursery_tx(&tx, kind, confirm_target).await
 		}).await.context("failed to store tx in nursery")?;
 
 		slog!(BroadcastingTx, txid, raw_tx: serialize(&tx));
