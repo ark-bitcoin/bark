@@ -430,8 +430,6 @@ impl Server {
 
 			Some((watchman_cfg.clone(), watchman_wallet, frontier))
 		} else {
-			info!("Embedded watchman disabled: nursery tx follow-up is left \
-				to the watchmand process");
 			None
 		};
 		let watchman_wallet = watchman_deps.as_ref().map(|(_, w, _)| w.clone());
