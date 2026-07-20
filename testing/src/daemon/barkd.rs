@@ -374,6 +374,29 @@ impl Barkd {
 			.expect("failed to get barkd pending boards")
 	}
 
+	/// Wait until every pending board has been registered with the Ark server
+	/// and turned into a spendable VTXO.
+	///
+	/// A confirmed board only becomes spendable once the wallet re-syncs *after*
+	/// the server itself has observed the funding tx as sufficiently confirmed.
+	/// A single sync right after generating the confirmations races that
+	/// server-side chain catch-up, so we drive a sync and poll the pending set
+	/// until it clears.
+	pub async fn wait_for_boards_synced(&self) {
+		let timeout = Duration::from_secs(15);
+		let start = std::time::Instant::now();
+		loop {
+			self.sync().await;
+			if self.get_pending_boards().await.is_empty() {
+				return;
+			}
+			if start.elapsed() > timeout {
+				panic!("board auto-sync did not clear pending boards within {:?}", timeout);
+			}
+			tokio::time::sleep(Duration::from_secs(1)).await;
+		}
+	}
+
 	/// Estimate the board fee for the given amount.
 	pub async fn board_fee(&self, amount: Amount) -> FeeEstimateResponse {
 		let config = self.client_config();

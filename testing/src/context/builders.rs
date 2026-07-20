@@ -244,7 +244,10 @@ impl<'a> BarkdBuilder<'a> {
 			let b = daemon.board_all().await;
 			self.ctx.await_transaction(b.funding_tx.txid).await;
 			self.ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-			daemon.sync().await;
+			// Wait until the board is registered with the server and spendable,
+			// not just confirmed — a single sync here races the server's chain
+			// catch-up and can leave the wallet with no spendable VTXOs.
+			daemon.wait_for_boards_synced().await;
 		}
 
 		if let Some(amount) = self.fund_amount {
