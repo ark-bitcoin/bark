@@ -1,8 +1,0 @@
-- Deprecate the `--access-token` flag on `bark create`
-  Access tokens are not enforced by the server; the flag still accepts a
-  value and writes `server_access_token` to `config.toml`, but it is now
-  hidden from `--help` output and will be removed in a future release.
-  The matching `ark_server_access_token` field on the barkd REST
-  `/wallet` (create) request body is also deprecated; sending it remains
-  accepted but has no effect on server-side authorization.
-  [#2171](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2171)

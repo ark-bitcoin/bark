@@ -1,4 +1,0 @@
-- Add BIP 321 URI models
-  `Bip321UriRequest`, `Bip321UriQuery` and `Bip321UriResponse` for the new
-  `POST /wallet/bip321` endpoint.
-  [#2242](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2242)

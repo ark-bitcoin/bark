@@ -1,3 +1,0 @@
-- Harden permissions on newly created wallet files
-  New wallets now restrict their data directory, secret files and the debug log to the owning user, so other local (non-root) users can no longer read the seed, wallet state, server access token or logged activity. This also covers the `barkd` daemon, which locks down its data directory on creation. Existing wallets are left untouched; bark instead warns on open if their files are accessible to other users.
-  [#2194](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2194)

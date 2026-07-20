@@ -1,9 +1,0 @@
-- Surface the new `Canceled` exit state
-  Mirrors the bark-side support for canceling a unilateral exit before its
-  final transaction is broadcast. Adds the `ExitStateKind` discriminator and
-  the `ExitCancelResponse` web type used by the new REST cancel endpoint.
-  [#2270](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2270)
-  - **BREAKING:** `ExitState` gains a `Canceled(ExitCanceledState)` variant.
-    Exhaustive matches must handle it.
-  - **BREAKING:** `ExitError` gains `NotExiting`, `CannotCancelExit` and
-    `ExitTxAlreadyBroadcast` variants. Exhaustive matches must handle them.

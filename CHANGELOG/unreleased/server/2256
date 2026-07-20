@@ -1,4 +1,0 @@
-- Use the fast fee rate for the round funding transaction
-  The on-chain round funding tx now targets a 1-block confirmation instead
-  of 3-blocks.
-  [#2256](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2256)

@@ -1,3 +1,0 @@
-- Harden permissions on the wallet database and filestore
-  On open, `SqliteClient` checks the database file's permissions and warns if group or other users can access it, suggesting `chmod 600`. The file is not re-chmod'd on every open, so a deliberate permission setup is left intact. The `FileStorageAdaptor` likewise creates its wallet file owner-only (`0o600`) so wallet state is never world-readable.
-  [#2194](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2194)

@@ -1,6 +1,0 @@
-- Refuse to start a unilateral exit for a non-standard VTXO
-  The exit chain is now checked for sub-dust or non-relay-standard outputs
-  before any state is persisted, so users don't burn CPFP fees trying to
-  exit a VTXO whose transactions would be rejected by the bitcoin relay
-  network.
-  [#2198](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2198)

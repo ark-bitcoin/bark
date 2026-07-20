@@ -1,4 +1,0 @@
-- Adds `Exit::list_live` and `Exit::list_all`.
-  [#2278](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2278)
-  - **BREAKING:** `Exit::get_exit_status` returns `anyhow::Result` instead of
-    `Result<_, ExitError>`.

@@ -1,5 +1,0 @@
-- Harden block-height arithmetic against overflow and underflow
-  Exit-tx status refresh no longer stalls on chains with a tip below 100
-  blocks, confirmation counts survive reorg/stale-tip races, and the wallet
-  rejects a server advertising an out-of-range `required_board_confirmations`.
-  [#2276](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2276)

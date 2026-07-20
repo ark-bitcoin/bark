@@ -1,7 +1,0 @@
-- Deprecate the `rpc.access_token` telemetry attribute
-  Access tokens are not enforced by the server; the attribute is no longer a
-  reliable signal. The `RPC_ACCESS_TOKEN` constant and its use on the gRPC
-  request span are marked `#[deprecated]` and will be removed in a future
-  release. Any dashboard or LogQL query relying on `rpc.access_token` should
-  migrate or remove the filter.
-  [#2171](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2171)
