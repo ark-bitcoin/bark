@@ -2680,6 +2680,68 @@
         }
       }
     },
+    "/api/v1/wallet/refresh/delegated/vtxos": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "summary": "Refresh VTXOs in delegated mode",
+        "description": "Registers the specified VTXOs for refresh as a delegated participation: the wallet hands the server a signed participation and the server carries it through the round, so the wallet doesn't need to follow the round interactively. The input VTXOs are locked immediately and will be forfeited once the round completes, yielding new VTXOs with a fresh expiry.\n\nSet `height` to schedule the refresh for a future block height: the refresh fee is priced at that height and the server includes the participation in the first round once the chain tip reaches it. When `height` is omitted, the participation is eligible for the next round. Use the `rounds` endpoint to track progress.",
+        "operationId": "refresh_delegated",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelegatedRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the refresh result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRoundInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No VTXO IDs provided, or one of the provided VTXO IDs is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "One the VTXOs wasn't found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/refresh/vtxos": {
       "post": {
         "tags": [
@@ -3656,6 +3718,30 @@
         "properties": {
           "fingerprint": {
             "type": "string"
+          }
+        }
+      },
+      "DelegatedRefreshRequest": {
+        "type": "object",
+        "required": [
+          "vtxos"
+        ],
+        "properties": {
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Optional block height to schedule the refresh at. When set, the refresh fee is priced at\nthat height and the server includes the participation in the first round once the chain\ntip reaches it; when omitted, the participation is eligible for the next round.",
+            "minimum": 0
+          },
+          "vtxos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of VTXO IDs to refresh. The sum of the VTXOs being refreshed must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Keep in mind that fees set out in\n[RefreshFees](crate::cli::fees::RefreshFees) will be deducted from the newly created VTXO, this\nvalue must also be >= [P2TR_DUST](bitcoin_ext::P2TR_DUST)."
           }
         }
       },

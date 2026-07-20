@@ -179,6 +179,16 @@ pub enum RefreshCounterpartyError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`refresh_delegated`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RefreshDelegatedError {
+    Status400(models::BadRequestError),
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`refresh_vtxos`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -992,6 +1002,47 @@ pub async fn refresh_counterparty(configuration: &configuration::Configuration, 
     } else {
         let content = resp.text().await?;
         let entity: Option<RefreshCounterpartyError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Registers the specified VTXOs for refresh as a delegated participation: the wallet hands the server a signed participation and the server carries it through the round, so the wallet doesn't need to follow the round interactively. The input VTXOs are locked immediately and will be forfeited once the round completes, yielding new VTXOs with a fresh expiry.  Set `height` to schedule the refresh for a future block height: the refresh fee is priced at that height and the server includes the participation in the first round once the chain tip reaches it. When `height` is omitted, the participation is eligible for the next round. Use the `rounds` endpoint to track progress.
+pub async fn refresh_delegated(configuration: &configuration::Configuration, delegated_refresh_request: models::DelegatedRefreshRequest) -> Result<models::PendingRoundInfo, Error<RefreshDelegatedError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_delegated_refresh_request = delegated_refresh_request;
+
+    let uri_str = format!("{}/api/v1/wallet/refresh/delegated/vtxos", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_delegated_refresh_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::PendingRoundInfo`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::PendingRoundInfo`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<RefreshDelegatedError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

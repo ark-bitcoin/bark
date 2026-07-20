@@ -91,6 +91,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**pending_rounds**](docs/WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | List round participations
 *WalletApi* | [**refresh_all**](docs/WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | Refresh all VTXOs
 *WalletApi* | [**refresh_counterparty**](docs/WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | Refresh received VTXOs
+*WalletApi* | [**refresh_delegated**](docs/WalletApi.md#refresh_delegated) | **POST** /api/v1/wallet/refresh/delegated/vtxos | Refresh VTXOs in delegated mode
 *WalletApi* | [**refresh_vtxos**](docs/WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/refresh/vtxos | Refresh specific VTXOs
 *WalletApi* | [**send**](docs/WalletApi.md#send) | **POST** /api/v1/wallet/send | Send a payment
 *WalletApi* | [**send_onchain**](docs/WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | Send on-chain from Ark balance
@@ -129,6 +130,7 @@ Class | Method | HTTP request | Description
  - [ConnectedResponse](docs/ConnectedResponse.md)
  - [CreateWalletRequest](docs/CreateWalletRequest.md)
  - [CreateWalletResponse](docs/CreateWalletResponse.md)
+ - [DelegatedRefreshRequest](docs/DelegatedRefreshRequest.md)
  - [EncodedVtxoResponse](docs/EncodedVtxoResponse.md)
  - [ExitAwaitingDeltaState](docs/ExitAwaitingDeltaState.md)
  - [ExitCancelResponse](docs/ExitCancelResponse.md)

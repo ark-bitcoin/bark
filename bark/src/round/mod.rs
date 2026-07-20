@@ -30,7 +30,7 @@ use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
-use bitcoin_ext::TxStatus;
+use bitcoin_ext::{BlockHeight, TxStatus};
 use server_rpc::{protos, ServerConnection, TryFromBytes, MAX_NB_FORFEIT_NONCE_IDS};
 
 use crate::movement::manager::OnDropStatus;
@@ -1437,11 +1437,16 @@ impl Wallet {
 		}
 	}
 
-	/// Join next round in delegated mode
-	pub async fn join_next_round_delegated(
+	/// Join a round in delegated mode.
+	///
+	/// When `scheduled_height` is set, the server won't include the participation in a round
+	/// before the chain tip reaches it. When `None`, it is eligible for the next round (see
+	/// [Wallet::join_next_round_delegated]).
+	pub async fn join_delegated_round(
 		&self,
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
+		scheduled_height: Option<BlockHeight>,
 	) -> anyhow::Result<StoredRoundState<Unlocked>> {
 		let movement = if let Some(kind) = movement_kind {
 			Some(self.inner.movements.new_guarded_movement_with_update(
@@ -1455,7 +1460,7 @@ impl Wallet {
 		};
 		let movement_id = movement.as_ref().map(|m| m.id());
 
-		match self.join_next_round_delegated_inner(participation, movement_id).await {
+		match self.join_delegated_round_inner(participation, movement_id, scheduled_height).await {
 			Ok(state) => {
 				if let Some(mut m) = movement {
 					m.stop();
@@ -1471,10 +1476,25 @@ impl Wallet {
 		}
 	}
 
-	async fn join_next_round_delegated_inner(
+	/// Join the next delegated round, i.e. [Wallet::join_delegated_round] with no scheduled
+	/// height, so the participation is eligible for the very next round.
+	pub async fn join_next_round_delegated(
+		&self,
+		participation: RoundParticipation,
+		movement_kind: Option<RoundMovement>,
+	) -> anyhow::Result<StoredRoundState<Unlocked>> {
+		self.join_delegated_round(participation, movement_kind, None).await
+	}
+
+	/// Join a round in delegated mode.
+	///
+	/// When `scheduled_height` is set, the server won't include the participation in a round
+	/// before the chain tip reaches it. When `None`, it is eligible for the next round.
+	async fn join_delegated_round_inner(
 		&self,
 		participation: RoundParticipation,
 		movement_id: Option<MovementId>,
+		scheduled_height: Option<BlockHeight>,
 	) -> anyhow::Result<StoredRoundState<Unlocked>> {
 		let (mut srv, _) = self.require_server().await?;
 
@@ -1515,7 +1535,7 @@ impl Wallet {
 			input_vtxos,
 			vtxo_requests,
 			unblinded_mailbox_id: Some(unblinded_mailbox_id.serialize()),
-			scheduled_height: None,
+			scheduled_height,
 		}).await.context("error submitting round participation to server")?.into_inner();
 
 		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)

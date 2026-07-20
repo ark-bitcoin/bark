@@ -316,6 +316,20 @@ pub struct RefreshRequest {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct DelegatedRefreshRequest {
+	/// List of VTXO IDs to refresh. The sum of the VTXOs being refreshed must be
+	/// >= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Keep in mind that fees set out in
+	/// [RefreshFees](crate::cli::fees::RefreshFees) will be deducted from the newly created VTXO, this
+	/// value must also be >= [P2TR_DUST](bitcoin_ext::P2TR_DUST).
+	pub vtxos: Vec<String>,
+	/// Optional block height to schedule the refresh at. When set, the refresh fee is priced at
+	/// that height and the server includes the participation in the first round once the chain
+	/// tip reaches it; when omitted, the participation is eligible for the next round.
+	pub height: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct BoardRequest {
 	/// An amount of onchain funds to board (in satoshis). For a board operation to be successful,
 	/// this value, with any server-configured [BoardFees](crate::cli::fees::BoardFees) deducted, must be
@@ -601,8 +615,8 @@ pub struct PendingRoundInfo {
 }
 
 impl PendingRoundInfo {
-	pub fn new<'a>(
-		state: &'a bark::persist::models::StoredRoundState,
+	pub fn new<G>(
+		state: &bark::persist::models::StoredRoundState<G>,
 		sync_result: anyhow::Result<bark::round::RoundStatus>,
 	) -> Self {
 		let funding_tx = state.state().funding_tx();
