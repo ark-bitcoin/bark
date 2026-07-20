@@ -29,6 +29,7 @@ pub struct CaptaindBuilder<'a> {
 	fund_amount: Option<Amount>,
 	lightningd: Option<&'a Lightningd>,
 	mod_cfg: Option<Box<dyn FnOnce(&mut server::Config)>>,
+	no_vtxo_pool: bool,
 }
 
 impl<'a> CaptaindBuilder<'a> {
@@ -40,7 +41,17 @@ impl<'a> CaptaindBuilder<'a> {
 			fund_amount: None,
 			lightningd: None,
 			mod_cfg: None,
+			no_vtxo_pool: false,
 		}
+	}
+
+	/// Stop the vtxo pool from issuing. Offboards are funded from the rounds
+	/// wallet, which trusts its own unconfirmed change, so an offboard can end
+	/// up spending a still-unconfirmed pool issuance tx — a flaky ancestor.
+	/// Use this on offboard tests that don't need pool vtxos.
+	pub fn no_vtxo_pool(mut self) -> Self {
+		self.no_vtxo_pool = true;
+		self
 	}
 
 	pub fn bitcoind(mut self, bitcoind: Arc<Bitcoind>) -> Self {
@@ -75,6 +86,9 @@ impl<'a> CaptaindBuilder<'a> {
 		).await;
 		if let Some(mod_cfg) = self.mod_cfg {
 			mod_cfg(&mut cfg);
+		}
+		if self.no_vtxo_pool {
+			cfg.vtxopool.vtxo_targets.clear();
 		}
 
 		let ret = Captaind::new(&self.name, bitcoind, cfg);

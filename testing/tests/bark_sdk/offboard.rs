@@ -146,7 +146,7 @@ async fn offboard_replays_identical_prepare_request() {
 	const OFFBOARD_CONFIRMATIONS: u32 = 2;
 
 	let ctx = TestContext::new("bark_sdk/offboard_replays_identical_prepare_request").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 	let proxy = srv.start_proxy_no_mailbox(ReplayPrepareOffboardProxy).await;
 
 	let wallet = ctx.bark_sdk("bark", &proxy)
@@ -184,7 +184,7 @@ async fn offboard_replays_identical_prepare_request() {
 #[tokio::test]
 async fn offboard_rejects_unsigned_finish_response() {
 	let ctx = TestContext::new("bark_sdk/offboard_rejects_unsigned_finish_response").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 	let proxy = srv.start_proxy_no_mailbox(UnsignedFinishResponseProxy::new()).await;
 
 	// Manual sync only, so the test controls the finish retry.
@@ -227,7 +227,7 @@ async fn offboard_recovers_expired_session_by_repreparing() {
 	const SESSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 	let ctx = TestContext::new("bark_sdk/offboard_recovers_expired_session_by_repreparing").await;
-	let srv = ctx.captaind("server")
+	let srv = ctx.captaind("server").no_vtxo_pool()
 		.funded(btc(10))
 		.cfg(|c| c.offboard_session_timeout = SESSION_TIMEOUT)
 		.create().await;
@@ -291,6 +291,7 @@ async fn offboard_rebroadcasts_evicted_tx_within_grace_period() {
 		// keep it out of the picture so the wallet's own re-broadcast is
 		// the only way the tx can come back. The check interval may not
 		// exceed the session timeout, so push that out too.
+		.no_vtxo_pool()
 		.cfg(|c| {
 			c.offboard_session_timeout = Duration::from_secs(3600);
 			c.offboard_check_interval = Duration::from_secs(3600);
@@ -345,7 +346,7 @@ async fn offboard_rebroadcasts_evicted_tx_within_grace_period() {
 #[tokio::test]
 async fn offboard_reports_lost_tx_after_grace_period() {
 	let ctx = TestContext::new("bark_sdk/offboard_reports_lost_tx_after_grace_period").await;
-	let srv = ctx.captaind("server")
+	let srv = ctx.captaind("server").no_vtxo_pool()
 		.funded(btc(10))
 		// Keep the server from re-broadcasting the evicted tx. The check
 		// interval may not exceed the session timeout, so push that out too.
@@ -413,7 +414,7 @@ async fn offboard_recovers_lost_finish_by_adopting_chain_tx() {
 	const SESSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 	let ctx = TestContext::new("bark_sdk/offboard_recovers_lost_finish_by_adopting_chain_tx").await;
-	let srv = ctx.captaind("server")
+	let srv = ctx.captaind("server").no_vtxo_pool()
 		.funded(btc(10))
 		.cfg(|c| c.offboard_session_timeout = SESSION_TIMEOUT)
 		.create().await;
@@ -467,7 +468,7 @@ async fn offboard_recovers_lost_finish_by_adopting_chain_tx() {
 #[tokio::test]
 async fn offboard_cancels_when_fees_change_after_lost_session() {
 	let ctx = TestContext::new("bark_sdk/offboard_cancels_when_fees_change_after_lost_session").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 	let proxy = srv.start_proxy_no_mailbox(DropFirstFinishRequestProxy::new()).await;
 
 	// Manual sync only, so the test controls each recovery step.

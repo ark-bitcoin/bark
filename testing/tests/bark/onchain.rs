@@ -22,7 +22,7 @@ async fn bark_address_changes() {
 async fn list_utxos() {
 	let ctx = TestContext::new("bark/list_utxos").await;
 
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board(sat(200_000)).await;

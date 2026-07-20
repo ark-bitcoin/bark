@@ -385,6 +385,9 @@ async fn max_vtxo_amount() {
 
 	// but we can offboard the entire amount!
 	bark1.unset_timeout();
+	// Settle the pool before the offboard, else it can be funded from an
+	// unconfirmed pool issuance tx.
+	srv.wait_for_vtxopool(&ctx).await;
 	let address = ctx.bitcoind().get_new_address();
 	bark1.offboard_all(address.clone()).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;

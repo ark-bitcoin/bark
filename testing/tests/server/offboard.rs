@@ -73,6 +73,7 @@ async fn utxos_unlock_after_pending_offboard_expiry() {
 
 	let ctx = TestContext::new("server/utxos_unlock_after_pending_offboard_expiry").await;
 	let srv = ctx.captaind("server")
+		.no_vtxo_pool()
 		.funded(btc(10))
 		.cfg(|c| c.offboard_session_timeout = SESSION_TIMEOUT)
 		.create().await;
@@ -87,9 +88,8 @@ async fn utxos_unlock_after_pending_offboard_expiry() {
 		.boarded(btc(6))
 		.create().await;
 
-	// Premise: the rounds wallet cannot fund two 6btc offboard txs at the
-	// same time. The vtxopool issuing pool vtxos out of the 10btc funding
-	// only shrinks the balance further.
+	// Premise: the 10btc rounds wallet cannot fund two 6btc offboard txs at
+	// the same time.
 	let status = srv.wallet_status().await;
 	assert!(status.rounds.trusted_balance < btc(11),
 		"rounds wallet is rich enough to fund two offboards, breaking the \
@@ -145,7 +145,7 @@ async fn utxos_unlock_after_pending_offboard_expiry() {
 #[tokio::test]
 async fn finish_offboard_replays_for_identical_retry() {
 	let ctx = TestContext::new("server/finish_offboard_replays_for_identical_retry").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 	let proxy = srv.start_proxy_no_mailbox(ReplayFinishOffboardProxy).await;
 
 	let wallet = ctx.bark_sdk("bark", &proxy)

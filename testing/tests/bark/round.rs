@@ -630,6 +630,10 @@ async fn multiple_round_participations_dont_race() {
 		.try_into().expect("should have exactly one spendable vtxo after refresh");
 	assert_ne!(old_vtxo_id, new_vtxo.vtxo.id(), "old and new vtxo should not be the same");
 
+	// Settle the pool before the offboard, else it can be funded from an
+	// unconfirmed pool issuance tx.
+	srv.wait_for_vtxopool(&ctx).await;
+
 	// Offboard the new vtxo to prove it is spendable
 	let address = ctx.bitcoind().get_new_address();
 	wallet.offboard_all(address.clone()).await.unwrap();
@@ -688,6 +692,10 @@ async fn refresh_vtxos_and_participate_ongoing_rounds_dont_race() {
 	let [new_vtxo] = wallet.spendable_vtxos().await.unwrap()
 		.try_into().expect("should have exactly one spendable vtxo after refresh");
 	assert_ne!(old_vtxo_id, new_vtxo.vtxo.id(), "old and new vtxo should not be the same");
+
+	// Settle the pool before the offboard, else it can be funded from an
+	// unconfirmed pool issuance tx.
+	srv.wait_for_vtxopool(&ctx).await;
 
 	// Offboard the new vtxo to prove it is spendable
 	let address = ctx.bitcoind().get_new_address();
@@ -768,6 +776,10 @@ async fn participate_round_and_progress_pending_dont_race() {
 		.try_into().expect("should have exactly one spendable vtxo after refresh");
 	assert_ne!(old_vtxo_id, new_vtxo.vtxo.id(), "old and new vtxo should not be the same");
 
+	// Settle the pool before the offboard, else it can be funded from an
+	// unconfirmed pool issuance tx.
+	srv.wait_for_vtxopool(&ctx).await;
+
 	// Offboard the new vtxo to prove it is spendable
 	let address = ctx.bitcoind().get_new_address();
 	wallet.offboard_all(address.clone()).await.unwrap();
@@ -841,6 +853,10 @@ async fn participate_round_and_event_stream_processing_dont_race() {
 	let [new_vtxo] = wallet.spendable_vtxos().await.unwrap()
 		.try_into().expect("should have exactly one spendable vtxo after refresh");
 	assert_ne!(old_vtxo_id, new_vtxo.vtxo.id(), "old and new vtxo should not be the same");
+
+	// Settle the pool before the offboard, else it can be funded from an
+	// unconfirmed pool issuance tx.
+	srv.wait_for_vtxopool(&ctx).await;
 
 	// Offboard the new vtxo to prove it is spendable
 	let address = ctx.bitcoind().get_new_address();

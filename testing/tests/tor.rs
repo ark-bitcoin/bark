@@ -70,6 +70,10 @@ async fn smoke_test(
 	assert_eq!(bark1.spendable_balance().await, board_amount);
 	assert_eq!(bark2.spendable_balance().await, board_amount);
 
+	// Settle the pool before offboarding, else the offboard can be funded
+	// from an unconfirmed pool issuance tx.
+	srv.wait_for_vtxopool(&ctx).await;
+
 	// Refresh round — give bark time to connect over Tor before triggering
 	bark1.send_onchain(bark1.get_onchain_address().await, sat(400_000)).await;
 	ctx.generate_blocks(1).await;
@@ -88,7 +92,6 @@ async fn smoke_test(
 
 	// LN send to external node
 	lightning.sync().await;
-	srv.wait_for_vtxopool(&ctx).await;
 	let invoice = lightning.external.invoice(Some(sat(10_000)), "ln_send_ext", "test").await;
 	bark1.pay_lightning_wait(&invoice, None).await;
 	assert_eq!(bark1.spendable_balance().await, sat(489_062));
