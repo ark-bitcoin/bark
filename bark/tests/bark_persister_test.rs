@@ -31,8 +31,7 @@ use bark::movement::{
 use bark::movement::update::MovementUpdate;
 use bark::persist::BarkPersister;
 use bark::persist::models::{
-	PaidInvoice, StoredExit, StoredRoundState, Unlocked,
-	RoundStateId, SerdeRoundState, PendingOffboard,
+	PaidInvoice, StoredExit, StoredRoundState, Unlocked, RoundStateId, SerdeRoundState,
 };
 use bark::round::RoundState;
 use bark::vtxo::{VtxoState, VtxoStateKind};
@@ -101,6 +100,10 @@ impl BarkPersister for Dummy {
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
 		}]))
+	}
+
+	async fn get_wallet_vtxos(&self, _ids: &[VtxoId]) -> anyhow::Result<Vec<WalletVtxo>> {
+		Ok(Vec::new())
 	}
 
 	async fn get_full_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
@@ -281,21 +284,6 @@ impl BarkPersister for Dummy {
 		_new_state: VtxoState,
 		_allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<()> {
-		Ok(())
-	}
-
-	async fn store_pending_offboard(
-		&self,
-		_pending: &PendingOffboard,
-	) -> anyhow::Result<()> {
-		Ok(())
-	}
-
-	async fn get_pending_offboards(&self) -> anyhow::Result<Vec<PendingOffboard>> {
-		Ok(vec![])
-	}
-
-	async fn remove_pending_offboard(&self, _movement_id: MovementId) -> anyhow::Result<()> {
 		Ok(())
 	}
 

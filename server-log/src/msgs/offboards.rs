@@ -32,6 +32,12 @@ pub struct ReplayedOffboardSession {
 impl_slog!(ReplayedOffboardSession, DEBUG, "replayed pending offboard session for identical request");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayedOffboardFinish {
+	pub offboard_txid: Txid,
+}
+impl_slog!(ReplayedOffboardFinish, DEBUG, "replayed finished offboard response for identical request");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedOffboard {
 	pub offboard_txid: Txid,
 	pub input_vtxos: Vec<VtxoId>,

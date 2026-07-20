@@ -180,6 +180,14 @@ pub struct Config {
 	/// Default value: 2 for mainnet
 	pub offboard_required_confirmations: BlockHeight,
 
+	/// How long, in seconds, a broadcast offboard tx may be missing from
+	/// both chain and mempool before the wallet reports the offboard as
+	/// lost. Within the grace period the wallet re-broadcasts the tx
+	/// instead: the chain backend might just be slow or out of sync.
+	///
+	/// Default value: 3600 (one hour)
+	pub offboard_lost_tx_grace_period_secs: u64,
+
 	/// Daemon sync interval in seconds for periodic tasks (onchain, exits,
 	/// boards, offboards, maintenance, rounds, mailbox).
 	///
@@ -220,6 +228,7 @@ impl Config {
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(2)),
 			round_tx_required_confirmations: 1,
 			offboard_required_confirmations: 2,
+			offboard_lost_tx_grace_period_secs: 3600,
 			daemon_sync_interval_secs: 60,
 			daemon_manual_sync: false,
 		};

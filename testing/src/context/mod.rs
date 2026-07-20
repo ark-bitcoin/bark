@@ -380,6 +380,7 @@ impl TestContext {
 				issue_interval: Duration::from_secs(3),
 			},
 			offboard_session_timeout: Duration::from_secs(30),
+			offboard_check_interval: Duration::from_secs(1),
 			offboard_acceptable_fee_rate_duration: Duration::from_secs(60 * 10),
 			fee_estimator: server::fee_estimator::Config {
 				update_interval: Duration::from_secs(60),
@@ -565,6 +566,7 @@ impl TestContext {
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(5)),
 			round_tx_required_confirmations: constants::ROUND_CONFIRMATIONS,
 			offboard_required_confirmations: constants::OFFBOARD_CONFIRMATIONS,
+			offboard_lost_tx_grace_period_secs: 3600,
 			daemon_sync_interval_secs: 3,
 			daemon_manual_sync: false,
 		}

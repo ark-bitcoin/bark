@@ -7,9 +7,10 @@
 //! This module defines the generic vocabulary; per-kind machinery (state
 //! machines, transition functions) lives in submodules.
 
-pub mod lightning;
 pub mod arkoor_send;
 pub mod board;
+pub mod lightning;
+pub mod offboard;
 
 use std::time::Duration;
 
@@ -21,6 +22,7 @@ use crate::actions::arkoor_send::ArkoorSend;
 use crate::actions::board::Board;
 use crate::actions::lightning::pay::LightningSend;
 use crate::actions::lightning::receive::LightningReceive;
+use crate::actions::offboard::Offboard;
 use crate::lock_manager::LockGuard;
 use crate::vtxo::{VtxoState, VtxoStateKind};
 
@@ -37,6 +39,7 @@ pub enum WalletActionCheckpoint {
 	LightningReceive(LightningReceive),
 	ArkoorSend(ArkoorSend),
 	Board(Board),
+	Offboard(Offboard),
 }
 
 impl WalletActionCheckpoint {
@@ -46,6 +49,7 @@ impl WalletActionCheckpoint {
 			WalletActionCheckpoint::LightningReceive(r) => r.id(),
 			WalletActionCheckpoint::ArkoorSend(s) => s.id(),
 			WalletActionCheckpoint::Board(s) => s.id(),
+			WalletActionCheckpoint::Offboard(o) => o.id(),
 		}
 	}
 
@@ -104,6 +108,20 @@ impl WalletActionCheckpoint {
 			_ => None,
 		}
 	}
+
+	pub fn as_offboard(&self) -> Option<&Offboard> {
+		match self {
+			WalletActionCheckpoint::Offboard(o) => Some(o),
+			_ => None,
+		}
+	}
+
+	pub fn into_offboard(self) -> Option<Offboard> {
+		match self {
+			WalletActionCheckpoint::Offboard(o) => Some(o),
+			_ => None,
+		}
+	}
 }
 
 impl From<LightningSend> for WalletActionCheckpoint {
@@ -127,6 +145,12 @@ impl From<ArkoorSend> for WalletActionCheckpoint {
 impl From<Board> for WalletActionCheckpoint {
 	fn from(s: Board) -> Self {
 		WalletActionCheckpoint::Board(s)
+	}
+}
+
+impl From<Offboard> for WalletActionCheckpoint {
+	fn from(o: Offboard) -> Self {
+		WalletActionCheckpoint::Offboard(o)
 	}
 }
 
@@ -251,7 +275,16 @@ pub trait WalletAction: Sized + Send + Sync {
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError>;
 
 	/// Called when the action should be retried
-	async fn on_retry(self, _wallet: &Wallet, attempts: u32) -> anyhow::Result<Advance<Self>> {
+	///
+	/// `error` is the failure that triggered the retry; implementations can
+	/// attach it to their park so callers driving [DriveMode::UntilParkOrDone]
+	/// see why the action stopped.
+	async fn on_retry(
+		self,
+		_wallet: &Wallet,
+		attempts: u32,
+		_error: AdvanceError,
+	) -> anyhow::Result<Advance<Self>> {
 		Ok(park_with_backoff(self, attempts))
 	}
 
@@ -416,7 +449,7 @@ impl Wallet {
 				Err(e) => {
 					retries = retries.saturating_add(1);
 					log::error!("Got error {:?} from action {}, retrying", e, id);
-					snapshot.on_retry(self, retries).await.inspect_err(|err| {
+					snapshot.on_retry(self, retries, e).await.inspect_err(|err| {
 						warn!("action {} on_retry failed, leaving checkpoint for retry: {:#}", id, err);
 					})?
 				},

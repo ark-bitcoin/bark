@@ -443,6 +443,12 @@ pub struct Config {
 	#[serde(with = "utils::serde::duration")]
 	pub offboard_session_timeout: Duration,
 
+	/// How often we check pending offboards: expiring sessions that reached
+	/// [Config::offboard_session_timeout] and retrying the commit and
+	/// broadcast of signed offboard txs.
+	#[serde(with = "utils::serde::duration")]
+	pub offboard_check_interval: Duration,
+
 	/// The time in which a fee rate is considered valid for performing an offboard.
 	///
 	/// This allows us to handle the case where clients don't receive up-to-date fee rates due to
@@ -532,6 +538,14 @@ impl Config {
 	pub fn validate(&self) -> anyhow::Result<()> {
 		self.bitcoind.validate()?;
 		self.fees.validate()?;
+
+		if self.offboard_check_interval > self.offboard_session_timeout {
+			bail!("Invalid configuration: offboard_check_interval ({:?}) may not \
+				exceed offboard_session_timeout ({:?}), otherwise sessions linger \
+				past their timeout between checks.",
+				self.offboard_check_interval, self.offboard_session_timeout,
+			);
+		}
 
 		Ok(())
 	}
@@ -721,6 +735,19 @@ mod test {
 		cfg.bitcoind.rpc_user = bitcoind_rpc_user.clone();
 		cfg.bitcoind.rpc_pass = bitcoind_rpc_pass.clone();
 		cfg.validate().expect_err("Invalid. Either cookie or pass but not both");
+	}
+
+	#[test]
+	fn validate_offboard_check_interval() {
+		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+		cfg.bitcoind.cookie = Some(".cookie".into());
+
+		cfg.offboard_session_timeout = Duration::from_secs(30);
+		cfg.offboard_check_interval = Duration::from_secs(30);
+		cfg.validate().expect("checking exactly once per timeout is valid");
+
+		cfg.offboard_check_interval = Duration::from_secs(31);
+		cfg.validate().expect_err("Invalid because sessions would outlive their timeout");
 	}
 
 	#[test]

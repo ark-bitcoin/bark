@@ -1,6 +1,7 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tokio_stream::Stream;
@@ -168,11 +169,29 @@ impl ArkRpcProxy for () {}
 pub struct ArkRpcProxyServer {
 	pub stop: tokio::sync::oneshot::Sender<()>,
 	pub address: String,
+	ark_upstream: Arc<RwLock<ArkClient>>,
+	mailbox_upstream: Arc<RwLock<MailboxClient>>,
+}
+
+impl ArkRpcProxyServer {
+	/// Point the ark proxy at a new upstream client, e.g. after the
+	/// server restarted on fresh ports.
+	pub fn set_ark_upstream(&self, client: ArkClient) {
+		*self.ark_upstream.write().unwrap() = client;
+	}
+
+	/// Point the mailbox proxy at a new upstream client, e.g. after the
+	/// server restarted on fresh ports.
+	pub fn set_mailbox_upstream(&self, client: MailboxClient) {
+		*self.mailbox_upstream.write().unwrap() = client;
+	}
 }
 
 impl ArkRpcProxyServer {
 	/// Run an ark proxy server.
 	pub async fn start(ark: (impl ArkRpcProxy, ArkClient), mailbox: (impl MailboxRpcProxy, MailboxClient)) -> ArkRpcProxyServer {
+		let ark_upstream = Arc::new(RwLock::new(ark.1));
+		let mailbox_upstream = Arc::new(RwLock::new(mailbox.1));
 		loop {
 			let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
 			let stop_rx = futures::FutureExt::map(stop_rx, |_| ());
@@ -181,12 +200,12 @@ impl ArkRpcProxyServer {
 			let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 			let ark_server = rpc::server::ArkServiceServer::new(ArkRpcProxyWrapper {
 				proxy: ark.0.clone(),
-				upstream: ark.1.clone(),
+				upstream: ark_upstream.clone(),
 			});
 
 			let mailbox_server = rpc::server::MailboxServiceServer::new(MailboxRpcProxyWrapper {
 				proxy: mailbox.0.clone(),
-				upstream: mailbox.1.clone(),
+				upstream: mailbox_upstream.clone(),
 			});
 
 			// The serve_with_shutdown call stays running if the port number
@@ -225,6 +244,8 @@ impl ArkRpcProxyServer {
 			return ArkRpcProxyServer {
 				stop: stop_tx,
 				address: addr,
+				ark_upstream,
+				mailbox_upstream,
 			};
 		}
 	}
@@ -233,7 +254,13 @@ impl ArkRpcProxyServer {
 /// A wrapper struct around a proxy implementation to run a tonic server.
 struct ArkRpcProxyWrapper<T: ArkRpcProxy> {
 	proxy: T,
-	upstream: ArkClient,
+	upstream: Arc<RwLock<ArkClient>>,
+}
+
+impl<T: ArkRpcProxy> ArkRpcProxyWrapper<T> {
+	fn upstream_client(&self) -> ArkClient {
+		self.upstream.read().unwrap().clone()
+	}
 }
 
 #[async_trait]
@@ -241,56 +268,56 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	async fn handshake(
 		&self, req: tonic::Request<protos::HandshakeRequest>,
 	) -> Result<tonic::Response<protos::HandshakeResponse>, tonic::Status> {
-		Ok(tonic::Response::new(ArkRpcProxy::handshake(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::handshake(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn get_ark_info(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::ArkInfo>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::get_ark_info(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::get_ark_info(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn get_offboard_fee_rate(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::OffboardFeeRateResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::get_offboard_fee_rate(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::get_offboard_fee_rate(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn get_vtxo(
 		&self, req: tonic::Request<protos::GetVtxoRequest>,
 	) -> Result<tonic::Response<protos::GetVtxoResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::get_vtxo(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::get_vtxo(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn get_vtxo_status(
 		&self, req: tonic::Request<protos::GetVtxoStatusRequest>,
 	) -> Result<tonic::Response<protos::GetVtxoStatusResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::get_vtxo_status(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::get_vtxo_status(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn request_board_cosign(
 		&self, req: tonic::Request<protos::BoardCosignRequest>,
 	) -> Result<tonic::Response<protos::BoardCosignResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::request_board_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::request_board_cosign(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn register_board_vtxo(
 		&self, req: tonic::Request<protos::BoardVtxoRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::register_board_vtxo(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::register_board_vtxo(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn register_vtxo_transactions(
 		&self, req: tonic::Request<protos::RegisterVtxoTransactionsRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::register_vtxo_transactions(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::register_vtxo_transactions(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	#[allow(deprecated)]
@@ -298,21 +325,21 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::RegisterVtxoTransactionsRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::register_vtxos(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::register_vtxos(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn request_arkoor_cosign(
 		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::request_arkoor_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::request_arkoor_cosign(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn request_lightning_pay_htlc_cosign(
 		&self, req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_cosign(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn initiate_lightning_payment(
@@ -320,7 +347,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
 		#[allow(deprecated)]
-		Ok(tonic::Response::new(ArkRpcProxy::initiate_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::initiate_lightning_payment(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn check_lightning_payment(
@@ -328,21 +355,21 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	) -> Result<tonic::Response<protos::LightningPaymentStatus>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
 		#[allow(deprecated)]
-		Ok(tonic::Response::new(ArkRpcProxy::check_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::check_lightning_payment(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn request_lightning_pay_htlc_revocation(
 		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_revocation(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_revocation(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn fetch_bolt12_invoice(
 		&self, req: tonic::Request<protos::FetchBolt12InvoiceRequest>,
 	) -> Result<tonic::Response<protos::FetchBolt12InvoiceResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::fetch_bolt12_invoice(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::fetch_bolt12_invoice(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn start_lightning_receive(
@@ -350,7 +377,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::StartLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::StartLightningReceiveResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::start_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::start_lightning_receive(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn cancel_lightning_receive(
@@ -358,7 +385,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::CancelLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::cancel_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::cancel_lightning_receive(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn check_lightning_receive(
@@ -366,28 +393,28 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::CheckLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::CheckLightningReceiveResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::check_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::check_lightning_receive(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn prepare_lightning_receive_claim(
 		&self, req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>,
 	) -> Result<tonic::Response<protos::PrepareLightningReceiveClaimResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::prepare_lightning_receive_claim(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::prepare_lightning_receive_claim(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn claim_lightning_receive(
 		&self, req: tonic::Request<protos::ClaimLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::claim_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::claim_lightning_receive(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn next_round_time(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::NextRoundTimeResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::next_round_time(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::next_round_time(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	type SubscribeRoundsStream = Box<
@@ -398,28 +425,28 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::subscribe_rounds(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::subscribe_rounds(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn last_round_event(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::RoundEvent>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::last_round_event(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::last_round_event(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn submit_payment(
 		&self, req: tonic::Request<protos::SubmitPaymentRequest>,
 	) -> Result<tonic::Response<protos::SubmitPaymentResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::submit_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::submit_payment(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn provide_vtxo_signatures(
 		&self, req: tonic::Request<protos::VtxoSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::provide_vtxo_signatures(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::provide_vtxo_signatures(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn submit_round_participation(
@@ -427,7 +454,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::RoundParticipationRequest>,
 	) -> Result<tonic::Response<protos::RoundParticipationResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::submit_round_participation(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::submit_round_participation(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn round_participation_status(
@@ -435,7 +462,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::RoundParticipationStatusRequest>,
 	) -> Result<tonic::Response<protos::RoundParticipationStatusResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::round_participation_status(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::round_participation_status(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn request_leaf_vtxo_cosign(
@@ -443,7 +470,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::LeafVtxoCosignRequest>,
 	) -> Result<tonic::Response<protos::LeafVtxoCosignResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::request_leaf_vtxo_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::request_leaf_vtxo_cosign(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn request_forfeit_nonces(
@@ -451,7 +478,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::ForfeitNoncesRequest>,
 	) -> Result<tonic::Response<protos::ForfeitNoncesResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::request_forfeit_nonces(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::request_forfeit_nonces(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn forfeit_vtxos(
@@ -459,7 +486,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::ForfeitVtxosRequest>,
 	) -> Result<tonic::Response<protos::ForfeitVtxosResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::forfeit_vtxos(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::forfeit_vtxos(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn prepare_offboard(
@@ -467,7 +494,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::PrepareOffboardRequest>,
 	) -> Result<tonic::Response<protos::PrepareOffboardResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::prepare_offboard(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::prepare_offboard(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn finish_offboard(
@@ -475,7 +502,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::FinishOffboardRequest>,
 	) -> Result<tonic::Response<protos::FinishOffboardResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(ArkRpcProxy::finish_offboard(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(ArkRpcProxy::finish_offboard(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 }
 
@@ -510,7 +537,13 @@ pub trait MailboxRpcProxy: Send + Sync + Clone + 'static {
 /// A wrapper struct around a proxy implementation to run a tonic server.
 struct MailboxRpcProxyWrapper<T: MailboxRpcProxy> {
 	proxy: T,
-	upstream: MailboxClient,
+	upstream: Arc<RwLock<MailboxClient>>,
+}
+
+impl<T: MailboxRpcProxy> MailboxRpcProxyWrapper<T> {
+	fn upstream_client(&self) -> MailboxClient {
+		self.upstream.read().unwrap().clone()
+	}
 }
 
 #[async_trait]
@@ -519,14 +552,14 @@ impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<
 		&self, req: tonic::Request<protos::mailbox_server::PostArkoorMessageRequest>,
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(MailboxRpcProxy::post_arkoor_message(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(MailboxRpcProxy::post_arkoor_message(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn read_mailbox(
 		&self, req: tonic::Request<protos::mailbox_server::MailboxRequest>,
 	) -> Result<tonic::Response<protos::mailbox_server::MailboxMessages>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(MailboxRpcProxy::read_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(MailboxRpcProxy::read_mailbox(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	type SubscribeMailboxStream = Box<
@@ -537,14 +570,14 @@ impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<
 		&self, req: tonic::Request<protos::mailbox_server::MailboxRequest>,
 	) -> Result<tonic::Response<Self::SubscribeMailboxStream>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(MailboxRpcProxy::subscribe_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(MailboxRpcProxy::subscribe_mailbox(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn post_recovery_vtxo_ids(
 		&self, req: tonic::Request<protos::mailbox_server::PostRecoveryVtxoIdsRequest>,
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
-		Ok(tonic::Response::new(MailboxRpcProxy::post_recovery_vtxo_ids(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(MailboxRpcProxy::post_recovery_vtxo_ids(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 }
 

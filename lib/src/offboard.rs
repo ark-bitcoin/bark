@@ -12,14 +12,15 @@
 use std::borrow::Borrow;
 
 use bitcoin::{
-	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Txid, Witness
+	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Txid,
+	Witness,
 };
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{Prevouts, SighashCache};
 
-use bitcoin_ext::{fee, BlockDelta, BlockHeight, KeypairExt, TxOutExt, P2TR_DUST};
+use bitcoin_ext::{fee, BlockDelta, BlockHeight, KeypairExt, NonStandardOutput, TxOutExt, P2TR_DUST};
 
 use crate::{musig, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, SECP};
 use crate::connectors::construct_multi_connector_fanout_tx;
@@ -37,7 +38,13 @@ const CONNECTOR_EXPIRY_DELTA: BlockDelta = 144;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
 #[error("invalid offboard request: {0}")]
-pub struct InvalidOffboardRequestError(&'static str);
+pub struct InvalidOffboardRequestError(String);
+
+impl From<NonStandardOutput> for InvalidOffboardRequestError {
+	fn from(err: NonStandardOutput) -> Self {
+		Self(format!("{:#}", err))
+	}
+}
 
 /// Contains information regarding an offboard that a client would like to perform.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
@@ -59,10 +66,7 @@ pub struct OffboardRequest {
 impl OffboardRequest {
 	/// Validate that the offboard has a valid script.
 	pub fn validate(&self) -> Result<(), InvalidOffboardRequestError> {
-		if !self.to_txout().is_standard() {
-			return Err(InvalidOffboardRequestError("non-standard output"));
-		}
-		Ok(())
+		Ok(self.to_txout().check_standard()?)
 	}
 
 	/// Convert into a tx output.
@@ -136,10 +140,11 @@ pub struct OffboardForfeitContext<'a, V> {
 	offboard_tx: &'a Transaction,
 }
 
-impl<'a, V> OffboardForfeitContext<'a, V>
-where
-	V: AsRef<Vtxo<Full>>,
-{
+/// Construction and validation work with any VTXO representation: they
+/// only need the number of inputs, so the client can validate a prepared
+/// offboard tx with bare wallet vtxos. Only signing and finishing need
+/// the full form; those methods are bounded on `AsRef<Vtxo<Full>>` below.
+impl<'a, V> OffboardForfeitContext<'a, V> {
 	/// Create a new [OffboardForfeitContext] with given input VTXOs and offboard tx
 	///
 	/// Number of input VTXOs must not be zero.
@@ -184,7 +189,12 @@ where
 
 		Ok(())
 	}
+}
 
+impl<'a, V> OffboardForfeitContext<'a, V>
+where
+	V: AsRef<Vtxo<Full>>,
+{
 	/// Sign forfeit transactions for all input VTXOs
 	///
 	/// Provide the keys for the VTXO pubkeys in order of the input VTXOs.

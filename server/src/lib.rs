@@ -199,7 +199,7 @@ pub struct Server {
 	htlc_settler: Arc<HtlcSettler>,
 	vtxopool: VtxoPool,
 	watchman_handle: Option<watchman::WatchmanHandle>,
-	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, Option<offboards::PendingOffboard>>>,
+	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, offboards::OffboardSession>>,
 	fee_estimator: Arc<FeeEstimator>,
 	/// scriptPubkeys in the bitcoin address blocklist
 	bitcoin_address_blocklist: Option<BitcoinAddressBlocklist>,

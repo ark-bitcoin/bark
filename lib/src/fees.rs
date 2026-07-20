@@ -3,7 +3,7 @@ use std::ops;
 
 use bitcoin::{Amount, FeeRate, ScriptBuf, Weight};
 
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
+use bitcoin_ext::{BlockHeight};
 
 use crate::Vtxo;
 
@@ -320,10 +320,11 @@ pub enum FeeValidationError {
 	#[error("Fee ({fee}) exceeds amount ({amount})")]
 	FeeExceedsAmount { amount: Amount, fee: Amount },
 
-	#[error("Amount after fee ({amount_after_fee}) is below dust limit ({P2TR_DUST}). Amount: {amount}, Fee: {fee}")]
+	#[error("Amount after fee ({amount_after_fee}) is below dust limit ({dust}). Amount: {amount}, Fee: {fee}")]
 	AmountAfterFeeBelowDust {
 		amount: Amount,
 		fee: Amount,
+		dust: Amount,
 		amount_after_fee: Amount,
 	},
 }
@@ -376,7 +377,7 @@ pub fn validate_and_subtract_fee(
 ///
 /// This function ensures two critical conditions are met:
 /// 1. Fee doesn't exceed the original amount (prevents overflow)
-/// 2. Amount after fee is >= P2TR_DUST (ensures economically viable output)
+/// 2. Amount after fee is >= dust (ensures economically viable output)
 ///
 /// # Returns
 /// * `Ok(Amount)` - The amount after subtracting the fee
@@ -385,45 +386,49 @@ pub fn validate_and_subtract_fee(
 /// # Example
 /// ```
 /// use ark::fees::{validate_and_subtract_fee_min_dust, FeeValidationError};
+/// use ark::vtxo::VTXO_DUST;
 /// use bitcoin::Amount;
-/// use bitcoin_ext::P2TR_DUST;
 ///
+/// let dust = VTXO_DUST;
 /// let amount = Amount::from_sat(10_000);
 /// let fee = Amount::from_sat(100);
-/// let result = validate_and_subtract_fee_min_dust(amount, fee);
+/// let result = validate_and_subtract_fee_min_dust(amount, fee, dust);
 /// assert_eq!(result.unwrap(), Amount::from_sat(9_900));
 ///
 /// let amount = Amount::from_sat(10_000);
 /// let fee = Amount::from_sat(9_670);
-/// let result = validate_and_subtract_fee_min_dust(amount, fee);
-/// assert_eq!(result.unwrap(), P2TR_DUST);
+/// let result = validate_and_subtract_fee_min_dust(amount, fee, dust);
+/// assert_eq!(result.unwrap(), dust);
 ///
 /// let amount = Amount::from_sat(10_000);
 /// let fee = Amount::from_sat(11_000);
-/// let result = validate_and_subtract_fee_min_dust(amount, fee);
-/// assert_eq!(result.unwrap_err(), FeeValidationError::FeeExceedsAmount { amount, fee });
+/// let result = validate_and_subtract_fee_min_dust(amount, fee, dust);
+/// assert_eq!(result.unwrap_err(), FeeValidationError::FeeExceedsAmount { amount, fee, });
 ///
 /// let amount = Amount::from_sat(10_000);
 /// let fee = Amount::from_sat(10_000);
-/// let result = validate_and_subtract_fee_min_dust(amount, fee);
+/// let result = validate_and_subtract_fee_min_dust(amount, fee, dust);
 /// assert_eq!(result.unwrap_err(), FeeValidationError::AmountAfterFeeBelowDust {
 /// 	amount,
 /// 	fee,
+/// 	dust,
 /// 	amount_after_fee: amount - fee,
 /// });
 /// ```
 pub fn validate_and_subtract_fee_min_dust(
 	amount: Amount,
 	fee: Amount,
+	dust: Amount,
 ) -> Result<Amount, FeeValidationError> {
 	let amount_after_fee = amount.checked_sub(fee)
 		.ok_or(FeeValidationError::FeeExceedsAmount { amount, fee })?;
 
-	// amount - fee must be >= P2TR_DUST
-	if amount_after_fee < P2TR_DUST {
+	// amount - fee must be >= dust
+	if amount_after_fee < dust {
 		return Err(FeeValidationError::AmountAfterFeeBelowDust {
 			amount,
 			fee,
+			dust,
 			amount_after_fee,
 		});
 	}

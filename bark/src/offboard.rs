@@ -1,459 +1,75 @@
 
 use anyhow::Context;
-use bitcoin::{Amount, SignedAmount, Transaction, Txid};
-use bitcoin::hashes::Hash;
-use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::Keypair;
-use log::{info, trace, warn};
+use bitcoin::{Amount, Txid};
+use log::{info, warn};
 
-use ark::{musig, ProtocolEncoding, Vtxo, VtxoPolicy};
-use ark::arkoor::ArkoorDestination;
-use ark::attestations::OffboardRequestAttestation;
-use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
-use ark::offboard::{OffboardForfeitContext, OffboardRequest};
-use ark::vtxo::{Full, VtxoRef};
-use bitcoin_ext::{BlockHeight, TxStatus, P2TR_DUST};
-use server_rpc::{protos, ServerConnection, TryFromBytes};
+use ark::vtxo::VtxoRef;
 
-use crate::movement::manager::OnDropStatus;
-use crate::{Wallet, WalletVtxo};
-use crate::movement::update::MovementUpdate;
-use crate::movement::{MovementDestination, MovementStatus};
-use crate::persist::models::PendingOffboard;
-use crate::subsystem::{OffboardMovement, Subsystem};
-use crate::vtxo::{VtxoState, VtxoStateKind};
-use crate::vtxo::selection::InputSelection;
+use crate::Wallet;
+use crate::actions::{DriveMode, WalletActionId};
+use crate::actions::offboard::{Offboard, Progress, StartOffboardSpec, start_offboard};
 
 impl Wallet {
-	/// Checks pending offboard transactions for confirmation status.
-	///
-	/// - On confirmation with enough confs (or mempool with 0 required confs): finalize as successful.
-	/// - On `NotFound`: wait at least 1 hour before canceling, in case the chain backend is slow.
-	/// - On error (e.g. network drop): log and keep waiting — don't cancel due to transient failures.
-	pub async fn sync_pending_offboards(&self) -> anyhow::Result<()> {
-		let pending_offboards: Vec<PendingOffboard> = self.inner.db.get_pending_offboards().await?;
-
-		if pending_offboards.is_empty() {
-			return Ok(());
-		}
-
-		let current_height = self.inner.chain.tip().await?;
-		let required_confs = self.inner.config.offboard_required_confirmations;
-
-		trace!("Checking {} pending offboard transaction(s)", pending_offboards.len());
-
-		for pending in pending_offboards {
-			let status = self.inner.chain.tx_status(pending.offboard_txid).await;
-
-			match status {
-				Ok(TxStatus::Confirmed(block_ref)) => {
-					let confs = current_height.saturating_sub(block_ref.height).saturating_add(1);
-					if confs < required_confs as BlockHeight {
-						trace!(
-							"Offboard tx {} has {}/{} confirmations, waiting...",
-							pending.offboard_txid, confs, required_confs,
-						);
-						continue;
-					}
-
-					info!(
-						"Offboard tx {} confirmed, finalizing movement {}",
-						pending.offboard_txid, pending.movement_id,
-					);
-
-					// Mark VTXOs as spent
-					for vtxo_id in &pending.vtxo_ids {
-						if let Err(e) = self.inner.db.update_vtxo_state_checked(
-							*vtxo_id,
-							VtxoState::Spent,
-							&[VtxoStateKind::Locked],
-						).await {
-							warn!("Failed to mark vtxo {} as spent: {:#}", vtxo_id, e);
-						}
-					}
-
-					// Finish the movement as successful
-					if let Err(e) = self.inner.movements.finish_movement(
-						pending.movement_id,
-						MovementStatus::Successful,
-					).await {
-						warn!("Failed to finish movement {}: {:#}", pending.movement_id, e);
-					}
-
-					self.inner.db.remove_pending_offboard(pending.movement_id).await?;
-				}
-				Ok(TxStatus::Mempool) => {
-					if required_confs == 0 {
-						info!(
-							"Offboard tx {} in mempool with 0 required confirmations, \
-							finalizing movement {}",
-							pending.offboard_txid, pending.movement_id,
-						);
-
-						// Mark VTXOs as spent
-						for vtxo_id in &pending.vtxo_ids {
-							if let Err(e) = self.inner.db.update_vtxo_state_checked(
-								*vtxo_id,
-								VtxoState::Spent,
-								&[VtxoStateKind::Locked],
-							).await {
-								warn!("Failed to mark vtxo {} as spent: {:#}", vtxo_id, e);
-							}
-						}
-
-						// Finish the movement as successful
-						if let Err(e) = self.inner.movements.finish_movement(
-							pending.movement_id,
-							MovementStatus::Successful,
-						).await {
-							warn!("Failed to finish movement {}: {:#}", pending.movement_id, e);
-						}
-
-						self.inner.db.remove_pending_offboard(pending.movement_id).await?;
-					} else {
-						trace!(
-							"Offboard tx {} still in mempool, waiting...",
-							pending.offboard_txid,
-						);
-					}
-				}
-				Ok(TxStatus::NotFound) => {
-					// Don't cancel immediately — the chain backend might be slow
-					// or temporarily out of sync. Wait at least 1 hour before
-					// treating the tx as truly lost.
-					let age = chrono::Local::now() - pending.created_at;
-					if age < chrono::Duration::hours(1) {
-						trace!(
-							"Offboard tx {} not found, but only {} minutes old — waiting...",
-							pending.offboard_txid, age.num_minutes(),
-						);
-						continue;
-					}
-
-					warn!(
-						"Offboard tx {} not found after {} minutes, canceling movement {}",
-						pending.offboard_txid, age.num_minutes(), pending.movement_id,
-					);
-
-					// Restore VTXOs to spendable
-					for vtxo_id in &pending.vtxo_ids {
-						if let Err(e) = self.inner.db.update_vtxo_state_checked(
-							*vtxo_id,
-							VtxoState::Spendable,
-							&[VtxoStateKind::Locked],
-						).await {
-							warn!("Failed to restore vtxo {} to spendable: {:#}", vtxo_id, e);
-						}
-					}
-
-					// Finish the movement as failed
-					if let Err(e) = self.inner.movements.finish_movement(
-						pending.movement_id,
-						MovementStatus::Failed,
-					).await {
-						warn!("Failed to fail movement {}: {:#}", pending.movement_id, e);
-					}
-
-					self.inner.db.remove_pending_offboard(pending.movement_id).await?;
-				}
-				Err(e) => {
-					warn!(
-						"Failed to check status of offboard tx {}: {:#}",
-						pending.offboard_txid, e,
-					);
-				}
+	/// Returns every in-progress offboard checkpoint.
+	pub async fn pending_offboards(&self) -> anyhow::Result<Vec<Offboard>> {
+		let mut result = Vec::new();
+		for cp in self.inner.db.get_all_wallet_action_checkpoints().await? {
+			if let Some(o) = cp.into_offboard() {
+				result.push(o);
 			}
 		}
+		Ok(result)
+	}
 
+	/// Drives every pending offboard forward by one step (or to completion
+	/// if it's ready). Each action runs to its next park independently;
+	/// errors on one don't stop the others.
+	pub async fn sync_pending_offboards(&self) -> anyhow::Result<()> {
+		let pending = self.pending_offboards().await?;
+		if pending.is_empty() {
+			return Ok(());
+		}
+		info!("Syncing {} pending offboard(s)", pending.len());
+		for action in pending {
+			let id = action.id();
+			if let Err(e) = self.drive_action(action, DriveMode::UntilParkOrDone).await {
+				warn!("Failed to sync offboard {}: {:#}", id, e);
+			}
+		}
 		Ok(())
 	}
 
-	async fn offboard_inner(
-		&self,
-		srv: &mut ServerConnection,
-		vtxos: &[impl AsRef<Vtxo<Full>>],
-		vtxo_keys: &[Keypair],
-		req: &OffboardRequest,
-	) -> anyhow::Result<Transaction> {
-		let input_ids = vtxos.iter().map(|v| v.as_ref().id()).collect::<Vec<_>>();
-		if input_ids.len() > srv.ark_info().await.max_offboard_inputs {
-			bail!("too many offboard input VTXOs");
-		}
-
-		// Register VTXO transaction chains with server before offboarding
-		self.register_vtxo_transactions_with_server(&vtxos).await?;
-
-		let prep_resp = srv.client.prepare_offboard(protos::PrepareOffboardRequest {
-			offboard: Some(req.into()),
-			input_vtxo_ids: input_ids.iter()
-				.map(|id| id.to_bytes().to_vec())
-				.collect(),
-			attestation: vtxo_keys.iter()
-				.map(|k| OffboardRequestAttestation::new(req, &input_ids, k).serialize())
-				.collect(),
-		}).await.context("prepare offboard request failed")?.into_inner();
-		let unsigned_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(
-			&prep_resp.offboard_tx,
-		).with_context(|| format!(
-			"received invalid unsigned offboard tx from server: {}", prep_resp.offboard_tx.as_hex(),
-		))?;
-		let offboard_txid = unsigned_offboard_tx.compute_txid();
-		info!("Received unsigned offboard tx {} from server", offboard_txid);
-		let forfeit_cosign_nonces = prep_resp.forfeit_cosign_nonces.into_iter().map(|n| {
-			Ok(musig::PublicNonce::from_bytes(&n)
-				.context("received invalid public cosign nonce from server")?)
-		}).collect::<anyhow::Result<Vec<_>>>()?;
-
-		let ctx = OffboardForfeitContext::new(&vtxos, &unsigned_offboard_tx);
-		ctx.validate_offboard_tx(&req).context("received invalid offboard tx from server")?;
-
-		let sigs = ctx.user_sign_forfeits(&vtxo_keys, &forfeit_cosign_nonces);
-
-		let finish_resp = srv.client.finish_offboard(protos::FinishOffboardRequest {
-			offboard_txid: offboard_txid.as_byte_array().to_vec(),
-			user_nonces: sigs.public_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
-			partial_signatures: sigs.partial_signatures.iter()
-				.map(|s| s.serialize().to_vec())
-				.collect(),
-		}).await.context("error sending offboard forfeit signatures to server")?.into_inner();
-
-		let signed_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(
-			&finish_resp.signed_offboard_tx,
-		).with_context(|| format!(
-			"received invalid offboard tx from server: {}", finish_resp.signed_offboard_tx.as_hex(),
-		))?;
-		if signed_offboard_tx.compute_txid() != offboard_txid {
-			bail!("Signed offboard tx received from server is different from \
-				unsigned tx we forfeited for: unsigned={}, signed={}",
-				prep_resp.offboard_tx.as_hex(), finish_resp.signed_offboard_tx.as_hex(),
-			);
-		}
-
-		// we don't accept the tx if our mempool doesn't accept it, it might be a double spend
-		self.inner.chain.broadcast_tx(&signed_offboard_tx).await.with_context(|| format!(
-			"error broadcasting offboard tx {} (tx={})",
-			offboard_txid, finish_resp.signed_offboard_tx.as_hex(),
-		))?;
-
-		Ok(signed_offboard_tx)
+	/// Fetches the current checkpoint for the given action id, if any.
+	pub async fn offboard_checkpoint(&self, id: &WalletActionId)
+		-> anyhow::Result<Option<Offboard>>
+	{
+		Ok(self.inner.db.get_wallet_action_checkpoint(id).await?
+			.and_then(|cp| cp.into_offboard()))
 	}
 
-	/// Send to an onchain address using your offchain balance
+	/// Send to an onchain address using your offchain balance.
+	///
+	/// We can only offboard whole VTXOs, so this kicks off an arkoor
+	/// split first to produce an exact-sized vtxo plus change, then
+	/// offboards the new vtxo.
 	pub async fn send_onchain(
 		&self,
 		destination: bitcoin::Address,
 		amount: Amount,
 	) -> anyhow::Result<Txid> {
-		if amount < P2TR_DUST {
-			bail!("it doesn't make sense to send dust");
-		}
-
-		let (mut srv, ark) = self.require_server().await?;
-		let offboard_feerate = srv.offboard_feerate().await?;
-		let tip = self.inner.chain.tip().await?;
-
-		let destination_spk = destination.script_pubkey();
-		let (vtxos, fee) = InputSelection::new()
-			.max_inputs(srv.ark_info().await.max_offboard_inputs)
-			.fee_scheme(tip, |a, v| {
-				ark.fees.offboard.calculate(&destination_spk, a, offboard_feerate, v)
-					.ok_or_else(|| anyhow!("failed to calculate offboard fee for {}", a))
-			})
-			.select(self.spendable_vtxos().await?, amount)?;
-		let required_amount = amount + fee;
-
-		info!("We can only offboard whole VTXOs, so we will make an arkoor tx first...");
-
-		// this will be the key that holds the temporary vtxos we will offboard
-		let offboard_pubkey = self.derive_store_next_keypair().await
-			.context("failed to create new keypair")?.0;
-		let offboard_dest = ArkoorDestination {
-			total_amount: required_amount,
-			policy: VtxoPolicy::new_pubkey(offboard_pubkey.public_key()),
-		};
-		// Peek the change keypair without storing it. We only persist the
-		// index below if the arkoor actually produced a change vtxo.
-		let (change_keypair, change_key_index) = self.peek_next_keypair().await
-			.context("failed to derive arkoor change keypair")?;
-		let arkoor = self.create_checkpointed_arkoor_with_vtxos(
-			offboard_dest, vtxos.into_iter(), change_keypair,
-		).await.context("error trying to prepare offboard VTXOs with an arkoor tx")?;
-		if !arkoor.change.is_empty() {
-			self.inner.db.store_vtxo_key(change_key_index, change_keypair.public_key()).await
-				.context("failed to store arkoor change keypair")?;
-		}
-
-		self.store_spendable_vtxos(&arkoor.change).await
-			.context("error storing change VTXOs from preparatory arkoor")?;
-		self.store_locked_vtxos(&arkoor.created, None).await
-			.context("error storing new VTXOs (locked) from preparatory arkoor")?;
-		self.mark_vtxos_as_spent(&arkoor.inputs).await
-			.context("error marking used input VTXOs as spent")?;
-
-		let mut movement = self.inner.movements.new_guarded_movement_with_update(
-			Subsystem::OFFBOARD,
-			OffboardMovement::SendOnchain.to_string(),
-			OnDropStatus::Failed,
-			MovementUpdate::new()
-				.intended_balance(-amount.to_signed()?)
-				.effective_balance(-required_amount.to_signed()?)
-				.fee(fee)
-				.consumed_vtxos(&arkoor.inputs)
-				.produced_vtxos(&arkoor.change)
-				.metadata([(
-					"offboard_vtxos".into(),
-					serde_json::to_value(
-						arkoor.created.iter().map(|v| v.id()).collect::<Vec<_>>(),
-					).expect("offboard_vtxos can serde"),
-				)])
-				.sent_to([MovementDestination::bitcoin(destination.clone(), amount)])
+		let action = start_offboard(
+			self, destination, StartOffboardSpec::SendOnchain { amount },
 		).await?;
-		let state = VtxoState::Locked {
-			holder: Some(crate::vtxo::VtxoLockHolder::Movement { id: movement.id() }),
-		};
-		self.set_vtxo_states(&arkoor.created, &state, &[]).await
-			.context("error setting movement id on locked VTXOs")?;
-
-		// now perform the offboard
-		let vtxos = arkoor.created;
-
-		let req = OffboardRequest {
-			script_pubkey: destination_spk.clone(),
-			net_amount: amount,
-			deduct_fees_from_gross_amount: false,
-			fee_rate: offboard_feerate,
-		};
-		let vtxo_keys = vec![offboard_pubkey; vtxos.len()];
-
-		let signed_offboard_tx = self.offboard_inner(&mut srv, &vtxos, &vtxo_keys, &req).await
-			.context("error performing offboard")?;
-
-		movement.apply_update(MovementUpdate::new()
-			.metadata(OffboardMovement::metadata(&signed_offboard_tx))
-		).await.context("error updating movement")?;
-
-		if self.inner.config.offboard_required_confirmations == 0 {
-			// No confirmation required — mark VTXOs as spent and succeed immediately
-			for vtxo in &vtxos {
-				self.inner.db.update_vtxo_state_checked(
-					vtxo.id(),
-					VtxoState::Spent,
-					&[crate::vtxo::VtxoStateKind::Locked],
-				).await.context("error marking vtxo as spent")?;
-			}
-			movement.success().await
-				.context("error finishing movement")?;
-		} else {
-			// Store as pending offboard — don't mark success until confirmed on chain
-			let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-			self.inner.db.store_pending_offboard(&PendingOffboard {
-				movement_id: movement.id(),
-				offboard_txid: signed_offboard_tx.compute_txid(),
-				offboard_tx: signed_offboard_tx.clone(),
-				vtxo_ids,
-				destination: destination.to_string(),
-				created_at: chrono::Local::now(),
-			}).await.context("error storing pending offboard")?;
-
-			// Disarm the guard so it doesn't auto-fail the movement on drop
-			movement.stop();
-		}
-
-		Ok(signed_offboard_tx.compute_txid())
-	}
-
-	async fn offboard(
-		&self,
-		vtxos: Vec<WalletVtxo>,
-		destination: bitcoin::Address,
-	) -> anyhow::Result<Txid> {
-		let (mut srv, ark) = self.require_server().await?;
-		let offboard_feerate = srv.offboard_feerate().await?;
-		let tip = self.inner.chain.tip().await?;
-
-		let destination_spk = destination.script_pubkey();
-		let vtxos_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-		let fee = ark.fees.offboard.calculate(
-			&destination_spk,
-			vtxos_amount,
-			offboard_feerate,
-			vtxos.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip)),
-		).context("error calculating offboard fee")?;
-		let net_amount = validate_and_subtract_fee_min_dust(vtxos_amount, fee)?;
-		let vtxo_keys = {
-			let mut keys = Vec::with_capacity(vtxos.len());
-			for v in &vtxos {
-				keys.push(self.get_vtxo_key(v).await?);
-			}
-			keys
-		};
-
-		let req = OffboardRequest {
-			script_pubkey: destination_spk.clone(),
-			net_amount,
-			deduct_fees_from_gross_amount: true,
-			fee_rate: offboard_feerate,
-		};
-
-		// Hydrate the inputs to their full form: offboard_inner needs the
-		// genesis chain to register and forfeit them with the server.
-		let input_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		let full_inputs = self.inner.db.get_full_vtxos(&input_ids).await
-			.context("failed to hydrate offboard input vtxos")?;
-		let signed_offboard_tx = self.offboard_inner(&mut srv, &full_inputs, &vtxo_keys, &req).await
-			.context("error performing offboard")?;
-
-		// Lock VTXOs instead of marking them as spent
-		let vtxo_ids = vtxos.iter().map(|v| v.vtxo_id()).collect::<Vec<_>>();
-		let effective_amt = -SignedAmount::try_from(vtxos_amount)
-			.expect("can't have this many vtxo sats");
-		let destination_str = destination.to_string();
-		let movement_id = self.inner.movements.new_movement_with_update(
-			Subsystem::OFFBOARD,
-			OffboardMovement::Offboard.to_string(),
-			MovementUpdate::new()
-				.intended_balance(effective_amt)
-				.effective_balance(effective_amt)
-				.fee(fee)
-				.consumed_vtxos(&vtxos)
-				.sent_to([MovementDestination::bitcoin(destination, net_amount)])
-				.metadata(OffboardMovement::metadata(&signed_offboard_tx)),
-		).await?;
-
-		self.lock_vtxos(&vtxos, Some(crate::vtxo::VtxoLockHolder::Movement { id: movement_id })).await?;
-
-		if self.inner.config.offboard_required_confirmations == 0 {
-			// No confirmation required — mark VTXOs as spent and succeed immediately
-			for vtxo in &vtxos {
-				self.inner.db.update_vtxo_state_checked(
-					vtxo.vtxo_id(),
-					VtxoState::Spent,
-					&[crate::vtxo::VtxoStateKind::Locked],
-				).await.context("error marking vtxo as spent")?;
-			}
-			self.inner.movements.finish_movement(
-				movement_id,
-				MovementStatus::Successful,
-			).await.context("error finishing movement")?;
-		} else {
-			// Store as pending offboard — wait for on-chain confirmation
-			self.inner.db.store_pending_offboard(&PendingOffboard {
-				movement_id,
-				offboard_txid: signed_offboard_tx.compute_txid(),
-				offboard_tx: signed_offboard_tx.clone(),
-				vtxo_ids,
-				destination: destination_str,
-				created_at: chrono::Local::now(),
-			}).await.context("error storing pending offboard")?
-		}
-
-		Ok(signed_offboard_tx.compute_txid())
+		self.run_offboard(action).await
 	}
 
 	/// Offboard all VTXOs to a given [bitcoin::Address].
 	pub async fn offboard_all(&self, address: bitcoin::Address) -> anyhow::Result<Txid> {
 		let input_vtxos = self.spendable_vtxos().await?;
-		Ok(self.offboard(input_vtxos, address).await?)
+		let action = start_offboard(
+			self, address, StartOffboardSpec::OffboardWhole { vtxos: input_vtxos },
+		).await?;
+		self.run_offboard(action).await
 	}
 
 	/// Offboard the given VTXOs to a given [bitcoin::Address].
@@ -471,7 +87,37 @@ impl Wallet {
 			};
 			input_vtxos.push(vtxo);
 		}
+		let action = start_offboard(
+			self, address, StartOffboardSpec::OffboardWhole { vtxos: input_vtxos },
+		).await?;
+		self.run_offboard(action).await
+	}
 
-		Ok(self.offboard(input_vtxos, address).await?)
+	async fn run_offboard(&self, action: Offboard) -> anyhow::Result<Txid> {
+		let offboard_id = action.id();
+		let guard = self.inner.lock_manager.try_lock(&offboard_id).await
+			.context("offboard action already in progress")?;
+
+		self.inner.db.upsert_wallet_action_checkpoint(&offboard_id, &action.clone().into()).await
+			.context("failed to persist initial offboard checkpoint")?;
+
+		// Drive once synchronously to get past the server interaction; the
+		// rest (confirmation polling) is left to sync_pending_offboards.
+		self.drive_action_with_guard(action, DriveMode::UntilParkOrDone, guard).await?;
+
+		match self.offboard_checkpoint(&offboard_id).await? {
+			Some(o) => match o.progress {
+				Progress::AwaitingConfirmations { offboard_txid, .. } => Ok(offboard_txid),
+				// A transient error parked the action before broadcast (the
+				// executor logged the error itself). The checkpoint
+				// survives, so the next wallet sync re-drives it.
+				other => bail!(
+					"offboard {} could not complete yet (parked in {:?}); \
+					it remains pending and will be retried on wallet sync",
+					offboard_id, other,
+				),
+			},
+			None => bail!("offboard {} finished without producing a txid", offboard_id),
+		}
 	}
 }

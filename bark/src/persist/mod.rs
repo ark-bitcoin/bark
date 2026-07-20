@@ -45,8 +45,7 @@ use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::{ExitTxOrigin, ExitStateKind};
 use crate::persist::models::{
-	PaidInvoice, RoundStateId, SettledLightningReceive,
-	StoredExit, StoredRoundState, Unlocked, PendingOffboard,
+	PaidInvoice, RoundStateId, SettledLightningReceive, StoredExit, StoredRoundState, Unlocked,
 };
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::movement::update::MovementUpdate;
@@ -336,6 +335,19 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the lookup fails.
 	async fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>>;
+
+	/// Fetch multiple wallet VTXOs by id, preserving the order of the
+	/// input slice.
+	///
+	/// Parameters:
+	/// - ids: [VtxoId]s to look up.
+	///
+	/// Returns:
+	/// - `Ok(Vec<WalletVtxo>)` with one entry per input id, in order.
+	///
+	/// Errors:
+	/// - Returns an error if any id is missing or the lookup fails.
+	async fn get_wallet_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<WalletVtxo>>;
 
 	/// Fetch all wallet VTXOs in the database.
 	///
@@ -632,36 +644,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<()>;
-
-	/// Store a pending offboard record.
-	///
-	/// Parameters:
-	/// - pending: The [PendingOffboard] to store.
-	///
-	/// Errors:
-	/// - Returns an error if the record cannot be stored.
-	async fn store_pending_offboard(
-		&self,
-		pending: &PendingOffboard,
-	) -> anyhow::Result<()>;
-
-	/// Get all pending offboard records.
-	///
-	/// Returns:
-	/// - `Ok(Vec<PendingOffboard>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	async fn get_pending_offboards(&self) -> anyhow::Result<Vec<PendingOffboard>>;
-
-	/// Remove a pending offboard record by its [MovementId].
-	///
-	/// Parameters:
-	/// - movement_id: The [MovementId] to remove.
-	///
-	/// Errors:
-	/// - Returns an error if the record cannot be removed.
-	async fn remove_pending_offboard(&self, movement_id: MovementId) -> anyhow::Result<()>;
 }
 
 /// Return the recommended [`BarkPersister`] backend for the current

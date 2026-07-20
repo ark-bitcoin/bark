@@ -167,7 +167,9 @@ impl WalletAction for LightningSend {
 		Ok(Advance::Next(LightningSend { progress: new_progress, ..self }))
 	}
 
-	async fn on_retry(self, wallet: &Wallet, retries: u32) -> anyhow::Result<Advance<Self>> {
+	async fn on_retry(self, wallet: &Wallet, retries: u32, _error: AdvanceError)
+		-> anyhow::Result<Advance<Self>>
+	{
 		match self.progress.clone() {
 			Progress::Start => {
 				if self.is_htlc_near_expiry(wallet).await? {

@@ -2,9 +2,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use bitcoin::{Amount, SignedAmount};
 use server_rpc::protos;
 
-use ark_testing::{btc, TestContext};
+use bark::movement::MovementStatus;
+
+use ark_testing::{btc, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
 
 /// The error [AbandonOffboardProxy] fails prepare_offboard with.
@@ -27,6 +30,29 @@ impl captaind::proxy::ArkRpcProxy for AbandonOffboardProxy {
 		self.requests.lock().unwrap().push(req.clone());
 		upstream.prepare_offboard(req).await?;
 		Err(tonic::Status::invalid_argument(ABANDON_ERROR))
+	}
+}
+
+/// Sends every finish_offboard request to the server twice, like a client
+/// that lost the first response and retries. The server must replay the
+/// same signed tx instead of rejecting the retry as an unknown session.
+#[derive(Clone)]
+struct ReplayFinishOffboardProxy;
+
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for ReplayFinishOffboardProxy {
+	async fn finish_offboard(
+		&self, upstream: &mut ArkClient, req: protos::FinishOffboardRequest,
+	) -> Result<protos::FinishOffboardResponse, tonic::Status> {
+		let first = upstream.finish_offboard(req.clone()).await?.into_inner();
+		let retry = upstream.finish_offboard(req).await?.into_inner();
+		if first != retry {
+			return Err(tonic::Status::internal(format!(
+				"finish_offboard retry got a different response: {:?} vs {:?}",
+				first, retry,
+			)));
+		}
+		Ok(retry)
 	}
 }
 
@@ -80,6 +106,17 @@ async fn utxos_unlock_after_pending_offboard_expiry() {
 		.expect_err("the proxy should have failed the first offboard");
 	assert!(format!("{err:#}").contains(ABANDON_ERROR), "unexpected error: {err:#}");
 
+	// The rejected offboard leaves a failed movement recording the intent,
+	// with a zero effective balance: its vtxos went back to spendable, so
+	// the wallet's balance never actually changed.
+	let movements = wallet.history().await.expect("list movements").into_iter()
+		.filter(|m| m.subsystem.name == "bark.offboard")
+		.collect::<Vec<_>>();
+	assert_eq!(movements.len(), 1);
+	assert_eq!(movements[0].status, MovementStatus::Failed);
+	assert_ne!(movements[0].intended_balance, SignedAmount::ZERO);
+	assert_eq!(movements[0].effective_balance, SignedAmount::ZERO);
+
 	// While the session is pending it keeps its wallet UTXOs locked, so
 	// the server cannot fund an offboard of the second vtxo: this is the
 	// starvation. Note this error comes from the server, not the proxy.
@@ -103,4 +140,26 @@ async fn utxos_unlock_after_pending_offboard_expiry() {
 				"expired offboard session did not release its wallet UTXOs: {e}"),
 		}
 	}
+}
+
+#[tokio::test]
+async fn finish_offboard_replays_for_identical_retry() {
+	let ctx = TestContext::new("server/finish_offboard_replays_for_identical_retry").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let proxy = srv.start_proxy_no_mailbox(ReplayFinishOffboardProxy).await;
+
+	let wallet = ctx.bark_sdk("bark", &proxy)
+		.boarded(sat(800_000))
+		.create().await;
+
+	// A server without finish replay rejects the proxy's second call with
+	// "unknown offboard txid", failing the whole offboard.
+	let address = ctx.bitcoind().get_new_address();
+	wallet.offboard_all(address.clone()).await
+		.expect("offboard should succeed despite the doubled finish request");
+
+	// And the replayed response was the real signed tx: it confirms and
+	// pays out.
+	ctx.generate_blocks(1).await;
+	assert_ne!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO);
 }

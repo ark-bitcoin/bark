@@ -120,14 +120,6 @@ CREATE TABLE bark_mailbox_checkpoint (
 				checkpoint INTEGER NOT NULL,
 				updated_at DATETIME NOT NULL
 			);
-CREATE TABLE bark_pending_offboard (
-				movement_id INTEGER PRIMARY KEY,
-				offboard_txid TEXT NOT NULL,
-				offboard_tx BLOB NOT NULL,
-				vtxo_ids TEXT NOT NULL,
-				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-				destination TEXT NOT NULL
-			);
 CREATE TABLE IF NOT EXISTS "bark_movements_sent_to" (
 				movement_id      INTEGER NOT NULL REFERENCES bark_movements(id),
 				destination_type  TEXT    NOT NULL,

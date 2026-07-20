@@ -22,8 +22,7 @@ use crate::exit::{ExitState, ExitStateKind, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
-	PaidInvoice, SerdeRoundState, SettledLightningReceive,
-	StoredExit, Unlocked, PendingOffboard,
+	PaidInvoice, SerdeRoundState, SettledLightningReceive, StoredExit, Unlocked,
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::RoundState;
@@ -272,71 +271,6 @@ pub fn get_movements_by_payment_method(
 	Ok(results)
 }
 
-pub fn store_pending_offboard(
-	tx: &Transaction,
-	pending: &PendingOffboard,
-) -> anyhow::Result<()> {
-	let vtxo_ids_json = serde_json::to_string(&pending.vtxo_ids)
-		.context("failed to serialize vtxo_ids")?;
-	let offboard_tx_bytes = consensus::serialize(&pending.offboard_tx);
-
-	let mut statement = tx.prepare("
-		INSERT INTO bark_pending_offboard (movement_id, offboard_txid, offboard_tx, vtxo_ids, destination)
-		VALUES (:movement_id, :offboard_txid, :offboard_tx, :vtxo_ids, :destination);"
-	)?;
-
-	statement.execute(named_params! {
-		":movement_id": pending.movement_id.0,
-		":offboard_txid": pending.offboard_txid.to_string(),
-		":offboard_tx": offboard_tx_bytes,
-		":vtxo_ids": vtxo_ids_json,
-		":destination": pending.destination,
-	})?;
-	Ok(())
-}
-
-pub fn get_all_pending_offboards(conn: &Connection) -> anyhow::Result<Vec<PendingOffboard>> {
-	let q = "SELECT movement_id, offboard_txid, offboard_tx, vtxo_ids, destination, created_at FROM bark_pending_offboard;";
-	let mut statement = conn.prepare(q)?;
-	let mut rows = statement.query([])?;
-	let mut pending = Vec::new();
-	while let Some(row) = rows.next()? {
-		let movement_id = MovementId::new(row.get::<_, u32>("movement_id")?);
-		let offboard_txid = Txid::from_str(&row.get::<_, String>("offboard_txid")?)?;
-		let offboard_tx_bytes = row.get::<_, Vec<u8>>("offboard_tx")?;
-		let offboard_tx: bitcoin::Transaction = consensus::deserialize(&offboard_tx_bytes)
-			.context("failed to deserialize offboard_tx")?;
-		let vtxo_ids_json = row.get::<_, String>("vtxo_ids")?;
-		let vtxo_ids: Vec<VtxoId> = serde_json::from_str(&vtxo_ids_json)
-			.context("failed to deserialize vtxo_ids")?;
-		let destination = row.get::<_, String>("destination")?;
-		let created_at = row.get::<_, DateTime<chrono::Utc>>("created_at")?
-			.with_timezone(&chrono::Local);
-
-		pending.push(PendingOffboard {
-			movement_id,
-			offboard_txid,
-			offboard_tx,
-			vtxo_ids,
-			destination,
-			created_at,
-		});
-	}
-	Ok(pending)
-}
-
-pub fn remove_pending_offboard(
-	tx: &Transaction,
-	movement_id: MovementId,
-) -> anyhow::Result<()> {
-	let q = "DELETE FROM bark_pending_offboard WHERE movement_id = :movement_id;";
-	let mut statement = tx.prepare(q)?;
-	statement.execute(named_params! {
-		":movement_id": movement_id.0,
-	})?;
-	Ok(())
-}
-
 pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
 	vtxo: &Vtxo<Full>,
@@ -484,6 +418,43 @@ pub fn get_wallet_vtxo_by_id(
 	} else {
 		Ok(None)
 	}
+}
+
+/// Fetch a batch of wallet VTXOs by id, preserving the order of the input
+/// slice. Errors if any id is missing — callers pass ids they just read
+/// from the wallet, so missing rows indicate the wallet's state is
+/// inconsistent with what the caller observed.
+pub fn get_wallet_vtxos_by_ids(
+	conn: &Connection,
+	ids: &[VtxoId],
+) -> anyhow::Result<Vec<WalletVtxo>> {
+	if ids.is_empty() {
+		return Ok(Vec::new());
+	}
+
+	let query = format!(
+		"SELECT {VTXO_VIEW_COLUMNS} FROM vtxo_view
+		WHERE id IN (SELECT atom FROM json_each(?))",
+	);
+	let mut statement = conn.prepare(&query)?;
+
+	let json_ids = serde_json::to_string(&ids)?;
+	let rows = statement.query([json_ids])?;
+	let vtxos = rows_to_wallet_vtxos(rows)?;
+
+	let by_id = vtxos.into_iter()
+		.map(|v| (v.vtxo.id(), v))
+		.collect::<HashMap<_, _>>();
+	let mut out = Vec::with_capacity(ids.len());
+	for id in ids {
+		// Look up rather than consume so that a repeated id yields the
+		// same vtxo again instead of a spurious "not found".
+		match by_id.get(id) {
+			Some(v) => out.push(v.clone()),
+			None => bail!("vtxo {id} not found in vtxo_view"),
+		}
+	}
+	Ok(out)
 }
 
 pub fn get_all_vtxos(conn: &Connection) -> anyhow::Result<Vec<WalletVtxo>> {

@@ -1,0 +1,23 @@
+- Rework offboards into crash-safe, resumable wallet actions
+  Offboards and onchain sends now run through the wallet action executor
+  with a persisted checkpoint per step, so an interrupted offboard resumes
+  on the next wallet sync instead of being lost. A wallet that loses the
+  server's response mid-offboard recovers by adopting the broadcast tx
+  from chain, or falls back to preparing a fresh session; if that fresh
+  session can no longer succeed (e.g. fee rates moved), the offboard is
+  cancelled and its funds are released. A broadcast offboard tx that
+  disappears from chain is reported instead of silently retried forever.
+  - Pending offboards can be inspected via `Wallet::pending_offboards`
+    and are driven by `Wallet::sync_pending_offboards` on every sync
+  - How long a vanished offboard tx is re-broadcast before being
+    reported lost is configurable via `offboard_lost_tx_grace_period_secs`
+    (default one hour)
+  - Failed offboards finish their movement as failed with a zero
+    effective balance, since no funds actually left the wallet
+  - Existing pending offboards are migrated to the new checkpoint format
+  - Input vtxos left locked by an offboard that already failed are
+    unlocked by a migration, repeating the cleanup bark 0.2.4 did once
+  - Fixed `send_onchain` failing whenever the payment produced change
+  - **BREAKING:** `BarkPersister` implementations must provide
+    `get_wallet_vtxos`; the pending-offboard methods are removed
+  [#2085](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2085)
