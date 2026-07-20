@@ -43,6 +43,25 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 use crate::chain::ChainSource;
 
 
+/// The result of simulating the CPFP broadcast walk of a set of P2A parents, for fee estimation.
+#[derive(Debug, Clone)]
+pub struct CpfpWalkEstimate {
+	/// A signed CPFP child per parent with the package fee it commits, in parent order. When
+	/// `shortfall` is set, this only covers the parents funded before funds ran out.
+	pub children: Vec<(Transaction, Amount)>,
+	/// Set when confirmed funds ran out before every parent could be bumped.
+	pub shortfall: Option<FundingShortfall>,
+}
+
+/// The funding gap that stopped a [CpfpWalkEstimate] before all parents were bumped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FundingShortfall {
+	/// The amount of confirmed funds the failing CPFP child needed.
+	pub needed: Amount,
+	/// The confirmed funds that were actually available to it.
+	pub available: Amount,
+}
+
 /// Summary of a wallet transaction produced by [OnchainWallet::list_transaction_infos].
 #[derive(Debug, Clone)]
 pub struct WalletTxInfo {
@@ -163,6 +182,18 @@ pub trait OnchainWalletTrait: std::any::Any + Send + Sync {
 		tx: &Transaction,
 		fees: MakeCpfpFees,
 	) -> Result<Transaction, CpfpError>;
+
+	/// Estimate the CPFP children needed to broadcast every given P2A parent, for fee estimation
+	/// only: the children are never broadcast and the wallet must not be mutated.
+	///
+	/// Implementations simulate the broadcast walk: each child funds itself from confirmed coins,
+	/// each child's change is spendable by the next, and repeated calls must not consume addresses
+	/// or coins. The walk stops early when confirmed funds run out, returning the shortfall and
+	/// only the children funded so far.
+	fn estimate_p2a_cpfp_walk(
+		&self,
+		parents: &[(Transaction, MakeCpfpFees)],
+	) -> Result<CpfpWalkEstimate, CpfpError>;
 
 	/// Persist the signed CPFP transaction so it can be rebroadcast or retrieved as needed.
 	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError>;

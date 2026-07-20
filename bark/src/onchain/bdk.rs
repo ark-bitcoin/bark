@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use bdk_esplora::EsploraAsyncExt;
-use bdk_wallet::chain::{Anchor, ChainPosition, CheckPoint};
+use bdk_wallet::chain::{Anchor, ChainPosition, CheckPoint, ConfirmationBlockTime, Indexer, TxUpdate};
 use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
-use bdk_wallet::{Balance, KeychainKind, LocalOutput, TxBuilder, TxOrdering};
+use bdk_wallet::signer::SignerOrdering;
+use bdk_wallet::{Balance, KeychainKind, LoadError, LocalOutput, TxBuilder, TxOrdering, Update};
 use bitcoin::{
 	Address, Amount, FeeRate, Network, Psbt, Script, Sequence, Transaction, TxOut,
 	Txid, Weight, bip32, psbt,
@@ -15,7 +16,7 @@ use bitcoin::{
 use log::{debug, error, info, trace, warn};
 
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, DEEPLY_CONFIRMED};
+use bitcoin_ext::{BlockHeight, DEEPLY_CONFIRMED, TransactionExt};
 use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
 
@@ -23,7 +24,8 @@ use crate::Wallet;
 use crate::chain::{ChainSource, ChainSourceClient};
 use crate::exit::{ExitVtxo, ExitState};
 use crate::onchain::{
-	LocalUtxo, MakeCpfpFees, Utxo, OnchainWalletTrait, WalletTxInfo,
+	CpfpWalkEstimate, FundingShortfall, LocalUtxo, MakeCpfpFees, Utxo, OnchainWalletTrait,
+	WalletTxInfo,
 };
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
@@ -116,6 +118,133 @@ impl<Cs: Send + Sync> TxBuilderExt for TxBuilder<'_, Cs> {
 	}
 }
 
+/// Map the internal BDK CPFP error onto the public [CpfpError] surface.
+fn cpfp_internal_to_error(e: CpfpInternalError) -> CpfpError {
+	match e {
+		CpfpInternalError::General(s) => CpfpError::InternalError(s),
+		CpfpInternalError::Create(e) => CpfpError::CreateError(e.to_string()),
+		CpfpInternalError::Extract(e) => CpfpError::FinalizeError(e.to_string()),
+		CpfpInternalError::Fee() => CpfpError::InternalError(CpfpInternalError::Fee().to_string()),
+		CpfpInternalError::FinalizeError(s) => CpfpError::FinalizeError(s),
+		CpfpInternalError::InsufficientConfirmedFunds(f) => {
+			CpfpError::InsufficientConfirmedFunds {
+				needed: f.needed, available: f.available,
+			}
+		},
+		CpfpInternalError::NoFeeAnchor(txid) => CpfpError::NoFeeAnchor(txid),
+		CpfpInternalError::Signer(e) => CpfpError::SigningError(e.to_string()),
+	}
+}
+
+/// A throwaway, in-memory replica of a wallet, used only for fee estimation.
+///
+/// The broadcast-walk estimate inserts CPFP children as *confirmed*, which BDK can't undo. Running
+/// it on a replica keeps that mutation off the live wallet.
+pub struct EstimationWallet {
+	inner: BdkWallet,
+}
+
+impl EstimationWallet {
+	/// Build a replica from a snapshot of `wallet`'s live components (chain, tx graph, keychain
+	/// index and locked outpoints — staged changes included), reusing its signers so the replica
+	/// builds and signs transactions exactly like the original would.
+	pub fn new(wallet: &BdkWallet) -> Result<EstimationWallet, LoadError> {
+		let mut changeset = bdk_wallet::ChangeSet {
+			network: Some(wallet.network()),
+			local_chain: wallet.local_chain().initial_changeset(),
+			tx_graph: wallet.tx_graph().initial_changeset(),
+			indexer: wallet.spk_index().initial_changeset(),
+			..Default::default()
+		};
+		for (keychain, descriptor) in wallet.keychains() {
+			match keychain {
+				KeychainKind::External => changeset.descriptor = Some(descriptor.clone()),
+				KeychainKind::Internal => changeset.change_descriptor = Some(descriptor.clone()),
+			}
+		}
+		changeset.locked_outpoints.outpoints = wallet.list_locked_outpoints()
+			.map(|outpoint| (outpoint, true))
+			.collect();
+
+		let mut inner = BdkWallet::load()
+			.check_network(wallet.network())
+			.load_wallet_no_persist(changeset)?
+			.expect("changeset carries a descriptor");
+
+		// The changeset only carries public descriptors, so hand the original's signers over.
+		for keychain in [KeychainKind::External, KeychainKind::Internal] {
+			for signer in wallet.get_signers(keychain).signers() {
+				inner.add_signer(keychain, SignerOrdering::default(), Arc::clone(signer));
+			}
+		}
+
+		Ok(EstimationWallet { inner })
+	}
+
+	/// Insert a CPFP child into the replica as confirmed, anchored at its tip, so the next child
+	/// can spend its change.
+	fn apply_cpfp_child(&mut self, child: &Transaction) {
+		let mut tx_update = TxUpdate::default();
+		tx_update.txs.push(Arc::new(child.clone()));
+
+		tx_update.anchors.insert((
+			ConfirmationBlockTime {
+				block_id: self.inner.latest_checkpoint().block_id(),
+				confirmation_time: 0,
+			},
+			child.compute_txid(),
+		));
+
+		self.inner.apply_update(Update { tx_update, ..Default::default() })
+			.expect("anchor block is the replica's own tip");
+	}
+
+	/// Build one CPFP child per parent, funding each from confirmed coins and recycling each
+	/// child's change into the next (the serial order the packages really confirm in). Each child
+	/// is returned with the exact package fee it commits, which an RBF minimum can push above
+	/// rate × weight. Stops early when confirmed funds run out, reporting the shortfall.
+	pub fn estimate_p2a_cpfp_walk(
+		&mut self,
+		parents: &[(Transaction, MakeCpfpFees)],
+	) -> Result<CpfpWalkEstimate, CpfpInternalError> {
+		let mut children = Vec::with_capacity(parents.len());
+		for (parent, fees) in parents {
+			let child = match self.inner.make_signed_p2a_cpfp(parent, *fees) {
+				Ok(child) => child,
+				Err(CpfpInternalError::InsufficientConfirmedFunds(e)) => {
+					return Ok(CpfpWalkEstimate {
+						children,
+						shortfall: Some(FundingShortfall {
+							needed: e.needed,
+							available: e.available,
+						}),
+					});
+				},
+				Err(e) => return Err(e),
+			};
+
+			let (_, anchor_txout) = parent.fee_anchor()
+				.expect("make_signed_p2a_cpfp succeeded on this parent");
+			// The replica wallet knows all inputs but the anchor
+			let funding_value = anchor_txout.value + child.input.iter()
+				.filter_map(|input| {
+					self.inner.tx_graph().get_txout(input.previous_output)
+						.map(|txout| txout.value)
+				})
+				.sum::<Amount>();
+			// The parent is zero-fee, so the child pays the whole package fee: everything its
+			// inputs bring in beyond its own outputs.
+			let fee = funding_value.checked_sub(child.output_value())
+				.unwrap_or_default();
+
+			self.apply_cpfp_child(&child);
+
+			children.push((child, fee));
+		}
+
+		Ok(CpfpWalkEstimate { children, shortfall: None })
+	}
+}
 
 /// A basic wrapper around the bdk wallet to showcase
 /// how to use bark with an external onchain wallet.
@@ -238,20 +367,17 @@ impl OnchainWalletTrait for OnchainWallet {
 	) -> Result<Transaction, CpfpError> {
 		WalletExt::make_signed_p2a_cpfp(&mut self.inner, tx, fees)
 			.inspect_err(|e| error!("Error creating signed P2A CPFP: {}", e))
-			.map_err(|e| match e {
-				CpfpInternalError::General(s) => CpfpError::InternalError(s),
-				CpfpInternalError::Create(e) => CpfpError::CreateError(e.to_string()),
-				CpfpInternalError::Extract(e) => CpfpError::FinalizeError(e.to_string()),
-				CpfpInternalError::Fee() => CpfpError::InternalError(e.to_string()),
-				CpfpInternalError::FinalizeError(s) => CpfpError::FinalizeError(s),
-				CpfpInternalError::InsufficientConfirmedFunds(f) => {
-					CpfpError::InsufficientConfirmedFunds {
-						needed: f.needed, available: f.available,
-					}
-				},
-				CpfpInternalError::NoFeeAnchor(txid) => CpfpError::NoFeeAnchor(txid),
-				CpfpInternalError::Signer(e) => CpfpError::SigningError(e.to_string()),
-			})
+			.map_err(cpfp_internal_to_error)
+	}
+
+	fn estimate_p2a_cpfp_walk(
+		&self,
+		parents: &[(Transaction, MakeCpfpFees)],
+	) -> Result<CpfpWalkEstimate, CpfpError> {
+		EstimationWallet::new(&self.inner)
+			.map_err(|e| CpfpError::InternalError(format!("failed to build estimation wallet: {}", e)))
+			.and_then(|mut w| w.estimate_p2a_cpfp_walk(parents).map_err(cpfp_internal_to_error))
+			.inspect_err(|e| error!("Error estimating P2A CPFP walk: {}", e))
 	}
 
 	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
@@ -548,5 +674,161 @@ impl OnchainWallet {
 			let _ = self.inner.take_staged();
 		}
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use std::collections::HashSet;
+
+	use bdk_wallet::chain::BlockId;
+	use bdk_wallet::test_utils::{get_test_wpkh, insert_checkpoint, receive_output_in_latest_block};
+	use bitcoin::{BlockHash, OutPoint};
+	use bitcoin::hashes::Hash;
+
+	/// A wallet with one confirmed UTXO per given amount.
+	fn funded_wallet(amounts: &[Amount]) -> BdkWallet {
+		let mut wallet = BdkWallet::create_single(get_test_wpkh())
+			.network(Network::Regtest)
+			.create_wallet_no_persist()
+			.unwrap();
+		insert_checkpoint(&mut wallet, BlockId { height: 1_000, hash: BlockHash::all_zeros() });
+		for amount in amounts {
+			receive_output_in_latest_block(&mut wallet, *amount);
+		}
+		wallet
+	}
+
+	/// A zero-fee v3 parent carrying a P2A fee anchor; `tag` makes its txid unique.
+	fn p2a_parent(tag: u8) -> Transaction {
+		Transaction {
+			version: bitcoin::transaction::Version(3),
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: vec![bitcoin::TxIn {
+				previous_output: OutPoint::new(Txid::from_byte_array([tag; 32]), 0),
+				..Default::default()
+			}],
+			output: vec![bitcoin_ext::fee::fee_anchor()],
+		}
+	}
+
+	#[test]
+	fn estimation_wallet_replicates_and_isolates() {
+		let wallet = funded_wallet(&[Amount::from_sat(1_000), Amount::from_sat(1_001)]);
+		let mut replica = EstimationWallet::new(&wallet).unwrap();
+
+		assert_eq!(wallet.balance(), replica.inner.balance());
+		assert_eq!(
+			wallet.list_unspent().map(|u| u.outpoint).collect::<Vec<_>>(),
+			replica.inner.list_unspent().map(|u| u.outpoint).collect::<Vec<_>>(),
+		);
+		assert_eq!(
+			wallet.next_derivation_index(KeychainKind::External),
+			replica.inner.next_derivation_index(KeychainKind::External),
+		);
+
+		// The replica must sign with the original's keys, and mutating it must not leak into
+		// the original wallet.
+		let parent = p2a_parent(1);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(1).unwrap());
+		let child = replica.inner.make_signed_p2a_cpfp(&parent, fees).unwrap();
+		assert_eq!(wallet.balance().confirmed, Amount::from_sat(2_001));
+		assert!(wallet.get_tx(child.compute_txid()).is_none());
+	}
+
+	/// With a single-coin wallet, every CPFP child after the first can only be funded by the
+	/// previous child's change: the walk must model that serial recycling.
+	#[test]
+	fn cpfp_walk_recycles_change_serially() {
+		let wallet = funded_wallet(&[Amount::from_sat(50_000)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let parents = (1..=3).map(|tag| (p2a_parent(tag), fees)).collect::<Vec<_>>();
+
+		let walk = EstimationWallet::new(&wallet).unwrap().estimate_p2a_cpfp_walk(&parents).unwrap();
+		assert!(walk.shortfall.is_none());
+		assert_eq!(walk.children.len(), 3);
+
+		for (i, (child, fee)) in walk.children.iter().enumerate() {
+			let anchor_point = parents[i].0.fee_anchor().unwrap().0;
+			assert!(child.input.iter().any(|input| input.previous_output == anchor_point));
+			assert_eq!(child.input.len(), 2, "anchor spend plus a single funding input");
+			assert_eq!(child.output.len(), 1, "drain output only");
+			// The parent is zero-fee, so the effective-rate child pays exactly the package fee.
+			assert_eq!(*fee, fees.effective() * (parents[i].0.weight() + child.weight()));
+			if i > 0 {
+				let (prev_child, _) = &walk.children[i - 1];
+				let prev_change = OutPoint::new(prev_child.compute_txid(), 0);
+				assert!(
+					child.input.iter().any(|input| input.previous_output == prev_change),
+					"child {} must be funded by the previous child's change", i,
+				);
+				// Funded solely by the previous change, so the reported fee must be exactly
+				// the value that change lost.
+				assert_eq!(*fee, prev_child.output[0].value - child.output[0].value);
+			}
+		}
+
+		// The walk runs against a replica; the wallet itself stays untouched.
+		assert_eq!(wallet.balance().confirmed, Amount::from_sat(50_000));
+		assert!(wallet.get_tx(walk.children[0].0.compute_txid()).is_none());
+	}
+
+	/// Whatever coins each child selects, no coin may fund two children: earlier estimation
+	/// re-ran selection against the same unchanged wallet, double-counting the same UTXO.
+	#[test]
+	fn cpfp_walk_never_double_spends_across_children() {
+		// NB identical amounts would produce identical funding txids and collapse into one UTXO.
+		// No coin covers a ~1150-sat package fee plus non-dust change alone, so children have to
+		// combine coins.
+		let amounts = (0..5).map(|i| Amount::from_sat(1_000 + i)).collect::<Vec<_>>();
+		let wallet = funded_wallet(&amounts);
+		let original_coins = wallet.list_unspent()
+			.map(|u| u.outpoint)
+			.collect::<HashSet<_>>();
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(4).unwrap());
+		let parents = (1..=2).map(|tag| (p2a_parent(tag), fees)).collect::<Vec<_>>();
+
+		let walk = EstimationWallet::new(&wallet).unwrap().estimate_p2a_cpfp_walk(&parents).unwrap();
+		assert!(walk.shortfall.is_none());
+		assert_eq!(walk.children.len(), 2);
+
+		let change_outputs = walk.children.iter()
+			.map(|(child, _)| OutPoint::new(child.compute_txid(), 0))
+			.collect::<HashSet<_>>();
+		let mut spent = HashSet::new();
+		for ((child, _), (parent, _)) in walk.children.iter().zip(&parents) {
+			let anchor_point = parent.fee_anchor().unwrap().0;
+			for input in &child.input {
+				if input.previous_output == anchor_point {
+					continue;
+				}
+				let coin = input.previous_output;
+				assert!(
+					original_coins.contains(&coin) || change_outputs.contains(&coin),
+					"funding input {} must be a wallet coin or an earlier child's change", coin,
+				);
+				assert!(spent.insert(coin), "coin {} funds two children", coin);
+			}
+		}
+	}
+
+	#[test]
+	fn cpfp_walk_reports_shortfall() {
+		// 3000 sats fund the first ~2200-sat package but its change can't fund the second.
+		let wallet = funded_wallet(&[Amount::from_sat(3_000)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let parents = (1..=2).map(|tag| (p2a_parent(tag), fees)).collect::<Vec<_>>();
+
+		let walk = EstimationWallet::new(&wallet).unwrap().estimate_p2a_cpfp_walk(&parents).unwrap();
+		assert_eq!(walk.children.len(), 1);
+		let (first_child, first_fee) = &walk.children[0];
+		// The single coin funds the first child entirely, so wallet value splits exactly into
+		// the reported fee and the change.
+		assert_eq!(*first_fee + first_child.output[0].value, Amount::from_sat(3_000));
+		let shortfall = walk.shortfall.expect("second bump must exceed the remaining change");
+		assert!(shortfall.needed > shortfall.available);
+		assert_eq!(shortfall.available, first_child.output[0].value);
 	}
 }
