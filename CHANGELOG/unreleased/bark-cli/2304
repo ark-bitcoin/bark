@@ -1,0 +1,3 @@
+- Add `--height` to `refresh --delegated`
+  Schedule a delegated refresh at a future block height instead of the next round.
+  [#2304](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2304)
