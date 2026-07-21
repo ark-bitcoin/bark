@@ -246,11 +246,9 @@ impl Server {
 			min_expiry_height,
 			mailbox_id,
 			htlc_vtxo_ids,
+			fee,
 		).await?;
 
-		slog!(LightningPaymentInitiated, payment_hash, amount: payment_amount, fee,
-			min_expiry: min_expiry_height,
-		);
 		Ok(())
 	}
 

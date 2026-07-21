@@ -207,7 +207,7 @@ impl LightningManager {
 		self.node_handles.read().iter().find(|h| h.id == id).cloned()
 	}
 
-	/// Pays a bolt-11 invoice and returns the pre-image
+	/// Pays a bolt-11 invoice
 	///
 	/// This method is also more clever than calling the grpc-method.
 	/// We might be able to recover from a short connection-break or time-outs
@@ -227,6 +227,7 @@ impl LightningManager {
 		htlc_send_expiry_height: BlockHeight,
 		sender_mailbox_id: Option<MailboxIdentifier>,
 		htlc_vtxo_ids: Vec<VtxoId>,
+		user_fee: Amount,
 	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
@@ -239,6 +240,7 @@ impl LightningManager {
 			htlc_send_expiry_height,
 			sender_mailbox_id.as_ref(),
 			&htlc_vtxo_ids,
+			user_fee,
 		).await {
 			error!("Error sending bolt11 payment for invoice: {:#}", e);
 		} else {
@@ -269,6 +271,7 @@ impl LightningManager {
 		htlc_send_expiry_height: BlockHeight,
 		sender_mailbox_id: Option<&MailboxIdentifier>,
 		htlc_vtxo_ids: &[VtxoId],
+		user_fee: Amount,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 		let node = self.active_node().context("no active cln node")?;
@@ -325,6 +328,9 @@ impl LightningManager {
 				retry_for,
 			).await;
 		});
+		slog!(LightningPaymentInitiated, payment_hash, amount, fee: user_fee,
+			min_expiry: htlc_send_expiry_height,
+		);
 
 		Ok(())
 	}
