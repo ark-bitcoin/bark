@@ -857,8 +857,10 @@ impl Server {
 		let mut signed_txs: Vec<Transaction> = Vec::new();
 		let mut seen_txids: HashSet<Txid> = HashSet::new();
 		let mut registered_ids: Vec<VtxoId> = Vec::new();
-		for vtxo in vtxos {
-			let vtxo = vtxo.as_ref();
+
+		let vtxos = vtxos.into_iter().map(|v| v.as_ref().clone()).collect::<Vec<_>>();
+
+		for vtxo in &vtxos {
 			let vtxo_id = vtxo.id();
 
 			// Check vtxo exists in database
@@ -901,11 +903,14 @@ impl Server {
 			registered_ids.push(vtxo_id);
 		}
 
-		// Upsert the signed chain and flip the vtxos from `unregistered`
-		// to `spendable` in a single tx. Any vtxo already in another state
-		// (e.g. spendable from a round output, or spent) is left alone.
+		// Persist the fully-signed vtxos (so the server can later serve them to
+		// a wallet recovering from seed), upsert the signed chain, and flip the
+		// vtxos from `unregistered` to `spendable` in a single tx. Any vtxo
+		// already in another state (e.g. spendable from a round output, or
+		// spent) is left alone.
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_txs)
+			.provide_signatures(vtxos)
 			.mark_vtxos_registered(registered_ids);
 		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
 		Ok(())

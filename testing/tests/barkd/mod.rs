@@ -8,5 +8,6 @@ mod lightning;
 mod mnemonic;
 mod notifications;
 mod onchain;
+mod recovery;
 mod rounds;
 mod vtxo;

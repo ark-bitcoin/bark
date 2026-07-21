@@ -406,7 +406,6 @@ async fn try_create_wallet(
 		} else if config.esplora_address.is_some() {
 			warn!("The given --birthday-height will be ignored because you're using Esplora.");
 		}
-		warn!("Recovering from mnemonic currently only supports recovering on-chain funds!");
 	} else {
 		if opts.birthday_height.is_some() {
 			bail!("Can't set --birthday-height if --mnemonic is not set.");
@@ -443,10 +442,6 @@ async fn try_create_wallet(
 
 	let mut onchain = OnchainWallet::load_or_create(net.as_bitcoin(), seed, db.clone()).await?;
 	let lock_manager = open_lock_manager(&datadir)?;
-	let seed = WalletSeed::new_from_mnemonic(net.as_bitcoin(), &mnemonic);
-	BarkWallet::create(
-		net.as_bitcoin(), &seed, &config, &*db, &*lock_manager, opts.force,
-	).await.context("error creating wallet")?;
 
 	// Skip initial block sync if we generated a new wallet.
 	let birthday_height = if is_new_wallet {
@@ -455,6 +450,26 @@ async fn try_create_wallet(
 		opts.birthday_height
 	};
 	onchain.initial_wallet_scan(&chain, birthday_height).await?;
+
+	// Create the wallet by opening with `create_if_not_exists` rather than
+	// calling `Wallet::create` directly: opening is what runs seed recovery, so
+	// a wallet restored from a mnemonic rebuilds its spendable VTXO set from the
+	// recovery mailbox. The on-chain scan above has already run, so recovery can
+	// validate recovered VTXOs against their chain anchors. `run_daemon` stays
+	// off — this only needs to create and recover.
+	BarkWallet::open(
+		net.as_bitcoin(),
+		WalletSeed::new_from_mnemonic(net.as_bitcoin(), &mnemonic),
+		config,
+		OpenWalletArgs {
+			persister: Some(db),
+			lock_manager: Some(lock_manager),
+			create_if_not_exists: true,
+			create_without_server: opts.force,
+			run_daemon: false,
+			..Default::default()
+		},
+	).await.context("error creating wallet")?;
 	Ok(())
 }
 

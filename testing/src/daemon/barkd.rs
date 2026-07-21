@@ -4,7 +4,6 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Context;
 use bitcoin::{Amount, Network};
 use bitcoin::secp256k1::rand::{self, RngCore};
 use chrono::{DateTime, Utc};
@@ -31,12 +30,11 @@ use bark_rest_client::apis::{
 };
 use bark_rest_client::models::{
 	BoardRequest, ExitClaimAllRequest, ExitClaimVtxosRequest, ExitProgressRequest,
-	ExitStartRequest, LightningInvoiceRequest, RefreshRequest, SendRequest,
-	WaitNotificationResponse,
+	ExitStartRequest, LightningInvoiceRequest, OffboardAllRequest, RefreshRequest,
+	SendOnchainRequest, SendRequest, WaitNotificationResponse,
 };
 use futures::{Stream, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
-
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::{BARKD_EXEC, BARK_TOKIO_WORKER_THREADS};
 use crate::util::resolve_path;
@@ -140,20 +138,38 @@ impl Barkd {
 	/// `create_wallet` loads them from the file, mirroring the
 	/// `bark create` CLI pattern.
 	pub async fn create_wallet(&self) -> anyhow::Result<()> {
+		self.create_wallet_with(None, None).await
+	}
+
+	/// Create the barkd wallet from an explicit BIP-39 `mnemonic` (seed
+	/// recovery). `birthday_height` optionally bounds how far back the wallet
+	/// scans the chain.
+	pub async fn create_wallet_with(
+		&self,
+		mnemonic: Option<String>,
+		birthday_height: Option<u32>,
+	) -> anyhow::Result<()> {
 		#[allow(deprecated)]
 		let req = CreateWalletRequest {
 			ark_server: None,
 			ark_server_access_token: None,
 			chain_source: None,
-			mnemonic: None,
+			mnemonic,
 			network: BarkNetwork::Regtest,
-			birthday_height: None,
+			birthday_height,
 		};
 
 		let config = self.client_config();
-		wallet_api::create_wallet(&config, req).await
-			.context("failed to create barkd wallet")?;
+		wallet_api::create_wallet(&config, req).await?;
 		Ok(())
+	}
+
+	/// Return the BIP-39 mnemonic phrase backing the wallet.
+	pub async fn mnemonic(&self) -> String {
+		let config = self.client_config();
+		wallet_api::mnemonic(&config).await
+			.expect("failed to get barkd mnemonic")
+			.mnemonic
 	}
 
 	/// Get a new on-chain receiving address from barkd.
@@ -193,6 +209,38 @@ impl Barkd {
 		};
 		wallet_api::bip321_uri(&config, req, Some(uppercase)).await
 			.expect("failed to build barkd bip321 uri")
+	}
+
+	/// Pay a BOLT-11 `invoice` (lightning send), using the amount from the
+	/// invoice. The REST send does not wait for the payment to resolve, so
+	/// callers should drive resolution with [`Barkd::sync`].
+	pub async fn pay_lightning(&self, invoice: &str) {
+		let config = self.client_config();
+		wallet_api::send(&config, SendRequest {
+			destination: invoice.to_string(),
+			amount_sat: None,
+			comment: None,
+		}).await.expect("barkd lightning send failed");
+	}
+
+	/// Offboard `amount` to a Bitcoin `destination` address (send-onchain),
+	/// leaving the remainder as an off-chain change VTXO. Blocks until the
+	/// offboard completes.
+	pub async fn send_onchain(&self, destination: &str, amount: Amount) {
+		let config = self.client_config();
+		wallet_api::send_onchain(&config, SendOnchainRequest {
+			destination: destination.to_string(),
+			amount_sat: amount.to_sat(),
+		}).await.expect("barkd send_onchain failed");
+	}
+
+	/// Offboard all VTXOs to a Bitcoin `destination` address, leaving the
+	/// wallet empty. Blocks until the offboard completes.
+	pub async fn offboard_all(&self, destination: &str) {
+		let config = self.client_config();
+		wallet_api::offboard_all(&config, OffboardAllRequest {
+			address: Some(destination.to_string()),
+		}).await.expect("barkd offboard_all failed");
 	}
 
 	/// Request a short-lived websocket authentication ticket.
@@ -372,6 +420,29 @@ impl Barkd {
 		let config = self.client_config();
 		boards_api::get_pending_boards(&config).await
 			.expect("failed to get barkd pending boards")
+	}
+
+	/// Wait until every pending board has been registered with the Ark server
+	/// and turned into a spendable VTXO.
+	///
+	/// A confirmed board only becomes spendable once the wallet re-syncs *after*
+	/// the server itself has observed the funding tx as sufficiently confirmed.
+	/// A single sync right after generating the confirmations races that
+	/// server-side chain catch-up, so we drive a sync and poll the pending set
+	/// until it clears.
+	pub async fn wait_for_boards_synced(&self) {
+		let timeout = Duration::from_secs(15);
+		let start = std::time::Instant::now();
+		loop {
+			self.sync().await;
+			if self.get_pending_boards().await.is_empty() {
+				return;
+			}
+			if start.elapsed() > timeout {
+				panic!("board auto-sync did not clear pending boards within {:?}", timeout);
+			}
+			tokio::time::sleep(Duration::from_secs(1)).await;
+		}
 	}
 
 	/// Estimate the board fee for the given amount.

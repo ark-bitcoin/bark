@@ -6,11 +6,15 @@ use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use server_rpc::protos;
 
-use ark_testing::{btc, require_bark_version, sat, TestContext};
+use ark_testing::{TestContext, btc, is_bark_version, require_bark_version, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, MailboxClient};
 use ark_testing::util::FutureExt;
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
+
+/// First bark version that posts the intermediate (Locked) HTLC VTXO to the
+/// recovery mailbox, adding one id to the lightning-flow expectations below.
+const HTLC_INTERMEDIATE_VERSION: &str = "0.3.0";
 
 #[tokio::test]
 async fn reject_arkoor_with_bad_signature() {
@@ -307,9 +311,15 @@ async fn recovery_mailbox_lightning_send_change() {
 
 	// Check recovery mailbox has the change vtxo
 	let recovery_ids = read_recovery_vtxo_ids(&mut mb_rpc, &bark_wallet).await;
-	// 2 vtxo_ids: board + lightning change
-	assert_eq!(recovery_ids.len(), 2, "recovery mailbox should have 2 vtxo_ids (board + lightning change)");
-	assert!(recovery_ids.contains(&vtxos_after[0].id()), "lightning change vtxo_id should be in recovery mailbox");
+
+	if is_bark_version!(> HTLC_INTERMEDIATE_VERSION) {
+		// 3 vtxo_ids: board + HTLC intermediate (Locked) + lightning change
+		assert_eq!(recovery_ids.len(), 3, "recovery mailbox should have 3 vtxo_ids (board + HTLC intermediate + lightning change)");
+		assert!(recovery_ids.contains(&vtxos_after[0].id()), "lightning change vtxo_id should be in recovery mailbox");
+	} else {
+		// 2 vtxo_ids: board + lightning change
+		assert_eq!(recovery_ids.len(), 2, "recovery mailbox should have 2 vtxo_ids (board + lightning change)");
+	};
 }
 
 /// Test that lightning send revocation vtxo_ids are posted to recovery mailbox
@@ -351,8 +361,14 @@ async fn recovery_mailbox_lightning_send_revoke() {
 
 	// Check recovery mailbox has the new vtxos
 	let recovery_ids = read_recovery_vtxo_ids(&mut mb_rpc, &bark_wallet).await;
-	// 3 vtxo_ids: board + lightning change + revoked payment
-	assert_eq!(recovery_ids.len(), 3, "recovery mailbox should have 3 vtxo_ids (board + change + revoked)");
+
+	if is_bark_version!(> HTLC_INTERMEDIATE_VERSION) {
+		// 4 vtxo_ids: board + HTLC intermediate (Locked) + lightning change + revoked payment
+		assert_eq!(recovery_ids.len(), 4, "recovery mailbox should have 4 vtxo_ids (board + HTLC intermediate + change + revoked)");
+	} else {
+		// 3 vtxo_ids: board + lightning change + revoked payment
+		assert_eq!(recovery_ids.len(), 3, "recovery mailbox should have 3 vtxo_ids (board + change + revoked)");
+	};
 
 	// Both vtxos should be in recovery mailbox
 	for vtxo in &vtxos_after {
@@ -410,7 +426,14 @@ async fn recovery_mailbox_lightning_receive() {
 
 	// Check recovery mailbox has the received vtxo
 	let recovery_ids = read_recovery_vtxo_ids(&mut mb_rpc, &bark_wallet).await;
-	// 2 vtxo_ids: board + lightning received
-	assert_eq!(recovery_ids.len(), 2, "recovery mailbox should have 2 vtxo_ids (board + lightning received)");
+
+	if is_bark_version!(> HTLC_INTERMEDIATE_VERSION) {
+		// 3 vtxo_ids: board + HTLC intermediate (Locked) + lightning received
+		assert_eq!(recovery_ids.len(), 3, "recovery mailbox should have 3 vtxo_ids (board + HTLC intermediate + lightning received)");
+	} else {
+		// 2 vtxo_ids: board + lightning received
+		assert_eq!(recovery_ids.len(), 2, "recovery mailbox should have 2 vtxo_ids (board + lightning received)");
+	};
+
 	assert!(recovery_ids.contains(&received_vtxo.id()), "lightning received vtxo_id should be in recovery mailbox");
 }

@@ -849,6 +849,11 @@ async fn hark_vtxo_swap(
 		)).map_err(HarkForfeitError::SentForfeits)?;
 	}
 
+	// then register the output vtxos with the server
+	wallet.register_vtxo_transactions_with_server(output_vtxos).await
+		.context("couldn't register output vtxo transactions with server")
+		.map_err(HarkForfeitError::SentForfeits)?;
+
 	Ok(())
 }
 

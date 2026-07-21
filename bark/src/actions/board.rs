@@ -25,7 +25,7 @@ use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId};
 use crate::chain::BroadcastError;
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
-use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
+use crate::vtxo::{VtxoState, VtxoStateKind};
 
 /// An in-flight board, persisted as a single checkpoint row and driven across
 /// crashes by the executor.
@@ -136,9 +136,14 @@ async fn run_broadcast(
 	board: &Board,
 	signed_vtxo: Vtxo<Full>,
 ) -> Result<(), AdvanceError> {
-	wallet.store_locked_vtxos(
+	// The server doesn't know this vtxo until `register_board`, so skip the
+	// recovery-mailbox post `store_locked_vtxos` would do (it would fail the
+	// mailbox FK to `vtxo`); `register_board` posts it once accepted.
+	wallet.store_vtxos(
 		[&signed_vtxo],
-		Some(VtxoLockHolder::Action { id: board.id.clone() }),
+		&VtxoState::Locked {
+			holder: Some(crate::vtxo::VtxoLockHolder::Movement { id: board.movement_id }),
+		},
 	).await?;
 
 	let utxo = OutPoint::new(board.funding_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
@@ -294,7 +299,10 @@ async fn run_register(wallet: &Wallet, board: &Board) -> anyhow::Result<()> {
 		vtxo.id(), crate::vtxo::VtxoState::Spendable, VtxoStateKind::UNSPENT_STATES,
 	).await?;
 
-	// Post vtxo ID to server for recovery (non-critical, just log errors).
+	// Post vtxo ID for recovery (non-critical, just log errors). Done here
+	// rather than in `store_locked_vtxos` because the server only has the
+	// vtxo row after `register_board_vtxo` above, so the mailbox FK would
+	// otherwise fail.
 	if let Err(e) = wallet.post_recovery_vtxo_ids([vtxo.id()]).await {
 		error!("Failed to post recovery vtxo ID to server: {:#}", e);
 	}

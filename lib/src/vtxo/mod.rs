@@ -821,6 +821,24 @@ impl<P: Policy> Vtxo<Full, P> {
 			i.other_output_sum().and_then(|amt| sum.checked_add(amt))
 		})?)
 	}
+
+	/// The ids of every intermediate output in this VTXO's genesis chain — a
+	/// *superset* of the ancestor VTXOs it (directly or transitively) spent.
+	///
+	/// [`Vtxo::transactions`] walks the chain from the anchor down to this VTXO;
+	/// we return the output of every tx but the last (the last produces this VTXO
+	/// itself). The chain also holds intermediate transition outputs (e.g.
+	/// checkpoints) that were never owned VTXOs, hence a superset: it contains
+	/// every owned ancestor id, but not every id it returns is one.
+	pub fn ancestor_ids(&self) -> Vec<VtxoId> {
+		let items = self.transactions().collect::<Vec<_>>();
+		// The last item is this VTXO itself, so we don't need to include it
+		let ancestor_count = items.len().saturating_sub(1);
+		items.iter()
+			.take(ancestor_count)
+			.map(|item| OutPoint::new(item.tx.compute_txid(), item.output_idx as u32).into())
+			.collect()
+	}
 }
 
 impl<G> Vtxo<G, VtxoPolicy> {
@@ -1509,6 +1527,66 @@ mod test {
 			vtxos.arkoor3_vtxo.exit_depth(),
 			3 /* cosign */ + 1 /* checkpoint */ + 1 /* arkoor */,
 		);
+	}
+
+	#[test]
+	fn ancestor_ids() {
+		let v = &*VTXO_VECTORS;
+
+		// A board VTXO is its own chain anchor: a single genesis tx producing the
+		// VTXO itself, hence no ancestors.
+		assert_eq!(v.board_vtxo.exit_depth(), 1, "board is a single-tx chain anchor");
+		assert!(v.board_vtxo.ancestor_ids().is_empty(),
+			"a chain-anchor VTXO has no ancestors");
+
+		// For every fixture: ancestor_ids is the whole genesis chain minus the
+		// VTXO itself — length one less than the chain, never the VTXO's own id,
+		// and the chain's final tx produces the VTXO itself (the invariant
+		// ancestor_ids relies on).
+		for vtxo in [
+			&v.board_vtxo, &v.arkoor_htlc_out_vtxo, &v.arkoor2_vtxo,
+			&v.round1_vtxo, &v.round2_vtxo, &v.arkoor3_vtxo,
+		] {
+			let ancestors = vtxo.ancestor_ids();
+
+			assert_eq!(ancestors.len(), vtxo.exit_depth() as usize - 1,
+				"ancestor_ids is the whole genesis chain except the VTXO itself");
+			assert!(!ancestors.contains(&vtxo.id()),
+				"ancestor_ids must never contain the VTXO's own id");
+
+			let last = vtxo.transactions().last().expect("a VTXO has >=1 transaction");
+			let last_id: VtxoId = OutPoint::new(last.tx.compute_txid(), last.output_idx as u32).into();
+			assert_eq!(last_id, vtxo.id(),
+				"the final genesis tx must produce the VTXO itself");
+		}
+
+		// The recovery-critical property: a VTXO's ancestor set contains the id
+		// of every owned VTXO it (transitively) spent, ordered chain-anchor-first,
+		// so recovery can skip a parent spent into a newer recovered child.
+
+		// board -> arkoor1: arkoor1 spent the board.
+		assert!(v.arkoor_htlc_out_vtxo.ancestor_ids().contains(&v.board_vtxo.id()),
+			"a single-hop arkoor lists the board it spent as an ancestor");
+
+		// board -> arkoor1 -> arkoor2: arkoor2 lists both, ordered anchor-first.
+		let anc2 = v.arkoor2_vtxo.ancestor_ids();
+		let board_pos = anc2.iter().position(|id| *id == v.board_vtxo.id())
+			.expect("arkoor2 must list the board ancestor");
+		let arkoor1_pos = anc2.iter().position(|id| *id == v.arkoor_htlc_out_vtxo.id())
+			.expect("arkoor2 must list the arkoor1 ancestor");
+		assert!(board_pos < arkoor1_pos,
+			"ancestors are ordered from chain anchor down to the immediate parent");
+
+		// A child's ancestor chain begins with its parent's whole chain (the
+		// parent's own ancestors followed by the parent itself).
+		let mut parent_chain = v.arkoor_htlc_out_vtxo.ancestor_ids();
+		parent_chain.push(v.arkoor_htlc_out_vtxo.id());
+		assert!(v.arkoor2_vtxo.ancestor_ids().starts_with(&parent_chain),
+			"a child's ancestors extend its parent's full genesis chain");
+
+		// round2 -> arkoor3: an arkoor built on a round output lists that output.
+		assert!(v.arkoor3_vtxo.ancestor_ids().contains(&v.round2_vtxo.id()),
+			"an arkoor spending a round output lists it as an ancestor");
 	}
 
 	#[test]

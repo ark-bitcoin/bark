@@ -12,6 +12,16 @@ use ark::vtxo::{Full, VtxoRef};
 
 use crate::Wallet;
 
+#[derive(Debug, thiserror::Error)]
+pub enum VtxoValidationError {
+	#[error("chain error: {0}")]
+	Chain(anyhow::Error),
+	#[error("anchor not found")]
+	AnchorNotFound,
+	#[error("invalid: {0}")]
+	Invalid(#[from] ark::vtxo::VtxoValidationError),
+}
+
 impl Wallet {
 	/// Attempts to lock VTXOs with the given [VtxoId](ark::VtxoId) values.
 	///
@@ -116,14 +126,23 @@ impl Wallet {
 	///
 	/// It does nothing if the VTXOs already exist.
 	///
+	/// Also posts the vtxo IDs to the server's recovery mailbox (non-critical, errors are logged).
+	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	pub async fn store_locked_vtxos<'a>(
 		&self,
-		vtxos: impl IntoIterator<Item = &'a Vtxo<Full>>,
+		vtxos: impl IntoIterator<Item = &'a Vtxo<Full>> + Clone,
 		holder: Option<VtxoLockHolder>,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Locked { holder }).await
+		self.store_vtxos(vtxos.clone(), &VtxoState::Locked { holder }).await?;
+
+		// Post vtxo IDs to server for recovery (non-critical, just log errors)
+		if let Err(e) = self.post_recovery_vtxo_ids(vtxos.into_iter().map(|v| v.id())).await {
+			error!("Failed to post recovery vtxo IDs to server: {:#}", e);
+		}
+
+		Ok(())
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with an initial state of

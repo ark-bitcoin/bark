@@ -5,7 +5,7 @@ use anyhow::{Context, bail};
 use bitcoin::{Transaction, Txid};
 use tracing::debug;
 
-use ark::{ProtocolEncoding, ServerVtxo, VtxoId};
+use ark::{ProtocolEncoding, ServerVtxo, Vtxo, VtxoId};
 use ark::vtxo::{Bare, Full};
 
 use super::model::{SpendState, VirtualTransaction};
@@ -137,6 +137,7 @@ impl VtxoInserts {
 }
 
 struct VtxoUpdates {
+	provide_signatures: Vec<Vtxo<Full>>,
 	oor_spends: Vec<OorSpendUpdate>,
 	round_spends: Vec<RoundSpendUpdate>,
 	offboard_spends: Vec<OffboardSpendUpdate>,
@@ -149,6 +150,7 @@ struct VtxoUpdates {
 impl VtxoUpdates {
 	fn new() -> Self {
 		VtxoUpdates {
+			provide_signatures: Vec::new(),
 			oor_spends: Vec::new(),
 			round_spends: Vec::new(),
 			offboard_spends: Vec::new(),
@@ -413,6 +415,17 @@ impl VtxoTreeUpdate {
 		self.vtxo_updates.registrations.extend(ids);
 		self
 	}
+
+	/// Overwrites the stored vtxos with their fully-signed versions, so the
+	/// server can later serve complete vtxos to a wallet recovering from seed.
+	/// Every provided vtxo must already exist (see [`do_provide_signatures`]).
+	pub fn provide_signatures(
+		mut self,
+		vtxos: impl IntoIterator<Item = Vtxo<Full>>,
+	) -> Self {
+		self.vtxo_updates.provide_signatures.extend(vtxos);
+		self
+	}
 }
 
 // -- Execution --
@@ -439,6 +452,48 @@ pub async fn execute_vtxo_tree_update(
 	apply_vtxo_updates(tx, &update.vtxo_updates).await?;
 
 	Ok(inserted)
+}
+
+async fn do_provide_signatures(
+	tx: &tokio_postgres::Transaction<'_>,
+	vtxos: &[Vtxo<Full>],
+) -> anyhow::Result<()> {
+	if vtxos.is_empty() { return Ok(()) }
+
+	let mut vtxo_ids = Vec::with_capacity(vtxos.len());
+	let mut serialised = Vec::with_capacity(vtxos.len());
+	for vtxo in vtxos {
+		vtxo_ids.push(vtxo.id().to_string());
+		serialised.push(vtxo.serialize());
+	}
+
+	let rows = tx.execute(
+		"
+		UPDATE vtxo
+		SET
+			vtxo = u.serialised,
+			updated_at = NOW()
+		FROM
+			UNNEST($1::text[], $2::bytea[]) AS u(vtxo_id, serialised)
+		WHERE vtxo.vtxo_id = u.vtxo_id
+		",
+		&[&vtxo_ids, &serialised]
+	).await.context("failed to provide signatures")?;
+
+	// Every provided vtxo must exist; a mismatch means a caller handed us an id
+	// the server never stored, which would otherwise be swallowed silently.
+	if rows != vtxos.len() as u64 {
+		let bad = tx.query_one("
+			SELECT u.vtxo_id
+			FROM UNNEST($1::text[]) AS u(vtxo_id)
+			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
+			WHERE v.vtxo_id IS NULL
+			LIMIT 1
+		", &[&vtxo_ids]).await.context("failed to find vtxo missing for provide_signatures")?;
+		let vtxo_id: &str = bad.get("vtxo_id");
+		return badarg!("cannot provide signatures for unknown vtxo: {}", vtxo_id);
+	}
+	Ok(())
 }
 
 async fn upsert_virtual_transactions(
@@ -516,6 +571,7 @@ async fn apply_vtxo_updates(
 	tx: &tokio_postgres::Transaction<'_>,
 	vu: &VtxoUpdates,
 ) -> anyhow::Result<()> {
+	do_provide_signatures(tx, &vu.provide_signatures).await?;
 	do_oor_spend_updates(tx, &vu.oor_spends).await?;
 	do_round_spend_updates(tx, &vu.round_spends).await?;
 	do_offboard_spend_updates(tx, &vu.offboard_spends).await?;
