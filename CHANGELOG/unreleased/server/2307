@@ -1,0 +1,9 @@
+- Accept unregistered VTXOs as lightning-receive anti-DoS proof
+  The anti-DoS ownership proof only demonstrates that the claimant controls a
+  genuine stake in the Ark; it never spends the VTXO, so the server no longer
+  requires the proof VTXO's signed transaction chain to be registered first.
+  This fixes lightning receives failing when the client happened to pick a
+  VTXO the server still tracks as `Unregistered` (e.g. an arkoor output whose
+  chain upload had not landed yet). Banned and otherwise unspendable VTXOs are
+  still rejected.
+  [#2307](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2307)
