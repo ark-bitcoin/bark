@@ -250,7 +250,8 @@ pub async fn create_wallet(
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when \
-		mnemonic exposure is disabled (`BARKD_EXPOSE_MNEMONIC=false` on barkd).",
+		mnemonic exposure is disabled. Exposure is off by default; the endpoint returns \
+		404 unless barkd is started with the `--expose-mnemonic` flag.",
 	tag = "wallet"
 )]
 #[debug_handler]

@@ -325,7 +325,7 @@ Name | Type | Description  | Required | Notes
 > models::MnemonicResponse mnemonic()
 Get wallet mnemonic
 
-Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when mnemonic exposure is disabled (`BARKD_EXPOSE_MNEMONIC=false` on barkd).
+Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when mnemonic exposure is disabled. Exposure is off by default; the endpoint returns 404 unless barkd is started with the `--expose-mnemonic` flag.
 
 ### Parameters
 

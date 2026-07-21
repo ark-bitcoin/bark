@@ -1,0 +1,7 @@
+- Disable the barkd mnemonic endpoint by default
+  `GET /api/v1/wallet/mnemonic` returned the wallet's BIP-39 seed phrase to
+  anyone who could reach the API, so it is now opt-in: start barkd with
+  `--expose-mnemonic` (or `BARKD_EXPOSE_MNEMONIC=true`) to enable it.
+  [#2308](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2308)
+  - **BREAKING:** the endpoint now responds with 404 unless mnemonic exposure
+    is explicitly enabled.

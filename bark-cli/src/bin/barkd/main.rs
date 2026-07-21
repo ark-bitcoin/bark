@@ -73,23 +73,23 @@ struct Cli {
 	port: Option<u16>,
 	/// The host to listen on. Defaults to loopback; any other value may expose
 	/// the API to other machines on your network or the public internet.
-	/// Consider `--expose-mnemonic=false` for hardening.
 	#[arg(long, env = "BARKD_BIND_HOST")]
 	host: Option<String>,
 
 	/// Comma-separated list of allowed CORS origins (e.g. "http://localhost:3001,https://myapp.example.com").
 	/// Defaults to denying all cross-origin requests; any value may expose the
-	/// API to browser clients on other origins. Consider
-	/// `--expose-mnemonic=false` for hardening.
+	/// API to browser clients on other origins.
 	#[arg(long, env = "BARKD_ALLOWED_ORIGINS", value_delimiter = ',')]
 	allowed_origins: Vec<String>,
 
 	/// Expose `GET /api/v1/wallet/mnemonic`, which returns the wallet's BIP-39
-	/// mnemonic phrase. Disabling responds with 404.
+	/// mnemonic phrase. Disabled by default; while disabled the endpoint
+	/// responds with 404. Pass `--expose-mnemonic` (or set
+	/// `BARKD_EXPOSE_MNEMONIC=true`) to enable it.
 	#[arg(
 		long,
 		env = "BARKD_EXPOSE_MNEMONIC",
-		default_value_t = true,
+		default_value_t = false,
 		value_parser = BoolishValueParser::new(),
 	)]
 	expose_mnemonic: bool,
@@ -444,4 +444,24 @@ async fn main() -> anyhow::Result<()>{
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	/// `--expose-mnemonic` is a bare presence flag: absent means the mnemonic
+	/// endpoint is disabled, present means enabled. This guards both the
+	/// disabled-by-default behavior and the flag form; the env-var value form
+	/// (`BARKD_EXPOSE_MNEMONIC=true`) is covered by the barkd integration tests.
+	#[test]
+	fn expose_mnemonic_flag_parsing() {
+		let cli = Cli::try_parse_from(["barkd"])
+			.expect("bare invocation should parse");
+		assert!(!cli.expose_mnemonic, "mnemonic exposure must be off by default");
+
+		let cli = Cli::try_parse_from(["barkd", "--expose-mnemonic"])
+			.expect("--expose-mnemonic should parse");
+		assert!(cli.expose_mnemonic, "--expose-mnemonic must enable exposure");
+	}
 }
