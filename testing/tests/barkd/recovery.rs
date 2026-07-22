@@ -26,7 +26,7 @@ async fn recovered_wallet_finds_boarded_vtxo() {
 	let srv = ctx.captaind("server").create().await;
 
 	// Board and register a single VTXO with the Ark server.
-	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).create().await;
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
 
 	let before = barkd.vtxos(None).await;
 	assert_eq!(before.len(), 1, "wallet should have one boarded VTXO before recovery");
@@ -66,7 +66,7 @@ async fn recovered_wallet_finds_round_vtxo() {
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
 	// Board a VTXO.
-	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).create().await;
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
 
 	let board = barkd.vtxos(None).await;
 	assert_eq!(board.len(), 1, "should have one boarded VTXO");
@@ -116,8 +116,8 @@ async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
 	// Sender boards a large VTXO; recipient just supplies an address to send to.
-	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).create().await;
-	let recipient = ctx.barkd("recipient", &srv).create().await;
+	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).expose_mnemonic().create().await;
+	let recipient = ctx.barkd("recipient", &srv).expose_mnemonic().create().await;
 	let dest = recipient.ark_address().await;
 
 	// Send multiple arkoors
@@ -194,7 +194,7 @@ async fn recovered_wallet_finds_lightning_receive() {
 	srv.wait_for_vtxopool(&ctx).await;
 	ctx.generate_blocks(1).await;
 
-	let barkd = ctx.barkd("barkd", &srv).create().await;
+	let barkd = ctx.barkd("barkd", &srv).expose_mnemonic().create().await;
 
 	let amount = sat(500_000);
 	let invoice = barkd.lightning_invoice(amount).await;
@@ -243,7 +243,7 @@ async fn recovered_wallet_finds_lightning_send_change() {
 	srv.wait_for_vtxopool(&ctx).await;
 	ctx.generate_blocks(1).await;
 
-	let barkd = ctx.barkd("barkd", &srv).boarded(sat(1_000_000)).create().await;
+	let barkd = ctx.barkd("barkd", &srv).boarded(sat(1_000_000)).expose_mnemonic().create().await;
 	let board = barkd.vtxos(None).await;
 	let board_id = board[0].vtxo.id;
 
@@ -299,7 +299,7 @@ async fn recovered_wallet_finds_lightning_send_revocation() {
 	srv.wait_for_vtxopool(&ctx).await;
 	ctx.generate_blocks(1).await;
 
-	let barkd = ctx.barkd("barkd", &srv).boarded(sat(1_000_000)).create().await;
+	let barkd = ctx.barkd("barkd", &srv).boarded(sat(1_000_000)).expose_mnemonic().create().await;
 
 	// Pay a 300k invoice with no route: the send fails and the wallet ends up
 	// with two VTXOs — the change and the revoked payment amount.
@@ -344,7 +344,7 @@ async fn recovered_wallet_finds_offboard_change() {
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_offboard_change").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
-	let barkd = ctx.barkd("bark", &srv).boarded(sat(1_000_000)).create().await;
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(1_000_000)).expose_mnemonic().create().await;
 	let recipient = ctx.barkd("recipient", &srv).create().await;
 	let addr = recipient.onchain_address().await;
 
@@ -386,7 +386,7 @@ async fn recovered_wallet_is_empty_when_fully_spent() {
 	let ctx = TestContext::new("barkd/recovered_wallet_is_empty_when_fully_spent").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
-	let barkd = ctx.barkd("bark", &srv).boarded(sat(500_000)).create().await;
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(500_000)).expose_mnemonic().create().await;
 	let recipient = ctx.barkd("recipient", &srv).create().await;
 	let addr = recipient.onchain_address().await;
 
@@ -421,7 +421,7 @@ async fn recovered_wallet_skips_exited_vtxo() {
 
 	let ctx = TestContext::new("barkd/recovered_wallet_skips_exited_vtxo").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
-	let barkd = ctx.barkd("bark", &srv).boarded(sat(500_000)).create().await;
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(500_000)).expose_mnemonic().create().await;
 
 	let [before] = barkd.vtxos(Some(true)).await.try_into().expect("should hold one VTXO");
 
@@ -463,6 +463,7 @@ async fn recovered_wallet_finds_mixed_origin_vtxos() {
 	let barkd = ctx.barkd("bark", &srv)
 		.boarded(sat(300_000))
 		.funded(sat(400_000))
+		.expose_mnemonic()
 		.create().await;
 	let board_id = barkd.vtxos(None).await[0].vtxo.id;
 
@@ -527,7 +528,7 @@ async fn recovered_wallet_skips_unownable_vtxo() {
 	let foreign_id = foreign.vtxos(None).await[0].vtxo.id;
 
 	// Our wallet boards its own VTXO, which is posted to our recovery mailbox.
-	let victim = ctx.barkd("victim", &srv).boarded(sat(100_000)).create().await;
+	let victim = ctx.barkd("victim", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
 	let own_id = victim.vtxos(None).await[0].vtxo.id;
 	let mnemonic = victim.mnemonic().await;
 
@@ -588,7 +589,7 @@ async fn recovered_wallet_skips_invalid_vtxo() {
 	let ctx = TestContext::new("barkd/recovered_wallet_skips_invalid_vtxo").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
-	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).create().await;
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
 	let mnemonic = barkd.mnemonic().await;
 
 	// Proxy get_vtxo to return our own board VTXO with an invalidated signature.
@@ -633,7 +634,7 @@ async fn recovered_wallet_tolerates_undecodable_vtxo_id() {
 	let ctx = TestContext::new("barkd/recovered_wallet_tolerates_undecodable_vtxo_id").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
-	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).create().await;
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
 	let own_id = barkd.vtxos(None).await[0].vtxo.id;
 	let mnemonic = barkd.mnemonic().await;
 
@@ -692,6 +693,7 @@ async fn recovered_wallet_reads_paginated_mailbox() {
 	let barkd = ctx.barkd("bark", &srv)
 		.boarded(sat(100_000))
 		.funded(sat(200_000))
+		.expose_mnemonic()
 		.create().await;
 	barkd.onchain_sync().await;
 	barkd.board_amount(sat(100_000)).await;
@@ -726,7 +728,7 @@ async fn recovered_wallet_skips_vtxo_beyond_gap_limit() {
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
 	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).create().await;
-	let recipient = ctx.barkd("recipient", &srv).create().await;
+	let recipient = ctx.barkd("recipient", &srv).expose_mnemonic().create().await;
 
 	// Mint 60 addresses (> STOP_GAP of 50), each revealing a fresh key, then
 	// receive into the last (highest-index) one.
@@ -762,6 +764,7 @@ async fn recovered_wallet_recovery_is_repeatable() {
 	let barkd = ctx.barkd("bark", &srv)
 		.boarded(sat(100_000))
 		.funded(sat(200_000))
+		.expose_mnemonic()
 		.create().await;
 	barkd.onchain_sync().await;
 	barkd.board_amount(sat(100_000)).await;
