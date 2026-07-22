@@ -35,6 +35,7 @@ use std::time::Duration;
 use bitcoin::{FeeRate, Network};
 use log::warn;
 use tokio::sync::RwLock;
+use tonic::codec::CompressionEncoding;
 use tonic::metadata::AsciiMetadataValue;
 use tonic::metadata::errors::InvalidMetadataValue;
 use tonic::service::interceptor::{InterceptedService, Interceptor};
@@ -485,12 +486,18 @@ impl ServerConnection {
 		let pver = check_handshake(handshake)?;
 		interceptor.pver = Some(pver);
 
+		// Advertise zstd so capable servers compress their responses; the
+		// savings are mostly on the response path. We only accept_compressed,
+		// never send_compressed: gRPC can't negotiate request-body compression,
+		// so the client leaves its own requests uncompressed.
 		let mut client = ArkServiceClient::with_interceptor(transport.clone(), interceptor.clone())
+			.accept_compressed(CompressionEncoding::Zstd)
 			.max_decoding_message_size(64 * 1024 * 1024); // 64MB limit
 
 		let info = client.ark_info(network).await?;
 
 		let mailbox_client = mailbox::MailboxServiceClient::with_interceptor(transport, interceptor)
+			.accept_compressed(CompressionEncoding::Zstd)
 			.max_decoding_message_size(64 * 1024 * 1024); // 64MB limit
 
 		let info = Arc::new(RwLock::new(ServerInfo::new(pver, info)));

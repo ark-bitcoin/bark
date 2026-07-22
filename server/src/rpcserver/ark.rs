@@ -17,6 +17,7 @@ use bitcoin::secp256k1::{rand, PublicKey};
 use tokio::sync::oneshot;
 use futures::StreamExt;
 use tokio_stream::Stream;
+use tonic::codec::CompressionEncoding;
 use tower_http::cors::CorsLayer;
 use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::info;
@@ -798,9 +799,18 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 
 	let (_, health_server) = tonic_health::server::health_reporter();
 
+	// send_compressed compresses responses only for clients that advertise
+	// grpc-accept-encoding, so clients that don't are unaffected. This is
+	// where nearly all the savings are. accept_compressed is kept for
+	// forward-compat: no current client compresses its requests, but
+	// supporting it now means a future client that does needs no server change.
 	let routes = tonic::service::Routes::default()
-		.add_service(rpc::server::ArkServiceServer::from_arc(srv.clone()))
-		.add_service(rpc::server::MailboxServiceServer::from_arc(srv.clone()))
+		.add_service(rpc::server::ArkServiceServer::from_arc(srv.clone())
+			.accept_compressed(CompressionEncoding::Zstd)
+			.send_compressed(CompressionEncoding::Zstd))
+		.add_service(rpc::server::MailboxServiceServer::from_arc(srv.clone())
+			.accept_compressed(CompressionEncoding::Zstd)
+			.send_compressed(CompressionEncoding::Zstd))
 		.add_service(health_server);
 
 	tonic::transport::Server::builder()
