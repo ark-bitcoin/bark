@@ -438,6 +438,16 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
+	async fn mark_vtxos_registered(&self, vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::mark_vtxos_registered(&conn, vtxo_ids)
+	}
+
+	async fn get_unregistered_vtxo_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
+		let conn = self.connect()?;
+		query::get_unregistered_vtxo_ids(&conn)
+	}
+
 }
 
 #[cfg(any(test, doc))]

@@ -79,6 +79,7 @@ impl BarkPersister for Dummy {
 			state: VtxoState::Spendable,
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
+			registered: false,
 		}))
 	}
 
@@ -88,6 +89,7 @@ impl BarkPersister for Dummy {
 			state: VtxoState::Spendable,
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
+			registered: false,
 		}]))
 	}
 
@@ -99,6 +101,7 @@ impl BarkPersister for Dummy {
 			},
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
+			registered: false,
 		}]))
 	}
 
@@ -275,6 +278,7 @@ impl BarkPersister for Dummy {
 			state: VtxoState::Spent,
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
+			registered: false,
 		}]).pop().unwrap())
 	}
 
@@ -285,6 +289,14 @@ impl BarkPersister for Dummy {
 		_allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<()> {
 		Ok(())
+	}
+
+	async fn mark_vtxos_registered(&self, _vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn get_unregistered_vtxo_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
+		Ok(vec![])
 	}
 
 	async fn store_round_state(&self, _round_state: &RoundState) -> anyhow::Result<RoundStateId> {

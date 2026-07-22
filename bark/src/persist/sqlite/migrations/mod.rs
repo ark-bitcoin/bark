@@ -39,6 +39,7 @@ mod m0038_board_action_checkpoints;
 mod m0039_movement_action_id;
 mod m0040_unlock_failed_movement_vtxos_again;
 mod m0041_offboard_action_checkpoint;
+mod m0042_vtxo_registered;
 
 use anyhow::Context;
 use log::debug;
@@ -85,6 +86,7 @@ use m0038_board_action_checkpoints::Migration0038;
 use m0039_movement_action_id::Migration0039;
 use m0040_unlock_failed_movement_vtxos_again::Migration0040;
 use m0041_offboard_action_checkpoint::Migration0041;
+use m0042_vtxo_registered::Migration0042;
 
 pub struct MigrationContext {}
 
@@ -143,6 +145,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0039{})?;
 		self.try_migration(conn, &Migration0040{})?;
 		self.try_migration(conn, &Migration0041{})?;
+		self.try_migration(conn, &Migration0042{})?;
 
 		Ok(())
 	}
@@ -297,7 +300,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 41).unwrap();
+		assert_current_version(&conn, 42).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());

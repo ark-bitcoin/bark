@@ -644,6 +644,22 @@ pub trait BarkPersister: Send + Sync + 'static {
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<()>;
+
+	/// Set [WalletVtxo::registered] on the given VTXOs, recording that their
+	/// recovery state (mailbox ID post + signed transaction chain) has been
+	/// asserted with the server so the sync-time catch-up can skip them.
+	async fn mark_vtxos_registered(&self, vtxo_ids: &[VtxoId]) -> anyhow::Result<()>;
+
+	/// Fetch the IDs of all VTXOs whose recovery state still needs to be
+	/// asserted with the server: not yet marked [WalletVtxo::registered] and
+	/// in any state except [VtxoStateKind::Spent], in unspecified order.
+	///
+	/// Exited VTXOs are included: their exit transactions being broadcast
+	/// doesn't mean the resulting on-chain outputs were claimed, so a wallet
+	/// recovering from seed must still learn about them to claim the funds.
+	/// Spent VTXOs were forfeited to the server and carry no recoverable
+	/// value.
+	async fn get_unregistered_vtxo_ids(&self) -> anyhow::Result<Vec<VtxoId>>;
 }
 
 /// Return the recommended [`BarkPersister`] backend for the current

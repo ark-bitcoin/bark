@@ -402,7 +402,7 @@ async fn update_vtxo_state_checked<S: StorageAdaptor>(
 
 	adaptor.put(updated_record).await?;
 
-	Ok(wallet_vtxo_from_full(&serde_vtxo.vtxo, new_state))
+	Ok(wallet_vtxo_from_full(&serde_vtxo.vtxo, new_state, serde_vtxo.registered))
 }
 
 pub struct StorageAdaptorWrapper<S: StorageAdaptor> {
@@ -664,6 +664,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			let serde_vtxo = SerdeVtxo {
 				vtxo: (*vtxo).clone(),
 				states: vec![(*state).clone()],
+				registered: false,
 			};
 
 			let sk = sort::vtxo_sort_key(
@@ -686,7 +687,9 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			Some(serde_vtxo) => {
 				let state = serde_vtxo.current_state()
 					.context("vtxo has no state")?.clone();
-				Ok(Some(wallet_vtxo_from_full(&serde_vtxo.vtxo, state)))
+				Ok(Some(wallet_vtxo_from_full(
+					&serde_vtxo.vtxo, state, serde_vtxo.registered,
+				)))
 			},
 			None => Ok(None),
 		}
@@ -700,7 +703,9 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 				.with_context(|| format!("vtxo {id} not found"))?;
 			let state = serde_vtxo.current_state()
 				.context("vtxo has no state")?.clone();
-			out.push(wallet_vtxo_from_full(&serde_vtxo.vtxo, state));
+			out.push(wallet_vtxo_from_full(
+				&serde_vtxo.vtxo, state, serde_vtxo.registered,
+			));
 		}
 		Ok(out)
 	}
@@ -717,7 +722,9 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 					.current_state()
 					.cloned()
 					.context("vtxo has no state")?;
-				Ok(wallet_vtxo_from_full(&serde_vtxo.vtxo, state))
+				Ok(wallet_vtxo_from_full(
+					&serde_vtxo.vtxo, state, serde_vtxo.registered,
+				))
 			})
 			.collect()
 	}
@@ -744,7 +751,9 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 				let current_state = serde_vtxo.current_state()
 					.context("vtxo has no current state")?.clone();
 				debug_assert_eq!(current_state.kind(), *state);
-				records.push(wallet_vtxo_from_full(&serde_vtxo.vtxo, current_state));
+				records.push(wallet_vtxo_from_full(
+					&serde_vtxo.vtxo, current_state, serde_vtxo.registered,
+				));
 			}
 		}
 
@@ -818,6 +827,52 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			update_vtxo_state_checked(&mut *lock, *id, new_state.clone(), allowed_old_states).await?;
 		}
 		Ok(())
+	}
+
+	async fn mark_vtxos_registered(&self, vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+		let mut lock = self.inner.write().await;
+		for id in vtxo_ids {
+			let mut serde_vtxo = get_vtxo(&*lock, *id).await?
+				.with_context(|| format!("vtxo {id} not found"))?;
+			if serde_vtxo.registered {
+				continue;
+			}
+			serde_vtxo.registered = true;
+
+			// Keep the record's sort key unchanged: it is derived from the
+			// current state, which this update doesn't touch.
+			let state = serde_vtxo.current_state().context("vtxo has no state")?;
+			let sk = sort::vtxo_sort_key(
+				state.kind(), serde_vtxo.vtxo.expiry_height(), serde_vtxo.vtxo.amount(),
+			);
+			let record = Record::from_data(
+				partition::VTXO,
+				&id.to_bytes(),
+				Some(sk),
+				&serde_vtxo,
+			)?;
+			lock.put(record).await?;
+		}
+		Ok(())
+	}
+
+	async fn get_unregistered_vtxo_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
+		let records = self.inner.read().await
+			.query_sorted(Query::new_full_range(partition::VTXO)).await?;
+
+		let mut ids = Vec::new();
+		for record in records {
+			let serde_vtxo = record.to_data::<SerdeVtxo>()?;
+			if serde_vtxo.registered {
+				continue;
+			}
+			let state = serde_vtxo.current_state()
+				.context("vtxo has no state")?;
+			if state.kind() != VtxoStateKind::Spent {
+				ids.push(serde_vtxo.vtxo.id());
+			}
+		}
+		Ok(ids)
 	}
 
 	async fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()> {

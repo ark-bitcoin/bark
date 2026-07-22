@@ -106,8 +106,9 @@ pub (crate) fn row_to_wallet_vtxo(row: &Row<'_>) -> anyhow::Result<WalletVtxo> {
 
 	let exit_depth = row.get::<_, i64>("exit_depth")? as u16;
 	let exit_tx_weight = Weight::from_wu(row.get::<_, i64>("exit_tx_weight")? as u64);
+	let registered = row.get::<_, bool>("registered")?;
 
-	Ok(WalletVtxo { vtxo, state, exit_depth, exit_tx_weight })
+	Ok(WalletVtxo { vtxo, state, exit_depth, exit_tx_weight, registered })
 }
 
 pub (crate) fn rows_to_wallet_vtxos(mut rows: Rows<'_>) -> anyhow::Result<Vec<WalletVtxo>> {
