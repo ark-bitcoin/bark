@@ -29,8 +29,9 @@ async fn board_all_barkd() {
 
 	// board_all drains the onchain wallet; the gross board amount is the
 	// funded amount minus the onchain tx fee. With deterministic regtest
-	// fees the resulting net amount (after Ark fees) is fixed.
-	let expected_net = sat(98_349);
+	// fees the resulting net amount (after Ark fees) is fixed:
+	// 99,443 - base (100) - ceil(994.43) = 98,348
+	let expected_net = sat(98_348);
 	assert_eq!(board.amount, expected_net, "board_all net amount should match expected");
 
 	let balance_after = barkd.bark_balance().await;

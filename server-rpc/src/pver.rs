@@ -17,3 +17,8 @@ pub const PROTOCOL_VERSION_OFFBOARD_FIX: u64 = 2;
 /// progressing all the way to the claimed leaf and force-exiting it. Clients on
 /// this version build the claim with checkpoints and the server requires it.
 pub const PROTOCOL_VERSION_LN_RECEIVE_CHECKPOINT: u64 = 3;
+
+/// Version that rounds ppm fees up to a satoshi instead of down and
+/// calculates ppm expiry fees on the exact total across all VTXOs rather
+/// than per VTXO.
+pub const PROTOCOL_VERSION_PPM_FEE_TOTAL: u64 = 4;

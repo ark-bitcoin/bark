@@ -13,6 +13,7 @@ use ark::attestations::OffboardRequestAttestation;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use bitcoin_ext::P2TR_DUST;
+use server_rpc::pver::PROTOCOL_VERSION_PPM_FEE_TOTAL;
 
 use crate::{Server, SECP};
 use crate::bitcoind as bcd;
@@ -142,6 +143,7 @@ impl Server {
 		request: OffboardRequest,
 		input_vtxos: Vec<VtxoId>,
 		attestations: Vec<OffboardRequestAttestation>,
+		pver: u64,
 	) -> anyhow::Result<OffboardResponse> {
 		if input_vtxos.len() > self.ark_info().max_offboard_inputs {
 			return badarg!("too many inputs");
@@ -213,12 +215,22 @@ impl Server {
 		// If the user is performing an offboard then we deduct fees from the total VTXO sum.
 		let (net_amount, fee) = if request.deduct_fees_from_gross_amount {
 			let dust = request.script_pubkey.minimal_non_dust();
-			let fee = self.config.fees.offboard.calculate(
-				&request.script_pubkey,
-				gross_amount,
-				request.fee_rate,
-				fee_info,
-			).context("unable to calculate fee for offboard")?;
+			let fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
+				self.config.fees.offboard.calculate(
+					&request.script_pubkey,
+					gross_amount,
+					request.fee_rate,
+					fee_info,
+				)
+			} else {
+				#[allow(deprecated)]
+				self.config.fees.offboard.calculate_legacy(
+					&request.script_pubkey,
+					gross_amount,
+					request.fee_rate,
+					fee_info,
+				)
+			}.context("unable to calculate fee for offboard")?;
 			let net_amount = validate_and_subtract_fee_min_dust(gross_amount, fee, dust)?;
 			if net_amount != request.net_amount {
 				return badarg!(
@@ -228,12 +240,22 @@ impl Server {
 			}
 			(net_amount, fee)
 		} else {
-			let fee = self.config.fees.offboard.calculate(
-				&request.script_pubkey,
-				request.net_amount,
-				request.fee_rate,
-				fee_info
-			).context("unable to calculate fee for offboard")?;
+			let fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
+				self.config.fees.offboard.calculate(
+					&request.script_pubkey,
+					request.net_amount,
+					request.fee_rate,
+					fee_info,
+				)
+			} else {
+				#[allow(deprecated)]
+				self.config.fees.offboard.calculate_legacy(
+					&request.script_pubkey,
+					request.net_amount,
+					request.fee_rate,
+					fee_info,
+				)
+			}.context("unable to calculate fee for offboard")?;
 			let total = request.net_amount.checked_add(fee).context("request amount + fee overflow")?;
 			if total != gross_amount {
 				return badarg!(

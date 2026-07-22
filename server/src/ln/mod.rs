@@ -28,6 +28,7 @@ use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, PaymentStatus, 
 use ark::util::IteratorExt;
 use server_rpc::protos::{self, InputVtxo, lightning_payment_status};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
+use server_rpc::pver::PROTOCOL_VERSION_PPM_FEE_TOTAL;
 use server_rpc::TryFromBytes;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
@@ -158,6 +159,7 @@ impl Server {
 		payment_amount: Amount,
 		htlc_vtxo_ids: Vec<VtxoId>,
 		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
+		pver: u64,
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
 		let payment_hash = invoice.payment_hash();
@@ -218,8 +220,12 @@ impl Server {
 		let tip = self.sync_manager.chain_tip();
 		let vtxo_fee_infos = vtxos.iter()
 			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip.height));
-		let fee = self.config.fees.lightning_send.calculate(payment_amount, vtxo_fee_infos)
-			.context("fee overflowed")?;
+		let fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
+			self.config.fees.lightning_send.calculate(payment_amount, vtxo_fee_infos)
+		} else {
+			#[allow(deprecated)]
+			self.config.fees.lightning_send.calculate_legacy(payment_amount, vtxo_fee_infos)
+		}.context("fee overflowed")?;
 		let amount_with_fee = payment_amount.checked_add(fee).context("validation overflow")?;
 
 		// the max routing fee is the configured fraction of our own fee,
@@ -407,6 +413,7 @@ impl Server {
 		min_cltv_delta: BlockDelta,
 		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
 		description: Option<String>,
+		pver: u64,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
@@ -428,7 +435,12 @@ impl Server {
 		}
 
 		// Calculate lightning receive fees and validate fees don't exceed the received amount
-		let fee = self.config.fees.lightning_receive.calculate(amount).context("fee overflowed")?;
+		let fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
+			self.config.fees.lightning_receive.calculate(amount)
+		} else {
+			#[allow(deprecated)]
+			self.config.fees.lightning_receive.calculate_legacy(amount)
+		}.context("fee overflowed")?;
 		validate_and_subtract_fee(amount, fee)?;
 
 		if let Some(max) = self.config.max_vtxo_amount {
@@ -563,6 +575,7 @@ impl Server {
 		user_pubkey: PublicKey,
 		htlc_recv_expiry: BlockHeight,
 		anti_dos: Option<protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos>,
+		pver: u64,
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo<Full>>)> {
 		let mut sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
@@ -594,8 +607,12 @@ impl Server {
 
 		// Deduct the fees from the HTLC VTXOs.
 		let received_amount = sub.amount();
-		let fee = self.config.fees.lightning_receive.calculate(received_amount)
-			.context("fee overflowed")?;
+		let fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
+			self.config.fees.lightning_receive.calculate(received_amount)
+		} else {
+			#[allow(deprecated)]
+			self.config.fees.lightning_receive.calculate_legacy(received_amount)
+		}.context("fee overflowed")?;
 		let htlc_amount = validate_and_subtract_fee(received_amount, fee)?;
 
 		let lowest_incoming_htlc_expiry = sub.lowest_incoming_htlc_expiry
