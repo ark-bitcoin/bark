@@ -5,7 +5,7 @@ use bitcoin::hashes::Hash;
 use ark::ServerVtxo;
 use ark::test_util::VTXO_VECTORS;
 
-use server::database::Db;
+use server::database::{Db, SpendState};
 use server::database::tree::VtxoTreeUpdate;
 
 use ark_testing::TestContext;
@@ -385,4 +385,146 @@ async fn claim_is_idempotent() {
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_claimed([vtxo.id()]);
 	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("idempotent claim");
+}
+
+#[tokio::test]
+async fn provide_signatures_stores_full_vtxo() {
+	let (_ctx, db) = test_db("provide_signatures_stores_full_vtxo").await;
+
+	let vtxo = VTXO_VECTORS.board_vtxo.clone();
+
+	// Insert as bare + unregistered: the stored vtxo bytes are empty until
+	// the signed version is provided, so the readback below only works if
+	// provide_signatures stored them. (Production unregistered inserts —
+	// arkoor, lightning — store full-unsigned bytes instead; bare is the
+	// leaner fixture.)
+	let update = VtxoTreeUpdate::new()
+		.insert_unspent_bare_vtxos(
+			[ServerVtxo::from(vtxo.clone()).to_bare()], SpendState::Unregistered,
+		);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert bare");
+
+	let update = VtxoTreeUpdate::new()
+		.provide_signatures([vtxo.clone()]);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("provide signatures");
+
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("readback");
+	assert!(state.vtxo.has_all_witnesses(), "stored vtxo should be fully signed");
+}
+
+#[tokio::test]
+async fn provide_signatures_is_idempotent() {
+	let (_ctx, db) = test_db("provide_signatures_is_idempotent").await;
+
+	let vtxo = VTXO_VECTORS.board_vtxo.clone();
+
+	let update = VtxoTreeUpdate::new()
+		.insert_unspent_bare_vtxos(
+			[ServerVtxo::from(vtxo.clone()).to_bare()], SpendState::Unregistered,
+		);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert bare");
+
+	let update = VtxoTreeUpdate::new()
+		.provide_signatures([vtxo.clone()]);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first provide");
+
+	// Re-applying the same signatures should succeed: a registration can be
+	// applied server-side without the wallet recording it (e.g. it crashed
+	// before marking the vtxo registered), so a later sync re-sends it.
+	let update = VtxoTreeUpdate::new()
+		.provide_signatures([vtxo.clone()]);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("idempotent provide");
+
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("readback");
+	assert!(state.vtxo.has_all_witnesses(), "stored vtxo should be fully signed");
+}
+
+#[tokio::test]
+async fn provide_signatures_duplicate_in_batch() {
+	let (_ctx, db) = test_db("provide_signatures_duplicate_in_batch").await;
+
+	let vtxo = VTXO_VECTORS.board_vtxo.clone();
+
+	let update = VtxoTreeUpdate::new()
+		.insert_unspent_bare_vtxos(
+			[ServerVtxo::from(vtxo.clone()).to_bare()], SpendState::Unregistered,
+		);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert bare");
+
+	// The same vtxo twice in one batch must not trip the existence check.
+	let update = VtxoTreeUpdate::new()
+		.provide_signatures([vtxo.clone(), vtxo.clone()]);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await
+		.expect("duplicate in batch should succeed");
+
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("readback");
+	assert!(state.vtxo.has_all_witnesses(), "stored vtxo should be fully signed");
+}
+
+/// One unknown vtxo rejects the whole batch with a badarg naming every
+/// missing id, and rolls back the update for the known ones.
+#[tokio::test]
+async fn provide_signatures_unknown_vtxos_fail() {
+	let (_ctx, db) = test_db("provide_signatures_unknown_vtxos_fail").await;
+
+	let known = VTXO_VECTORS.board_vtxo.clone();
+	let unknown1 = VTXO_VECTORS.round1_vtxo.clone();
+	let unknown2 = VTXO_VECTORS.arkoor2_vtxo.clone();
+
+	let update = VtxoTreeUpdate::new()
+		.insert_unspent_bare_vtxos(
+			[ServerVtxo::from(known.clone()).to_bare()], SpendState::Unregistered,
+		);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert bare");
+
+	let update = VtxoTreeUpdate::new()
+		.provide_signatures([known.clone(), unknown1.clone(), unknown2.clone()]);
+	let err = db.write(async |t| t.execute_vtxo_tree_update(update).await).await.unwrap_err();
+	let msg = err.to_alt_string();
+	assert!(msg.contains("cannot provide signatures for unknown vtxo"), "got: {}", msg);
+	assert!(msg.contains(&unknown1.id().to_string()), "got: {}", msg);
+	assert!(msg.contains(&unknown2.id().to_string()), "got: {}", msg);
+
+	// The whole batch rolled back: the known vtxo's bytes are still bare.
+	let blob = db.read(async |t| {
+		let row = t.query_one(
+			"SELECT vtxo FROM vtxo WHERE vtxo_id = $1", &[&known.id().to_string()],
+		).await?;
+		Ok(row.get::<_, Vec<u8>>(0))
+	}).await.unwrap();
+	assert!(blob.is_empty(), "stored bytes should still be empty after rollback");
+}
+
+/// Providing signatures for a vtxo that is no longer `unregistered` must not
+/// flip its state back to spendable: `mark_vtxos_registered` only transitions
+/// `unregistered` vtxos. A regression there would resurrect spent vtxos.
+#[tokio::test]
+async fn provide_signatures_does_not_resurrect_spent_vtxo() {
+	let (_ctx, db) = test_db("provide_signatures_does_not_resurrect_spent_vtxo").await;
+
+	let vtxo = VTXO_VECTORS.board_vtxo.clone();
+
+	let update = VtxoTreeUpdate::new()
+		.insert_spendable_vtxos([ServerVtxo::from(vtxo.clone())]);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
+
+	let update = VtxoTreeUpdate::new()
+		.mark_vtxos_oor_spent([(vtxo.id(), dummy_txid(0xaa))]);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("spend");
+
+	// Re-registration of a spent vtxo, like a stale wallet re-asserting its
+	// recovery state, overwrites the stored bytes but must keep it spent.
+	let update = VtxoTreeUpdate::new()
+		.provide_signatures([vtxo.clone()])
+		.mark_vtxos_registered([vtxo.id()]);
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("re-register");
+
+	let state = db.read(async |t| {
+		let row = t.query_one(
+			"SELECT spend_state::text FROM vtxo WHERE vtxo_id = $1",
+			&[&vtxo.id().to_string()],
+		).await?;
+		Ok(row.get::<_, String>(0))
+	}).await.unwrap();
+	assert_eq!(state, "spent");
 }

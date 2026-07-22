@@ -6,6 +6,7 @@ mod mailbox;
 mod offboard;
 mod postgres;
 mod postgres_migrations;
+mod registration;
 mod settler;
 mod watchman;
 
