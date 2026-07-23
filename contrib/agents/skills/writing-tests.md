@@ -38,6 +38,21 @@ Place integration tests in `testing/tests/`. Each file focuses on a specific com
 - `testing/tests/exit.rs` - Exit flow tests
 - etc.
 
+### Version-gate tests of new bark behavior
+
+The CI compat jobs (`compat-bark-*` in `.gitlab/tests.yml`) run the `bark`
+and `barkd` test binaries against **released** bark binaries, so a test that
+asserts behavior introduced since the last release fails there. Gate such
+tests as the first line, using the last released version:
+
+```rust
+require_bark_version!(> "0.3.0");
+```
+
+Dev builds report `DIRTY`, which satisfies every `>` check, so gated tests
+still run in the normal jobs. A compat failure is recognizable in CI logs by
+the datadir path: `test/bark-<version>/...`.
+
 ## Naming Conventions
 
 - Use `snake_case` for test function names
