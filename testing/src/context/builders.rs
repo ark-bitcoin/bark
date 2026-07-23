@@ -229,6 +229,12 @@ impl<'a> BarkdBuilder<'a> {
 		self
 	}
 
+	/// Enable the `GET /wallet/mnemonic` endpoint, which barkd disables by
+	/// default. Needed by tests that read the seed back out of the daemon.
+	pub fn expose_mnemonic(self) -> Self {
+		self.env("BARKD_EXPOSE_MNEMONIC", "true")
+	}
+
 	pub async fn create(self) -> Barkd {
 		let (chain_source, bitcoind) = if let Some(electrs) = &self.ctx.electrs {
 			(BarkdChainSource::Esplora(electrs.rest_url()), None)

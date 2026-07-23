@@ -2343,7 +2343,7 @@
           "wallet"
         ],
         "summary": "Get wallet mnemonic",
-        "description": "Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when mnemonic exposure is disabled (`BARKD_EXPOSE_MNEMONIC=false` on barkd).",
+        "description": "Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when mnemonic exposure is disabled. Exposure is off by default; the endpoint returns 404 unless barkd is started with the `--expose-mnemonic` flag.",
         "operationId": "mnemonic",
         "responses": {
           "200": {

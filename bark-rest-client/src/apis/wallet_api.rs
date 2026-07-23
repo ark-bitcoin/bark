@@ -645,7 +645,7 @@ pub async fn import_vtxo(configuration: &configuration::Configuration, import_vt
     }
 }
 
-/// Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when mnemonic exposure is disabled (`BARKD_EXPOSE_MNEMONIC=false` on barkd).
+/// Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when mnemonic exposure is disabled. Exposure is off by default; the endpoint returns 404 unless barkd is started with the `--expose-mnemonic` flag.
 pub async fn mnemonic(configuration: &configuration::Configuration, ) -> Result<models::MnemonicResponse, Error<MnemonicError>> {
 
     let uri_str = format!("{}/api/v1/wallet/mnemonic", configuration.base_path);
