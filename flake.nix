@@ -1,6 +1,11 @@
 {
 	description = "ark";
 
+	nixConfig = {
+		extra-substituters = [ "https://bark.cachix.org" ];
+		extra-trusted-public-keys = [ "bark.cachix.org-1:Iaihe4ABbOQz1CHBoYUZS/sHVAcISasJZ+lL3I4gRB0=" ];
+	};
+
 	inputs = {
 		nixpkgs.url = "nixpkgs/nixos-25.11";
 		# nixpkgs-master.url = "github:NixOS/nixpkgs/master";

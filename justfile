@@ -316,3 +316,12 @@ generate-bark-rest-client: dump-bark-rest-openapi-schema
 	cp bark-rest/helpers/models.rs {{BARK_REST_CLIENT_DIR}}/src/models/mod.rs
 
 generate-static-files: dump-server-sql-schema dump-bark-sql-schema generate-bark-rest-client
+
+cachix-push:
+	nix develop .#default  --profile /tmp/bark-shell-dev      -c true
+	nix develop .#build    --profile /tmp/bark-shell-build    -c true
+	nix develop .#msrv-lib --profile /tmp/bark-shell-msrv-lib -c true
+	cachix push bark /tmp/bark-shell-dev
+	cachix push bark /tmp/bark-shell-build
+	cachix push bark /tmp/bark-shell-msrv-lib
+

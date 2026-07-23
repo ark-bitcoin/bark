@@ -12,6 +12,7 @@ environment with all necessary dependencies already packaged. We provide a Nix F
 against Linux and macOS. You can use it with one of the following methods in the root directory of
 the bark repository:
 
+- Optionally configure our Cachix cache: `cachix use bark`
 - Run `nix develop`
   - You may need to use the following flag:
     - `--extra-experimental-features "nix-command flakes"`
