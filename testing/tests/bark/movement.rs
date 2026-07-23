@@ -445,7 +445,7 @@ async fn round_refresh() {
 #[tokio::test]
 async fn movement_send_onchain() {
 	let ctx = TestContext::new("movement/movement_send_onchain").await;
-	let srv = ctx.captaind("server").cfg(|cfg| {
+	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;

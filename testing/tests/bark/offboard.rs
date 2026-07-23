@@ -13,7 +13,7 @@ async fn offboard_all() {
 	require_bark_version!(> "0.2.3");
 
 	let ctx = TestContext::new("bark/offboard_all").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
@@ -63,7 +63,7 @@ async fn offboard_all() {
 #[tokio::test]
 async fn offboard_vtxos() {
 	let ctx = TestContext::new("bark/offboard_vtxos").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
@@ -125,7 +125,7 @@ async fn offboard_vtxos() {
 #[tokio::test]
 async fn bark_send_onchain() {
 	let ctx = TestContext::new("bark/bark_send_onchain").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	let bark2 = ctx.bark("bark2", &srv).create().await;
 
@@ -217,7 +217,7 @@ async fn old_bark_recovers_from_rejected_forfeit_sigs() {
 	require_bark_version!(== "0.2.3");
 
 	let ctx = TestContext::new("bark/old_bark_recovers_from_rejected_forfeit_sigs").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 
 	let bark = ctx.bark("bark", &srv)
 		.boarded(sat(1_000_000))

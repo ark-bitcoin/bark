@@ -584,7 +584,7 @@ async fn offboard_fee_base_deducted() {
 	require_bark_version!(> "0.1.4");
 
 	let ctx = TestContext::new("fees/offboard_fee_base_deducted").await;
-	let srv = ctx.captaind("server").cfg(|cfg| {
+	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.fees.offboard = OffboardFees {
 			base_fee: sat(5_000),
@@ -643,7 +643,7 @@ async fn offboard_fee_with_ppm_expiry() {
 	require_bark_version!(> "0.1.4");
 
 	let ctx = TestContext::new("fees/offboard_fee_with_ppm_expiry").await;
-	let srv = ctx.captaind("server").cfg(|cfg| {
+	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.fees.offboard = OffboardFees {
 			base_fee: Amount::ZERO,
@@ -699,7 +699,7 @@ async fn offboard_all_rejects_dust_output() {
 	require_bark_version!(> "0.1.4");
 
 	let ctx = TestContext::new("fees/offboard_all_rejects_dust_output").await;
-	let srv = ctx.captaind("server").cfg(|cfg| {
+	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.fee_estimator.fallback_fee_rate_regular = FeeRate::from_sat_per_vb(7).unwrap();
 		cfg.fees.offboard = OffboardFees {
@@ -735,7 +735,7 @@ async fn send_onchain_fee_deducted() {
 	require_bark_version!(> "0.1.4");
 
 	let ctx = TestContext::new("fees/send_onchain_fee_deducted").await;
-	let srv = ctx.captaind("server").cfg(|cfg| {
+	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.fees.offboard = OffboardFees {
 			base_fee: sat(3_000),
 			fixed_additional_vb: 100,
