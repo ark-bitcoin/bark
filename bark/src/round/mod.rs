@@ -24,7 +24,7 @@ use futures::future::join_all;
 use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
-use ark::{ArkInfo, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
+use ark::{ArkInfo, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::Full;
 use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
 use ark::forfeit::HashLockedForfeitBundle;
@@ -37,6 +37,7 @@ use server_rpc::{protos, ServerConnection, TryFromBytes, MAX_NB_FORFEIT_NONCE_ID
 use crate::movement::manager::OnDropStatus;
 use crate::{Wallet, WalletVtxo, SECP, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::movement::{MovementId, MovementStatus};
+use crate::vtxo::VtxoStateKind;
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 use crate::subsystem::{RoundMovement, Subsystem};
@@ -322,6 +323,21 @@ impl RoundState {
 			}
 		}
 
+		// Inputs stay locked from attempt start until the round is final. A
+		// pending participation is only intent, so its inputs remain
+		// spendable. A re-attempt re-locks what this movement already holds.
+		if let Err(e) = wallet.lock_vtxos(
+			&self.participation.inputs, self.movement_id.map(|m| m.into()),
+		).await {
+			warn!("Failed to lock inputs for round attempt {}:{}: {:#}",
+				attempt.round_seq, attempt.attempt_seq, e,
+			);
+			self.flow = RoundFlowState::Failed {
+				error: format!("failed to lock input VTXOs: {:#}", e),
+			};
+			return;
+		}
+
 		match start_attempt(wallet, &self.participation, attempt).await {
 			Ok(state) => {
 				self.flow = RoundFlowState::InteractiveOngoing {
@@ -577,6 +593,11 @@ impl RoundState {
 	pub fn locked_pending_inputs(&self) -> &[Vtxo<Full>] {
 		//TODO(stevenroose) consider if we can't just drop the state after forfeit exchange
 		match self.flow {
+			// These are candidates, not a claim that the inputs are locked: a
+			// participation awaiting its round holds no lock until an attempt
+			// starts, or until the server issues a delegated round.
+			// pending_round_input_vtxos keeps only the ones locked by this
+			// round's movement.
 			RoundFlowState::NonInteractivePending { .. }
 				| RoundFlowState::InteractivePending
 				| RoundFlowState::InteractiveOngoing { .. }
@@ -1499,6 +1520,8 @@ async fn persist_round_failure(
 	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
 	debug!("Attempting to persist the failure of a round with the movement ID {:?}", movement_id);
+	// Inputs the round never locked, or that another operation holds by now,
+	// are skipped: `unlock_vtxos` only releases what this holder locked.
 	let unlock_result = wallet.unlock_vtxos(
 		&participation.inputs, movement_id.map(|m| m.into()),
 	).await;
@@ -1601,9 +1624,24 @@ impl Wallet {
 		Ok(UNIX_EPOCH.checked_add(Duration::from_secs(ts)).context("invalid timestamp")?)
 	}
 
+	async fn check_inputs_spendable(&self, inputs: &[VtxoId]) -> anyhow::Result<()> {
+		for input in inputs.iter() {
+			let vtxo = self.get_vtxo_by_id(*input).await
+				.context("error loading round input VTXO")?;
+			if vtxo.state.kind() != VtxoStateKind::Spendable {
+				bail!("input VTXO {} is not spendable (state: {})",
+					input, vtxo.state.kind(),
+				);
+			}
+		}
+		Ok(())
+	}
+
 	/// Start a new round participation
 	///
-	/// This function will store the state in the db and mark the VTXOs as locked.
+	/// Stores the participation intent in the db. The input VTXOs are only
+	/// locked once a round attempt starts, so an abandoned participation
+	/// never leaves VTXOs locked.
 	///
 	/// ### Return
 	///
@@ -1614,6 +1652,12 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
+		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+
+		// The inputs are only locked at attempt start; here they must just
+		// be spendable.
+		self.check_inputs_spendable(&input_ids).await?;
+
 		let movement = if let Some(kind) = movement_kind {
 			Some(self.inner.movements.new_guarded_movement_with_update(
 				Subsystem::ROUND,
@@ -1625,11 +1669,7 @@ impl Wallet {
 			None
 		};
 		let movement_id = movement.as_ref().map(|m| m.id());
-		let input_vtxos = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 		let state = RoundState::new_interactive(participation, movement_id);
-
-		self.lock_vtxos(&input_vtxos, movement_id.map(|m| m.into())).await
-			.context("failed to lock input VTXOs")?;
 
 		match (async || {
 			let id = self.inner.db.store_round_state(&state).await?;
@@ -1643,8 +1683,6 @@ impl Wallet {
 				Ok(state)
 			},
 			Err(e) => {
-				self.unlock_vtxos(&input_vtxos, movement_id.map(|m| m.into())).await
-					.context("failed to unlock input VTXOs")?;
 				if let Some(mut m) = movement {
 					m.fail().await.context("failed to mark movement as failed")?;
 				}
@@ -1664,6 +1702,14 @@ impl Wallet {
 		movement_kind: Option<RoundMovement>,
 		scheduled_height: Option<BlockHeight>,
 	) -> anyhow::Result<StoredRoundState<Unlocked>> {
+		// The inputs are only locked once an attempt starts, so like an
+		// interactive registration this one just needs them spendable.
+		// Pending participations over the same inputs stand: the server drops
+		// the ones it holds when it stores this submission, and they notice
+		// on their next sync.
+		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+		self.check_inputs_spendable(&input_ids).await?;
+
 		let movement = if let Some(kind) = movement_kind {
 			Some(self.inner.movements.new_guarded_movement_with_update(
 				Subsystem::ROUND,
@@ -1766,6 +1812,10 @@ impl Wallet {
 			(and has sufficient confirmations).",
 		);
 
+		// NB: the server dropped any older pending participation over one of
+		// these inputs when it accepted this one. Those records stay in place
+		// and settle on their own sync, which keeps this function callable
+		// from a state that is itself being synced.
 		let id = self.inner.db.store_round_state(&state).await?;
 		Ok(StoredRoundState::new(id, state))
 	}

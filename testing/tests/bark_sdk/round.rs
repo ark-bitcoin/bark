@@ -1,10 +1,14 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ark::VtxoId;
-use bark::movement::MovementStatus;
-use bark::vtxo::{VtxoLockHolder, VtxoState};
 use bitcoin::hashes::Hash;
+use tokio_stream::StreamExt;
+
+use ark::VtxoId;
+use ark::rounds::RoundEvent;
+use bark::movement::MovementStatus;
+use bark::subsystem::RoundMovement;
+use bark::vtxo::{VtxoLockHolder, VtxoState};
 use server_log::{NoRoundPayments, RoundFinished, RoundParticipationRejected};
 use server_rpc::protos;
 
@@ -618,7 +622,6 @@ async fn maintenance_refresh_delegated_drops_server_rejected_vtxo() {
 /// spendable. Once the server has issued the round and its funding tx is in the
 /// mempool, a sync locks the inputs under the refresh movement, and the round
 /// subsystem reports them as its pending inputs. When the round confirms the
-/// inputs are forfeited and replaced by the new VTXOs.
 #[tokio::test]
 async fn delegated_round_locks_inputs_once_issued() {
 	let ctx = TestContext::new("bark_sdk/delegated_round_locks_inputs_once_issued").await;
@@ -687,4 +690,72 @@ async fn delegated_round_locks_inputs_once_issued() {
 	assert!(new_ids.iter().all(|id| !ids.contains(id)),
 		"the inputs must be replaced by the round outputs: {ids:?} -> {new_ids:?}",
 	);
+}
+
+#[tokio::test]
+async fn round_inputs_locked_only_from_attempt_start() {
+	//! Joining the next round only records intent: the input VTXOs stay
+	//! spendable while waiting for a round and only get locked once a round
+	//! without ever having locked anything.
+
+	let ctx = TestContext::new("bark_sdk/round_inputs_locked_only_from_attempt_start").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).funded(btc(10)).create().await;
+	let wallet = ctx.bark_sdk("bark", &srv).funded(sat(1_000_000))
+		.boarded(sat(800_000))
+		.create().await;
+
+	let [vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo");
+	let vtxo_id = vtxo.vtxo.id();
+
+	let participation = wallet.build_refresh_participation(vec![vtxo_id]).await
+		.unwrap().expect("should build participation");
+	let state_id = wallet.join_next_round(participation, Some(RoundMovement::Refresh)).await
+		.unwrap().id();
+	assert_eq!(
+		wallet.get_vtxo_by_id(vtxo_id).await.unwrap().state, VtxoState::Spendable,
+		"input should stay spendable while waiting for a round",
+	);
+
+	// An abandoned participation cancels cleanly: nothing was ever locked.
+	wallet.cancel_pending_round(state_id).await.unwrap();
+	assert!(wallet.pending_round_states().await.unwrap().is_empty());
+	assert_eq!(wallet.get_vtxo_by_id(vtxo_id).await.unwrap().state, VtxoState::Spendable);
+
+	// Join again and drive the round stepwise: the input must be locked
+	// from the moment the attempt starts.
+	let participation = wallet.build_refresh_participation(vec![vtxo_id]).await
+		.unwrap().expect("should build participation");
+	wallet.join_next_round(participation, Some(RoundMovement::Refresh)).await
+		.unwrap().id();
+
+	let mut rpc = srv.get_public_rpc().await;
+	let mut events = rpc.subscribe_rounds(protos::Empty {}).await.unwrap().into_inner();
+	srv.trigger_round().await;
+
+	let mut saw_locked = false;
+	while let Some(item) = events.next().await {
+		let event = RoundEvent::try_from(item.unwrap()).unwrap();
+		wallet.progress_pending_rounds(Some(&event)).await.unwrap();
+
+		if let RoundEvent::Attempt(a) = &event && a.attempt_seq == 0 {
+			let state = wallet.get_vtxo_by_id(vtxo_id).await.unwrap().state;
+			assert!(matches!(state, VtxoState::Locked { .. }),
+				"input should be locked once the attempt started, got {:?}", state,
+			);
+			saw_locked = true;
+		}
+
+		if let RoundEvent::Finished(_) = &event {
+			break;
+		}
+	}
+	assert!(saw_locked, "never observed the round attempt start");
+
+	// The round finishes with the input consumed as usual.
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	wallet.sync().await;
+	assert_eq!(wallet.get_vtxo_by_id(vtxo_id).await.unwrap().state, VtxoState::Spent);
 }
