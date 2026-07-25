@@ -25,8 +25,9 @@ use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
 use ark::{ArkInfo, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
-use ark::vtxo::Full;
+use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoPolicy};
 use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
+use ark::fees::FeeValidationError;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
@@ -37,11 +38,10 @@ use server_rpc::{protos, ServerConnection, TryFromBytes, MAX_NB_FORFEIT_NONCE_ID
 use crate::movement::manager::OnDropStatus;
 use crate::{Wallet, WalletVtxo, SECP, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::movement::{MovementId, MovementStatus};
-use crate::vtxo::VtxoStateKind;
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 use crate::subsystem::{RoundMovement, Subsystem};
-use crate::vtxo::{validate_vtxo_tree_params, VtxoLockHolder, VtxoState};
+use crate::vtxo::{validate_vtxo_tree_params, VtxoLockHolder, VtxoStateKind, VtxoState};
 
 /// How long [`Wallet::lock_wait_round_state`] waits for a contended
 /// round lock before giving up. Long enough to outlast a normal round.
@@ -307,6 +307,138 @@ impl RoundState {
 		Ok(ret)
 	}
 
+	/// Build this participation without the given inputs, and rebuild the
+	/// refresh output from the ones that remain.
+	///
+	/// Nothing is mutated or persisted, so an already submitted
+	/// participation can reach the server before the wallet commits to the
+	/// new shape. Use [RoundState::adopt_participation] to take it on.
+	///
+	/// Returns `None` when the participation cannot be shrunk: too little
+	/// value remains to pay the refresh fee and a non-dust output, or it pays
+	/// an output this wallet does not own. Cancel or fail it instead.
+	async fn try_shrink_participation(
+		&self,
+		wallet: &Wallet,
+		remove: &[VtxoId],
+	) -> anyhow::Result<Option<RoundParticipation>> {
+		let remaining = self.participation.inputs.iter()
+			.filter(|v| !remove.contains(&v.id()))
+			.cloned()
+			.collect::<Vec<_>>();
+		if remaining.len() == self.participation.inputs.len() {
+			return Ok(Some(self.participation.clone()));
+		}
+		if !self.is_self_refresh(wallet).await? {
+			warn!("Round participation pays an output this wallet doesn't own; \
+				refusing to shrink it, as that would redirect the payment",
+			);
+			return Ok(None);
+		}
+
+		let nb_remaining = remaining.len();
+		let participation = match self.scheduled_height() {
+			Some(scheduled_height) => {
+				wallet.build_scheduled_refresh_participation(remaining, scheduled_height).await
+			},
+			None => {
+				wallet.build_refresh_participation(remaining).await
+			},
+		};
+
+		let built = match participation {
+			Ok(p) => p,
+			// A remainder that cannot pay the refresh fee and still leave a
+			// non-dust output cannot be refreshed on its own.
+			Err(e) if matches!(e.downcast_ref::<FeeValidationError>(),
+				Some(FeeValidationError::AmountAfterFeeBelowDust { .. })
+					| Some(FeeValidationError::FeeExceedsAmount { .. }),
+			) => {
+				info!("Round participation's {} remaining input(s) cannot cover the \
+					refresh fee: {}", nb_remaining, e,
+				);
+				return Ok(None);
+			},
+			Err(e) => return Err(e),
+		};
+
+		// No inputs left to refresh, so there is nothing to shrink to.
+		let Some(mut participation) = built else {
+			debug!("Round participation lost every input; it cannot be shrunk");
+			return Ok(None);
+		};
+
+		debug!("Shrinking round participation from {} to {} inputs",
+			self.participation.inputs.len(), nb_remaining,
+		);
+		participation.unblinded_mailbox_id = self.participation.unblinded_mailbox_id.clone();
+		Ok(Some(participation))
+	}
+
+	/// Whether every output of this participation pays back into this wallet,
+	/// the only shape [RoundState::try_shrink_participation] can rebuild.
+	async fn is_self_refresh(&self, wallet: &Wallet) -> anyhow::Result<bool> {
+		for output in self.participation.outputs.iter() {
+			let user_pubkey = match output.policy {
+				VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => user_pubkey,
+				VtxoPolicy::ServerHtlcSend(_) |
+				VtxoPolicy::ServerHtlcSend_v0(_) |
+				VtxoPolicy::ServerHtlcRecv(_) |
+				VtxoPolicy::ServerHtlcRecv_v0(_) => return Ok(false),
+			};
+			if wallet.inner.db.get_public_key_idx(&user_pubkey).await?.is_none() {
+				return Ok(false);
+			}
+		}
+		Ok(true)
+	}
+
+	/// Take on a participation built by
+	/// [RoundState::try_shrink_participation], and keep the movement's
+	/// consumed VTXOs and amounts in sync with it.
+	///
+	/// The caller must persist the updated state.
+	async fn adopt_participation(
+		&mut self,
+		wallet: &Wallet,
+		participation: RoundParticipation,
+	) -> anyhow::Result<()> {
+		if let Some(id) = self.movement_id {
+			wallet.sync_movement_to_participation(id, &participation).await?;
+		}
+		self.participation = participation;
+		Ok(())
+	}
+
+	/// Lock the inputs this participation can still claim for a starting round
+	/// attempt, shrinking it to them when others took some.
+	///
+	/// Returns false when nothing usable remains.
+	async fn lock_inputs_and_shrink(&mut self, wallet: &Wallet) -> anyhow::Result<bool> {
+		let holder = self.movement_id.map(VtxoLockHolder::from);
+		let unavailable = wallet.lock_available_vtxos(
+			&self.participation.inputs, holder.clone(),
+		).await?;
+		if unavailable.is_empty() {
+			return Ok(true);
+		}
+
+		// The shrunk participation only holds inputs we just locked.
+		let res = match self.try_shrink_participation(wallet, &unavailable).await {
+			Ok(Some(shrunk)) => self.adopt_participation(wallet, shrunk).await.map(|_| true),
+			Ok(None) => Ok(false),
+			Err(e) => Err(e),
+		};
+
+		// We locked above, so release on every way out but success without waiting for next sync.
+		if !matches!(res, Ok(true)) {
+			if let Err(e) = wallet.unlock_vtxos(&self.participation.inputs, holder).await {
+				warn!("Failed to release round inputs after a failed shrink: {:#}", e);
+			}
+		}
+		res
+	}
+
 	async fn try_start_attempt(
 		&mut self,
 		wallet: &Wallet,
@@ -323,19 +455,26 @@ impl RoundState {
 			}
 		}
 
-		// Inputs stay locked from attempt start until the round is final. A
-		// pending participation is only intent, so its inputs remain
-		// spendable. A re-attempt re-locks what this movement already holds.
-		if let Err(e) = wallet.lock_vtxos(
-			&self.participation.inputs, self.movement_id.map(|m| m.into()),
-		).await {
-			warn!("Failed to lock inputs for round attempt {}:{}: {:#}",
-				attempt.round_seq, attempt.attempt_seq, e,
-			);
-			self.flow = RoundFlowState::Failed {
-				error: format!("failed to lock input VTXOs: {:#}", e),
-			};
-			return;
+		// Inputs are only locked from attempt start. A re-attempt re-locks
+		// what this movement already holds.
+		match self.lock_inputs_and_shrink(wallet).await {
+			Ok(true) => {},
+			Ok(false) => {
+				warn!("No usable inputs left for round attempt {}:{}",
+					attempt.round_seq, attempt.attempt_seq,
+				);
+				self.flow = RoundFlowState::Canceled;
+				return;
+			},
+			Err(e) => {
+				warn!("Failed to lock inputs for round attempt {}:{}: {:#}",
+					attempt.round_seq, attempt.attempt_seq, e,
+				);
+				self.flow = RoundFlowState::Failed {
+					error: format!("failed to lock input VTXOs: {:#}", e),
+				};
+				return;
+			},
 		}
 
 		match start_attempt(wallet, &self.participation, attempt).await {
@@ -1622,6 +1761,20 @@ impl Wallet {
 		let (mut srv, _) = self.require_server().await?;
 		let ts = srv.client.next_round_time(protos::Empty {}).await?.into_inner().timestamp;
 		Ok(UNIX_EPOCH.checked_add(Duration::from_secs(ts)).context("invalid timestamp")?)
+	}
+
+	/// Point a round movement at the inputs and amounts of the participation
+	/// it now stands for, after that participation was shrunk.
+	async fn sync_movement_to_participation(
+		&self,
+		movement_id: MovementId,
+		participation: &RoundParticipation,
+	) -> anyhow::Result<()> {
+		let update = participation.to_movement_update()?
+			.replace_consumed_vtxos(&participation.inputs);
+		self.inner.movements.update_movement(movement_id, update).await
+			.context("failed to update movement after shrinking participation")?;
+		Ok(())
 	}
 
 	async fn check_inputs_spendable(&self, inputs: &[VtxoId]) -> anyhow::Result<()> {
