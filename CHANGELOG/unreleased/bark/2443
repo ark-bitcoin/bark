@@ -1,0 +1,19 @@
+- Round registration no longer locks the input VTXOs
+  Joining a round only records the intent; an interactive participation locks
+  its inputs once a round attempt starts. Interrupting `bark refresh` while it
+  waits no longer strands locked VTXOs: the leftover participation holds no
+  locks, is driven again by the next sync, and can always be canceled.
+  [#2443](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2443)
+  - **BREAKING:** `RoundFlowState` has a new `Redelegating` variant, so an
+    exhaustive match on it must handle one more case.
+  - A participation awaiting its round notices the inputs another operation
+    took: it shrinks to the ones it still has, or is canceled when too little
+    remains. `Wallet::sync_awaiting_round_participations` runs that pass on a
+    wallet sync, on the daemon chain-sync tick and on every mailbox message.
+  - A delegated participation that lost inputs is resubmitted with the rest,
+    keeping its scheduled height, because the server drops one wholesale as
+    soon as one of its inputs is consumed.
+  - `Wallet::join_next_round` and `Wallet::join_delegated_round` require
+    spendable inputs. Neither supersedes a participation already pending over
+    the same inputs; the server drops the ones it holds on a new submission,
+    and those records settle on their next sync.
