@@ -6474,6 +6474,7 @@
         "required": [
           "id",
           "status",
+          "state",
           "participation",
           "unlock_hash",
           "funding_txid"
@@ -6501,6 +6502,19 @@
           "participation": {
             "$ref": "#/components/schemas/RoundParticipationInfo",
             "description": "the round participation details"
+          },
+          "scheduled_height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The block height a delegated participation is scheduled for, if any",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/RoundFlowState",
+            "description": "Lifecycle phase of the participation"
           },
           "status": {
             "$ref": "#/components/schemas/RoundStatus",
@@ -6573,6 +6587,18 @@
             "description": "List of VTXO IDs to refresh. The sum of the VTXOs being refreshed must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Keep in mind that fees set out in\n[RefreshFees](crate::cli::fees::RefreshFees) will be deducted from the newly created VTXO, this\nvalue must also be >= [P2TR_DUST](bitcoin_ext::P2TR_DUST)."
           }
         }
+      },
+      "RoundFlowState": {
+        "type": "string",
+        "description": "Lifecycle phase of a round participation.",
+        "enum": [
+          "delegated-pending",
+          "pending",
+          "ongoing",
+          "awaiting-confirmations",
+          "failed",
+          "canceled"
+        ]
       },
       "RoundParticipationInfo": {
         "type": "object",

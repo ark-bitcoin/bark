@@ -160,6 +160,7 @@ docs/PendingRoundInfo.md
 docs/PpmExpiryFeeEntry.md
 docs/RefreshFees.md
 docs/RefreshRequest.md
+docs/RoundFlowState.md
 docs/RoundParticipationInfo.md
 docs/RoundStatus.md
 docs/RoundStatusOneOf.md
@@ -361,6 +362,7 @@ src/models/pending_round_info.rs
 src/models/ppm_expiry_fee_entry.rs
 src/models/refresh_fees.rs
 src/models/refresh_request.rs
+src/models/round_flow_state.rs
 src/models/round_participation_info.rs
 src/models/round_status.rs
 src/models/round_status_one_of.rs

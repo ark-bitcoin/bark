@@ -3,6 +3,7 @@
 //!
 
 use std::collections::HashMap;
+use std::fmt;
 use std::iter;
 use std::borrow::Cow;
 use std::convert::Infallible;
@@ -120,6 +121,36 @@ impl RoundStatus {
 	}
 }
 
+/// Type enum of [RoundFlowState].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RoundFlowKind {
+	/// Delegated participation waiting for its round
+	DelegatedPending,
+	/// Interactive participation waiting for its round
+	Pending,
+	/// The interactive part is being played out with the server
+	Ongoing,
+	/// The round finished and we are waiting for its funding tx to confirm
+	AwaitingConfirmations,
+	/// The participation failed
+	Failed,
+	/// The user canceled the participation
+	Canceled,
+}
+
+impl fmt::Display for RoundFlowKind {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			Self::DelegatedPending => f.write_str("delegated-pending"),
+			Self::Pending => f.write_str("pending"),
+			Self::Ongoing => f.write_str("ongoing"),
+			Self::AwaitingConfirmations => f.write_str("awaiting-confirmations"),
+			Self::Failed => f.write_str("failed"),
+			Self::Canceled => f.write_str("canceled"),
+		}
+	}
+}
+
 /// State of the progress of a round participation
 ///
 /// An instance of this struct is kept all the way from the intention of joining
@@ -194,6 +225,26 @@ impl RoundState {
 	/// Our participation in this round
 	pub fn participation(&self) -> &RoundParticipation {
 		&self.participation
+	}
+
+	/// The lifecycle phase this participation is in
+	pub fn flow_kind(&self) -> RoundFlowKind {
+		match self.flow {
+			RoundFlowState::NonInteractivePending { .. } => RoundFlowKind::DelegatedPending,
+			RoundFlowState::InteractivePending => RoundFlowKind::Pending,
+			RoundFlowState::InteractiveOngoing { .. } => RoundFlowKind::Ongoing,
+			RoundFlowState::Finished { .. } => RoundFlowKind::AwaitingConfirmations,
+			RoundFlowState::Failed { .. } => RoundFlowKind::Failed,
+			RoundFlowState::Canceled => RoundFlowKind::Canceled,
+		}
+	}
+
+	/// The block height a delegated participation is scheduled for, if any
+	pub fn scheduled_height(&self) -> Option<BlockHeight> {
+		match self.flow {
+			RoundFlowState::NonInteractivePending { scheduled_height, .. } => scheduled_height,
+			_ => None,
+		}
 	}
 
 	/// the unlock hash if already known

@@ -1,0 +1,4 @@
+- Add `state` and `scheduled_height` to the `PendingRoundInfo` schema
+  A client can now tell an ongoing participation from a delegated one that
+  waits for its scheduled block height.
+  [#2487](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2487)

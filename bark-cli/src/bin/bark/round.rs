@@ -3,6 +3,9 @@ use clap;
 
 use bark::Wallet;
 use bark::persist::models::RoundStateId;
+use bark_json as json;
+
+use bark_cli::util::output_json;
 
 
 #[derive(clap::Subcommand)]
@@ -22,7 +25,9 @@ pub enum RoundCommand {
 		#[clap(long = "continue")]
 		cont: bool,
 	},
-	//TODO(stevenroose) add list command
+	/// list pending round participations
+	#[command()]
+	List,
 }
 
 pub async fn execute_round_command(
@@ -46,6 +51,12 @@ pub async fn execute_round_command(
 				wallet.progress_pending_rounds(None).await?;
 			}
 			//TODO(stevenroose) consider printing statuses afterwards
+		},
+		RoundCommand::List => {
+			let infos = wallet.pending_round_states().await?.iter()
+				.map(json::web::PendingRoundInfo::from_state)
+				.collect::<Vec<_>>();
+			output_json(&infos);
 		},
 	}
 
