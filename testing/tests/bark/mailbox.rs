@@ -14,7 +14,7 @@ use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 /// First bark version that posts the intermediate (Locked) HTLC VTXO to the
 /// recovery mailbox, adding one id to the lightning-flow expectations below.
-const HTLC_INTERMEDIATE_VERSION: &str = "0.3.0";
+const HTLC_INTERMEDIATE_VERSION: &str = "0.4.0";
 
 #[tokio::test]
 async fn reject_arkoor_with_bad_signature() {
