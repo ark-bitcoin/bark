@@ -160,6 +160,27 @@ impl<G, P: Policy> VtxoState<G, P> {
 		if self.spend_state != SpendState::Spendable {
 			return badarg!("vtxo {} is not spendable (state: {})", self.vtxo_id, self.spend_state);
 		}
+		self.check_not_banned(chain_tip)
+	}
+
+	/// Checks whether this vtxo is acceptable as a lightning-receive anti-DoS
+	/// ownership proof.
+	///
+	/// Unlike [Self::check_spendable] this also accepts `Unregistered` vtxos.
+	/// The proof only demonstrates that the user controls a genuine stake in
+	/// the Ark (one the server itself cosigned); it never spends the vtxo, so
+	/// requiring the signed transaction chain to be uploaded first is
+	/// unnecessary. Banned vtxos are still rejected.
+	pub fn check_valid_anti_dos_proof(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
+		if !matches!(self.spend_state, SpendState::Spendable | SpendState::Unregistered) {
+			return badarg!(
+				"vtxo {} is not a valid anti-dos proof (state: {})", self.vtxo_id, self.spend_state,
+			);
+		}
+		self.check_not_banned(chain_tip)
+	}
+
+	fn check_not_banned(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
 		if let Some(until) = self.banned_until_height {
 			if chain_tip < until {
 				return badarg!("vtxo {} is banned until block {}", self.vtxo_id, until);
@@ -401,6 +422,30 @@ mod test {
 		v.spend_state = SpendState::Unregistered;
 		let err = v.check_spendable(100).unwrap_err();
 		assert!(format!("{err}").contains("unregistered"), "got: {err}");
+	}
+
+	#[test]
+	fn unregistered_is_valid_anti_dos_proof() {
+		let mut v = spendable();
+		v.spend_state = SpendState::Unregistered;
+		assert!(v.check_valid_anti_dos_proof(100).is_ok());
+	}
+
+	#[test]
+	fn spent_is_not_valid_anti_dos_proof() {
+		let mut v = spendable();
+		v.spend_state = SpendState::Spent;
+		v.oor_spent_txid = Some(Txid::all_zeros());
+		assert!(v.check_valid_anti_dos_proof(100).is_err());
+	}
+
+	#[test]
+	fn banned_is_not_valid_anti_dos_proof() {
+		let mut v = spendable();
+		v.spend_state = SpendState::Unregistered;
+		v.banned_until_height = Some(200);
+		assert!(v.check_valid_anti_dos_proof(100).is_err());
+		assert!(v.check_valid_anti_dos_proof(200).is_ok());
 	}
 
 	#[test]

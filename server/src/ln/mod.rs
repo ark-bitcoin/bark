@@ -666,7 +666,7 @@ impl Server {
 					let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await?;
 					let vtxo = vtxos.first().badarg("vtxo for proof not found")?;
 					let chain_tip = self.sync_manager.chain_tip().height;
-					vtxo.check_spendable(chain_tip).badarg("anti-dos proof vtxo not spendable")?;
+					vtxo.check_valid_anti_dos_proof(chain_tip).badarg("anti-dos proof vtxo must be spendable")?;
 
 					attestation.verify(payment_hash, &vtxo.vtxo).badarg("vtxo attestation invalid")?;
 				},
