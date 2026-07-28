@@ -1,0 +1,6 @@
+- Add `payment_hash` to `SendResponse` and `LightningPayResponse`
+  payment_hash is an optional field which is used by lightning payment
+  responses so a client can save that info and query the status later.
+  [#2324](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2324)
+- Add `LightningSendInfo` as a shared model between the REST and CLI. 
+  [#2324](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2324)

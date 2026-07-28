@@ -253,7 +253,7 @@ pub async fn pay(
 
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
 
-	if let Ok(invoice) = Bolt11Invoice::from_str(&body.destination) {
+	let invoice = if let Ok(invoice) = Bolt11Invoice::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-11 invoices");
 		}
@@ -275,5 +275,6 @@ pub async fn pay(
 
 	Ok(axum::Json(bark_json::web::LightningPayResponse {
 		message: "Payment initiated successfully".to_string(),
+		payment_hash: Some(invoice.payment_hash()),
 	}))
 }
