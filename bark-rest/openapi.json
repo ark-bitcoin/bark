@@ -1561,6 +1561,59 @@
         }
       }
     },
+    "/api/v1/lightning/sends/{identifier}": {
+      "get": {
+        "tags": [
+          "lightning"
+        ],
+        "summary": "Get send status",
+        "description": "Returns the status of a specified outgoing Lightning payment, identified by its payment hash or invoice string. The `state` field tracks the payment lifecycle from `start` through `paid`; the preimage is included once the payment succeeded. If the wallet does not recognize the payment hash, it will return `unknown`. This is a read on the status in the db, so it does not trigger any `sync` before checking the state.",
+        "operationId": "get_send_status",
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "description": "Payment hash or invoice string to search for",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the Lightning send status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LightningSendInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/notifications/wait": {
       "get": {
         "tags": [
@@ -5370,6 +5423,13 @@
           "message": {
             "type": "string",
             "description": "Success message"
+          },
+          "payment_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The payment hash of the lightning payment. Can be used to poll the\npayment status."
           }
         }
       },
@@ -5501,6 +5561,37 @@
               "$ref": "#/components/schemas/PpmExpiryFeeEntry"
             },
             "description": "A table mapping how soon a VTXO will expire to a PPM (parts per million) fee rate.\nThe table should be sorted by each `expiry_blocks_threshold` value in ascending order."
+          }
+        }
+      },
+      "LightningSendInfo": {
+        "type": "object",
+        "required": [
+          "payment_hash",
+          "state"
+        ],
+        "properties": {
+          "invoice": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The invoice string, if known."
+          },
+          "payment_hash": {
+            "type": "string",
+            "description": "The payment hash of the outgoing lightning payment"
+          },
+          "preimage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The payment preimage, revealed once the payment succeeded."
+          },
+          "state": {
+            "type": "string",
+            "description": "Lifecycle phase of the send: `unknown`, `start`, `htlc-received`,\n`payment-initiated`, `revocable-htlcs`, `revocation-stuck`, or `paid`."
           }
         }
       },
@@ -6364,6 +6455,13 @@
           "message": {
             "type": "string",
             "description": "Success message"
+          },
+          "payment_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The payment hash, when the destination resolved to a lightning\npayment. Can be used to poll the payment status."
           }
         }
       },

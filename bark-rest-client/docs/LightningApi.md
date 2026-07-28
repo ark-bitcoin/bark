@@ -8,6 +8,7 @@ Method | HTTP request | Description
 [**generate_invoice**](LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | Create a BOLT11 invoice
 [**generate_invoice_for_address**](LightningApi.md#generate_invoice_for_address) | **POST** /api/v1/lightning/receives/invoice/for-address | Create a BOLT11 invoice for an Ark address
 [**get_receive_status**](LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
+[**get_send_status**](LightningApi.md#get_send_status) | **GET** /api/v1/lightning/sends/{identifier} | Get send status
 [**list_receive_statuses**](LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses
 [**pay**](LightningApi.md#pay) | **POST** /api/v1/lightning/pay | Send a Lightning payment
 
@@ -120,6 +121,36 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**models::LightningReceiveInfo**](LightningReceiveInfo.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## get_send_status
+
+> models::LightningSendInfo get_send_status(identifier)
+Get send status
+
+Returns the status of a specified outgoing Lightning payment, identified by its payment hash or invoice string. The `state` field tracks the payment lifecycle from `start` through `paid`; the preimage is included once the payment succeeded. If the wallet does not recognize the payment hash, it will return `unknown`. This is a read on the status in the db, so it does not trigger any `sync` before checking the state.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**identifier** | **String** | Payment hash or invoice string to search for | [required] |
+
+### Return type
+
+[**models::LightningSendInfo**](LightningSendInfo.md)
 
 ### Authorization
 
