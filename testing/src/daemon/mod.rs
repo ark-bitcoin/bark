@@ -174,14 +174,23 @@ impl<T> Daemon<T>
 		let is_initialized = tokio::time::timeout(init_timeout, self.inner.wait_for_init());
 		let child_died = wait_for_completion(&mut child);
 
+		// No early returns here: the log dump below is what tells us why.
 		let result = tokio::select!(
 			val = is_initialized => {
-				val
-					.with_context(|| format!("Daemon {} failed to initialize within reasonable time", self.inner.name()))?
-					.with_context(|| format!("Daemon {} errored during wait_for_init", self.inner.name()))
+				match val {
+					Ok(res) => res.with_context(|| format!(
+						"Daemon {} errored during wait_for_init", self.inner.name(),
+					)),
+					Err(_) => Err(anyhow!(
+						"Daemon {} failed to initialize within reasonable time", self.inner.name(),
+					)),
+				}
 			}
-			_ = child_died => {
-				bail!("Daemon {} stopped running before initialization", self.inner.name())
+			status = child_died => {
+				Err(anyhow!("Daemon {} stopped running before initialization with {}",
+					self.inner.name(),
+					status.map(|s| s.to_string()).unwrap_or("unknown exit status".into()),
+				))
 			}
 		);
 
