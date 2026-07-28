@@ -1,0 +1,9 @@
+- Add `GET /lightning/sends/{identifier}` to check outgoing Lightning payments
+  Mirrors the receive-side status endpoint: pass a payment hash or BOLT11
+  invoice and get the payment lifecycle state reading from the database.
+  This means no sync is performed as it is just a read.
+  [#2324](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2324)
+- Return the payment hash from `POST /wallet/send` and `POST /lightning/pay`
+  Facilitates the query for a payment_hash by adding it as a field on the
+  response of a send/payment.
+  [#2324](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2324)
