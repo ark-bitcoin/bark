@@ -10,6 +10,7 @@ use tokio::time::sleep;
 
 use crate::constants::env::TOR_EXEC;
 use crate::daemon::{Daemon, DaemonHelper};
+use crate::ports::pick_port;
 use crate::util::resolve_path;
 
 pub struct HiddenService {
@@ -101,7 +102,7 @@ impl DaemonHelper for TorHelper {
 	}
 
 	async fn make_reservations(&self) -> anyhow::Result<()> {
-		*self.socks_port.lock() = Some(portpicker::pick_unused_port().expect("free port available"));
+		*self.socks_port.lock() = Some(pick_port());
 		Ok(())
 	}
 

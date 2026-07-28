@@ -37,6 +37,7 @@ use futures::{Stream, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::{BARKD_EXEC, BARK_TOKIO_WORKER_THREADS};
+use crate::ports::pick_port;
 use crate::util::resolve_path;
 
 pub type Barkd = Daemon<BarkdHelper>;
@@ -674,7 +675,7 @@ impl DaemonHelper for BarkdHelper {
 	}
 
 	async fn make_reservations(&self) -> anyhow::Result<()> {
-		*self.port.lock() = portpicker::pick_unused_port().expect("No ports free");
+		*self.port.lock() = pick_port();
 		Ok(())
 	}
 

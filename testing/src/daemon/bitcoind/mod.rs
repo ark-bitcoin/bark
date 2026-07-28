@@ -19,6 +19,7 @@ use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
 use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
 use crate::constants::TX_PROPAGATION_SLEEP_TIME;
 use crate::daemon::{Daemon, DaemonHelper};
+use crate::ports::pick_port;
 use crate::util::{FutureExt, resolve_path, get_tx_propagation_timeout_millis};
 
 pub struct BitcoindHelper {
@@ -368,17 +369,22 @@ impl DaemonHelper for BitcoindHelper {
 		// working after a stop/start cycle.
 		let mut state = self.state.lock();
 		if state.rpc_port.is_none() {
-			state.rpc_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+			state.rpc_port = Some(pick_port());
 		}
 		if state.p2p_port.is_none() {
-			state.p2p_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+			state.p2p_port = Some(pick_port());
 		}
 		if state.zmq_port.is_none() {
-			state.zmq_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+			state.zmq_port = Some(pick_port());
 		}
 
 		Ok(())
 	}
+
+	async fn drop_reservations(&self) {
+		*self.state.lock() = BitcoindState::default();
+	}
+
 	async fn prepare(&self) -> anyhow::Result<()> {
 		debug!("Creating bitcoind datadir in {:?}", self.config.datadir.clone());
 		std::fs::create_dir_all(self.config.datadir.clone())?;

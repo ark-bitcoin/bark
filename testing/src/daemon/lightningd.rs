@@ -23,6 +23,7 @@ use crate::Bitcoind;
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use crate::constants::env::{LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_PLUGIN_DIR};
 use crate::daemon::{Daemon, DaemonHelper};
+use crate::ports::pick_port;
 use crate::util::resolve_path;
 
 pub type Lightningd = Daemon<LightningDHelper>;
@@ -358,9 +359,9 @@ impl DaemonHelper for LightningDHelper {
 	}
 
 	async fn make_reservations(&self) -> anyhow::Result<()> {
-		let grpc_port = portpicker::pick_unused_port().expect("No ports free");
-		let hold_port = portpicker::pick_unused_port().expect("No ports free");
-		let port = portpicker::pick_unused_port().expect("No ports free");
+		let grpc_port = pick_port();
+		let hold_port = pick_port();
+		let port = pick_port();
 
 		trace!("Reserved grpc_port={}, hold_port={} and port={}", grpc_port, hold_port, port);
 		let mut state = self.state.lock().await;

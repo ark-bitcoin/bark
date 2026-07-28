@@ -60,6 +60,9 @@ pub trait DaemonHelper {
 	async fn make_reservations(&self) -> anyhow::Result<()>;
 	async fn prepare(&self) -> anyhow::Result<()>;
 
+	/// Drop the reservations so a retried start makes fresh ones.
+	async fn drop_reservations(&self) {}
+
 	/// A hook to run right after daemon succesfully started.
 	async fn post_start(
 		&self,
@@ -116,6 +119,10 @@ impl<T> Daemon<T>
 						break Err(err);
 					} else {
 						tries -= 1;
+						// Never came up, so nothing uses its ports yet.
+						if self.child.lock().await.is_none() {
+							self.inner.drop_reservations().await;
+						}
 						warn!("Failed attempt to start {}. Retrying {} more times...",
 							self.name, tries,
 						);

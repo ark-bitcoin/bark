@@ -24,6 +24,7 @@ use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcP
 use crate::{secs, Bitcoind, Daemon, DaemonHelper, TestContext};
 use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
 use crate::constants::env::CAPTAIND_EXEC;
+use crate::ports::pick_port;
 use crate::util::resolve_path;
 
 pub type Captaind = Daemon<CaptaindHelper>;
@@ -433,9 +434,9 @@ impl DaemonHelper for CaptaindHelper {
 	}
 
 	async fn make_reservations(&self) -> anyhow::Result<()> {
-		let public_port = portpicker::pick_unused_port().expect("No ports free");
-		let admin_port = portpicker::pick_unused_port().expect("No ports free");
-		let integration_port = portpicker::pick_unused_port().expect("No ports free");
+		let public_port = pick_port();
+		let admin_port = pick_port();
+		let integration_port = pick_port();
 
 		let public_address = format!("0.0.0.0:{}", public_port);
 		let admin_address = format!("127.0.0.1:{}", admin_port);
