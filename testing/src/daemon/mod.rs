@@ -216,6 +216,12 @@ impl<T> Daemon<T>
 					Ok(c) => error!("stdout: {c}"),
 					Err(e) => error!("failed to read stdout at {}: {}", stdout_path.display(), e),
 				}
+
+				// A timed-out daemon still holds the datadir a retry needs.
+				if let Err(e) = child.kill().await {
+					error!("Failed to kill daemon '{}' after a failed start: {:#}", self.name, e);
+				}
+
 				Err(e)
 			}
 		}
