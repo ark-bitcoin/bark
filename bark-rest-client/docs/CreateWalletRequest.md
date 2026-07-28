@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 **ark_server_access_token** | Option<**String**> | An access token for a private Ark server.  **Deprecated**: access tokens are no longer enforced by the server; this field will be removed in a future release. | [optional]
 **birthday_height** | Option<**i32**> | An optional birthday height to start syncing the wallet from | [optional]
 **chain_source** | Option<[**models::ChainSourceConfig**](ChainSourceConfig.md)> | The chain source to use for the wallet. Optional when a config.toml already exists in the datadir. | [optional]
+**force** | Option<**bool**> | Proceed even if the datadir contains unexpected files | [optional]
 **mnemonic** | Option<**String**> | The optional mnemonic to use for the wallet | [optional]
 **network** | [**models::BarkNetwork**](BarkNetwork.md) | The network to use for the wallet | 
 
