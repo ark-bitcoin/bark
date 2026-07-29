@@ -9,6 +9,7 @@
 //! that mode would silently test the current code under a "compat" label.
 
 mod lightning;
+mod mailbox;
 mod offboard;
 mod round;
 mod vtxo_lock;
