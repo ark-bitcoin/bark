@@ -18,6 +18,7 @@ use bark_rest::auth::AuthToken;
 use bark::fs_perms;
 
 use bark_cli::VERSION_DIRTY;
+use bark_cli::connection;
 use bark_cli::log::init_logging;
 use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, read_mnemonic, AUTH_TOKEN_FILE};
 use tokio_util::sync::CancellationToken;
@@ -343,6 +344,8 @@ async fn main() -> anyhow::Result<()>{
 			Consider building at one of the tagged versions or using the release builds.");
 	}
 
+	let _barkd_lock = connection::acquire_barkd_lock(&datadir)?;
+
 	let auth_token = if cli.no_auth {
 		if cli.allowed_origins.is_empty() {
 			warn!("Auth is disabled and no CORS origins are configured — \
@@ -403,11 +406,7 @@ async fn main() -> anyhow::Result<()>{
 			// NB: No need to stop the daemon here, it will be stopped when the wallet is removed from the server state
 
 			Box::pin(async move {
-				// Wipe datadir
-				let _ = tokio::fs::remove_dir_all(&datadir).await.ok();
-				tokio::fs::create_dir_all(&datadir).await?;
-				// Lock it back to the owner.
-				fs_perms::harden(&datadir, 0o700)?;
+				connection::wipe_datadir_except_daemon_files(&datadir)?;
 				Ok(())
 			})
 		}

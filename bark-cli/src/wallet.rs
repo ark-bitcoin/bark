@@ -51,6 +51,7 @@ use bark::persist::adaptor::filestore::FileStorageAdaptor;
 
 use bitcoin_ext::BlockHeight;
 
+use crate::connection::BARKD_LOCK_FILE;
 use crate::util;
 
 /// File name of the mnemonic file.
@@ -278,6 +279,27 @@ pub struct CreateOpts {
 	pub config: ConfigOpts,
 }
 
+/// Non-wallet files barkd leaves in the datadir; they must survive a wallet create.
+const EXPECTED_DATADIR_FILES: [&str; 6] = [
+	DEBUG_LOG_FILE,
+	STDOUT_LOG_FILE,
+	STDERR_LOG_FILE,
+	LOCK_FILE,
+	AUTH_TOKEN_FILE,
+	BARKD_LOCK_FILE,
+];
+
+/// Whether `name` is an expected datadir file or an atomic-write temp
+/// sibling of one (`.<name>.temp.<nanos>.<n>.tmp`).
+fn is_expected_datadir_file(name: &str) -> bool {
+	EXPECTED_DATADIR_FILES.iter().chain(&[CONFIG_FILE]).any(|expected| {
+		name == *expected || name.strip_prefix('.')
+			.and_then(|s| s.strip_prefix(expected))
+			.and_then(|s| s.strip_prefix(".temp."))
+			.is_some_and(|s| s.ends_with(".tmp"))
+	})
+}
+
 /// Checks the config file and maybe cleans it
 /// - returns whether a config file was present
 /// - if clean is false, errors if any file not config or logs is present
@@ -292,16 +314,7 @@ async fn check_clean_datadir(datadir: &Path, clean: bool) -> anyhow::Result<bool
 				has_config = true;
 				continue;
 			}
-			if item.file_name() == DEBUG_LOG_FILE
-				|| item.file_name() == STDOUT_LOG_FILE
-				|| item.file_name() == STDERR_LOG_FILE
-			{
-				continue;
-			}
-			if item.file_name() == LOCK_FILE {
-				continue;
-			}
-			if item.file_name() == AUTH_TOKEN_FILE {
+			if is_expected_datadir_file(&item.file_name().to_string_lossy()) {
 				continue;
 			}
 
@@ -544,5 +557,24 @@ pub async fn open_wallet(datadir: &Path, user_agent: &str) -> anyhow::Result<Opt
 	).await?;
 
 	Ok(Some(bark_wallet))
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn expected_datadir_files_and_their_temps() {
+		assert!(is_expected_datadir_file("auth_token"));
+		assert!(is_expected_datadir_file("barkd.lock"));
+		// Atomic-write temp siblings, mid-write or left by a crash.
+		assert!(is_expected_datadir_file(".auth_token.temp.42.3.tmp"));
+		assert!(is_expected_datadir_file(".config.toml.temp.42.0.tmp"));
+
+		assert!(!is_expected_datadir_file("mnemonic"));
+		assert!(!is_expected_datadir_file("db.sqlite"));
+		assert!(!is_expected_datadir_file(".mnemonic.temp.42.0.tmp"));
+		assert!(!is_expected_datadir_file("barkd.lock.bak"));
+	}
 }
 
