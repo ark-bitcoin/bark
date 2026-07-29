@@ -281,21 +281,19 @@ impl DaemonProcess {
 	}
 
 	async fn run_sync_processes(&self) {
-		let mut sync_interval = tokio::time::interval(self.sync_interval());
-
+		// NB: tokio::time::interval needs Instant::now(), which panic on wasm
 		loop {
+			if self.connected.load(Ordering::Relaxed) {
+				self.run_fee_rate_update().await;
+				self.run_boards_sync().await;
+				self.run_offboards_sync().await;
+			}
+			self.run_onchain_sync().await;
+			self.run_rounds_sync().await;
+			self.run_exits().await;
+
 			futures::select! {
-				_ = sync_interval.tick().fuse() => {
-					if self.connected.load(Ordering::Relaxed) {
-						self.run_fee_rate_update().await;
-						self.run_boards_sync().await;
-						self.run_offboards_sync().await;
-					}
-					self.run_onchain_sync().await;
-					self.run_rounds_sync().await;
-					self.run_exits().await;
-					sync_interval.reset();
-				},
+				_ = sleep(self.sync_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting sync processes...");
 					break;
