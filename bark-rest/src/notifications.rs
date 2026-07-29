@@ -97,7 +97,7 @@ impl NotificationManagerProcess {
 struct NotificationManagerInner {
 	buffer: NotificationBuffer,
 	shutdown: CancellationToken,
-	_jh: tokio::task::JoinHandle<()>,
+	jh: tokio::task::JoinHandle<()>,
 }
 
 #[derive(Clone)]
@@ -113,7 +113,7 @@ impl NotificationManager {
 		Self(Arc::new(NotificationManagerInner {
 			buffer,
 			shutdown: shutdown.clone(),
-			_jh: jh,
+			jh,
 		}))
 	}
 
@@ -134,5 +134,11 @@ impl NotificationManager {
 				}
 			}
 		}
+	}
+}
+
+impl Drop for NotificationManager {
+	fn drop(&mut self) {
+		self.0.jh.abort();
 	}
 }
