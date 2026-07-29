@@ -46,7 +46,7 @@ async fn test_offboard_all() {
 
 	wallet.board_amount(Amount::from_sat(90_000)).await
 		.expect("failed to board");
-	generate_blocks(3).await;
+	generate_blocks(BOARD_CONFIRMATIONS).await;
 	wallet.sync_pending_boards().await.expect("failed to sync boards");
 
 	let before = wallet.balance().await.expect("failed to get balance");

@@ -49,7 +49,7 @@ async fn test_board() {
 	assert!(!board.vtxos.is_empty(), "board should produce vtxos");
 
 	// Confirm the board transaction.
-	generate_blocks(3).await;
+	generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// Register the confirmed board with the server.
 	wallet.sync_pending_boards().await.expect("failed to sync boards");

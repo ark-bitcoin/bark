@@ -45,7 +45,7 @@ async fn test_arkoor_send() {
 
 	sender.board_amount(Amount::from_sat(90_000)).await
 		.expect("failed to board");
-	generate_blocks(3).await;
+	generate_blocks(BOARD_CONFIRMATIONS).await;
 	sender.sync_pending_boards().await.expect("failed to sync boards");
 
 	// -- Receiver: create wallet, get address --
