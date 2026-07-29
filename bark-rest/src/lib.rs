@@ -144,6 +144,12 @@ impl ServerWallet {
 			notification_mngr: NotificationManager::start(wallet, shutdown),
 		}
 	}
+
+	/// Stop the wallet's background tasks, waking any request waiting on them.
+	pub fn stop(&self) {
+		self.notification_mngr.stop();
+		self.wallet.stop_daemon();
+	}
 }
 
 impl std::ops::Deref for ServerWallet {

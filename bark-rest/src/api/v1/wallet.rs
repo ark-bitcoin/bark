@@ -195,7 +195,10 @@ pub async fn wallet_delete(State(state): State<ServerState>, Json(req): Json<bar
 		badarg!("No wallet deletion hook configured");
 	};
 	hook().await.context("Couldn't delete wallet")?;
-	state.wallet.write().take();
+	let wallet = state.wallet.write().take();
+	if let Some(wallet) = wallet {
+		wallet.stop();
+	}
 	Ok(Json(bark_json::web::WalletDeleteResponse {
 		deleted: true,
 		message: "Wallet deleted".to_string(),

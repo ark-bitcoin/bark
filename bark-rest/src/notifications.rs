@@ -96,8 +96,10 @@ impl NotificationManagerProcess {
 
 struct NotificationManagerInner {
 	buffer: NotificationBuffer,
+	/// Child of the server-wide token, created in [Self::start]: a server
+	/// shutdown reaches this manager, but cancelling it stops the manager alone.
 	shutdown: CancellationToken,
-	jh: tokio::task::JoinHandle<()>,
+	_jh: tokio::task::JoinHandle<()>,
 }
 
 #[derive(Clone)]
@@ -107,14 +109,23 @@ impl NotificationManager {
 	pub(crate) fn start(wallet: Wallet, shutdown: CancellationToken) -> Self {
 		let buffer = NotificationBuffer::new();
 
+		// Must be [CancellationToken::child_token], not a clone of the argument:
+		// a clone shares the server-wide token's node, so cancelling it would
+		// shut down the whole server.
+		let shutdown = shutdown.child_token();
 		let process = NotificationManagerProcess { wallet, shutdown: shutdown.clone() };
 		let jh = process.run(buffer.clone());
 
 		Self(Arc::new(NotificationManagerInner {
 			buffer,
-			shutdown: shutdown.clone(),
-			jh,
+			shutdown,
+			_jh: jh,
 		}))
+	}
+
+	/// Stop the process task, waking any pending [Self::wait_notifications].
+	pub(crate) fn stop(&self) {
+		self.0.shutdown.cancel();
 	}
 
 	pub(crate) async fn wait_notifications(&self, since: Option<DateTime<Utc>>) -> Option<(DateTime<Utc>, Vec<WalletNotification>)> {
@@ -134,11 +145,5 @@ impl NotificationManager {
 				}
 			}
 		}
-	}
-}
-
-impl Drop for NotificationManager {
-	fn drop(&mut self) {
-		self.0.jh.abort();
 	}
 }
