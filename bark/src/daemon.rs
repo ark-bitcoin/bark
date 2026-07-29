@@ -95,6 +95,7 @@ impl DaemonProcess {
 		loop {
 			let shutdown = self.shutdown.clone();
 			if self.connected.load(Ordering::Relaxed) {
+				trace!("Daemon subscribing to mailbox message stream");
 				let r = self.wallet.subscribe_process_mailbox_messages(None, shutdown).await;
 				if let Err(e) = r {
 					warn!("An error occurred while processing mailbox messages: {e:#}");
@@ -185,7 +186,9 @@ impl DaemonProcess {
 		&self,
 		backoff: &mut ReconnectBackoff,
 	) -> anyhow::Result<()> {
+		trace!("Daemon subscribing to round event stream");
 		let mut events = self.wallet.subscribe_round_events().await?;
+		trace!("Daemon connected to round event stream");
 
 		loop {
 			futures::select! {
@@ -324,6 +327,7 @@ impl DaemonProcess {
 		info!("Starting daemon for wallet {}", self.wallet.fingerprint());
 
 		self.run_startup_tasks().await;
+		trace!("Daemon startup tasks complete, starting background processes");
 
 		if self.wallet.config().daemon_manual_sync {
 			// In manual-sync mode only the server connection heartbeat keeps
