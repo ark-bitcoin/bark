@@ -202,7 +202,7 @@ test-all-codecov:
 test: test-unit test-integration test-integration-esplora test-integration-mempool
 
 wasm-tests TEST="": ensure-build-bins docker-pull
-	CHAIN_SOURCE=esplora cargo run -p wasm-testing --bin wasm-test-suite --features=bin
+	CHAIN_SOURCE=esplora cargo run -p wasm-testing --bin wasm-test-suite --features=bin -- "{{TEST}}"
 
 codecov-report:
 	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"
