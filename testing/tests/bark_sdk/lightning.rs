@@ -1,10 +1,16 @@
 use std::time::Duration;
 
-use ark::lightning::Preimage;
+use futures::StreamExt;
+
+use ark::lightning::{PaymentHash, Preimage};
 use ark_testing::{TestContext, btc, util::FutureExt};
 
 use bark::actions::lightning::pay::LightningSendState;
+use bark::actions::lightning::receive::LightningReceiveState;
+use bark::movement::MovementStatus;
+use bark::subsystem::Subsystem;
 use cln_rpc::plugins::hold;
+use server_rpc::protos::mailbox_server::mailbox_message::Message as MailboxMsg;
 
 #[tokio::test]
 async fn pay_hold_succeeds() {
@@ -270,4 +276,67 @@ async fn pay_hold_refused() {
 	let balance = wallet.balance().await.expect("balance");
 	assert_eq!(balance.spendable, board_amount);
 	assert_eq!(balance.pending_lightning_send, btc(0));
+}
+
+/// Any integrator should be able to claim a lightning receive off the raw mailbox stream
+/// alone, without depending on bark's own background sync loop or any particular sync method:
+/// create an invoice, wait on the mailbox stream for the incoming-HTLC notification, then call
+/// `try_claim_lightning_receive` once. No daemon and no background syncing runs, so that single
+/// claim call has to complete the receive on its own.
+#[tokio::test]
+async fn receive_claim_on_mailbox_notification() {
+	let ctx = TestContext::new("bark_sdk/receive_claim_on_mailbox_notification").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|cfg| cfg.daemon_manual_sync = true)
+		.create().await;
+
+	lightning.sync().await;
+
+	let invoice_amount = btc(0.5);
+	let invoice = wallet.bolt11_invoice(invoice_amount, None, None).await
+		.expect("creating invoice");
+	let payment_hash = PaymentHash::from(&invoice);
+
+	// Subscribe to the mailbox stream before the payment arrives.
+	let mut mailbox = wallet.subscribe_mailbox_messages(None).await
+		.expect("subscribing to mailbox stream");
+
+	let (pay_result, claim_result) = tokio::join!(
+		lightning.external.try_pay_bolt11(invoice.to_string()),
+		async {
+			// Wait for the server's incoming-payment notification.
+			loop {
+				let msg = mailbox.next().wait_millis(10_000).await
+					.expect("mailbox stream ended before notification")
+					.expect("mailbox stream error");
+				if let Some(MailboxMsg::IncomingLightningPayment(m)) = msg.message {
+					assert_eq!(m.payment_hash, payment_hash.to_vec(),
+						"notification for unexpected payment");
+					break;
+				}
+			}
+			wallet.try_claim_lightning_receive(payment_hash, false).await
+		},
+	);
+
+	let state = claim_result.expect("try_claim_lightning_receive errored");
+	assert!(matches!(state, LightningReceiveState::Settled(_)),
+		"receive should be settled after the claim, got {:?}", state);
+
+	pay_result.expect("lightning payment failed");
+
+	let movements = wallet.history().await.expect("movements");
+	let recv_mvt = movements.iter()
+		.find(|m| m.subsystem.is_subsystem(Subsystem::LIGHTNING_RECEIVE))
+		.expect("no lightning receive movement");
+	assert_eq!(recv_mvt.status, MovementStatus::Successful,
+		"lightning receive movement should be successful, got {:?}", recv_mvt.status);
+
+	let balance = wallet.balance().await.expect("balance");
+	assert_eq!(balance.spendable, invoice_amount);
 }
