@@ -60,6 +60,9 @@ pub trait DaemonHelper {
 	async fn make_reservations(&self) -> anyhow::Result<()>;
 	async fn prepare(&self) -> anyhow::Result<()>;
 
+	/// Drop the reservations so a retried start makes fresh ones.
+	async fn drop_reservations(&self) {}
+
 	/// A hook to run right after daemon succesfully started.
 	async fn post_start(
 		&self,
@@ -116,6 +119,10 @@ impl<T> Daemon<T>
 						break Err(err);
 					} else {
 						tries -= 1;
+						// Never came up, so nothing uses its ports yet.
+						if self.child.lock().await.is_none() {
+							self.inner.drop_reservations().await;
+						}
 						warn!("Failed attempt to start {}. Retrying {} more times...",
 							self.name, tries,
 						);
@@ -174,14 +181,23 @@ impl<T> Daemon<T>
 		let is_initialized = tokio::time::timeout(init_timeout, self.inner.wait_for_init());
 		let child_died = wait_for_completion(&mut child);
 
+		// No early returns here: the log dump below is what tells us why.
 		let result = tokio::select!(
 			val = is_initialized => {
-				val
-					.with_context(|| format!("Daemon {} failed to initialize within reasonable time", self.inner.name()))?
-					.with_context(|| format!("Daemon {} errored during wait_for_init", self.inner.name()))
+				match val {
+					Ok(res) => res.with_context(|| format!(
+						"Daemon {} errored during wait_for_init", self.inner.name(),
+					)),
+					Err(_) => Err(anyhow!(
+						"Daemon {} failed to initialize within reasonable time", self.inner.name(),
+					)),
+				}
 			}
-			_ = child_died => {
-				bail!("Daemon {} stopped running before initialization", self.inner.name())
+			status = child_died => {
+				Err(anyhow!("Daemon {} stopped running before initialization with {}",
+					self.inner.name(),
+					status.map(|s| s.to_string()).unwrap_or("unknown exit status".into()),
+				))
 			}
 		);
 
@@ -200,6 +216,12 @@ impl<T> Daemon<T>
 					Ok(c) => error!("stdout: {c}"),
 					Err(e) => error!("failed to read stdout at {}: {}", stdout_path.display(), e),
 				}
+
+				// A timed-out daemon still holds the datadir a retry needs.
+				if let Err(e) = child.kill().await {
+					error!("Failed to kill daemon '{}' after a failed start: {:#}", self.name, e);
+				}
+
 				Err(e)
 			}
 		}

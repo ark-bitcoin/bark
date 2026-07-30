@@ -21,6 +21,7 @@ use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
 use crate::daemon::captaind::{SlogHandler, SweepAdminClient};
 use crate::constants::env::WATCHMAND_EXEC;
+use crate::ports::pick_port;
 use crate::util::resolve_path;
 
 pub type Watchmand = Daemon<WatchmandHelper>;
@@ -226,7 +227,7 @@ impl DaemonHelper for WatchmandHelper {
 	}
 
 	async fn make_reservations(&self) -> anyhow::Result<()> {
-		let admin_port = portpicker::pick_unused_port().expect("No ports free");
+		let admin_port = pick_port();
 		let admin_address = format!("127.0.0.1:{}", admin_port);
 		trace!("admin rpc address: {}", admin_address.to_string());
 		self.cfg.lock().admin_address = Some(SocketAddr::from_str(admin_address.as_str())?);

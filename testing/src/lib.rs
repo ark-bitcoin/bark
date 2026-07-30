@@ -9,6 +9,7 @@ pub mod context;
 pub mod constants;
 pub mod daemon;
 pub mod lightning;
+pub mod ports;
 pub mod util;
 pub mod bark;
 pub mod postgres;

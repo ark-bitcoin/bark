@@ -13,6 +13,7 @@ use server::secret::Secret;
 
 use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};
+use crate::ports::pick_port;
 use crate::util::resolve_path;
 
 
@@ -142,7 +143,7 @@ impl DaemonHelper for PostgresHelper {
 	}
 
 	async fn make_reservations(&self) -> anyhow::Result<()> {
-		let db_port = portpicker::pick_unused_port().expect("No ports free");
+		let db_port = pick_port();
 
 		trace!("Reserved postgres port = {}", db_port);
 		*self.port.lock() = Some(db_port);

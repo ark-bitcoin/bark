@@ -15,6 +15,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::{Captaind, TestContext};
+use crate::ports::pick_port;
 
 #[derive(Clone)]
 struct AppState {
@@ -36,8 +37,7 @@ impl ControlServer {
 			.rest_url()
 			.replace("0.0.0.0", "127.0.0.1")
 			.into();
-		let port = portpicker::pick_unused_port()
-			.expect("no free TCP port for control server");
+		let port = pick_port();
 		Self { state: AppState { ctx, srv, upstream_esplora }, port }
 	}
 

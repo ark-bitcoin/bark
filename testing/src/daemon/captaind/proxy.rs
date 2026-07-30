@@ -8,6 +8,7 @@ use tokio_stream::Stream;
 use server_rpc::{self as rpc, protos};
 
 use crate::daemon::captaind::{ArkClient, MailboxClient};
+use crate::ports::pick_port;
 use crate::util::FutureExt;
 
 /// Trait used to easily implement Ark proxy interfaces.
@@ -196,7 +197,7 @@ impl ArkRpcProxyServer {
 			let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
 			let stop_rx = futures::FutureExt::map(stop_rx, |_| ());
 
-			let port = portpicker::pick_unused_port().expect("free port available");
+			let port = pick_port();
 			let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 			let ark_server = rpc::server::ArkServiceServer::new(ArkRpcProxyWrapper {
 				proxy: ark.0.clone(),

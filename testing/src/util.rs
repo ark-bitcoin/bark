@@ -2,6 +2,7 @@
 use std::{env, fmt};
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -140,9 +141,17 @@ pub fn is_running(child: &mut Child) -> bool {
 	}
 }
 
-pub async fn wait_for_completion(child: &mut Child) -> () {
-	while is_running(child) {
-		tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+/// Wait until the child exits, returning its exit status if we could read it.
+pub async fn wait_for_completion(child: &mut Child) -> Option<ExitStatus> {
+	loop {
+		match child.try_wait() {
+			Ok(Some(status)) => return Some(status),
+			Ok(None) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+			Err(err) => {
+				error!("Failed to get status of Child={:?}: {:?}", child, err);
+				return None;
+			},
+		}
 	}
 }
 

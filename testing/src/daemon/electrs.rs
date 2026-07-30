@@ -14,6 +14,7 @@ use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER}
 use crate::constants::env::{ESPLORA_ELECTRS_EXEC, MEMPOOL_ELECTRS_EXEC};
 use crate::constants::TX_PROPAGATION_SLEEP_TIME;
 use crate::daemon::{Daemon, DaemonHelper};
+use crate::ports::pick_port;
 use crate::util::{get_tx_propagation_timeout_millis, resolve_path};
 
 #[derive(Clone, Copy)]
@@ -230,9 +231,9 @@ impl DaemonHelper for ElectrsHelper {
 	}
 
 	async fn make_reservations(&self) -> anyhow::Result<()> {
-		let rest_port = portpicker::pick_unused_port().expect("No ports free");
-		let electrum_port = portpicker::pick_unused_port().expect("No ports free");
-		let monitoring_port = portpicker::pick_unused_port().expect("No ports free");
+		let rest_port = pick_port();
+		let electrum_port = pick_port();
+		let monitoring_port = pick_port();
 
 		trace!("Reserved electrs ports = {}, {} and {}", rest_port, electrum_port, monitoring_port);
 		let mut state = self.state.lock();
