@@ -393,6 +393,18 @@ pub struct LightningInvoiceRequest {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct LightningInvoiceForAddressRequest {
+	/// The amount to create invoice for (in satoshis).
+	pub amount_sat: u64,
+	/// Ark address that will receive the claimed VTXO.
+	pub address: String,
+	/// Optional description embedded in the invoice as its memo.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub description: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct LightningPayRequest {
 	/// The invoice, offer, or lightning address to pay
 	pub destination: String,
@@ -629,4 +641,3 @@ pub struct WalletDeleteResponse {
 	pub deleted: bool,
 	pub message: String,
 }
-

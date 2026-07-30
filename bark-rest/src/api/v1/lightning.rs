@@ -7,6 +7,7 @@ use bitcoin::Amount;
 use anyhow::Context;
 use utoipa::OpenApi;
 
+use ark::address::VtxoDelivery;
 use ark::lightning::Offer;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
@@ -19,6 +20,7 @@ use crate::ServerState;
 #[openapi(
 	paths(
 		generate_invoice,
+		generate_invoice_for_address,
 		get_receive_status,
 		list_receive_statuses,
 		cancel_receive,
@@ -26,6 +28,7 @@ use crate::ServerState;
 	),
 	components(schemas(
 		bark_json::web::LightningInvoiceRequest,
+		bark_json::web::LightningInvoiceForAddressRequest,
 		bark_json::cli::InvoiceInfo,
 		bark_json::cli::LightningReceiveInfo,
 		bark_json::web::LightningPayRequest,
@@ -38,6 +41,7 @@ pub struct LightningApiDoc;
 pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/receives/invoice", post(generate_invoice))
+		.route("/receives/invoice/for-address", post(generate_invoice_for_address))
 		.route("/receives/{identifier}", get(get_receive_status).delete(cancel_receive))
 		.route("/receives", get(list_receive_statuses))
 		.route("/pay", post(pay))
@@ -66,6 +70,45 @@ pub async fn generate_invoice(
 	let amount = Amount::from_sat(body.amount_sat);
 	let invoice = wallet.bolt11_invoice(amount, body.description, None).await
 		.context("Failed to create invoice")?;
+
+	Ok(axum::Json(bark_json::cli::InvoiceInfo {
+		invoice: invoice.to_string(),
+	}))
+}
+
+#[utoipa::path(
+	post,
+	path = "/receives/invoice/for-address",
+	summary = "Create a BOLT11 invoice for an Ark address",
+	request_body = bark_json::web::LightningInvoiceForAddressRequest,
+	responses(
+		(status = 200, description = "Returns the created invoice", body = bark_json::cli::InvoiceInfo),
+		(status = 400, description = "Bad request", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning \
+		receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox.",
+	tag = "lightning"
+)]
+#[debug_handler]
+pub async fn generate_invoice_for_address(
+	State(state): State<ServerState>,
+	Json(body): Json<bark_json::web::LightningInvoiceForAddressRequest>,
+) -> HandlerResult<Json<bark_json::cli::InvoiceInfo>> {
+	let wallet = state.require_wallet()?;
+
+	let amount = Amount::from_sat(body.amount_sat);
+	let address = ark::Address::from_str(&body.address)
+		.badarg("address is not a valid Ark address")?;
+	wallet.validate_arkoor_address(&address).await
+		.badarg("address is not valid for this wallet")?;
+	if !address.delivery().iter()
+		.any(|d| matches!(d, VtxoDelivery::ServerMailbox { .. }))
+	{
+		badarg!("Ark address has no supported mailbox delivery mechanism");
+	}
+	let invoice = wallet.bolt11_invoice_for_address(amount, address, body.description, None).await
+		.context("Failed to create invoice for address")?;
 
 	Ok(axum::Json(bark_json::cli::InvoiceInfo {
 		invoice: invoice.to_string(),

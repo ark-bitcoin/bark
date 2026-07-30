@@ -33,6 +33,15 @@ pub enum GenerateInvoiceError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`generate_invoice_for_address`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GenerateInvoiceForAddressError {
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`get_receive_status`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -127,6 +136,47 @@ pub async fn generate_invoice(configuration: &configuration::Configuration, ligh
     } else {
         let content = resp.text().await?;
         let entity: Option<GenerateInvoiceError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox.
+pub async fn generate_invoice_for_address(configuration: &configuration::Configuration, lightning_invoice_for_address_request: models::LightningInvoiceForAddressRequest) -> Result<models::InvoiceInfo, Error<GenerateInvoiceForAddressError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_lightning_invoice_for_address_request = lightning_invoice_for_address_request;
+
+    let uri_str = format!("{}/api/v1/lightning/receives/invoice/for-address", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_lightning_invoice_for_address_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::InvoiceInfo`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::InvoiceInfo`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GenerateInvoiceForAddressError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

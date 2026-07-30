@@ -31,8 +31,8 @@ use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
 use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::{BlockHeight, FeeRateExt};
 
+use crate::{Bitcoind, TestContext, is_bark_version};
 use crate::constants::BOARD_CONFIRMATIONS;
-use crate::{Bitcoind, TestContext};
 use crate::context::ToArkUrl;
 use crate::constants::env::{BARK_COMMAND_TIMEOUT_MILLIS, BARK_EXEC, BARK_TOKIO_WORKER_THREADS, USE_FILESTORE};
 use crate::util::resolve_path;
@@ -618,6 +618,36 @@ impl Bark {
 	pub async fn bolt11_invoice_with_token(&self, amount: Amount, token: &str) -> InvoiceInfo {
 		self.try_bolt11_invoice_with_token(amount, token).await
 			.expect("bolt11 invoice command failed")
+	}
+
+	pub async fn try_bolt11_invoice_for_address(
+		&self,
+		address: impl fmt::Display,
+		amount: Amount,
+	) -> anyhow::Result<InvoiceInfo> {
+		anyhow::ensure!(
+			is_bark_version!(> "0.4.0"),
+			"lightning invoice-for-address requires bark > 0.4.0, got {}", Self::version().await,
+		);
+		let address = address.to_string();
+		let amount = amount.to_string();
+		let res = self.try_run([
+			"lightning",
+			"invoice-for-address",
+			&address,
+			&amount,
+			"--verbose",
+		]).await?;
+		Ok(serde_json::from_str(&res).expect("json error"))
+	}
+
+	pub async fn bolt11_invoice_for_address(
+		&self,
+		address: impl fmt::Display,
+		amount: Amount,
+	) -> InvoiceInfo {
+		self.try_bolt11_invoice_for_address(address, amount).await
+			.expect("bolt11 invoice-for-address command failed")
 	}
 
 	pub async fn try_lightning_receive(&self, invoice: &str) -> anyhow::Result<()> {

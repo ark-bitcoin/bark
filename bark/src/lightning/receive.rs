@@ -38,6 +38,8 @@ impl Wallet {
 				Progress::AwaitingPayment => continue,
 				Progress::HtlcsReady(htlcs) => &htlcs.vtxo_ids,
 				Progress::PreimageRevealed(htlcs) => &htlcs.vtxo_ids,
+				// Claim outputs are destined to another wallet's address.
+				Progress::Delivering(_) => continue,
 			};
 			for id in vtxo_ids {
 				total += self.get_vtxo_by_id(*id).await?.vtxo.amount();
@@ -118,7 +120,43 @@ impl Wallet {
 		description: Option<String>,
 		token: Option<String>,
 	) -> anyhow::Result<Bolt11Invoice> {
-		let start = start_lightning_receive(self, amount, description, token).await?;
+		let start = start_lightning_receive(self, amount, description, token, None).await?;
+		self.inner.db.upsert_wallet_action_checkpoint(&start.id(), &start.clone().into()).await?;
+		Ok(start.invoice.clone())
+	}
+
+	/// Create, store and return a [`Bolt11Invoice`] whose claimed Ark VTXO
+	/// will be forwarded to `claim_destination`. A destination owned by
+	/// this wallet is claimed locally instead of via its mailbox.
+	///
+	/// Trust model: the claim arkoor is built directly against
+	/// `claim_destination`'s policy, so the funds are signed to the
+	/// destination the moment they're claimed. This wallet never holds a
+	/// key that can spend them, so it has no custodial control and cannot
+	/// redirect — a malicious or compromised caller of this method cannot
+	/// steal the payment unless they provide a different address than the
+	/// desired end user.
+	///
+	/// It can still strand it: delivering the signed output to the
+	/// destination's mailbox is a separate step that only this wallet can
+	/// perform, and nothing else (not the server, not the destination) can
+	/// discover or recover that output until it does. The delivery is a
+	/// parked action that resumes automatically on restart, so a crash
+	/// recovers on its own — but for as long as this wallet stays offline
+	/// (or simply never delivers), the destination cannot claim funds that
+	/// are already theirs. Forwarding through a third party means trusting
+	/// it to eventually come back online and deliver, not trusting it with
+	/// custody.
+	pub async fn bolt11_invoice_for_address(
+		&self,
+		amount: Amount,
+		claim_destination: ark::Address,
+		description: Option<String>,
+		token: Option<String>,
+	) -> anyhow::Result<Bolt11Invoice> {
+		let start = start_lightning_receive(
+			self, amount, description, token, Some(claim_destination),
+		).await?;
 		self.inner.db.upsert_wallet_action_checkpoint(&start.id(), &start.clone().into()).await?;
 		Ok(start.invoice.clone())
 	}
@@ -157,7 +195,7 @@ impl Wallet {
 				bail!("cannot cancel: HTLCs already granted; the receive will complete \
 					or be abandoned near expiry");
 			},
-			Progress::PreimageRevealed(_) => {
+			Progress::PreimageRevealed(_) | Progress::Delivering(_) => {
 				bail!("cannot cancel: preimage has already been revealed");
 			},
 		}

@@ -1,0 +1,11 @@
+- Add Lightning invoices for Ark address delivery
+  `bark lightning invoice-for-address` creates an invoice whose claimed VTXO
+  is delivered to another wallet's Ark address. The claim is signed directly
+  to that address, so this wallet has no custodial control over the payment
+  and cannot redirect it. Delivery is still a separate step only
+  this wallet can perform, and the recipient has no independent way to
+  recover the funds until it happens. This step resumes automatically on
+  restart, so a crash recovers on its own — but running this for someone
+  else means they're trusting you to stay online and eventually deliver,
+  not trusting you with custody.
+  [#2146](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2146)

@@ -11,14 +11,13 @@ use bitcoin::hex::DisplayHex;
 use log::{error, warn};
 
 use ark::{ProtocolEncoding, Vtxo};
-use ark::address::VtxoDelivery;
 use ark::arkoor::ArkoorDestination;
 use ark::vtxo::{Full, VtxoId};
 use server_rpc::protos;
 
 use crate::Wallet;
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId};
-use crate::arkoor::ArkoorCreateError;
+use crate::arkoor::{ArkoorCreateError, DeliveryOutcome, post_arkoor_to_mailboxes};
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
@@ -126,9 +125,10 @@ impl WalletAction for ArkoorSend {
 				movement_id, signed_destination_vtxos, signed_change_vtxos,
 				last_park_error: _,
 			} => {
-				match attempt_delivery(
-					wallet, &self.destination, &signed_destination_vtxos,
-				).await? {
+				let (mut srv, _) = wallet.require_server().await?;
+				match post_arkoor_to_mailboxes(
+					&mut srv, self.destination.delivery(), &signed_destination_vtxos,
+				).await {
 					DeliveryOutcome::AnySucceeded => Progress::Finalizing {
 						movement_id,
 						signed_change_vtxos,
@@ -348,67 +348,6 @@ async fn run_registration(
 		vtxos: serialized,
 	}).await.map_err(AdvanceError::Server)?;
 	Ok(())
-}
-
-/// Outcome of one [`attempt_delivery`] pass.
-enum DeliveryOutcome {
-	AnySucceeded,
-	/// No mailbox accepted the post. `summary` describes why and is captured
-	/// in both the park error and `Progress::Delivery::last_park_error`.
-	AllFailed { summary: String },
-}
-
-/// Post the signed arkoor vtxos to every server-mailbox delivery method on
-/// the destination. Mailbox posts are idempotent on the server, so we retry
-/// the full set each pass without tracking per-method status.
-///
-/// Any-success semantics: one accepted post is enough to advance, since the
-/// recipient only needs the signed chain to arrive once. BOAT-001 frames
-/// `delivery` mechanisms as alternatives provided by the recipient (a sender
-/// SHOULD refuse only if none are usable), so treating a single success as
-/// sufficient is consistent with the spec. See
-/// <https://github.com/ark-protocol/boats/blob/e328d8a3a49a41df79424c132db13e38a6fd4d44/boat-0001.md?plain=1#L96-L101>.
-async fn attempt_delivery(
-	wallet: &Wallet,
-	destination: &ark::Address,
-	signed_destination_vtxos: &[Vtxo<Full>],
-) -> Result<DeliveryOutcome, AdvanceError> {
-	let (mut srv, _) = wallet.require_server().await?;
-
-	let serialized = signed_destination_vtxos.iter()
-		.map(|v| v.serialize().to_vec())
-		.collect::<Vec<_>>();
-
-	let mut any_succeeded = false;
-	let mut failures: Vec<String> = Vec::new();
-	for method in destination.delivery() {
-		let blinded_id = match method {
-			VtxoDelivery::ServerMailbox { blinded_id } => blinded_id,
-			_ => continue,
-		};
-		let req = protos::mailbox_server::PostArkoorMessageRequest {
-			blinded_id: blinded_id.as_ref().to_vec(),
-			vtxos: serialized.clone(),
-		};
-		match srv.mailbox_client.post_arkoor_message(req).await {
-			Ok(_) => any_succeeded = true,
-			Err(e) => {
-				let reason = format!("{:#}", e);
-				error!("failed to post arkoor vtxos to mailbox: {}", reason);
-				failures.push(reason);
-			},
-		}
-	}
-
-	if any_succeeded {
-		return Ok(DeliveryOutcome::AnySucceeded);
-	}
-	let summary = if failures.is_empty() {
-		"no mailbox delivery mechanism configured on destination".to_string()
-	} else {
-		format!("no delivery mechanism accepted the arkoor vtxos: {}", failures.join("; "))
-	};
-	Ok(DeliveryOutcome::AllFailed { summary })
 }
 
 /// Finalize the send. All steps are idempotent.

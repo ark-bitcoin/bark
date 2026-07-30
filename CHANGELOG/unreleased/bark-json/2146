@@ -1,0 +1,4 @@
+- Add a request model for forwarded Lightning receives
+  `LightningInvoiceForAddressRequest` describes invoices whose claimed VTXO
+  is delivered to a supplied Ark address.
+  [#2146](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2146)

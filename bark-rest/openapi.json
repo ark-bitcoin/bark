@@ -1392,6 +1392,58 @@
         }
       }
     },
+    "/api/v1/lightning/receives/invoice/for-address": {
+      "post": {
+        "tags": [
+          "lightning"
+        ],
+        "summary": "Create a BOLT11 invoice for an Ark address",
+        "description": "Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox.",
+        "operationId": "generate_invoice_for_address",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LightningInvoiceForAddressRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the created invoice",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/lightning/receives/{identifier}": {
       "get": {
         "tags": [
@@ -5137,6 +5189,32 @@
           }
         }
       },
+      "LightningInvoiceForAddressRequest": {
+        "type": "object",
+        "required": [
+          "amount_sat",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Ark address that will receive the claimed VTXO."
+          },
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount to create invoice for (in satoshis).",
+            "minimum": 0
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional description embedded in the invoice as its memo."
+          }
+        }
+      },
       "LightningInvoiceRequest": {
         "type": "object",
         "required": [
@@ -5295,7 +5373,7 @@
           },
           "state": {
             "type": "string",
-            "description": "Lifecycle phase of the receive: `awaiting-payment`, `htlcs-ready`,\n`preimage-revealed`, or `settled`."
+            "description": "Lifecycle phase of the receive: `awaiting-payment`, `htlcs-ready`,\n`preimage-revealed`, `delivering`, or `settled`."
           }
         }
       },
