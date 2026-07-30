@@ -893,6 +893,7 @@ pub fn add_unilateral_exit(amount_sats: u64) {
 pub fn set_frontier_metrics(
 	claim_volume: u64,
 	progress_volume: u64,
+	sweep_volume: u64,
 	wait_volume: u64,
 ) {
 	if let Some(m) = TELEMETRY.get() {
@@ -905,6 +906,11 @@ pub fn set_frontier_metrics(
 			KeyValue::new(ATTRIBUTE_TYPE, "progress"),
 		]);
 		m.frontier_gauge.record(progress_volume, &progress_attrs);
+
+		let sweep_attrs = m.with_global_labels([
+			KeyValue::new(ATTRIBUTE_TYPE, "sweep"),
+		]);
+		m.frontier_gauge.record(sweep_volume, &sweep_attrs);
 
 		let wait_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "wait"),
