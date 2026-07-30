@@ -351,6 +351,7 @@ mod test {
 			state: VtxoState::Spendable,
 			exit_depth: 0,
 			exit_tx_weight: Weight::ZERO,
+			registered: false,
 		}
 	}
 

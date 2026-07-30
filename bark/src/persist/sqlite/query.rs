@@ -401,7 +401,7 @@ pub fn get_pending_round_state_ids(
 /// Columns the `vtxo_view`-based listings always select, in the order
 /// [`row_to_wallet_vtxo`] expects them.
 const VTXO_VIEW_COLUMNS: &str =
-	"raw_bare, exit_depth, exit_tx_weight, state";
+	"raw_bare, exit_depth, exit_tx_weight, state, registered";
 
 pub fn get_wallet_vtxo_by_id(
 	conn: &Connection,
@@ -647,6 +647,42 @@ pub fn update_vtxo_state_checked(
 		},
 		n => bail!("Corrupted database: inserted {n} state rows for a single vtxo"),
 	}
+}
+
+/// Set the `registered` flag on the given vtxos, recording that their
+/// recovery state (mailbox ID post + signed transaction chain) has been
+/// asserted with the server. The flag only moves from unset to set.
+pub fn mark_vtxos_registered(
+	conn: &Connection,
+	vtxo_ids: &[VtxoId],
+) -> anyhow::Result<()> {
+	let mut statement = conn.prepare(
+		"UPDATE bark_vtxo SET registered = 1
+		WHERE id IN (SELECT atom FROM json_each(?))",
+	)?;
+	statement.execute([serde_json::to_string(&vtxo_ids)?])?;
+	Ok(())
+}
+
+/// Fetch the IDs of all vtxos that are not marked `registered` and not
+/// spent, i.e. the ones the sync-time recovery catch-up still needs to
+/// assert with the server. See
+/// [BarkPersister::get_unregistered_vtxo_ids][crate::persist::BarkPersister::get_unregistered_vtxo_ids]
+/// for why exited vtxos are included.
+pub fn get_unregistered_vtxo_ids(
+	conn: &Connection,
+) -> anyhow::Result<Vec<VtxoId>> {
+	let mut statement = conn.prepare(
+		"SELECT id FROM vtxo_view WHERE registered = 0 AND state_kind != ?",
+	)?;
+	let mut rows = statement.query([VtxoStateKind::Spent.as_str()])?;
+
+	let mut ids = Vec::new();
+	while let Some(row) = rows.next()? {
+		let id: String = row.get(0)?;
+		ids.push(VtxoId::from_str(&id)?);
+	}
+	Ok(ids)
 }
 
 /// Apply [update_vtxo_state_checked] to every id in `vtxo_ids` against the
@@ -1156,6 +1192,66 @@ mod test {
 		update_vtxo_state_checked(
 			&tx, vtxo.id(), VtxoState::Locked { holder: None }, &[VtxoStateKind::Spent],
 		).expect_err("transition from Spendable should fail when only Spent is allowed");
+	}
+
+	#[test]
+	fn test_mark_vtxos_registered() {
+		let (_, mut conn) = in_memory_db();
+		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
+
+		let tx = conn.transaction().unwrap();
+		let vtxo_1 = &VTXO_VECTORS.board_vtxo;
+		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
+
+		let spendable = VtxoState::Spendable;
+		store_vtxo_with_initial_state(&tx, &vtxo_1, &spendable).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, &spendable).unwrap();
+
+		// Fresh vtxos start unregistered.
+		let wv = get_wallet_vtxo_by_id(&tx, vtxo_1.id()).unwrap().unwrap();
+		assert!(!wv.registered);
+
+		// Marking one vtxo must not affect the other.
+		mark_vtxos_registered(&tx, &[vtxo_1.id()]).unwrap();
+		let wv = get_wallet_vtxo_by_id(&tx, vtxo_1.id()).unwrap().unwrap();
+		assert!(wv.registered);
+		let wv = get_wallet_vtxo_by_id(&tx, vtxo_2.id()).unwrap().unwrap();
+		assert!(!wv.registered);
+
+		// The flag survives state transitions.
+		update_vtxo_state_checked(
+			&tx, vtxo_1.id(), VtxoState::Spent, &[VtxoStateKind::Spendable],
+		).unwrap();
+		let wv = get_wallet_vtxo_by_id(&tx, vtxo_1.id()).unwrap().unwrap();
+		assert!(wv.registered);
+	}
+
+	#[test]
+	fn test_get_unregistered_vtxo_ids() {
+		let (_, mut conn) = in_memory_db();
+		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
+
+		let tx = conn.transaction().unwrap();
+		let spendable = &VTXO_VECTORS.board_vtxo;
+		let locked = &VTXO_VECTORS.round1_vtxo;
+		let exited = &VTXO_VECTORS.round2_vtxo;
+		let spent = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
+		let registered = &VTXO_VECTORS.arkoor2_vtxo;
+
+		store_vtxo_with_initial_state(&tx, spendable, &VtxoState::Spendable).unwrap();
+		store_vtxo_with_initial_state(&tx, locked, &VtxoState::Locked { holder: None }).unwrap();
+		store_vtxo_with_initial_state(&tx, exited, &VtxoState::Exited).unwrap();
+		store_vtxo_with_initial_state(&tx, spent, &VtxoState::Spent).unwrap();
+		store_vtxo_with_initial_state(&tx, registered, &VtxoState::Spendable).unwrap();
+		mark_vtxos_registered(&tx, &[registered.id()]).unwrap();
+
+		// Spendable, locked and exited unregistered vtxos all need recovery
+		// catch-up; spent and already-registered ones don't.
+		let mut ids = get_unregistered_vtxo_ids(&tx).unwrap();
+		ids.sort();
+		let mut expected = vec![spendable.id(), locked.id(), exited.id()];
+		expected.sort();
+		assert_eq!(ids, expected);
 	}
 
 	#[test]

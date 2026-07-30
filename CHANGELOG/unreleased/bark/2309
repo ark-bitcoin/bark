@@ -1,0 +1,17 @@
+- Re-register owned VTXOs with the server on wallet sync
+  Syncing a wallet now re-posts the IDs of all non-spent (spendable, locked
+  and exited) VTXOs to the server's recovery mailbox and re-registers their
+  fully-signed transaction chains. This catches up VTXOs that were stored
+  before this mechanism existed or whose post failed transiently, so a wallet
+  recovering from seed can rebuild its state. Exited VTXOs are backed up too,
+  since their exit transactions being broadcast doesn't mean the on-chain
+  outputs were claimed. Both server endpoints are idempotent, and the
+  catch-up is best-effort: an unreachable server logs a warning without
+  interrupting the sync.
+  VTXOs whose mailbox post and chain registration both succeeded once are
+  marked registered (new `registered` column on `bark_vtxo`, exposed as
+  `WalletVtxo::registered`) and skipped by later syncs, so the catch-up
+  only re-uploads what the server may still be missing. If a server-side
+  recovery issue is ever discovered, a migration can reset the flag to force
+  a full re-upload.
+  [#2309](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2309)

@@ -416,9 +416,13 @@ impl VtxoTreeUpdate {
 		self
 	}
 
-	/// Overwrites the stored vtxos with their fully-signed versions, so the
-	/// server can later serve complete vtxos to a wallet recovering from seed.
-	/// Every provided vtxo must already exist (see [`do_provide_signatures`]).
+	/// Overwrites the stored VTXOs with their fully-signed versions, so the
+	/// server can later serve complete VTXOs to a wallet recovering from seed.
+	/// Every provided VTXO must already exist (see `do_provide_signatures`).
+	///
+	/// Callers must only pass validated, fully-signed VTXOs: the stored bytes
+	/// are overwritten unconditionally, and same-id duplicates are deduped on
+	/// the assumption that any of them serves recovery equally well.
 	pub fn provide_signatures(
 		mut self,
 		vtxos: impl IntoIterator<Item = Vtxo<Full>>,
@@ -460,11 +464,14 @@ async fn do_provide_signatures(
 ) -> anyhow::Result<()> {
 	if vtxos.is_empty() { return Ok(()) }
 
+	let mut seen = HashSet::with_capacity(vtxos.len());
 	let mut vtxo_ids = Vec::with_capacity(vtxos.len());
 	let mut serialised = Vec::with_capacity(vtxos.len());
 	for vtxo in vtxos {
-		vtxo_ids.push(vtxo.id().to_string());
-		serialised.push(vtxo.serialize());
+		if seen.insert(vtxo.id()) {
+			vtxo_ids.push(vtxo.id().to_string());
+			serialised.push(vtxo.serialize());
+		}
 	}
 
 	let rows = tx.execute(
@@ -482,16 +489,21 @@ async fn do_provide_signatures(
 
 	// Every provided vtxo must exist; a mismatch means a caller handed us an id
 	// the server never stored, which would otherwise be swallowed silently.
-	if rows != vtxos.len() as u64 {
-		let bad = tx.query_one("
+	if rows != vtxo_ids.len() as u64 {
+		let missing = tx.query("
 			SELECT u.vtxo_id
 			FROM UNNEST($1::text[]) AS u(vtxo_id)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
 			WHERE v.vtxo_id IS NULL
-			LIMIT 1
-		", &[&vtxo_ids]).await.context("failed to find vtxo missing for provide_signatures")?;
-		let vtxo_id: &str = bad.get("vtxo_id");
-		return badarg!("cannot provide signatures for unknown vtxo: {}", vtxo_id);
+		", &[&vtxo_ids]).await.context("failed to find vtxos missing for provide_signatures")?;
+		if missing.is_empty() {
+			bail!("provide_signatures updated {} of {} rows but no vtxo is missing",
+				rows, vtxo_ids.len(),
+			);
+		}
+		let missing = missing.iter().map(|r| r.get::<_, &str>("vtxo_id"))
+			.collect::<Vec<_>>();
+		return badarg!("cannot provide signatures for unknown vtxos: {}", missing.join(", "));
 	}
 	Ok(())
 }

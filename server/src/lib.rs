@@ -864,7 +864,11 @@ impl Server {
 		let mut seen_txids: HashSet<Txid> = HashSet::new();
 		let mut registered_ids: Vec<VtxoId> = Vec::new();
 
-		let vtxos = vtxos.into_iter().map(|v| v.as_ref().clone()).collect::<Vec<_>>();
+		let mut seen_ids: HashSet<VtxoId> = HashSet::new();
+		let vtxos = vtxos.into_iter()
+			.map(|v| v.as_ref().clone())
+			.filter(|v| seen_ids.insert(v.id()))
+			.collect::<Vec<_>>();
 
 		for vtxo in &vtxos {
 			let vtxo_id = vtxo.id();
@@ -911,9 +915,11 @@ impl Server {
 
 		// Persist the fully-signed vtxos (so the server can later serve them to
 		// a wallet recovering from seed), upsert the signed chain, and flip the
-		// vtxos from `unregistered` to `spendable` in a single tx. Any vtxo
-		// already in another state (e.g. spendable from a round output, or
-		// spent) is left alone.
+		// vtxos from `unregistered` to `spendable` in a single tx. The state
+		// flip only affects `unregistered` vtxos; the stored vtxo bytes are
+		// overwritten regardless of state, which is safe because each vtxo was
+		// validated above as a fully-signed version of that id, and any valid
+		// fully-signed version serves recovery equally well.
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_txs)
 			.provide_signatures(vtxos)

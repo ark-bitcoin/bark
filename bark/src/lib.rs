@@ -1795,6 +1795,14 @@ impl Wallet {
 				if let Err(e) = self.sync_force_exited_vtxos().await {
 					warn!("Error scanning for on-chain-exited VTXOs: {:#}", e);
 				}
+			},
+			async {
+				// Re-assert recovery state so vtxos whose mailbox post or
+				// registration failed at store time, or that predate the
+				// recovery mechanism, get caught up (non-critical).
+				if let Err(e) = self.catchup_recovery_vtxos().await {
+					warn!("Failed to catch up recovery VTXOs with server: {:#}", e);
+				}
 			}
 		);
 	}
@@ -2123,6 +2131,97 @@ impl Wallet {
 		if let Some(handle) = daemon.take() {
 			handle.stop();
 		}
+	}
+
+	/// Posts the IDs of all non-spent (spendable, locked and exited) VTXOs
+	/// to the server's recovery mailbox and re-registers their fully-signed
+	/// transaction chains, so a wallet recovering from seed can rebuild
+	/// its state. Both server endpoints are idempotent.
+	///
+	/// Exited VTXOs are backed up too: their exit transactions being
+	/// broadcast doesn't mean the on-chain outputs were claimed, and a
+	/// wallet recovering from seed must learn about the exit to claim
+	/// the funds.
+	///
+	/// VTXOs whose mailbox post and chain registration both succeeded once
+	/// are marked [WalletVtxo::registered] and skipped from then on, so
+	/// repeated syncs don't re-upload — or even re-read — the whole wallet.
+	async fn catchup_recovery_vtxos(&self) -> anyhow::Result<()> {
+		let ids = self.inner.db.get_unregistered_vtxo_ids().await?;
+		if ids.is_empty() {
+			return Ok(());
+		}
+
+		// The mailbox post and the chain registration are independent and
+		// both idempotent, so one failing must not stop the other. A vtxo
+		// is only marked registered once both succeeded for it, so a failed
+		// mailbox post keeps every vtxo eligible for the next catch-up.
+		let posted = self.post_recovery_vtxo_ids(ids.iter().copied()).await
+			.context("failed to post recovery vtxo IDs");
+		let registered = self.register_recovery_vtxo_chains(&ids, posted.is_ok()).await;
+
+		match (posted, registered) {
+			(Ok(()), registered) => registered,
+			(posted, Ok(())) => posted,
+			(Err(posted), Err(registered)) => {
+				Err(registered.context(format!("mailbox post also failed: {:#}", posted)))
+			},
+		}
+	}
+
+	/// Registers the fully-signed transaction chains of the given wallet
+	/// VTXOs with the server, in chunks with a per-vtxo fallback. When
+	/// `mark_registered` is set, every successfully registered vtxo is
+	/// marked [WalletVtxo::registered]. Part of
+	/// [`Self::catchup_recovery_vtxos`].
+	async fn register_recovery_vtxo_chains(
+		&self,
+		ids: &[VtxoId],
+		mark_registered: bool,
+	) -> anyhow::Result<()> {
+		const CHUNK_SIZE: usize = 20;
+		let mut failed = 0;
+		for chunk_ids in ids.chunks(CHUNK_SIZE) {
+			// Load the full vtxos one chunk at a time: exit chains can be
+			// tens of KB each, so don't hold every chain in memory at once.
+			let chunk = self.inner.db.get_full_vtxos(chunk_ids).await
+				.context("failed to load full vtxos for recovery registration")?;
+			ensure!(chunk.len() == chunk_ids.len(),
+				"loaded {} full vtxos for {} ids", chunk.len(), chunk_ids.len(),
+			);
+
+			let mut succeeded = Vec::with_capacity(chunk.len());
+			match self.register_vtxo_transactions_with_server(&chunk).await {
+				Ok(()) => succeeded.extend(chunk.iter().map(|v| v.id())),
+				Err(e) => {
+					debug!("Failed to register chunk of {} vtxo transactions, \
+						retrying one by one: {:#}", chunk.len(), e,
+					);
+					for vtxo in &chunk {
+						match self.register_vtxo_transactions_with_server(
+							std::slice::from_ref(vtxo),
+						).await {
+							Ok(()) => succeeded.push(vtxo.id()),
+							Err(e) => {
+								error!("Failed to register vtxo {} transactions with server; \
+									recovery from seed may miss it until registration succeeds: {:#}",
+									vtxo.id(), e,
+								);
+								failed += 1;
+							},
+						}
+					}
+				},
+			}
+			if mark_registered && !succeeded.is_empty() {
+				self.inner.db.mark_vtxos_registered(&succeeded).await
+					.context("failed to mark vtxos as registered for recovery")?;
+			}
+		}
+		if failed > 0 {
+			bail!("failed to register {} of {} vtxo transactions", failed, ids.len());
+		}
+		Ok(())
 	}
 
 	/// Registers the signed transaction chains for the given VTXOs with the

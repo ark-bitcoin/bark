@@ -191,6 +191,15 @@ pub struct WalletVtxo {
 	///
 	/// Lets the refresh strategy answer "uneconomical to exit" without loading the genesis.
 	pub exit_tx_weight: Weight,
+
+	/// Whether this VTXO's recovery state has been asserted with the server:
+	/// its ID posted to the recovery mailbox and its fully-signed transaction
+	/// chain registered. The sync-time catch-up skips VTXOs with this
+	/// flag set. Nothing clears the flag, so it only moves from `false` to
+	/// `true`; if a server-side recovery issue is ever discovered, a
+	/// migration can reset it to re-upload every VTXO.
+	#[serde(default)]
+	pub registered: bool,
 }
 
 impl VtxoRef for WalletVtxo {

@@ -43,6 +43,10 @@ pub struct SerdeVtxo {
 	pub vtxo: Vtxo<Full>,
 	/// VTXO states, sorted from oldest to newest.
 	pub states: Vec<VtxoState>,
+	/// See [WalletVtxo::registered]. Defaults to `false` for
+	/// records stored before this field existed, so they get caught up.
+	#[serde(default)]
+	pub registered: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -56,7 +60,7 @@ impl SerdeVtxo {
 
 	pub fn to_wallet_vtxo(&self) -> Result<WalletVtxo, MissingStateError> {
 		let state = self.current_state().cloned().ok_or(MissingStateError)?;
-		Ok(wallet_vtxo_from_full(&self.vtxo, state))
+		Ok(wallet_vtxo_from_full(&self.vtxo, state, self.registered))
 	}
 }
 
@@ -72,12 +76,14 @@ impl SerdeVtxo {
 pub(crate) fn wallet_vtxo_from_full(
 	vtxo: &Vtxo<Full>,
 	state: VtxoState,
+	registered: bool,
 ) -> WalletVtxo {
 	WalletVtxo {
 		vtxo: vtxo.to_bare(),
 		state,
 		exit_depth: vtxo.exit_depth(),
 		exit_tx_weight: vtxo.transactions().map(|t| t.tx.weight()).sum(),
+		registered,
 	}
 }
 
