@@ -116,6 +116,7 @@ docs/ImportVtxoRequest.md
 docs/InternalServerError.md
 docs/InvoiceInfo.md
 docs/LightningApi.md
+docs/LightningInvoiceForAddressRequest.md
 docs/LightningInvoiceRequest.md
 docs/LightningPayRequest.md
 docs/LightningPayResponse.md
@@ -305,6 +306,7 @@ src/models/fee_schedule.rs
 src/models/import_vtxo_request.rs
 src/models/internal_server_error.rs
 src/models/invoice_info.rs
+src/models/lightning_invoice_for_address_request.rs
 src/models/lightning_invoice_request.rs
 src/models/lightning_pay_request.rs
 src/models/lightning_pay_response.rs

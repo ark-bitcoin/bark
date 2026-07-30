@@ -6,6 +6,7 @@ Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**cancel_receive**](LightningApi.md#cancel_receive) | **DELETE** /api/v1/lightning/receives/{identifier} | Cancel a pending receive
 [**generate_invoice**](LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | Create a BOLT11 invoice
+[**generate_invoice_for_address**](LightningApi.md#generate_invoice_for_address) | **POST** /api/v1/lightning/receives/invoice/for-address | Create a BOLT11 invoice for an Ark address
 [**get_receive_status**](LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
 [**list_receive_statuses**](LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses
 [**pay**](LightningApi.md#pay) | **POST** /api/v1/lightning/pay | Send a Lightning payment
@@ -55,6 +56,36 @@ Generates a new BOLT11 invoice for the specified amount via the Ark server, crea
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
 **lightning_invoice_request** | [**LightningInvoiceRequest**](LightningInvoiceRequest.md) |  | [required] |
+
+### Return type
+
+[**models::InvoiceInfo**](InvoiceInfo.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## generate_invoice_for_address
+
+> models::InvoiceInfo generate_invoice_for_address(lightning_invoice_for_address_request)
+Create a BOLT11 invoice for an Ark address
+
+Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**lightning_invoice_for_address_request** | [**LightningInvoiceForAddressRequest**](LightningInvoiceForAddressRequest.md) |  | [required] |
 
 ### Return type
 

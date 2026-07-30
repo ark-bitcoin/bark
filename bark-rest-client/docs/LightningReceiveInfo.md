@@ -13,7 +13,7 @@ Name | Type | Description | Notes
 **payment_preimage** | Option<**String**> | The payment preimage, if known. | [optional]
 **preimage_revealed_at** | Option<**String**> | The timestamp at which the preimage was revealed. | [optional]
 **settled_at** | Option<**String**> | The timestamp at which the receive settled, if it has. | [optional]
-**state** | **String** | Lifecycle phase of the receive: `awaiting-payment`, `htlcs-ready`, `preimage-revealed`, or `settled`. | 
+**state** | **String** | Lifecycle phase of the receive: `awaiting-payment`, `htlcs-ready`, `preimage-revealed`, `delivering`, or `settled`. | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

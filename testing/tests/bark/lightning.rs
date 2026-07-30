@@ -600,6 +600,79 @@ lightning_test!(bark_can_receive_lightning_when_pool_spend_creates_subdust_outpu
 	];
 });
 
+#[tokio::test]
+async fn bark_can_receive_lightning_for_offline_address() {
+	require_bark_version!(> "0.4.0");
+
+	let ctx = TestContext::new("lightningd/bark_can_receive_lightning_for_offline_address").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let proxy = ctx.bark("proxy", &srv).funded(btc(3)).create().await;
+	let recipient = ctx.bark("recipient", &srv).funded(btc(3)).create().await;
+	let proxy_board_amount = btc(2);
+	let recipient_board_amount = btc(1);
+	proxy.board_and_confirm_and_register(&ctx, proxy_board_amount).await;
+	recipient.board_and_confirm_and_register(&ctx, recipient_board_amount).await;
+
+	let recipient_address = recipient.address().await;
+	let pay_amount = sat(100_000);
+	let invoice_info = proxy.bolt11_invoice_for_address(&recipient_address, pay_amount).await;
+
+	tokio::join!(
+		lightning.external.pay_bolt11(invoice_info.invoice.clone()),
+		proxy.lightning_receive(&invoice_info.invoice).wait_millis(10_000),
+	);
+
+	assert_eq!(
+		proxy.spendable_balance().await,
+		proxy_board_amount,
+		"proxy should not keep the forwarded Lightning receive",
+	);
+	assert_eq!(
+		recipient.spendable_balance_no_sync().await,
+		recipient_board_amount,
+		"recipient should remain offline until explicit sync",
+	);
+
+	recipient.sync().await;
+	assert_eq!(recipient.spendable_balance().await, recipient_board_amount + pay_amount);
+}
+
+#[tokio::test]
+async fn bark_can_receive_lightning_for_own_address() {
+	require_bark_version!(> "0.4.0");
+
+	let ctx = TestContext::new("lightningd/bark_can_receive_lightning_for_own_address").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
+	let board_amount = btc(2);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	let own_address = bark.address().await;
+	let pay_amount = sat(100_000);
+	let invoice_info = bark.bolt11_invoice_for_address(&own_address, pay_amount).await;
+
+	tokio::join!(
+		lightning.external.pay_bolt11(invoice_info.invoice.clone()),
+		bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000),
+	);
+
+	// A mailbox roundtrip would leave the funds unsynced in our own
+	// mailbox, so an unsynced balance proves the claim was local.
+	assert_eq!(
+		bark.spendable_balance_no_sync().await,
+		board_amount + pay_amount,
+		"receive to our own address should land in our spendable balance without a sync",
+	);
+	// And a mailbox sync must not double-count the receive.
+	assert_eq!(bark.spendable_balance().await, board_amount + pay_amount);
+}
+
 async fn bark_check_lightning_receive_no_wait(
 	ctx: &TestContext,
 	_lightning: &LightningPaymentSetup,

@@ -370,7 +370,7 @@ pub struct LightningReceiveInfo {
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub payment_hash: PaymentHash,
 	/// Lifecycle phase of the receive: `awaiting-payment`, `htlcs-ready`,
-	/// `preimage-revealed`, or `settled`.
+	/// `preimage-revealed`, `delivering`, or `settled`.
 	pub state: String,
 	/// The invoice string, if known.
 	pub invoice: String,
@@ -434,6 +434,8 @@ impl From<&LightningReceive> for LightningReceiveInfo {
 			ReceiveProgress::AwaitingPayment => ("awaiting-payment", vec![]),
 			ReceiveProgress::HtlcsReady(htlcs) => ("htlcs-ready", htlcs.vtxo_ids.clone()),
 			ReceiveProgress::PreimageRevealed(htlcs) => ("preimage-revealed", htlcs.vtxo_ids.clone()),
+			// The HTLCs are spent once the claim outputs await delivery.
+			ReceiveProgress::Delivering(_) => ("delivering", vec![]),
 		};
 		LightningReceiveInfo {
 			payment_hash: recv.payment_hash,

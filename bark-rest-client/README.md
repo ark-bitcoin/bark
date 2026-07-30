@@ -58,6 +58,7 @@ Class | Method | HTTP request | Description
 *HistoryApi* | [**update_metadata**](docs/HistoryApi.md#update_metadata) | **POST** /api/v1/history/{id}/metadata | Patch movement metadata
 *LightningApi* | [**cancel_receive**](docs/LightningApi.md#cancel_receive) | **DELETE** /api/v1/lightning/receives/{identifier} | Cancel a pending receive
 *LightningApi* | [**generate_invoice**](docs/LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | Create a BOLT11 invoice
+*LightningApi* | [**generate_invoice_for_address**](docs/LightningApi.md#generate_invoice_for_address) | **POST** /api/v1/lightning/receives/invoice/for-address | Create a BOLT11 invoice for an Ark address
 *LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
 *LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses
 *LightningApi* | [**pay**](docs/LightningApi.md#pay) | **POST** /api/v1/lightning/pay | Send a Lightning payment
@@ -208,6 +209,7 @@ Class | Method | HTTP request | Description
  - [ImportVtxoRequest](docs/ImportVtxoRequest.md)
  - [InternalServerError](docs/InternalServerError.md)
  - [InvoiceInfo](docs/InvoiceInfo.md)
+ - [LightningInvoiceForAddressRequest](docs/LightningInvoiceForAddressRequest.md)
  - [LightningInvoiceRequest](docs/LightningInvoiceRequest.md)
  - [LightningPayRequest](docs/LightningPayRequest.md)
  - [LightningPayResponse](docs/LightningPayResponse.md)

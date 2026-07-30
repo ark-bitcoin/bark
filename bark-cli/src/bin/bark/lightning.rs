@@ -86,6 +86,24 @@ pub enum LightningCommand {
 		#[arg(long)]
 		token: Option<String>,
 	},
+	/// Creates a bolt11 invoice that forwards the received Ark VTXO to an Ark address
+	#[command()]
+	InvoiceForAddress {
+		/// Ark address that will receive the claimed VTXO
+		address: ark::Address,
+		/// Invoice amount
+		amount: Amount,
+		/// Optional description to embed in the invoice as its memo
+		#[arg(long)]
+		description: Option<String>,
+		/// Wait for the incoming payment to settle and be delivered
+		#[arg(long)]
+		wait: bool,
+		/// Provide a lightning receive token for authentication of this claim if the server requires one
+		/// and there are no existing spendable VTXOs to prove ownership of
+		#[arg(long)]
+		token: Option<String>,
+	},
 	/// List all generated invoices
 	#[command()]
 	Invoices,
@@ -186,6 +204,13 @@ pub async fn execute_lightning_command(
 		},
 		LightningCommand::Invoice { amount, description, wait, token } => {
 			let invoice = wallet.bolt11_invoice(amount, description, token).await?;
+			output_json(&InvoiceInfo { invoice: invoice.to_string() });
+			if wait {
+				wallet.try_claim_lightning_receive(invoice.into(), true).await?;
+			}
+		},
+		LightningCommand::InvoiceForAddress { address, amount, description, wait, token } => {
+			let invoice = wallet.bolt11_invoice_for_address(amount, address, description, token).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 			if wait {
 				wallet.try_claim_lightning_receive(invoice.into(), true).await?;

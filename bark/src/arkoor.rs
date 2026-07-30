@@ -2,13 +2,13 @@ use anyhow::Context;
 use bitcoin::{Amount, NetworkKind};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
-use log::{info, warn};
+use log::{error, info, warn};
 
-use ark::VtxoPolicy;
+use ark::{ProtocolEncoding, VtxoPolicy};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::vtxo::{Full, Vtxo, VtxoId};
-use server_rpc::protos;
+use server_rpc::{protos, ServerConnection};
 
 use crate::{VtxoDelivery, Wallet, WalletVtxo};
 use crate::actions::DriveMode;
@@ -53,6 +53,59 @@ pub enum ArkoorAddressError {
 	UnknownDeliveryMechanism(String),
 	#[error("Other error: {0}")]
 	Other(String),
+}
+
+/// Outcome of one [`post_arkoor_to_mailboxes`] pass.
+pub(crate) enum DeliveryOutcome {
+	/// At least one mailbox accepted the post.
+	AnySucceeded,
+	/// No mailbox accepted the post. `summary` describes why and is meant to
+	/// be captured in a caller's park error for observability.
+	AllFailed { summary: String },
+}
+
+/// Posts `vtxos` to every [`VtxoDelivery::ServerMailbox`] method found in
+/// `delivery`, in order, skipping any other delivery variant. Mailbox posts
+/// are idempotent on the server.
+///
+/// Any-success semantics: one accepted post is enough, since the recipient
+/// only needs the signed chain to arrive once.
+pub(crate) async fn post_arkoor_to_mailboxes(
+	srv: &mut ServerConnection,
+	delivery: &[VtxoDelivery],
+	vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<Full>>>,
+) -> DeliveryOutcome {
+	let serialized = vtxos.into_iter()
+		.map(|v| v.as_ref().serialize().to_vec())
+		.collect::<Vec<_>>();
+
+	let mut any_succeeded = false;
+	let mut failures: Vec<String> = Vec::new();
+	for method in delivery {
+		let VtxoDelivery::ServerMailbox { blinded_id } = method else { continue };
+		let req = protos::mailbox_server::PostArkoorMessageRequest {
+			blinded_id: blinded_id.as_ref().to_vec(),
+			vtxos: serialized.clone(),
+		};
+		match srv.mailbox_client.post_arkoor_message(req).await {
+			Ok(_) => any_succeeded = true,
+			Err(e) => {
+				let reason = format!("{:#}", e);
+				error!("failed to post arkoor vtxos to mailbox: {}", reason);
+				failures.push(reason);
+			},
+		}
+	}
+
+	if any_succeeded {
+		return DeliveryOutcome::AnySucceeded;
+	}
+	let summary = if failures.is_empty() {
+		"no mailbox delivery mechanism configured on destination".to_string()
+	} else {
+		format!("no delivery mechanism accepted the arkoor vtxos: {}", failures.join("; "))
+	};
+	DeliveryOutcome::AllFailed { summary }
 }
 
 impl Wallet {
