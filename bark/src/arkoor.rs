@@ -55,6 +55,33 @@ pub enum ArkoorAddressError {
 	Other(String),
 }
 
+/// Split a change amount into the piece amounts of the change destinations.
+///
+/// Change is split in two so that repeated payments build a tree of
+/// change VTXOs rather than a chain, keeping exit depth logarithmic in
+/// the number of payments. The payment plus two change pieces stays
+/// within the server's default arkoor fanout limit of 4.
+///
+/// We only split while the change exceeds the payment, so piece sizes
+/// track the wallet's payment sizes. Pieces below the dust threshold are
+/// fine here: [ark::arkoor::ArkoorBuilder] isolates them.
+///
+/// This must remain deterministic in its inputs: a retried action
+/// rebuilds its package by calling this again (see
+/// [Wallet::create_checkpointed_arkoor_with_vtxos]), so changing the
+/// policy breaks actions persisted mid-cosign by an older version.
+/// ENG-644 tracks storing the pieces in the action to lift that.
+fn split_change_amount(change: Amount, pay: Amount) -> Vec<Amount> {
+	if change == Amount::ZERO {
+		Vec::new()
+	} else if change > pay {
+		let half = change / 2;
+		vec![half, change - half]
+	} else {
+		vec![change]
+	}
+}
+
 /// Outcome of one [`post_arkoor_to_mailboxes`] pass.
 pub(crate) enum DeliveryOutcome {
 	/// At least one mailbox accepted the post.
@@ -197,11 +224,22 @@ impl Wallet {
 			user_keypairs.push(self.get_vtxo_key(vtxo).await?);
 		}
 
-		let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
-			inputs.into_iter(),
-			arkoor_dest.clone(),
-			VtxoPolicy::new_pubkey(change_pubkey),
-		)
+		let total_input = inputs.iter().map(|v| v.amount()).sum::<Amount>();
+		let change_amount = total_input.checked_sub(arkoor_dest.total_amount)
+			.ok_or_else(|| anyhow!("arkoor inputs ({}) don't cover destination ({})",
+				total_input, arkoor_dest.total_amount,
+			))?;
+
+		let change_policy = VtxoPolicy::new_pubkey(change_pubkey);
+		let mut outputs = vec![arkoor_dest.clone()];
+		for piece in split_change_amount(change_amount, arkoor_dest.total_amount) {
+			outputs.push(ArkoorDestination {
+				total_amount: piece,
+				policy: change_policy.clone(),
+			});
+		}
+
+		let builder = ArkoorPackageBuilder::new_with_checkpoints(inputs, outputs)
 			.context("Failed to construct arkoor package")?
 			.generate_user_nonces(&user_keypairs)
 			.context("invalid nb of keypairs")?;
@@ -281,5 +319,32 @@ impl Wallet {
 			}
 		}
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn split_change_amount_pieces() {
+		let pay = Amount::from_sat(10_000);
+
+		// zero change yields no pieces
+		assert_eq!(split_change_amount(Amount::ZERO, pay), Vec::<Amount>::new());
+
+		// change at or below the payment stays whole
+		for sats in [1, 5_000, 10_000] {
+			let change = Amount::from_sat(sats);
+			assert_eq!(split_change_amount(change, pay), vec![change]);
+		}
+
+		// change above the payment splits in two halves that add back up
+		for sats in [10_001, 123_457, 100_000_000] {
+			let change = Amount::from_sat(sats);
+			let pieces = split_change_amount(change, pay);
+			assert_eq!(pieces.len(), 2);
+			assert_eq!(pieces.iter().copied().sum::<Amount>(), change);
+		}
 	}
 }

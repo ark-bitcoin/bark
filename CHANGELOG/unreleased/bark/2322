@@ -1,0 +1,8 @@
+- Split arkoor change into two pieces so repeated payments build a tree of VTXOs
+  A single change output made every payment chain off the previous one, so exit
+  depth hit the server's `max_vtxo_exit_depth` (default 100) after ~50 payments
+  and forced a disruptive whole-wallet refresh. Change larger than the amount
+  paid is now split in two, and input selection spends the deepest VTXOs first
+  on equal expiry and skips VTXOs over the server's depth limit instead of
+  failing the payment.
+  [#2322](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2322)
