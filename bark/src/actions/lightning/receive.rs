@@ -24,7 +24,7 @@ use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_rpc::protos;
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 
-use crate::Wallet;
+use crate::{Config, Wallet};
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId, park_with_backoff};
 use crate::arkoor::{DeliveryOutcome, post_arkoor_to_mailboxes};
 use crate::movement::update::MovementUpdate;
@@ -117,8 +117,14 @@ impl WalletAction for LightningReceive {
 						return Ok(Advance::Failed(err.into()));
 					},
 					IncomingStatus::Ready => {
-						let htlcs = prepare_lightning_receive_htlcs(wallet, &self).await?;
-						Progress::HtlcsReady(htlcs)
+						match prepare_lightning_receive_htlcs(wallet, &self).await? {
+							Grant::Accepted(htlcs) => Progress::HtlcsReady(htlcs),
+							Grant::Rejected(err) => {
+								error!("Rejecting the HTLC vtxos granted for lightning receive {}: {:#}",
+									self.payment_hash, err);
+								return Ok(Advance::Failed(err.into()));
+							},
+						}
 					},
 				}
 			},
@@ -237,6 +243,15 @@ pub struct Htlcs {
 	pub vtxo_ids: Vec<VtxoId>,
 	/// The ID of the ongoing movement
 	pub movement_id: MovementId,
+}
+
+/// The result of asking the server to grant HTLC-recv vtxos.
+pub(crate) enum Grant {
+	/// The server granted vtxos we're willing to claim against.
+	Accepted(Htlcs),
+	/// The granted vtxos don't match what we asked for, so we reject them
+	/// instead of claiming against them.
+	Rejected(anyhow::Error),
 }
 
 /// A handle for the cosigned claim outputs awaiting forwarding to the
@@ -403,14 +418,29 @@ pub(crate) async fn check_incoming_lightning_payment(
 	})
 }
 
+/// The number of blocks we need, counted from now, to claim an HTLC-recv
+/// vtxo unilaterally once the server refuses to cosign.
+fn htlc_recv_exit_blocks_needed(
+	exit_delta: BlockDelta,
+	htlc_expiry_delta: BlockDelta,
+	config: &Config,
+) -> anyhow::Result<BlockDelta> {
+	exit_delta
+		.checked_add(htlc_expiry_delta)
+		.and_then(|v| v.checked_add(config.vtxo_exit_margin))
+		.and_then(|v| v.checked_add(config.htlc_recv_claim_delta))
+		.context("HTLC recv exit delta components sum overflows")
+}
+
 /// AwaitingPayment -> HtlcsReady. Asks the server to grant HTLC-recv
 /// vtxos for the inbound payment, validates them, creates the receive
 /// movement and stores the vtxos locked.
 pub(crate) async fn prepare_lightning_receive_htlcs(
 	wallet: &Wallet,
 	recv: &LightningReceive,
-) -> Result<Htlcs, AdvanceError> {
+) -> Result<Grant, AdvanceError> {
 	let (mut srv, ark_info) = wallet.require_server().await?;
+	let config = wallet.config();
 	let current_height = wallet.inner.chain.tip().await?;
 	let payment_hash = recv.payment_hash;
 
@@ -460,6 +490,29 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 				return Err(anyhow!("HTLC VTXO expiry height is less than requested: Requested {}, received {}",
 					htlc_recv_expiry, p.htlc_expiry).into());
 			}
+
+			// Ensure that the server didn't inflate the deltas for the client's
+			// unilateral exit clauses. Don't retry on any failure here: the
+			// server hands back these very same vtxos on every later request
+			// for this payment hash.
+			let claim_by = htlc_recv_exit_blocks_needed(
+				vtxo.exit_delta(), p.htlc_expiry_delta, config,
+			).and_then(|blocks_needed| {
+				current_height.checked_add(BlockHeight::from(blocks_needed))
+					.context("HTLC VTXO claim deadline overflows")
+			});
+			let claim_by = match claim_by {
+				Ok(claim_by) => claim_by,
+				Err(e) => return Ok(Grant::Rejected(e)),
+			};
+			if claim_by > p.htlc_expiry {
+				return Ok(Grant::Rejected(anyhow!(
+					"HTLC VTXO timelocks leave no time to claim it unilaterally: we need \
+					until height {} (exit delta {}, htlc expiry delta {}), but the server \
+					can claim it from height {}",
+					claim_by, vtxo.exit_delta(), p.htlc_expiry_delta, p.htlc_expiry,
+				)));
+			}
 		} else {
 			return Err(anyhow!("invalid HTLC VTXO policy: {:?}", vtxo.policy()).into());
 		}
@@ -506,10 +559,10 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 	let mut vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
 	vtxo_ids.sort();
 
-	Ok(Htlcs {
+	Ok(Grant::Accepted(Htlcs {
 		vtxo_ids,
 		movement_id,
-	})
+	}))
 }
 
 /// Claiming -> done, or -> Delivering when the receive has a claim
@@ -741,5 +794,53 @@ mod tests {
 			err.to_string().contains("returned invoice with payment hash"),
 			"{err:?}",
 		);
+	}
+
+	/// The blocks we ask the server to put between the tip and `htlc_expiry`
+	/// when creating the invoice, see [start_lightning_receive].
+	fn requested_cltv_delta(
+		exit_delta: BlockDelta,
+		htlc_expiry_delta: BlockDelta,
+		config: &Config,
+	) -> BlockDelta {
+		exit_delta + htlc_expiry_delta + config.vtxo_exit_margin
+			+ config.htlc_recv_claim_delta + LIGHTNING_PREPARE_CLAIM_DELTA
+	}
+
+	#[test]
+	fn htlc_recv_exit_blocks_needed_fits_the_requested_cltv_delta() {
+		let config = Config::network_default(bitcoin::Network::Bitcoin);
+
+		// A server granting the deltas it advertised leaves us
+		// LIGHTNING_PREPARE_CLAIM_DELTA to spare.
+		for (exit_delta, htlc_expiry_delta) in [(144, 6), (144, 40), (100, 0)] {
+			let needed = htlc_recv_exit_blocks_needed(
+				exit_delta, htlc_expiry_delta, &config,
+			).unwrap();
+			let requested = requested_cltv_delta(exit_delta, htlc_expiry_delta, &config);
+
+			assert_eq!(requested - needed, LIGHTNING_PREPARE_CLAIM_DELTA);
+		}
+	}
+
+	#[test]
+	fn htlc_recv_exit_blocks_needed_exceeds_cltv_delta_when_server_inflates_a_delta() {
+		let config = Config::network_default(bitcoin::Network::Bitcoin);
+		let requested = requested_cltv_delta(144, 6, &config);
+
+		// Inflating either delta past the leniency delta eats the whole window.
+		let inflated_expiry_delta = htlc_recv_exit_blocks_needed(144, 9, &config).unwrap();
+		assert!(inflated_expiry_delta > requested);
+
+		let inflated_exit_delta = htlc_recv_exit_blocks_needed(147, 6, &config).unwrap();
+		assert!(inflated_exit_delta > requested);
+	}
+
+	#[test]
+	fn htlc_recv_exit_blocks_needed_rejects_overflowing_deltas() {
+		let config = Config::network_default(bitcoin::Network::Bitcoin);
+
+		htlc_recv_exit_blocks_needed(BlockDelta::MAX, BlockDelta::MAX, &config)
+			.expect_err("summing the deltas should overflow");
 	}
 }

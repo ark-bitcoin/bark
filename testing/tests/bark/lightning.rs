@@ -19,7 +19,7 @@ use server::vtxopool::VtxoTarget;
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ToAltString};
-use bitcoin_ext::P2TR_DUST_SAT;
+use bitcoin_ext::{BlockDelta, P2TR_DUST_SAT};
 use server_rpc::protos::{
 	self, prepare_lightning_receive_claim_request::LightningReceiveAntiDos,
 	lightning_payment_status,
@@ -1286,6 +1286,81 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 	assert!(err.contains("vtxo attestation invalid"), "{err}");
 
 	assert_eq!(bark.spendable_balance().await, btc(2));
+}
+
+#[tokio::test]
+async fn bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta() {
+	require_bark_version!(> "0.4.0");
+
+	let ctx = TestContext::new("lightningd/bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta").await;
+
+	/// What the server actually puts in the granted policy.
+	const GRANTED_HTLC_EXPIRY_DELTA: BlockDelta = 30;
+	/// What the proxy advertises, and what the client budgets against.
+	const ADVERTISED_HTLC_EXPIRY_DELTA: BlockDelta = 6;
+
+	#[derive(Clone)]
+	struct UnderAdvertisedDeltaProxy;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for UnderAdvertisedDeltaProxy {
+		async fn get_ark_info(
+			&self, upstream: &mut ArkClient, req: protos::Empty,
+		) -> Result<protos::ArkInfo, tonic::Status> {
+			let mut info = upstream.get_ark_info(req).await?.into_inner();
+			info.htlc_expiry_delta = ADVERTISED_HTLC_EXPIRY_DELTA as u32;
+			Ok(info)
+		}
+	}
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
+		cfg.htlc_expiry_delta = GRANTED_HTLC_EXPIRY_DELTA;
+	}).funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let proxy = srv.start_proxy_no_mailbox(UnderAdvertisedDeltaProxy).await;
+
+	let bark = ctx.bark("bark1", &proxy.address).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let invoice = invoice_info.invoice.clone();
+	tokio::spawn(async move {
+		lightning.external.pay_bolt11(invoice).await;
+	});
+
+	// The attempts made while the payer is still on its way find nothing to
+	// claim yet and park, so keep driving until one of them sees the grant.
+	let mut rejection = None;
+	for _ in 0..20 {
+		let res = bark.try_lightning_receive_no_wait(&invoice_info.invoice)
+			.try_wait_millis(15_000).await.expect("claim command timed out");
+		if let Err(e) = res {
+			rejection = Some(e);
+			break;
+		}
+		// A completed receive means the grant was accepted; stop and let the
+		// assertions below report it. Don't sync here: a syncing balance
+		// command also drives the receive and would swallow the rejection,
+		// leaving the next claim to fail with "no pending lightning receive".
+		if bark.spendable_balance_no_sync().await != btc(2) {
+			break;
+		}
+		tokio::time::sleep(Duration::from_secs(1)).await;
+	}
+
+	// We never revealed the preimage, so we still hold only the board vtxo.
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(2));
+
+	let rejection = rejection.expect("expected bark to reject the granted HTLC vtxos");
+	assert!(format!("{:?}", rejection).contains("leave no time to claim it unilaterally"),
+		"{rejection:?}");
+
+	// The rejection is terminal: the receive is dropped instead of retrying
+	// the same grant until the inbound HTLC expires.
+	assert!(bark.list_lightning_receives().await.is_empty());
 }
 
 #[tokio::test]
