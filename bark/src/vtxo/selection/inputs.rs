@@ -45,6 +45,8 @@ pub struct InputSelection<F = ()> {
 	pub max_inputs: Option<usize>,
 	/// Never select these vtxos.
 	pub exclude: HashSet<VtxoId>,
+	/// Never select vtxos with an exit depth at or above this value.
+	pub max_exit_depth: Option<u16>,
 
 	fee_scheme: F,
 }
@@ -53,6 +55,16 @@ impl<F> InputSelection<F> {
 	/// Cap the total number of inputs that may be selected.
 	pub fn max_inputs(mut self, max_inputs: usize) -> Self {
 		self.max_inputs = Some(max_inputs);
+		self
+	}
+
+	/// Exclude vtxos with an exit depth at or above the given value.
+	///
+	/// Used to skip vtxos the server would reject as arkoor inputs for
+	/// exceeding its `max_vtxo_exit_depth`; such vtxos have to wait for a
+	/// refresh.
+	pub fn max_exit_depth(mut self, max_exit_depth: u16) -> Self {
+		self.max_exit_depth = Some(max_exit_depth);
 		self
 	}
 
@@ -89,6 +101,7 @@ impl InputSelection {
 		InputSelection {
 			max_inputs: self.max_inputs,
 			exclude: self.exclude,
+			max_exit_depth: self.max_exit_depth,
 			fee_scheme: FeeScheme { tip, calc_fee },
 		}
 	}
@@ -180,11 +193,12 @@ impl<F> fmt::Debug for FeeScheme<F> {
 /// A resumable scan over selection candidates.
 ///
 /// Construction applies the [InputSelection] exclusions and sorts the candidates
-/// soonest-expiring-first. [InputScanner::cover_amount] then advances the scan; it may be
+/// soonest-expiring-first, deepest exit depth first on equal expiry.
+/// [InputScanner::cover_amount] then advances the scan; it may be
 /// called repeatedly as long as the requested amounts never shrink, which lets the
 /// fee-convergence loop grow an earlier selection instead of restarting it.
 struct InputScanner {
-	/// Eligible candidates, sorted soonest-expiring-first.
+	/// Eligible candidates, sorted soonest-expiring-first, deepest-first on ties.
 	candidates: Vec<WalletVtxo>,
 	/// Index into `candidates` of the next candidate to consider.
 	cursor: usize,
@@ -197,11 +211,20 @@ struct InputScanner {
 }
 
 impl InputScanner {
-	/// Takes ownership of the given candidates vector and sorts it soonest-expiring-first, ready
-	/// for [InputScanner::cover_amount].
+	/// Takes ownership of the given candidates vector and sorts it soonest-expiring-first,
+	/// ready for [InputScanner::cover_amount].
+	///
+	/// On equal expiry (arkoor descendants of one root all share its expiry) the
+	/// deepest candidates sort first, for the same reason we spend
+	/// soonest-expiring first: spend what needs a refresh soonest. It also keeps
+	/// the depth concentrated in a few VTXOs, so reaching `max_exit_depth` only
+	/// strands those and leaves their shallower siblings spendable.
 	fn new<F>(selection: &InputSelection<F>, mut candidates: Vec<WalletVtxo>) -> InputScanner {
-		candidates.retain(|v| !selection.exclude.contains(&v.id()));
-		candidates.sort_by_key(|v| v.expiry_height());
+		candidates.retain(|v| {
+			!selection.exclude.contains(&v.id())
+				&& selection.max_exit_depth.is_none_or(|max| v.exit_depth < max)
+		});
+		candidates.sort_by_key(|v| (v.expiry_height(), cmp::Reverse(v.exit_depth)));
 
 		let max_inputs = selection.max_inputs.unwrap_or(usize::MAX);
 		let capacity = max_inputs.min(candidates.len());
@@ -402,6 +425,23 @@ mod test {
 		// Not coverable with any two inputs.
 		let err = selection.select(vtxos, Amount::from_sat(50_001)).unwrap_err();
 		assert!(err.to_string().contains("best 2 inputs"), "{}", err);
+	}
+
+	#[test]
+	fn covers_deepest_first_on_equal_expiry() {
+		let mut shallow = dummy_wallet_vtxo(10_000, 100);
+		shallow.exit_depth = 2;
+		let mut deep = dummy_wallet_vtxo(20_000, 100);
+		deep.exit_depth = 6;
+		let deep_id = deep.id();
+
+		// Of two VTXOs with the same expiry, the one closest to the depth limit
+		// is spent first.
+		let selected = InputSelection::new()
+			.select(vec![shallow, deep], Amount::from_sat(5_000)).unwrap();
+
+		assert_eq!(amounts(&selected), [20_000]);
+		assert_eq!(selected[0].id(), deep_id);
 	}
 
 	#[test]

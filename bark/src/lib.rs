@@ -2122,12 +2122,23 @@ impl Wallet {
 		Ok(first_expiry.map(|h| h.saturating_sub(self.inner.config.vtxo_refresh_expiry_threshold)))
 	}
 
+	/// Base [InputSelection] for spending VTXOs: skips VTXOs whose exit
+	/// depth the server would reject as arkoor inputs. Those can only be
+	/// spent again after a refresh.
+	async fn spend_input_selection(&self) -> anyhow::Result<InputSelection> {
+		let mut selection = InputSelection::new();
+		if let Some(info) = self.ark_info().await? {
+			selection = selection.max_exit_depth(info.max_vtxo_exit_depth);
+		}
+		Ok(selection)
+	}
+
 	/// Select any spendable VTXOs to cover the provided amount.
 	async fn select_any_vtxos_to_cover(
 		&self,
 		amount: Amount,
 	) -> anyhow::Result<Vec<WalletVtxo>> {
-		InputSelection::new().select(self.spendable_vtxos().await?, amount)
+		self.spend_input_selection().await?.select(self.spendable_vtxos().await?, amount)
 	}
 
 	/// Determines which VTXOs to use for a fee-paying transaction where the fee is added on top of
@@ -2143,7 +2154,7 @@ impl Wallet {
 		F: for<'a> Fn(Amount, SelectedFeeInfos<'a>) -> anyhow::Result<Amount>,
 	{
 		let tip = self.inner.chain.tip().await?;
-		InputSelection::new()
+		self.spend_input_selection().await?
 			.fee_scheme(tip, calc_fee)
 			.select(self.spendable_vtxos().await?, amount)
 	}
