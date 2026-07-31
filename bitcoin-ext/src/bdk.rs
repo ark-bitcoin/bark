@@ -15,7 +15,7 @@ use bitcoin::{
 	Amount, BlockHash, FeeRate, OutPoint, Script, Transaction, TxOut, Txid, Weight, Witness,
 };
 use bitcoin::psbt::{ExtractTxError, Input};
-use log::{debug, trace};
+use log::debug;
 use rand_core::RngCore;
 
 use crate::TransactionExt;
@@ -449,35 +449,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 				// required fee amount.
 				wallet.mark_output_keys_unused(&tx);
 				final_child_weight = tx_weight;
-				fee_needed = match fees {
-					MakeCpfpFees::Effective(fr) => total_weight * fr,
-					MakeCpfpFees::Rbf { min_effective_fee_rate, current_package_fee } => {
-						// RBF requires that you spend at least the total fee of every
-						// unconfirmed ancestor and the transaction you want to replace,
-						// then you must add mintxrelayfee * package_vbytes on top.
-						let min_tx_relay_fee = FeeRate::from_sat_per_vb(1).unwrap();
-						let min_package_fee = current_package_fee +
-							parent_weight * min_tx_relay_fee +
-							tx_weight * min_tx_relay_fee;
-
-						// This is the fee we want to pay based on the given minimum effective fee
-						// rate. It's possible that the desired fee is lower than the minimum
-						// package fee if the currently broadcast child transaction is bigger than
-						// the transaction we just produced.
-						let desired_fee = total_weight * min_effective_fee_rate;
-						if desired_fee < min_package_fee {
-							debug!("Using a minimum fee of {} instead of the desired fee of {} for RBF",
-								min_package_fee, desired_fee,
-							);
-							min_package_fee
-						} else {
-							trace!("Attempting to use the desired fee of {} for CPFP RBF",
-								desired_fee,
-							);
-							desired_fee
-						}
-					}
-				}
+				fee_needed = fees.package_fee(parent_weight, tx_weight);
 			} else {
 				debug!("Created P2A CPFP with weight {} and fee {} in {} iterations",
 					total_weight, fee_needed, i,

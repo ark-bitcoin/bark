@@ -4,8 +4,8 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**r#type** | **Type** |  (enum: not-exiting) | 
-**vtxo** | **String** |  | 
+**error** | **String** |  | 
+**r#type** | **Type** |  (enum: movement-registration-failure) | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

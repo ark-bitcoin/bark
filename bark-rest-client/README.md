@@ -175,6 +175,7 @@ Class | Method | HTTP request | Description
  - [ExitErrorOneOf30](docs/ExitErrorOneOf30.md)
  - [ExitErrorOneOf31](docs/ExitErrorOneOf31.md)
  - [ExitErrorOneOf32](docs/ExitErrorOneOf32.md)
+ - [ExitErrorOneOf33](docs/ExitErrorOneOf33.md)
  - [ExitErrorOneOf4](docs/ExitErrorOneOf4.md)
  - [ExitErrorOneOf5](docs/ExitErrorOneOf5.md)
  - [ExitErrorOneOf6](docs/ExitErrorOneOf6.md)

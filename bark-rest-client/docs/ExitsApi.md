@@ -22,10 +22,10 @@ Method | HTTP request | Description
 
 ## emergency_exit_fee
 
-> models::EmergencyExitFeeEstimateResponse emergency_exit_fee(vtxo_ids, fee_rate_sat_per_vb, destination)
+> models::EmergencyExitFeeEstimateResponse emergency_exit_fee(vtxo_ids, fee_rate_sat_per_vb, destination, fee_margin)
 Estimate emergency exit fee
 
-Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid now from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. `fundable` is false when the wallet's confirmed on-chain balance can't cover the full broadcast walk, which would stall the exit midway.
+Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. The broadcast fee includes the `fee_margin` scaling and is the on-chain balance to fund the exit with at that margin; the wallet's actual funds are never consulted.
 
 ### Parameters
 
@@ -33,8 +33,9 @@ Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs w
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
 **vtxo_ids** | Option<**String**> | Comma-separated VTXO ids to exit; omit to exit the entire wallet |  |
-**fee_rate_sat_per_vb** | Option<**i64**> | Fee rate in sat/vB applied to both legs; omit to price the broadcast leg at the current fast rate and the claim leg at the regular rate |  |
+**fee_rate_sat_per_vb** | Option<**f64**> | Fee rate in sat/vB (fractions allowed) applied to both legs; omit to price the broadcast leg at the current fast rate and the claim leg at the regular rate |  |
 **destination** | Option<**String**> | Claim destination address; omit to use a placeholder for weighing |  |
+**fee_margin** | Option<**f64**> | Scales the broadcast leg to cover feerate movement and UTXO consolidation; must be finite and non-negative, defaults to 1.2 |  |
 
 ### Return type
 

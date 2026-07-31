@@ -123,6 +123,10 @@ pub struct EstimateFeeOpts {
 	/// when omitted.
 	#[arg(long)]
 	destination: Option<Address<address::NetworkUnchecked>>,
+	/// Scales the broadcast leg to cover fee-rate movement and UTXO consolidation.
+	/// Must be finite and non-negative. Defaults to 1.2.
+	#[arg(long)]
+	fee_margin: Option<f64>,
 	/// Skip syncing wallet
 	#[arg(long)]
 	no_sync: bool,
@@ -416,7 +420,13 @@ pub async fn estimate_exit_fee(
 		None => None,
 	};
 
-	let estimate = wallet.estimate_emergency_exit_fee(&vtxos, fee_rate, destination).await?;
+	if let Some(m) = opts.fee_margin {
+		if !m.is_finite() || m < 0.0 {
+			bail!("--fee-margin must be finite and non-negative");
+		}
+	}
+
+	let estimate = wallet.estimate_emergency_exit_fee(&vtxos, fee_rate, destination, opts.fee_margin).await?;
 	output_json(&bark_json::web::EmergencyExitFeeEstimateResponse::from(estimate));
 	Ok(())
 }

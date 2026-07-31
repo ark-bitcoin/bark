@@ -128,7 +128,7 @@ pub use self::models::{
 	ExitProgressStatus, ExitTransactionStatus,
 };
 pub use self::vtxo::ExitVtxo;
-pub use self::estimate::ExitFeeEstimate;
+pub use self::estimate::{DEFAULT_BROADCAST_FEE_MARGIN, ExitFeeEstimate};
 
 use std::borrow::Borrow;
 use std::cmp;

@@ -128,12 +128,13 @@ pub enum GetLiveExitStatusError {
 }
 
 
-/// Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid now from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. `fundable` is false when the wallet's confirmed on-chain balance can't cover the full broadcast walk, which would stall the exit midway.
-pub async fn emergency_exit_fee(configuration: &configuration::Configuration, vtxo_ids: Option<&str>, fee_rate_sat_per_vb: Option<i64>, destination: Option<&str>) -> Result<models::EmergencyExitFeeEstimateResponse, Error<EmergencyExitFeeError>> {
+/// Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. The broadcast fee includes the `fee_margin` scaling and is the on-chain balance to fund the exit with at that margin; the wallet's actual funds are never consulted.
+pub async fn emergency_exit_fee(configuration: &configuration::Configuration, vtxo_ids: Option<&str>, fee_rate_sat_per_vb: Option<f64>, destination: Option<&str>, fee_margin: Option<f64>) -> Result<models::EmergencyExitFeeEstimateResponse, Error<EmergencyExitFeeError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_query_vtxo_ids = vtxo_ids;
     let p_query_fee_rate_sat_per_vb = fee_rate_sat_per_vb;
     let p_query_destination = destination;
+    let p_query_fee_margin = fee_margin;
 
     let uri_str = format!("{}/api/v1/exits/fee", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
@@ -146,6 +147,9 @@ pub async fn emergency_exit_fee(configuration: &configuration::Configuration, vt
     }
     if let Some(ref param_value) = p_query_destination {
         req_builder = req_builder.query(&[("destination", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_fee_margin {
+        req_builder = req_builder.query(&[("fee_margin", &param_value.to_string())]);
     }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());

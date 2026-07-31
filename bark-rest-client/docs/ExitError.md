@@ -31,6 +31,7 @@
 | ExitErrorOneOf30 |  |
 | ExitErrorOneOf31 |  |
 | ExitErrorOneOf32 |  |
+| ExitErrorOneOf33 |  |
 | ExitErrorOneOf4 |  |
 | ExitErrorOneOf5 |  |
 | ExitErrorOneOf6 |  |
