@@ -99,6 +99,36 @@ async fn send_arkoor_package() {
 }
 
 #[tokio::test]
+async fn oor_change_split() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("bark/oor_change_split").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(5_000)).create().await;
+
+	bark1.board_and_confirm_and_register(&ctx, sat(80_000)).await;
+
+	// Large change is split in two so that spending builds a tree of
+	// change VTXOs instead of a chain.
+	bark1.send_oor(&bark2.address().await, sat(20_000)).await;
+
+	let mut vtxos = bark1.vtxos().await;
+	vtxos.sort_by_key(|v| v.amount);
+	let [piece1, piece2] = vtxos.try_into().expect("should have two change vtxos");
+	assert_eq!(piece1.amount, sat(30_000));
+	assert_eq!(piece2.amount, sat(30_000));
+
+	// Change too small to split is kept whole.
+	bark1.send_oor(&bark2.address().await, sat(45_000)).await;
+
+	let [change] = bark1.vtxos().await.try_into().expect("should have one change vtxo");
+	assert_eq!(change.amount, sat(15_000));
+
+	assert_eq!(65_000, bark2.spendable_balance().await.to_sat());
+}
+
+#[tokio::test]
 async fn send_to_arkade_address_is_rejected() {
 	require_bark_version!(> "0.2.5");
 

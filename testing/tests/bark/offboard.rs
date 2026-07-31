@@ -4,7 +4,7 @@ use bitcoin_ext::P2TR_DUST_SAT;
 
 use bark_json::movements::{MovementDestination, PaymentMethod};
 
-use ark_testing::{btc, sat, TestContext, require_bark_version};
+use ark_testing::{btc, is_bark_version, sat, TestContext, require_bark_version};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::util::ToAltString;
 
@@ -135,8 +135,12 @@ async fn bark_send_onchain() {
 	ctx.generate_blocks(2).await;
 
 	let offboard_fee = sat(938);
-	let [change_vtxo] = bark1.vtxos().await.try_into().expect("should have one vtxo");
-	assert_eq!(change_vtxo.amount, input_vtxo.amount - send_amount - offboard_fee);
+	// bark > 0.5.0 splits change in two
+	let nb_change = if is_bark_version!(> "0.5.0") { 2 } else { 1 };
+	let change_vtxos = bark1.vtxos().await;
+	assert_eq!(change_vtxos.len(), nb_change);
+	let change_total = change_vtxos.iter().map(|v| v.amount).sum::<Amount>();
+	assert_eq!(change_total, input_vtxo.amount - send_amount - offboard_fee);
 
 	let movements = bark1.history().await;
 	let send_movement = movements.last().unwrap();

@@ -160,8 +160,13 @@ async fn accept_mailbox() {
 	bark.send_oor(bark3.address().await, sat(60_000)).await;
 
 	bark3.maintain().await;
+	// An arkoor output is created per input. On bark > 0.5.0 the sender's
+	// change is split in two pieces and the second send needs two of them to
+	// cover it, so bark3 receives three VTXOs from the two sends. Older barks
+	// don't split change, so each send uses a single input.
+	let expected_vtxos = if is_bark_version!(> "0.5.0") { 3 } else { 2 };
 	let bark3_vtxos = bark3.vtxos().await;
-	assert_eq!(bark3_vtxos.len(), 2, "bark3 should have 2 VTXOs");
+	assert_eq!(bark3_vtxos.len(), expected_vtxos, "unexpected number of VTXOs for bark3");
 
 	let bark3_wallet = bark3.client().await;
 	let vtxos = bark3_wallet.vtxos().await.unwrap();
@@ -266,15 +271,19 @@ async fn recovery_mailbox_receives_vtxo_ids() {
 	assert_eq!(recovery_ids.len(), 1, "bark2 recovery mailbox should have 1 vtxo_id");
 	assert_eq!(recovery_ids[0], bark2_vtxos[0].id(), "arkoor vtxo_id should match");
 
-	// === Test 3: Sending arkoor posts change vtxo_id to recovery mailbox ===
-	// bark1 sent arkoor above and should have change
+	// === Test 3: Sending arkoor posts change vtxo_ids to recovery mailbox ===
+	// bark1 sent arkoor above and should have change, split in two pieces
+	// on bark > 0.5.0
+	let nb_change = if is_bark_version!(> "0.5.0") { 2 } else { 1 };
 	let bark1_vtxos_after_send = bark1_wallet.vtxos().await.unwrap();
-	assert_eq!(bark1_vtxos_after_send.len(), 1, "bark1 should have 1 change VTXO");
+	assert_eq!(bark1_vtxos_after_send.len(), nb_change, "bark1 should only have change VTXOs");
 
 	let recovery_ids = read_recovery_vtxo_ids(&mut mb_rpc, &bark1_wallet).await;
-	// 2 vtxo_ids: board + change from sending arkoor
-	assert_eq!(recovery_ids.len(), 2, "bark1 recovery mailbox should have 2 vtxo_ids (board + change)");
-	assert!(recovery_ids.contains(&bark1_vtxos_after_send[0].id()), "change vtxo_id should be in recovery mailbox");
+	// board + every change piece from sending arkoor
+	assert_eq!(recovery_ids.len(), 1 + nb_change, "bark1 recovery mailbox should have board + change vtxo_ids");
+	for vtxo in &bark1_vtxos_after_send {
+		assert!(recovery_ids.contains(&vtxo.id()), "change vtxo_id should be in recovery mailbox");
+	}
 }
 
 /// Test that lightning send change vtxo_ids are posted to recovery mailbox

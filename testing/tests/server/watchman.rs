@@ -231,10 +231,11 @@ async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 	let msg = log_claim.recv().wait_millis(5000).await.expect("no claim log");
 	failures.assert_empty();
 	println!("arkoor vtxo sweep: {:#?}", msg);
-	// only change
-	assert_eq!(1, msg.vtxo_ids.len());
+	// only change, split in two pieces; these are the checkpoint vtxos of the
+	// pieces, not the change vtxos bark1 holds
+	assert_eq!(2, msg.vtxo_ids.len());
 	assert_eq!(250_000, msg.total_input_value.to_sat());
-	assert_eq!(249_093, msg.total_output_value.to_sat());
+	assert_eq!(248_561, msg.total_output_value.to_sat());
 }
 
 #[tokio::test]
