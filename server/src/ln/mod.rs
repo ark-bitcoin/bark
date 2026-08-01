@@ -73,6 +73,40 @@ fn validate_htlc_recv_expiry(
 	Ok(())
 }
 
+/// Validate a sender's side of an intra-Ark payment against the receive
+/// subscription that it will settle.
+///
+/// Since both invoice and sub amount are both user-provided, we need to ensure
+/// they match.
+pub(crate) fn validate_intra_ark_payment(
+	subscription: &LightningHtlcSubscription,
+	invoice: &Invoice,
+	payment_amount: Amount,
+) -> anyhow::Result<()> {
+	// An honest sender pays the exact bolt11 we issued for this payment hash.
+	// Demanding equality also rejects forgeries that keep the payment hash but
+	// change any other field, like the amount or the expiry.
+	match invoice {
+		Invoice::Bolt11(bolt11) if *bolt11 == subscription.invoice => {},
+		_ => return badarg!(
+			"invoice does not match the invoice we issued for payment hash {}",
+			subscription.payment_hash,
+		),
+	}
+
+	// The invoice equality above already implies this, but the payout to the
+	// receiver is driven by the subscription amount, so tie the sender's
+	// amount to it explicitly rather than by implication.
+	if payment_amount < subscription.amount() {
+		return badarg!(
+			"payment amount of {} is less than the invoiced amount of {}",
+			payment_amount, subscription.amount(),
+		);
+	}
+
+	Ok(())
+}
+
 
 impl Server {
 	#[tracing::instrument(skip(self, request))]
@@ -212,6 +246,12 @@ impl Server {
 			if invoice_msat < payment_amount.to_msat() / 2 {
 				return badarg!("requested payment amount more than double invoice amount");
 			}
+		}
+
+		if let Some(sub) = self.db.read(async |t|
+			t.get_htlc_subscription_by_payment_hash(payment_hash).await
+		).await? {
+			validate_intra_ark_payment(&sub, &invoice, payment_amount)?;
 		}
 
 		// Verify we can actually perform the payment when fees are taken into account. If for some
@@ -816,10 +856,103 @@ impl Server {
 
 #[cfg(test)]
 mod tests {
+	use std::time::Duration;
+
+	use bitcoin::hashes::{sha256, Hash};
+	use bitcoin::secp256k1::{Message, Secp256k1, SecretKey};
+	use chrono::Local;
+	use lightning_invoice::{Currency, InvoiceBuilder, PaymentSecret};
+	use ark::lightning::Bolt11Invoice;
+
 	use super::*;
 
 	/// Typical config delta used in tests.
 	const DELTA: BlockDelta = 40;
+
+	/// Build a signed bolt11 invoice, standing in for one we issued via cln.
+	///
+	/// `key` picks the payee identity: a sender forging an invoice for someone
+	/// else's payment hash signs with a key of their own.
+	fn test_invoice(payment_hash: sha256::Hash, amount_msat: u64, key: u8) -> Bolt11Invoice {
+		let secp = Secp256k1::new();
+		let secret = SecretKey::from_slice(&[key; 32]).unwrap();
+		InvoiceBuilder::new(Currency::Regtest)
+			.description("test".into())
+			.payment_hash(payment_hash)
+			.payment_secret(PaymentSecret([42; 32]))
+			.duration_since_epoch(Duration::from_secs(1_700_000_000))
+			.min_final_cltv_expiry_delta(144)
+			.amount_milli_satoshis(amount_msat)
+			.build_signed(|hash: &Message| secp.sign_ecdsa_recoverable(hash, &secret))
+			.unwrap()
+	}
+
+	fn test_subscription(invoice: Bolt11Invoice) -> LightningHtlcSubscription {
+		let now = Local::now();
+		LightningHtlcSubscription {
+			id: 1,
+			lightning_node_id: 1,
+			payment_hash: PaymentHash::from(&invoice),
+			invoice: invoice,
+			status: LightningHtlcSubscriptionStatus::Created,
+			lowest_incoming_htlc_expiry: None,
+			accepted_at: None,
+			created_at: now,
+			updated_at: now,
+			htlc_vtxos: vec![],
+		}
+	}
+
+	#[test]
+	fn intra_ark_payment_accepts_the_invoice_we_issued() {
+		let hash = sha256::Hash::hash(b"preimage");
+		let ours = test_invoice(hash, 1_000_000, 1);
+		let sub = test_subscription(ours.clone());
+
+		let invoice = Invoice::Bolt11(ours);
+		validate_intra_ark_payment(&sub, &invoice, Amount::from_sat(1000)).expect("exact amount");
+		// Overpaying is fine, we keep the difference.
+		validate_intra_ark_payment(&sub, &invoice, Amount::from_sat(1500)).expect("overpayment");
+		validate_intra_ark_payment(&sub, &invoice, Amount::from_sat(999)).expect_err("underpayment");
+	}
+
+	/// A sender who forges a cheaper invoice on the receiver's payment hash
+	/// would have us pay out the receiver's amount for their smaller one.
+	#[test]
+	fn intra_ark_payment_rejects_forged_invoice_on_same_payment_hash() {
+		let hash = sha256::Hash::hash(b"preimage");
+		let sub = test_subscription(test_invoice(hash, 100_000_000_000, 1));
+
+		// Same payment hash, far smaller amount, signed by the sender.
+		let forged = Invoice::Bolt11(test_invoice(hash, 1_000_000, 2));
+		assert_eq!(forged.payment_hash(), sub.payment_hash);
+		forged.check_signature().expect("a forged invoice is still self-consistent");
+
+		validate_intra_ark_payment(&sub, &forged, Amount::from_sat(1000))
+			.expect_err("forged invoice must be rejected");
+	}
+
+	/// The amount check in `initiate_lightning_payment` is skipped entirely for
+	/// an amountless invoice, so it must not be a way past this one either.
+	#[test]
+	fn intra_ark_payment_rejects_amountless_invoice() {
+		let secp = Secp256k1::new();
+		let secret = SecretKey::from_slice(&[2; 32]).unwrap();
+		let hash = sha256::Hash::hash(b"preimage");
+		let sub = test_subscription(test_invoice(hash, 100_000_000_000, 1));
+
+		let amountless = InvoiceBuilder::new(Currency::Regtest)
+			.description("test".into())
+			.payment_hash(hash)
+			.payment_secret(PaymentSecret([42; 32]))
+			.duration_since_epoch(Duration::from_secs(1_700_000_000))
+			.min_final_cltv_expiry_delta(144)
+			.build_signed(|hash: &Message| secp.sign_ecdsa_recoverable(hash, &secret))
+			.unwrap();
+
+		validate_intra_ark_payment(&sub, &Invoice::Bolt11(amountless), Amount::from_sat(1000))
+			.expect_err("amountless invoice must be rejected");
+	}
 
 	#[test]
 	fn grant_outgoing_htlc_respects_htlcs_expiry_delta() {

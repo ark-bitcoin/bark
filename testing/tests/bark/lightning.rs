@@ -9,7 +9,7 @@ use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
 use ark_testing::context::LightningPaymentSetup;
 use bark::actions::lightning::receive::LightningReceiveState;
-use bark::lightning_invoice::Bolt11Invoice;
+use bark::lightning_invoice::{Bolt11Invoice, Currency, InvoiceBuilder, PaymentSecret};
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
 use log::{info, trace};
@@ -991,6 +991,111 @@ async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 	assert!(payer_balance + payee_balance <= board_amount + board_amount,
 		"conservation violated: payer {payer_balance} + payee {payee_balance} exceeds \
 		2 x {board_amount}; the server was drained by the revoke-then-claim ordering");
+}
+
+/// Regression test for the intra-ark forged-invoice server drain.
+///
+/// A sender pays a receive with an invoice they signed themselves: same
+/// payment hash as the one the receiver got from us, far smaller amount.
+/// Nothing in a bolt11 invoice binds it to us - signature verification
+/// recovers the payee key from the signature itself, so a forged invoice
+/// verifies just fine.
+///
+/// Before the fix the server took the intra-ark shortcut on the payment hash
+/// alone. It validated the sender's amount only against the sender's own
+/// invoice, but paid the receiver the amount of the invoice *we* issued, out
+/// of the vtxopool, and ate the difference.
+#[tokio::test]
+async fn intra_ark_forged_invoice_does_not_drain_server() {
+	require_bark_version!(>= "0.3.0");
+
+	let ctx = TestContext::new("lightningd/intra_ark_forged_invoice_does_not_drain_server").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("server").lightningd(&lightning.external).create().await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	/// Records how the server answered the payment. Bark handles a rejection
+	/// gracefully (it revokes and reports a failed payment), so the reason
+	/// has to be captured here rather than read off the exit status.
+	#[derive(Clone)]
+	struct RecordInitiate(Arc<parking_lot::Mutex<Option<String>>>);
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for RecordInitiate {
+		async fn initiate_lightning_payment(
+			&self,
+			upstream: &mut ArkClient,
+			req: protos::InitiateLightningPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			match upstream.initiate_lightning_payment(req).await {
+				Ok(resp) => Ok(resp.into_inner()),
+				Err(e) => {
+					*self.0.lock() = Some(e.message().to_owned());
+					Err(e)
+				},
+			}
+		}
+	}
+
+	let rejection = Arc::new(parking_lot::Mutex::new(None));
+	let proxy = srv.start_proxy_no_mailbox(RecordInitiate(rejection.clone())).await;
+
+	// Both clients share the same server (and proxy) -> intra-ark payment.
+	let bark_payer = ctx.bark("bark-payer", &proxy.address).funded(btc(3)).create().await;
+	let bark_payee = ctx.bark("bark-payee", &proxy.address).funded(btc(3)).create().await;
+
+	let board_amount = btc(2);
+	bark_payer.board_and_confirm_and_register(&ctx, board_amount).await;
+	bark_payee.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	// The payee invoices 1 BTC through the server.
+	let invoice_amount = btc(1);
+	let invoice_info = bark_payee.bolt11_invoice(invoice_amount).await;
+	let real = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+
+	// The payer forges a 1000 sat invoice on the payee's payment hash, signed
+	// with a key of their own.
+	let forged_amount = sat(1000);
+	let secp = bitcoin::secp256k1::Secp256k1::new();
+	let attacker_key = bitcoin::secp256k1::SecretKey::from_slice(&[0xab; 32]).unwrap();
+	let forged = InvoiceBuilder::new(Currency::Regtest)
+		.description("forged".into())
+		.payment_hash(*real.payment_hash())
+		.payment_secret(PaymentSecret([0x11; 32]))
+		.current_timestamp()
+		.min_final_cltv_expiry_delta(144)
+		.amount_milli_satoshis(forged_amount.to_sat() * 1000)
+		.build_signed(|hash| secp.sign_ecdsa_recoverable(hash, &attacker_key))
+		.unwrap();
+	assert_eq!(forged.payment_hash(), real.payment_hash());
+	forged.check_signature().expect("a forged invoice is still self-consistent");
+
+	// The server must refuse to settle a receive against an invoice it never
+	// issued, instead of paying out `invoice_amount` for `forged_amount`.
+	bark_payer.pay_lightning(&forged, None).await;
+	let rejection = rejection.lock().clone().expect("server accepted the forged invoice");
+	assert!(rejection.contains("does not match the invoice we issued"),
+		"unexpected rejection reason: {rejection}");
+
+	// The payee tries to collect anyway: before the fix the subscription was
+	// already Accepted at this point and this claim minted `invoice_amount`
+	// out of the vtxopool for a `forged_amount` payment.
+	let _ = bark_payee.try_lightning_receive_no_wait(&invoice_info.invoice).await;
+
+	let payer_balance = bark_payer.spendable_balance().await;
+	let payee_balance = bark_payee.spendable_balance().await;
+
+	// The payee was never paid out of the vtxopool for the forged invoice.
+	assert!(payee_balance <= board_amount,
+		"payee was paid for a forged invoice, balance: {payee_balance}");
+	// Conservation: both funded only `board_amount`, so together they can never
+	// hold more than `2 * board_amount` without the server having been drained.
+	assert!(payer_balance + payee_balance <= board_amount + board_amount,
+		"conservation violated: payer {payer_balance} + payee {payee_balance} exceeds \
+		2 x {board_amount}; the server was drained by the forged invoice");
 }
 
 #[tokio::test]

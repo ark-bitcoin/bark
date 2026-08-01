@@ -57,6 +57,7 @@ use crate::ln::cln::{ClnNodeInfo, ClnNodeOnlineState, NodeHandle};
 use crate::ln::cln::hold::ClnHoldConfig;
 use crate::ln::cln::xpay::ClnXpayConfig;
 use crate::ln::settler::HtlcSettler;
+use crate::ln::validate_intra_ark_payment;
 use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
 use crate::config::Config;
@@ -292,7 +293,16 @@ impl LightningManager {
 		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?;
 		if let Some(sub) = sub {
 			trace!("Updating subscription status for intra-Ark lightning payment with payment hash {payment_hash}");
-			let res = self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await;
+
+			// This subscription read is what routes us down the intra-Ark path,
+			// so it is also where the sender's side has to be validated against
+			// it: `initiate_lightning_payment` checks the same thing, but a
+			// receive registered after that check would otherwise land here
+			// unvalidated and be paid out of our vtxopool.
+			let res = match validate_intra_ark_payment(&sub, &invoice, amount) {
+				Ok(()) => self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await,
+				Err(e) => Err(e),
+			};
 			if let Err(e) = res {
 				trace!("Failed to update subscription status: {e:#}");
 				let payment_attempt = self.db
