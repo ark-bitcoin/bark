@@ -51,9 +51,11 @@ impl Server {
 			t.get_round_participation_by_unlock_hash(unlock_hash).await
 		}).await?.badarg("unknown unlock hash")?;
 
-		if part.forfeited_at.is_some() {
-			return badarg!("round participation already forfeited");
-		}
+		// nb we deliberately don't reject already-forfeited participations:
+		// a wallet that crashed or lost its state after forfeiting will retry
+		// the whole swap, which starts by requesting nonces again. the
+		// forfeit_vtxos call that follows returns the unlock preimage without
+		// using the nonces, so the retry stays idempotent
 
 		let mut input_set = part.inputs.iter().map(|i| i.vtxo_id).collect::<HashSet<_>>();
 		for vtxo in vtxos {
