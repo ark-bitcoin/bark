@@ -44,8 +44,39 @@ impl Server {
 		unlock_hash: UnlockHash,
 		vtxos: &[VtxoId],
 	) -> anyhow::Result<Vec<musig::PublicNonce>> {
+		// only generate nonces for the inputs of the round participation with
+		// the given unlock hash, so that this endpoint can't be used to burn
+		// CPU on unbounded nonce generation
+		let part = self.db.read(async |t| {
+			t.get_round_participation_by_unlock_hash(unlock_hash).await
+		}).await?.badarg("unknown unlock hash")?;
+
+		if part.forfeited_at.is_some() {
+			return badarg!("round participation already forfeited");
+		}
+
+		let mut input_set = part.inputs.iter().map(|i| i.vtxo_id).collect::<HashSet<_>>();
+		for vtxo in vtxos {
+			if !input_set.remove(vtxo) {
+				return badarg!("vtxo with id {} is not part of this round participation",
+					vtxo);
+			}
+		}
+
 		let mut ret = Vec::with_capacity(vtxos.len());
 		for vtxo in vtxos {
+			// if we still hold nonces for this vtxo (e.g. the request was
+			// retried), return the existing public nonce: overwriting would
+			// invalidate a forfeit that is already being signed with them
+			let existing = self.forfeit_nonces.lock().get(vtxo)
+				.and_then(|opt| opt.as_ref())
+				.filter(|n| n.unlock_hash == unlock_hash)
+				.map(|n| n.public_nonce());
+			if let Some(pub_nonce) = existing {
+				ret.push(pub_nonce);
+				continue;
+			}
+
 			// nb this call is quite expensive computationally, so we don't want to
 			// keep the lock while doing it
 			let nonces = HarkForfeitNonces::generate(self.server_key.leak_ref(), unlock_hash);

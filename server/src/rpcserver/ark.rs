@@ -695,6 +695,10 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<protos::ForfeitNoncesResponse>, tonic::Status> {
 		let req = req.into_inner();
 
+		if req.vtxo_ids.len() > rpc::MAX_NB_FORFEIT_NONCE_IDS {
+			macros::badarg!("too many vtxo ids, max is {}", rpc::MAX_NB_FORFEIT_NONCE_IDS);
+		}
+
 		let unlock_hash = UnlockHash::from_bytes(req.unlock_hash)?;
 		let vtxos = req.vtxo_ids.iter().map(|v| VtxoId::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;

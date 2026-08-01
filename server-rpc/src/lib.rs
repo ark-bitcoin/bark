@@ -124,6 +124,9 @@ pub const PROTOCOL_VERSION_HEADER: &str = "pver";
 /// The maximum number of recovery IDs that the server accepts per request.
 pub const MAX_NB_MAILBOX_RECOVERY_IDS: usize = 20;
 
+/// The maximum number of vtxo IDs that the server accepts per forfeit nonces request.
+pub const MAX_NB_FORFEIT_NONCE_IDS: usize = 1000;
+
 
 #[derive(Debug, Clone)]
 pub struct WalletStatus {
