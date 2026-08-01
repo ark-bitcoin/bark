@@ -31,7 +31,7 @@ use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
 use bitcoin_ext::TxStatus;
-use server_rpc::{protos, ServerConnection, TryFromBytes};
+use server_rpc::{protos, ServerConnection, TryFromBytes, MAX_NB_FORFEIT_NONCE_IDS};
 
 use crate::movement::manager::OnDropStatus;
 use crate::{Wallet, WalletVtxo, SECP, SUBSCRIBE_REQUEST_TIMEOUT};
@@ -796,23 +796,29 @@ async fn hark_vtxo_swap(
 
 	// then do the forfeit dance
 
-	let server_nonces = srv.client.request_forfeit_nonces(protos::ForfeitNoncesRequest {
-		unlock_hash: unlock_hash.to_byte_array().to_vec(),
-		vtxo_ids: participation.inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-	}).await
-		.context("request forfeits nonces call failed")
-		.map_err(HarkForfeitError::Err)?
-		.into_inner().public_nonces.into_iter()
-		.map(|b| musig::PublicNonce::from_bytes(b))
-		.collect::<Result<Vec<_>, _>>()
-		.context("invalid forfeit nonces")
-		.map_err(HarkForfeitError::Err)?;
+	// the server caps the number of vtxo ids per nonces request, so for
+	// large participations we request the nonces in chunks
+	let mut server_nonces = Vec::with_capacity(participation.inputs.len());
+	for inputs in participation.inputs.chunks(MAX_NB_FORFEIT_NONCE_IDS) {
+		let nonces = srv.client.request_forfeit_nonces(protos::ForfeitNoncesRequest {
+			unlock_hash: unlock_hash.to_byte_array().to_vec(),
+			vtxo_ids: inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+		}).await
+			.context("request forfeits nonces call failed")
+			.map_err(HarkForfeitError::Err)?
+			.into_inner().public_nonces.into_iter()
+			.map(|b| musig::PublicNonce::from_bytes(b))
+			.collect::<Result<Vec<_>, _>>()
+			.context("invalid forfeit nonces")
+			.map_err(HarkForfeitError::Err)?;
 
-	if server_nonces.len() != participation.inputs.len() {
-		return Err(HarkForfeitError::Err(anyhow!(
-			"server sent {} nonce pairs, expected {}",
-			server_nonces.len(), participation.inputs.len(),
-		)));
+		if nonces.len() != inputs.len() {
+			return Err(HarkForfeitError::Err(anyhow!(
+				"server sent {} nonce pairs, expected {}",
+				nonces.len(), inputs.len(),
+			)));
+		}
+		server_nonces.extend(nonces);
 	}
 
 	let mut forfeit_bundles = Vec::with_capacity(participation.inputs.len());
