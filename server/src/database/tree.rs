@@ -636,6 +636,9 @@ async fn do_oor_spend_updates(
 }
 
 /// Idempotent: succeeds if already spent in the same round.
+///
+/// `policy_type` is part of the condition so an HTLC vtxo can never be
+/// forfeited into a round, whatever the caller checked.
 async fn do_round_spend_updates(
 	tx: &tokio_postgres::Transaction<'_>,
 	spends: &[RoundSpendUpdate],
@@ -647,6 +650,7 @@ async fn do_round_spend_updates(
 		UPDATE vtxo SET spend_state = 'spent', spent_in_round = u.round_id, updated_at = NOW()
 		FROM UNNEST($1::text[], $2::int8[]) AS u(vtxo_id, round_id)
 		WHERE vtxo.vtxo_id = u.vtxo_id
+		AND vtxo.policy_type = 'pubkey'
 		AND (vtxo.spend_state = 'spendable'
 			OR (vtxo.spend_state = 'spent' AND vtxo.spent_in_round = u.round_id))
 	", &[&ids, &round_ids]).await.context("failed to mark VTXOs as round-spent")?;
@@ -656,6 +660,7 @@ async fn do_round_spend_updates(
 			FROM UNNEST($1::text[], $2::int8[]) AS u(vtxo_id, round_id)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
 			WHERE v.vtxo_id IS NULL
+				OR v.policy_type != 'pubkey'
 				OR (v.spend_state != 'spendable'
 					AND NOT (v.spend_state = 'spent' AND v.spent_in_round = u.round_id))
 			LIMIT 1
@@ -670,6 +675,9 @@ async fn do_round_spend_updates(
 /// txid in a single update.
 ///
 /// Idempotent: succeeds if already offboarded with the same txids.
+///
+/// `policy_type` is part of the condition so an HTLC vtxo can never be
+/// offboarded, whatever the caller checked.
 async fn do_offboard_spend_updates(
 	tx: &tokio_postgres::Transaction<'_>,
 	spends: &[OffboardSpendUpdate],
@@ -687,6 +695,7 @@ async fn do_offboard_spend_updates(
 		FROM UNNEST($1::text[], $2::text[], $3::text[])
 			AS u(vtxo_id, offboard_txid, forfeit_txid)
 		WHERE vtxo.vtxo_id = u.vtxo_id
+		AND vtxo.policy_type = 'pubkey'
 		AND (vtxo.spend_state = 'spendable'
 			OR (vtxo.spend_state = 'spent'
 				AND vtxo.offboarded_in = u.offboard_txid
@@ -700,6 +709,7 @@ async fn do_offboard_spend_updates(
 				AS u(vtxo_id, offboard_txid, forfeit_txid)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
 			WHERE v.vtxo_id IS NULL
+				OR v.policy_type != 'pubkey'
 				OR (v.spend_state != 'spendable'
 					AND NOT (v.spend_state = 'spent'
 						AND v.offboarded_in = u.offboard_txid
