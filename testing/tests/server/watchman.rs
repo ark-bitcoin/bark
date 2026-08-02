@@ -974,3 +974,173 @@ async fn watchman_defends_multi_input_offboard_exit() {
 	assert_eq!(stolen, sat(0),
 		"multi-input offboard double-spend was NOT prevented; attacker stole {}", stolen);
 }
+
+/// How far the unilateral exit is driven before the stale clone tries to
+/// offboard the same vtxo.
+#[derive(Copy, Clone, Debug)]
+enum ExitDepth {
+	/// The exit tx is confirmed but its output is still unspent, so a forfeit
+	/// could still confiscate it.
+	TxConfirmed,
+	/// The exit output has been claimed by the user, so no forfeit can ever
+	/// spend it again.
+	Claimed,
+}
+
+/// Outcome of an "exit the vtxo first, then offboard it anyway" attempt.
+struct OffboardAfterExit {
+	/// The server's refusal, if it refused the offboard.
+	refusal: Option<String>,
+	/// What the offboard payout address received on chain.
+	payout: bitcoin::Amount,
+	/// The number of exit outputs still unspent after the watchman had every
+	/// chance to confiscate them.
+	unconfiscated: usize,
+}
+
+/// Boards one vtxo, unilaterally exits it as far as `depth` says, then has a
+/// stale clone of the same wallet offboard that same vtxo. The clone runs with
+/// `--no-sync` so it never notices the exit, which models a modified client:
+/// the server never sees client vtxo state, so accepting or refusing the
+/// offboard is entirely the server's call.
+async fn offboard_after_exit(test_name: &str, depth: ExitDepth) -> OffboardAfterExit {
+	let ctx = TestContext::new(test_name).await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.watchman = OptionalService::Disabled;
+		cfg.vtxopool.vtxo_targets = vec![];
+	}).create().await;
+	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+	}).create(&srv).await;
+
+	// fund the watchman so it can pay CPFP fees for any confiscation broadcast
+	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(1_000_000)).await;
+
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	bark.board_and_confirm_and_register(&ctx, sat(400_000)).await;
+	bark.sync().await;
+	let vtxo_ids = bark.vtxo_ids().await;
+	assert_eq!(vtxo_ids.len(), 1, "should hold exactly one board vtxo");
+	// the output a unilateral exit of this vtxo puts on chain
+	let exit_point = vtxo_ids[0].to_point();
+
+	// snapshot before the exit, so the clone still believes the vtxo is spendable
+	let stale = bark.full_clone("stale").await;
+
+	// the wallet unilaterally exits the vtxo
+	bark.start_exit_all().await;
+	let client = ctx.bitcoind().sync_client();
+	match depth {
+		ExitDepth::TxConfirmed => {
+			progress_exit_until_awaiting_delta(&ctx, &bark).await;
+			assert!(
+				client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_some(),
+				"exit output {} should be on chain and still unspent", exit_point,
+			);
+		},
+		ExitDepth::Claimed => {
+			complete_exit(&ctx, &bark).await;
+			let thief = ctx.bitcoind().get_new_address();
+			bark.claim_all_exits(&thief).await;
+			ctx.generate_blocks(1).await;
+			assert!(ctx.bitcoind().get_received_by_address(&thief) > sat(0),
+				"the exit should have been claimed on chain",
+			);
+			assert!(
+				client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_none(),
+				"exit output {} should have been spent by the claim", exit_point,
+			);
+		},
+	}
+
+	// the stale clone now offboards the very same vtxo
+	let payout = ctx.bitcoind().get_new_address();
+	let refusal = match stale.try_offboard_all_no_sync(&payout).await {
+		Ok(out) => {
+			println!("{}: server ACCEPTED the offboard: {}", test_name, out);
+			None
+		},
+		Err(e) => {
+			let msg = format!("{:#}", e);
+			println!("{}: server refused the offboard: {}", test_name, msg);
+			Some(msg)
+		},
+	};
+	ctx.generate_blocks(1).await;
+	let payout_received = ctx.bitcoind().get_received_by_address(&payout);
+
+	// If the server paid out, give the watchman every chance to cash in the
+	// forfeit before we call the exit output unconfiscated.
+	let exit_output_live = || {
+		client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_some()
+	};
+	if payout_received > sat(0) && exit_output_live() {
+		let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+		wm.wait_for_sync_height(tip).await;
+		for _ in 0..25 {
+			wm.trigger_sweep().await;
+			tokio::time::sleep(Duration::from_secs(2)).await;
+			let tip = ctx.generate_blocks(1).await;
+			wm.wait_for_sync_height(tip).await;
+			if !exit_output_live() {
+				break;
+			}
+		}
+	}
+	let unconfiscated = if exit_output_live() { 1 } else { 0 };
+
+	println!("{}: refused={} payout={} unconfiscated={}",
+		test_name, refusal.is_some(), payout_received, unconfiscated,
+	);
+	OffboardAfterExit { refusal, payout: payout_received, unconfiscated }
+}
+
+/// The regression test: a vtxo whose exit was fully claimed must not be
+/// offboardable. The claimed exit output is already spent, so a forfeit can
+/// never confiscate it and paying out the offboard is a straight loss for the
+/// server. This test is red without the exit gate in `prepare_offboard` and
+/// green with it.
+#[tokio::test]
+async fn server_refuses_offboard_of_claimed_exited_vtxo() {
+	require_bark_version!(> "0.4.0");
+
+	let res = offboard_after_exit(
+		"server/server_refuses_offboard_of_claimed_exited_vtxo", ExitDepth::Claimed,
+	).await;
+
+	let refusal = res.refusal.expect(
+		"server accepted an offboard of a vtxo whose exit was already claimed",
+	);
+	assert!(refusal.to_lowercase().contains("exit"),
+		"expected an 'already exited' refusal from the server, got: {}", refusal,
+	);
+	assert_eq!(res.payout, sat(0),
+		"the offboard was refused, so the payout address must have received nothing, got {}",
+		res.payout,
+	);
+}
+
+/// Control for [server_refuses_offboard_of_claimed_exited_vtxo]: the same flow,
+/// but the exit stops once the exit tx confirms, so its output is still unspent
+/// and a forfeit could still confiscate it. This only asserts the invariant
+/// that holds with and without the exit gate: the server never ends up out of
+/// pocket, because it either refuses the offboard or pays out and the watchman
+/// confiscates the exit output.
+#[tokio::test]
+async fn offboard_of_confirmed_exited_vtxo_never_costs_server() {
+	require_bark_version!(> "0.4.0");
+
+	let res = offboard_after_exit(
+		"server/offboard_of_confirmed_exited_vtxo_never_costs_server", ExitDepth::TxConfirmed,
+	).await;
+
+	assert!(res.payout == sat(0) || res.unconfiscated == 0,
+		"server paid out {} for an exited vtxo and {} exit output(s) were left unconfiscated",
+		res.payout, res.unconfiscated,
+	);
+	if let Some(ref refusal) = res.refusal {
+		assert!(refusal.to_lowercase().contains("exit"),
+			"expected an 'already exited' refusal from the server, got: {}", refusal,
+		);
+	}
+}
