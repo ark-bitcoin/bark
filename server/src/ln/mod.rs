@@ -205,7 +205,7 @@ impl Server {
 		let chain_tip = self.sync_manager.chain_tip().height;
 		let mut vtxos = vec![];
 		for htlc_vtxo in htlc_vtxos {
-			htlc_vtxo.check_spendable(chain_tip)?;
+			htlc_vtxo.check_htlc_send_spendable(chain_tip)?;
 
 			let vtxo = htlc_vtxo.vtxo.clone();
 

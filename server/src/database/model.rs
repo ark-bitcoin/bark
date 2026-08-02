@@ -13,7 +13,7 @@ use chrono::{DateTime, Local};
 use tokio_postgres::Row;
 
 use ark::{ProtocolEncoding, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
-use ark::vtxo::policy::{check_block_delta, check_block_height};
+use ark::vtxo::policy::{check_block_delta, check_block_height, VtxoPolicyKind};
 
 // Used by mailbox as an always increasing number for data sorting.
 pub type Checkpoint = u64;
@@ -156,7 +156,36 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 }
 
 impl<G, P: Policy> VtxoState<G, P> {
+	/// Whether this vtxo may be spent as a freely chosen input: a round, an
+	/// offboard or an arkoor. HTLC VTXOs are refused.
+	///
+	/// The lightning circuits that legitimately spend them don't come through
+	/// here: sending uses [Self::check_htlc_send_spendable], revoking and
+	/// claiming are gated on the payment instead.
 	pub fn check_spendable(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
+		let policy = self.vtxo.policy().policy_type();
+		if policy != VtxoPolicyKind::Pubkey {
+			return badarg!("vtxo {} is not spendable as a round, offboard or arkoor input \
+				(policy: {})", self.vtxo_id, policy,
+			);
+		}
+		self.check_state_spendable(chain_tip)
+	}
+
+	/// Whether this htlc-send vtxo may fund the lightning payment
+	///
+	/// Deliberately not reachable through [Self::check_spendable]: this is the
+	/// one gate where an HTLC vtxo is the expected input.
+	pub fn check_htlc_send_spendable(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
+		let policy = self.vtxo.policy().policy_type();
+		if policy != VtxoPolicyKind::ServerHtlcSend {
+			return badarg!("vtxo {} is not an htlc-send vtxo (policy: {})", self.vtxo_id, policy);
+		}
+		self.check_state_spendable(chain_tip)
+	}
+
+	/// The spend-lifecycle half of the checks above, shared by both.
+	fn check_state_spendable(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
 		if self.spend_state != SpendState::Spendable {
 			return badarg!("vtxo {} is not spendable (state: {})", self.vtxo_id, self.spend_state);
 		}
@@ -387,18 +416,12 @@ mod test {
 
 	use bitcoin::hashes::Hash;
 
-	/// A spendable, unbanned vtxo state for testing.
-	///
-	/// SAFETY: The vtxo field is uninitialized and must not be accessed.
-	/// The test methods only look at spend_state/banned/spent fields.
-	#[allow(invalid_value)]
-	fn spendable() -> VtxoState {
-		let vtxo = unsafe {
-			std::mem::MaybeUninit::<Vtxo<Full, VtxoPolicy>>::uninit().assume_init()
-		};
+	use ark::test_util::VTXO_VECTORS;
+
+	fn state(vtxo: Vtxo<Full, VtxoPolicy>) -> VtxoState {
 		VtxoState {
 			id: 0,
-			vtxo_id: VtxoId::from_slice(&[0; 36]).unwrap(),
+			vtxo_id: vtxo.id(),
 			vtxo,
 			oor_spent_txid: None,
 			spent_in_round: None,
@@ -408,6 +431,23 @@ mod test {
 			created_at: Local::now(),
 			updated_at: Local::now(),
 		}
+	}
+
+	/// A spendable, unbanned pubkey vtxo state for testing.
+	fn spendable() -> VtxoState {
+		state(VTXO_VECTORS.board_vtxo.clone())
+	}
+
+	/// A spendable, unbanned htlc-send vtxo, the shape a lightning payment
+	/// funds itself with.
+	fn htlc_send() -> VtxoState {
+		state(VTXO_VECTORS.arkoor_htlc_out_vtxo.clone())
+	}
+
+	/// A spendable, unbanned htlc-recv vtxo. Its real spend state is
+	/// `htlc-recv-unclaimed`, but the policy gate must not depend on that.
+	fn htlc_recv() -> VtxoState {
+		state(VTXO_VECTORS.round2_vtxo.clone())
 	}
 
 	#[test]
@@ -492,5 +532,46 @@ mod test {
 		let mut v = spendable();
 		v.spend_state = SpendState::Unregistered;
 		assert!(v.check_spendable_for_oor(100, Txid::all_zeros()).is_err());
+	}
+
+	#[test]
+	fn htlc_vtxos_are_never_generically_spendable() {
+		for (v, policy) in [
+			(htlc_send(), "server-htlc-send"),
+			(htlc_recv(), "server-htlc-receive"),
+		] {
+			let err = format!("{}", v.check_spendable(100).unwrap_err());
+			assert!(err.contains("not spendable as a") && err.contains(policy), "got: {err}");
+			// And the oor gate, which every arkoor path funnels through.
+			let err = format!("{}", v.check_spendable_for_oor(100, Txid::all_zeros()).unwrap_err());
+			assert!(err.contains("not spendable as a") && err.contains(policy), "got: {err}");
+		}
+	}
+
+	#[test]
+	fn htlc_send_is_spendable_by_the_lightning_send() {
+		assert!(htlc_send().check_htlc_send_spendable(100).is_ok());
+	}
+
+	/// The lightning-send gate is not a way around the policy gate: it only
+	/// takes the one policy it exists for.
+	#[test]
+	fn only_htlc_send_is_spendable_by_the_lightning_send() {
+		for v in [spendable(), htlc_recv()] {
+			let err = v.check_htlc_send_spendable(100).unwrap_err();
+			assert!(format!("{err}").contains("not an htlc-send vtxo"), "got: {err}");
+		}
+	}
+
+	/// State still gates the lightning send: a vtxo already consumed by a
+	/// settled payment can't fund another one.
+	#[test]
+	fn spent_htlc_send_is_not_spendable_by_the_lightning_send() {
+		let mut v = htlc_send();
+		v.spend_state = SpendState::LnSpent;
+		assert!(v.check_htlc_send_spendable(100).is_err());
+		v.spend_state = SpendState::Spendable;
+		v.banned_until_height = Some(200);
+		assert!(v.check_htlc_send_spendable(100).is_err());
 	}
 }

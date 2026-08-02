@@ -144,7 +144,8 @@ impl Server {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
 		let input_vtxo_states = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
 
-		// Validate policies
+		// Keep this even though check_spendable refuses htlc vtxos too: the
+		// idempotent-replay branch below skips it, this check always runs.
 		for v in &input_vtxo_states {
 			match v.vtxo.policy() {
 				VtxoPolicy::Pubkey( ..) => {},
