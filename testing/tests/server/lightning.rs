@@ -2,7 +2,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::hashes::Hash;
+use bitcoin::Amount;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
 use log::{info, trace};
@@ -12,6 +13,7 @@ use bitcoin_ext::BlockHeight;
 use ark::arkoor::ArkoorDestination;
 use ark::attestations::ArkoorCosignAttestation;
 use ark::vtxo::Full;
+use ark::vtxo::policy::VtxoPolicyKind;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::primitives::WalletVtxoInfo;
@@ -52,6 +54,22 @@ async fn assert_vtxopool_consistency(srv: &Captaind) {
 	assert_vtxopool_consistency_db(&db).await;
 }
 
+/// The HTLC-send vtxos `client` holds for `payment_hash`.
+async fn htlc_send_vtxo_ids(
+	client: &Wallet,
+	payment_hash: ark::lightning::PaymentHash,
+) -> Vec<ark::VtxoId> {
+	let ids = client.all_vtxos().await.unwrap()
+		.into_iter()
+		.filter_map(|wv| {
+			let pol = wv.vtxo.policy().as_server_htlc_send()?;
+			(pol.payment_hash == payment_hash).then(|| wv.vtxo.id())
+		})
+		.collect::<Vec<ark::VtxoId>>();
+	assert!(!ids.is_empty(), "the payment should have left HTLC vtxos in the wallet");
+	ids
+}
+
 /// Build a "claim all" revocation request from the HTLC-send vtxos `client`
 /// still holds for `payment_hash`, send it straight to the server, and return
 /// the error the server responds with (the caller asserts on it).
@@ -60,17 +78,7 @@ async fn request_htlc_revocation(
 	client: &Wallet,
 	payment_hash: ark::lightning::PaymentHash,
 ) -> tonic::Status {
-	let htlc_vtxo_ids = client.all_vtxos().await.unwrap()
-		.into_iter()
-		.filter_map(|wv| {
-			let pol = wv.vtxo.policy().as_server_htlc_send()?;
-			(pol.payment_hash == payment_hash).then(|| wv.vtxo.id())
-		})
-		.collect::<Vec<ark::VtxoId>>();
-	assert!(
-		!htlc_vtxo_ids.is_empty(),
-		"expected HTLC vtxos to remain in DB after settlement",
-	);
+	let htlc_vtxo_ids = htlc_send_vtxo_ids(client, payment_hash).await;
 
 	let mut htlc_vtxos = Vec::with_capacity(htlc_vtxo_ids.len());
 	let mut keypairs = Vec::with_capacity(htlc_vtxo_ids.len());
@@ -285,6 +293,233 @@ async fn reject_revocation_when_settled_but_status_regressed() {
 		status.message().contains("invoice has already been paid, preimage"),
 		"unexpected server response: {status:?}",
 	);
+}
+
+/// Requests the server to sign a HTLC while using a HTCL VTXO as an input
+async fn request_second_htlc_cosign(
+	ctx: &TestContext,
+	srv: &Captaind,
+	client: &Wallet,
+	htlc_vtxo_ids: &[ark::VtxoId],
+) -> tonic::Status {
+	let mut htlc_vtxos = Vec::with_capacity(htlc_vtxo_ids.len());
+	let mut keypairs = Vec::with_capacity(htlc_vtxo_ids.len());
+	for id in htlc_vtxo_ids {
+		let vtxo = client.get_full_vtxo(*id).await.unwrap();
+		keypairs.push(client.get_vtxo_key(&vtxo).await.unwrap());
+		htlc_vtxos.push(vtxo);
+	}
+
+	// A payment hash the server has never seen, so the request gets past the
+	// already-paid and already-in-progress gates and reaches the input checks.
+	let second_hash = ark::lightning::PaymentHash::from(
+		sha256::Hash::hash(b"a second invoice").to_byte_array(),
+	);
+	let tip = ctx.bitcoind().get_block_count().await as BlockHeight;
+	let htlc_expiry = tip + srv.config().htlc_send_expiry_delta as BlockHeight + 2;
+	let htlc_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key();
+	let outputs = vec![ArkoorDestination {
+		total_amount: htlc_vtxos.iter().map(|v| v.amount()).sum(),
+		policy: ark::VtxoPolicy::new_server_htlc_send(htlc_key, second_hash, htlc_expiry),
+	}];
+
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_with_checkpoints(
+		htlc_vtxos.clone(), outputs,
+	).unwrap().generate_user_nonces(&keypairs).unwrap();
+
+	let mut srv_rpc = srv.get_public_rpc().await;
+	srv_rpc.request_lightning_pay_htlc_cosign(protos::LightningPayHtlcCosignRequest {
+		parts: protos::ArkoorPackageCosignRequest::from(builder.cosign_request()).parts,
+	}).await.expect_err("server should refuse an HTLC vtxo as a lightning-send cosign input")
+}
+
+/// HTLC VTXOs should not be accepted as inputs for spends (arkoor, rounds or offboards).
+#[tokio::test]
+async fn refuse_generic_spends_of_htlc_send_vtxo_while_payment_in_flight() {
+	let ctx = TestContext::new(
+		"server/refuse_generic_spends_of_htlc_send_vtxo_while_payment_in_flight",
+	).await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	// The receiver invoices through the server and never claims, so the
+	// payment it funds never settles.
+	let bark_recv = ctx.bark("bark-recv", &srv).funded(btc(3)).create().await;
+	bark_recv.board_and_confirm_and_register(&ctx, btc(2)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+	let invoice_info = bark_recv.bolt11_invoice(btc(1)).await;
+
+	let bark_atk = ctx.bark("bark-atk", &srv).funded(btc(3)).create().await;
+	bark_atk.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	// Without `--wait` this returns as soon as the server has been told to pay.
+	bark_atk.try_pay_lightning(&invoice_info.invoice, None, false).await.unwrap();
+
+	let payment_hash: ark::lightning::PaymentHash =
+		Bolt11Invoice::from_str(&invoice_info.invoice).unwrap().into();
+	let client = bark_atk.client().await;
+	let htlc_vtxo_ids = htlc_send_vtxo_ids(&client, payment_hash).await;
+
+	// The premise: the server is on the hook for this payment.
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	let open_attempts = db.read(async |t| Ok(t.query("
+		SELECT id FROM lightning_payment_attempt
+		WHERE payment_hash = $1 AND status NOT IN ('failed', 'succeeded')
+	", &[&payment_hash.to_string()]).await?)).await.unwrap();
+	assert_eq!(open_attempts.len(), 1, "the payment should still be in flight");
+
+	// 1. Offboard: the server would co-sign a forfeit and pay out on-chain.
+	client.unlock_vtxos(&htlc_vtxo_ids).await.expect("it should be able to unlock vtxos on the db");
+	let address = ctx.bitcoind().get_new_address();
+	let err = client.offboard_vtxos(htlc_vtxo_ids.clone(), address.clone()).await
+		.expect_err("server must refuse to offboard an HTLC vtxo");
+	let err = format!("{err:#}");
+	assert!(err.contains("not spendable as a"), "unexpected error: {err}");
+
+	// Nothing was paid out. Without the fix the server co-signs and broadcasts
+	// the offboard, funding this address while it also pays the payee.
+	ctx.generate_blocks(1).await;
+	assert_eq!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO,
+		"server paid out an HTLC vtxo whose lightning payment is still in flight");
+
+	// 2. Round: forfeits the vtxo instead of offboarding it. Rounds only run on
+	// a long interval here, so kick one off alongside.
+	client.unlock_vtxos(&htlc_vtxo_ids).await.expect("it should be able to unlock vtxos on the db");
+	let (res, _) = tokio::join!(
+		client.refresh_vtxos(htlc_vtxo_ids.clone()),
+		srv.trigger_round(),
+	);
+	let err = res.expect_err("server must refuse an HTLC vtxo as a round input");
+	let err = format!("{err:#}");
+	assert!(err.contains("not spendable"), "unexpected error: {err}");
+
+	// 3. Arkoor, through the one path that accepted HTLC inputs: fund a second
+	// invoice with the vtxos already funding this one. Straight to the server,
+	// so no client-side state stands in the way.
+	let status = request_second_htlc_cosign(&ctx, &srv, &client, &htlc_vtxo_ids).await;
+	assert_eq!(status.code(), tonic::Code::InvalidArgument);
+	assert!(status.message().contains("not spendable as a"),
+		"unexpected server response: {status:?}");
+}
+
+/// HTLC VTXOs should not be used outside of the lightning payment/receive flow.
+/// This test asserts the server does not accept any HTLC VTXO as an input even
+/// outside of an ongoing lightning payment.
+#[tokio::test]
+async fn refuse_generic_spends_of_htlc_send_vtxo_with_no_payment_in_flight() {
+	let ctx = TestContext::new(
+		"server/refuse_generic_spends_of_htlc_send_vtxo_with_no_payment_in_flight",
+	).await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	/// Accepts the payment request and then does nothing with it.
+	#[derive(Clone)]
+	struct SwallowInitiate;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for SwallowInitiate {
+		async fn initiate_lightning_payment(
+			&self,
+			_upstream: &mut ArkClient,
+			_req: protos::InitiateLightningPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			Ok(protos::Empty {})
+		}
+
+		async fn check_lightning_payment(
+			&self,
+			_upstream: &mut ArkClient,
+			_req: protos::CheckLightningPaymentRequest,
+		) -> Result<protos::LightningPaymentStatus, tonic::Status> {
+			Ok(protos::LightningPaymentStatus {
+				payment_status: Some(
+					protos::lightning_payment_status::PaymentStatus::Pending(protos::Empty {}),
+				),
+			})
+		}
+	}
+
+	let proxy = srv.start_proxy_no_mailbox(SwallowInitiate).await;
+
+	let bark_atk = ctx.bark("bark-atk", &proxy.address).funded(btc(3)).create().await;
+	bark_atk.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice = lightning.external.invoice(
+		Some(btc(1)), "test_payment", "A test payment",
+	).await;
+	lightning.sync().await;
+	bark_atk.try_pay_lightning(&invoice, None, false).await.unwrap();
+
+	let payment_hash: ark::lightning::PaymentHash =
+		Bolt11Invoice::from_str(&invoice).unwrap().into();
+	let client = bark_atk.client().await;
+	let htlc_vtxo_ids = htlc_send_vtxo_ids(&client, payment_hash).await;
+
+	// The premise: the HTLC vtxos exist and the server never started paying.
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	let attempts = db.read(async |t| Ok(t.query("
+		SELECT id FROM lightning_payment_attempt WHERE payment_hash = $1
+	", &[&payment_hash.to_string()]).await?)).await.unwrap();
+	assert!(attempts.is_empty(), "the proxy should have swallowed the payment request");
+
+	client.unlock_vtxos(&htlc_vtxo_ids).await.expect("it should be able to unlock vtxos on the db");
+	let address = ctx.bitcoind().get_new_address();
+	let err = client.offboard_vtxos(htlc_vtxo_ids.clone(), address.clone()).await
+		.expect_err("server must refuse to offboard an HTLC vtxo");
+	assert!(format!("{err:#}").contains("not spendable as a"), "unexpected error: {err:#}");
+
+	ctx.generate_blocks(1).await;
+	assert_eq!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO,
+		"server paid out an HTLC vtxo");
+
+	client.unlock_vtxos(&htlc_vtxo_ids).await.expect("it should be able to unlock vtxos on the db");
+	let (res, _) = tokio::join!(
+		client.refresh_vtxos(htlc_vtxo_ids.clone()),
+		srv.trigger_round(),
+	);
+	let err = res.expect_err("server must refuse an HTLC vtxo as a round input");
+	assert!(format!("{err:#}").contains("not spendable"), "unexpected error: {err:#}");
+
+	let status = request_second_htlc_cosign(&ctx, &srv, &client, &htlc_vtxo_ids).await;
+	assert_eq!(status.code(), tonic::Code::InvalidArgument);
+	assert!(status.message().contains("not spendable as a"),
+		"unexpected server response: {status:?}");
+}
+
+/// HTLC VTXOs need to be revoked and cannot be used as offboard input. The client must
+/// provide a Pubkey VTXO.
+#[tokio::test]
+async fn revoked_htlc_send_vtxo_can_be_offboarded() {
+	let ctx = TestContext::new("server/revoked_htlc_send_vtxo_can_be_offboarded").await;
+
+	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(3)).create().await;
+	bark_1.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice = lightning.external.invoice(
+		Some(btc(1)), "test_payment", "A test payment",
+	).await;
+	bark_1.pay_lightning_wait(invoice, None).await;
+
+	// The revocation gave the funds back as a plain pubkey vtxo.
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.is_empty(), "the revocation should have left spendable vtxos");
+	assert!(vtxos.iter().all(|v| v.vtxo.policy_type == VtxoPolicyKind::Pubkey),
+		"no HTLC vtxo should be left after revocation: {vtxos:#?}");
+
+	// After revocation, client should be able to offboard a regular VTXO using
+	// Pubkey policy.
+	let address = ctx.bitcoind().get_new_address();
+	srv.wait_for_vtxopool(&ctx).await;
+	bark_1.offboard_all(&address).await;
+	ctx.generate_blocks(1).await;
+	assert_ne!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO,
+		"revoked funds should still be offboardable");
 }
 
 #[tokio::test]
