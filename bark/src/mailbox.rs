@@ -138,6 +138,7 @@ impl Wallet {
 			checkpoint: checkpoint,
 		});
 		req.set_timeout(SUBSCRIBE_REQUEST_TIMEOUT);
+		trace!("Requesting mailbox stream from checkpoint {}", checkpoint);
 
 		let stream = srv.mailbox_client.subscribe_mailbox(req).await?.into_inner().map(|m| {
 			let m = m.context("received error on mailbox message stream")?;

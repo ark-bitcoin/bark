@@ -95,6 +95,7 @@ impl DaemonProcess {
 		loop {
 			let shutdown = self.shutdown.clone();
 			if self.connected.load(Ordering::Relaxed) {
+				trace!("Daemon subscribing to mailbox message stream");
 				let r = self.wallet.subscribe_process_mailbox_messages(None, shutdown).await;
 				if let Err(e) = r {
 					warn!("An error occurred while processing mailbox messages: {e:#}");
@@ -185,7 +186,9 @@ impl DaemonProcess {
 		&self,
 		backoff: &mut ReconnectBackoff,
 	) -> anyhow::Result<()> {
+		trace!("Daemon subscribing to round event stream");
 		let mut events = self.wallet.subscribe_round_events().await?;
+		trace!("Daemon connected to round event stream");
 
 		loop {
 			futures::select! {
@@ -281,21 +284,19 @@ impl DaemonProcess {
 	}
 
 	async fn run_sync_processes(&self) {
-		let mut sync_interval = tokio::time::interval(self.sync_interval());
-
+		// NB: tokio::time::interval needs Instant::now(), which panic on wasm
 		loop {
+			if self.connected.load(Ordering::Relaxed) {
+				self.run_fee_rate_update().await;
+				self.run_boards_sync().await;
+				self.run_offboards_sync().await;
+			}
+			self.run_onchain_sync().await;
+			self.run_rounds_sync().await;
+			self.run_exits().await;
+
 			futures::select! {
-				_ = sync_interval.tick().fuse() => {
-					if self.connected.load(Ordering::Relaxed) {
-						self.run_fee_rate_update().await;
-						self.run_boards_sync().await;
-						self.run_offboards_sync().await;
-					}
-					self.run_onchain_sync().await;
-					self.run_rounds_sync().await;
-					self.run_exits().await;
-					sync_interval.reset();
-				},
+				_ = sleep(self.sync_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting sync processes...");
 					break;
@@ -326,6 +327,7 @@ impl DaemonProcess {
 		info!("Starting daemon for wallet {}", self.wallet.fingerprint());
 
 		self.run_startup_tasks().await;
+		trace!("Daemon startup tasks complete, starting background processes");
 
 		if self.wallet.config().daemon_manual_sync {
 			// In manual-sync mode only the server connection heartbeat keeps

@@ -361,7 +361,7 @@ wasm-tests:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export WASM_BINDGEN_TEST_TIMEOUT=300
-    - bash ./contrib/ci-run-test.sh wasm-tests
+    - bash ./contrib/ci-run-test.sh test-wasm
 
 core-server:
   interruptible: true

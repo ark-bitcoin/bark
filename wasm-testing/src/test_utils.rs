@@ -1,13 +1,16 @@
+use std::ops::Deref;
 use std::sync::Arc;
 
 use gloo_net::http::Request;
 
 use bark::persist::adaptor::indexed_db::IndexedDbClient;
 use bark::persist::adaptor::StorageAdaptorWrapper;
+use bark::persist::BarkPersister;
 use bark::chain::{ChainSource, ChainSourceSpec};
 use bark::lock_manager::{LockManager, web_locks::WebLockManager};
-use bark::Config;
+use bark::{Config, OpenWalletArgs, Wallet, WalletSeed};
 
+pub(crate) const BOARD_CONFIRMATIONS: u32 = 3;
 pub(crate) const WALLET_NAME: &str = "my_test_wallet";
 
 pub(crate) fn test_config() -> Config {
@@ -30,6 +33,49 @@ pub(crate) async fn open_db(name: &str) -> Arc<StorageAdaptorWrapper<IndexedDbCl
 	let storage = IndexedDbClient::open(name).await
 		.expect("failed to open IndexedDB");
 	Arc::new(StorageAdaptorWrapper::new(storage))
+}
+
+/// A regtest [Wallet] running the background daemon, which is stopped when
+/// this wrapper is dropped. The daemon holds a clone of the wallet, so
+/// without an explicit stop it would keep running (and hold IndexedDB
+/// borrows) for the rest of the browser test context.
+pub(crate) struct WasmWallet {
+	wallet: Wallet,
+}
+
+impl WasmWallet {
+	pub(crate) async fn open(
+		mnemonic: &bip39::Mnemonic,
+		config: Config,
+		db: Arc<dyn BarkPersister>,
+	) -> WasmWallet {
+		let wallet = Wallet::open(
+			bitcoin::Network::Regtest,
+			WalletSeed::new_from_mnemonic(bitcoin::Network::Regtest, mnemonic),
+			config,
+			OpenWalletArgs {
+				persister: Some(db),
+				lock_manager: Some(test_lock_manager()),
+				run_daemon: true,
+				create_if_not_exists: true,
+				..Default::default()
+			},
+		).await.expect("failed to open wallet");
+		WasmWallet { wallet }
+	}
+}
+
+impl Deref for WasmWallet {
+	type Target = Wallet;
+	fn deref(&self) -> &Wallet {
+		&self.wallet
+	}
+}
+
+impl Drop for WasmWallet {
+	fn drop(&mut self) {
+		self.wallet.stop_daemon();
+	}
 }
 
 pub(crate) async fn esplora_chain_source() -> ChainSource {

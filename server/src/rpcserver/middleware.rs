@@ -425,6 +425,8 @@ where
 		];
 		telemetry::add_grpc_in_progress(&attributes);
 
+		trace!("Started gRPC call: {}", rpc_method_details.format_path());
+
 		let start_time = Instant::now();
 		#[allow(deprecated)]
 		let grpc_span = info_span!(

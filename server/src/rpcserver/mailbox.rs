@@ -194,15 +194,17 @@ impl rpc::server::MailboxService for crate::Server {
 		let starting_checkpoint = Checkpoint::from(req.checkpoint.max(0));
 		let ret_limit = self.config.max_read_mailbox_items;
 
-		// Start listening for updates on the tip of the mailbox
-		// I mark the first value as changed
-		// This ensures `mailbox_tip_rx` will return immediately and
-		// start fetching historical records
+		// Start listening for updates on the tip of the mailbox.
+		// Marking the first value as changed makes `changed()` return
+		// immediately so the loop starts with a catch-up fetch.
 		let mut mailbox_tip_rx = self.mailbox_manager.subscribe(mailbox_id, 0);
 		mailbox_tip_rx.mark_changed();
 
 		let stream = async_stream::try_stream! {
 			let mut processed_cp = starting_checkpoint;
+			// NB: Always run the first fetch against the database; only use the
+			// watch value to skip wakeups that carry nothing new.
+			let mut first_fetch = true;
 
 			loop {
 				if mailbox_tip_rx.changed().await.is_err() {
@@ -211,9 +213,10 @@ impl rpc::server::MailboxService for crate::Server {
 				}
 
 				let new_cp = *mailbox_tip_rx.borrow_and_update();
-				if new_cp <= processed_cp {
+				if !first_fetch && new_cp <= processed_cp {
 					continue;
 				}
+				first_fetch = false;
 
 				'fetching:
 				loop {

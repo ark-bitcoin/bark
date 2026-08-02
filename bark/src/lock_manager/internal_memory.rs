@@ -18,9 +18,9 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::utils::time;
+use crate::utils::time::{self, Instant};
 
 use super::{LockGuard, LockManager, key::validate_key};
 
