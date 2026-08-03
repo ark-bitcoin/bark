@@ -390,7 +390,12 @@ pub struct Config {
 
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries.
 	///
-	/// Default is 6
+	/// It also sets the extra delay on the user's preimage clause of an
+	/// HTLC-recv VTXO, so clients size the invoice CLTV delta from the value
+	/// advertised in [ark::ArkInfo]. Raising it invalidates the margin of
+	/// invoices that were already created.
+	///
+	/// Default is 40
 	pub htlc_expiry_delta: BlockDelta,
 	/// The number of blocks after which an HTLC-send VTXO expires once granted.
 	/// When granting an HTLC-send VTXO, the Server doesn't know the lightning
