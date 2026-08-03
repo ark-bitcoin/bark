@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context;
 use bark::{BarkNetwork, OpenWalletArgs, WalletSeed};
@@ -15,7 +14,7 @@ use crate::constants::BOARD_CONFIRMATIONS;
 use crate::daemon::barkd::{Barkd, BarkdChainSource};
 use crate::daemon::watchmand::Watchmand;
 use crate::{Bark, Bitcoind, Captaind, Lightningd, LightningdConfig};
-use crate::util::FutureExt;
+use crate::util::{poll_interval, FutureExt};
 use super::TestContext;
 
 // If the caller asked us to board but didn't specify how much
@@ -610,7 +609,7 @@ impl<'a> LightningdBuilder<'a> {
 				if ret.try_grpc_client().await.is_ok() {
 					break;
 				} else {
-					tokio::time::sleep(Duration::from_millis(200)).await;
+					tokio::time::sleep(poll_interval()).await;
 				}
 			}
 		}.wait_millis(5000).await;

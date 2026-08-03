@@ -2,7 +2,6 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
 use tokio_stream::Stream;
 use tonic::codec::CompressionEncoding;
@@ -10,7 +9,7 @@ use server_rpc::{self as rpc, protos};
 
 use crate::daemon::captaind::{ArkClient, MailboxClient};
 use crate::ports::pick_port;
-use crate::util::FutureExt;
+use crate::util::{poll_interval, FutureExt};
 
 /// Trait used to easily implement Ark proxy interfaces.
 #[async_trait]
@@ -245,10 +244,10 @@ impl ArkRpcProxyServer {
 			// try to connect
 			let addr = format!("http://{}", addr);
 			loop {
-				tokio::time::sleep(Duration::from_millis(10)).await;
 				if rpc::ArkServiceClient::connect(addr.clone()).await.is_ok() {
 					break
 				}
+				tokio::time::sleep(poll_interval()).await;
 			};
 
 			return ArkRpcProxyServer {

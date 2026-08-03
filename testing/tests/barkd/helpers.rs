@@ -8,12 +8,12 @@ use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
 
 use ark_testing::TestContext;
 use ark_testing::daemon::barkd::Barkd;
+use ark_testing::util::poll_interval;
 
 /// Poll until the on-chain balance reaches the expected amount. Relies on
 /// the daemon's background `run_onchain_sync` to detect new transactions.
 pub async fn wait_for_onchain_balance(barkd: &Barkd, expected: Amount) {
 	let timeout = Duration::from_secs(15);
-	let poll_interval = Duration::from_secs(1);
 	let start = std::time::Instant::now();
 
 	loop {
@@ -27,7 +27,7 @@ pub async fn wait_for_onchain_balance(barkd: &Barkd, expected: Amount) {
 				expected, timeout, balance,
 			);
 		}
-		tokio::time::sleep(poll_interval).await;
+		tokio::time::sleep(poll_interval()).await;
 	}
 }
 
@@ -36,7 +36,6 @@ pub async fn wait_for_onchain_balance(barkd: &Barkd, expected: Amount) {
 /// so the daemon does the work, not an explicit sync call.
 pub async fn wait_for_boards_synced(barkd: &Barkd) {
 	let timeout = Duration::from_secs(15);
-	let poll_interval = Duration::from_secs(1);
 	let start = std::time::Instant::now();
 
 	loop {
@@ -50,7 +49,7 @@ pub async fn wait_for_boards_synced(barkd: &Barkd) {
 				timeout,
 			);
 		}
-		tokio::time::sleep(poll_interval).await;
+		tokio::time::sleep(poll_interval()).await;
 	}
 }
 
@@ -127,7 +126,6 @@ pub async fn wait_for_exits_claimable(ctx: &TestContext, barkd: &Barkd) {
 /// timeout rather than failing silently.
 pub async fn wait_for_spendable(barkd: &Barkd, expected: Amount) {
 	let timeout = Duration::from_secs(15);
-	let poll_interval = Duration::from_millis(500);
 	let start = std::time::Instant::now();
 
 	loop {
@@ -142,7 +140,7 @@ pub async fn wait_for_spendable(barkd: &Barkd, expected: Amount) {
 				expected, timeout, balance.spendable,
 			);
 		}
-		tokio::time::sleep(poll_interval).await;
+		tokio::time::sleep(poll_interval()).await;
 	}
 }
 
@@ -157,7 +155,6 @@ pub async fn wait_for_vtxos(
 	predicate: impl Fn(&[WalletVtxoInfo]) -> bool,
 ) -> Vec<WalletVtxoInfo> {
 	let timeout = Duration::from_secs(15);
-	let poll_interval = Duration::from_millis(500);
 	let start = std::time::Instant::now();
 
 	loop {
@@ -172,7 +169,7 @@ pub async fn wait_for_vtxos(
 				timeout, vtxos,
 			);
 		}
-		tokio::time::sleep(poll_interval).await;
+		tokio::time::sleep(poll_interval()).await;
 	}
 }
 

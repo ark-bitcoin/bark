@@ -14,7 +14,7 @@ use server::secret::Secret;
 use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
-use crate::util::resolve_path;
+use crate::util::{poll_interval, resolve_path};
 
 
 const LOCK_DIR: &str = "/tmp/ark-testing-postgres-locks";
@@ -208,7 +208,7 @@ impl DaemonHelper for PostgresHelper {
 			if self.is_ready().await {
 				return Ok(());
 			}
-			tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+			tokio::time::sleep(poll_interval()).await;
 		}
 	}
 }

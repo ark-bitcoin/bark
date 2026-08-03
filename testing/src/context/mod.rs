@@ -26,16 +26,17 @@ use server::Server;
 use tokio::{fs, join};
 use tonic::transport::Uri;
 
-use crate::constants::TX_PROPAGATION_SLEEP_TIME;
 use crate::daemon::bitcoind::BitcoindRpcHandle;
 use crate::daemon::bitcoind::snapshot;
 use crate::daemon::captaind::proxy::ArkRpcProxyServer;
 use crate::postgres::{self, PostgresDatabaseManager};
 use crate::util::{
-	get_bark_chain_source_from_env, get_cargo_workspace, get_tx_propagation_timeout_millis, test_data_directory, TestContextChainSource
+	get_bark_chain_source_from_env, get_cargo_workspace, get_tx_propagation_timeout_millis,
+	test_data_directory, poll_interval, TestContextChainSource,
 };
 use crate::{
-	btc, constants, is_bark_version, sat, Bark, Barkd, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig, Lightningd
+	btc, constants, is_bark_version, sat, Bark, Barkd, Bitcoind, BitcoindConfig, Captaind, Electrs,
+	ElectrsConfig, Lightningd,
 };
 
 pub mod builders;
@@ -533,7 +534,7 @@ impl TestContext {
 			trace!("Waiting for lightning node to come online");
 			let wait = async {
 				while !srv.has_hold_node() {
-					tokio::time::sleep(Duration::from_millis(100)).await;
+					tokio::time::sleep(poll_interval()).await;
 				}
 			};
 			if tokio::time::timeout(Duration::from_secs(5), wait).await.is_err() {
@@ -686,7 +687,7 @@ impl TestContext {
 						break;
 					}
 				}
-				tokio::time::sleep(Duration::from_millis(100)).await;
+				tokio::time::sleep(poll_interval()).await;
 			}
 		}));
 
@@ -727,7 +728,7 @@ impl TestContext {
 				if client.get_raw_transaction(&txid, None).is_ok() {
 					return;
 				} else {
-					tokio::time::sleep(TX_PROPAGATION_SLEEP_TIME).await;
+					tokio::time::sleep(poll_interval()).await;
 				}
 			}
 			panic!("Failed to get raw transaction: {}", txid);

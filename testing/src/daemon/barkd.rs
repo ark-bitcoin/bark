@@ -38,7 +38,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::{BARKD_EXEC, BARK_TOKIO_WORKER_THREADS};
 use crate::ports::pick_port;
-use crate::util::resolve_path;
+use crate::util::{poll_interval, resolve_path};
 
 pub type Barkd = Daemon<BarkdHelper>;
 
@@ -443,7 +443,7 @@ impl Barkd {
 			if start.elapsed() > timeout {
 				panic!("board auto-sync did not clear pending boards within {:?}", timeout);
 			}
-			tokio::time::sleep(Duration::from_secs(1)).await;
+			tokio::time::sleep(poll_interval()).await;
 		}
 	}
 
@@ -714,7 +714,7 @@ impl DaemonHelper for BarkdHelper {
 			if default_api::ping(&config).await.is_ok() {
 				return Ok(());
 			}
-			tokio::time::sleep(Duration::from_millis(100)).await;
+			tokio::time::sleep(poll_interval()).await;
 		}
 	}
 }

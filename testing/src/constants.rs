@@ -3,7 +3,9 @@ use std::time::Duration;
 pub const BOARD_CONFIRMATIONS: u32 = 3;
 pub const ROUND_CONFIRMATIONS: u32 = 6;
 pub const OFFBOARD_CONFIRMATIONS: u32 = 0;
-pub const TX_PROPAGATION_SLEEP_TIME: Duration = Duration::from_millis(1000);
+/// Default interval between attempts in poll loops.
+/// Can be overridden with the TEST_POLL_INTERVAL_MS env var.
+pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub mod env {
 	pub const TEST_DIRECTORY: &str = "TEST_DIRECTORY";
@@ -32,6 +34,9 @@ pub mod env {
 	pub const BARK_TOKIO_WORKER_THREADS: &str = "BARK_TOKIO_WORKER_THREADS";
 	// The maximum time to wait for a transaction to be propagated to a node, in milliseconds.
 	pub const TX_PROPAGATION_TIMEOUT_MILLIS: &str = "TX_PROPAGATION_TIMEOUT_MILLIS";
+	/// The interval between attempts in poll loops, in milliseconds.
+	/// Defaults to [super::DEFAULT_POLL_INTERVAL].
+	pub const TEST_POLL_INTERVAL_MS: &str = "TEST_POLL_INTERVAL_MS";
 	/// The env var to reach postgres binaries folder
 	pub const POSTGRES_BINS: &str = "POSTGRES_BINS";
 	/// By default, all artifacts of a tests are deleted after a succesful run.

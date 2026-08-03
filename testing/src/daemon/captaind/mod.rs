@@ -21,11 +21,11 @@ use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
 use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcProxy};
-use crate::{secs, Bitcoind, Daemon, DaemonHelper, TestContext};
+use crate::{Bitcoind, Daemon, DaemonHelper, TestContext};
 use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
 use crate::constants::env::CAPTAIND_EXEC;
 use crate::ports::pick_port;
-use crate::util::resolve_path;
+use crate::util::{poll_interval, resolve_path};
 
 pub type Captaind = Daemon<CaptaindHelper>;
 
@@ -381,7 +381,7 @@ impl Captaind {
 				ctx.await_transaction(txid).await;
 				return;
 			}
-			tokio::time::sleep(secs(1)).await;
+			tokio::time::sleep(poll_interval()).await;
 		}
 	}
 
@@ -403,7 +403,7 @@ impl Captaind {
 					return;
 				}
 			}
-			tokio::time::sleep(Duration::from_millis(50)).await;
+			tokio::time::sleep(poll_interval()).await;
 		}
 	}
 }
@@ -481,7 +481,7 @@ impl DaemonHelper for CaptaindHelper {
 
 	async fn wait_for_init(&self) -> anyhow::Result<()> {
 		while !self.is_ready().await {
-			tokio::time::sleep(Duration::from_millis(100)).await;
+			tokio::time::sleep(poll_interval()).await;
 		}
 		Ok(())
 	}
@@ -682,7 +682,7 @@ async fn spawn_slf_pipe(datadir: PathBuf) {
 			match reader.read_line(&mut line).await {
 				Ok(0) => {
 					// EOF or no data yet, wait a bit
-					tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+					tokio::time::sleep(poll_interval()).await;
 				}
 				Ok(_) => {
 					if let Err(e) = stdin.write_all(line.as_bytes()).await {

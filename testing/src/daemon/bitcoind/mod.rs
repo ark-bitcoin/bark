@@ -17,10 +17,9 @@ use bitcoin_ext::rpc::{self, RpcApi};
 
 use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
 use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
-use crate::constants::TX_PROPAGATION_SLEEP_TIME;
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
-use crate::util::{FutureExt, resolve_path, get_tx_propagation_timeout_millis};
+use crate::util::{FutureExt, poll_interval, resolve_path, get_tx_propagation_timeout_millis};
 
 pub struct BitcoindHelper {
 	name : String,
@@ -207,7 +206,7 @@ impl Bitcoind {
 			if let Ok(result) = client.get_raw_transaction(&txid, None) {
 				return result;
 			} else {
-				tokio::time::sleep(TX_PROPAGATION_SLEEP_TIME).await;
+				tokio::time::sleep(poll_interval()).await;
 			}
 		}
 		panic!("Failed to get raw transaction: {}", txid);
@@ -237,7 +236,7 @@ impl Bitcoind {
 			if current >= height {
 				break;
 			}
-			tokio::time::sleep(Duration::from_millis(100)).await;
+			tokio::time::sleep(poll_interval()).await;
 		}
 	}
 
@@ -441,10 +440,8 @@ impl DaemonHelper for BitcoindHelper {
 
 
 	async fn wait_for_init(&self) -> anyhow::Result<()> {
-		let sleep_duration = Duration::from_millis(1000);
-		while !self.is_initialized().await
-		{
-				tokio::time::sleep(sleep_duration).await;
+		while !self.is_initialized().await {
+			tokio::time::sleep(poll_interval()).await;
 		}
 		Ok(())
 	}
