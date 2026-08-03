@@ -175,6 +175,11 @@ impl rpc::server::ArkService for Server {
 		let pver = req.pver()?;
 		let req = req.into_inner();
 
+		if pver < server_rpc::pver::PROTOCOL_VERSION_BOARD_FUNDING_TX {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to board.");
+		}
+
 		let amount = Amount::from_sat(req.amount);
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 		let expiry_height = check_block_height(req.expiry_height)
