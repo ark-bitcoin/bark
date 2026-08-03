@@ -2,7 +2,7 @@ use std::pin::Pin;
 use bitcoin::hashes::Hash;
 use futures::Stream;
 use futures::StreamExt;
-use server_rpc::MAX_NB_MAILBOX_RECOVERY_IDS;
+use server_rpc::{MAX_NB_MAILBOX_ARKOOR_VTXOS, MAX_NB_MAILBOX_RECOVERY_IDS};
 use tracing::{error, warn};
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier, MailboxType};
@@ -97,6 +97,10 @@ impl rpc::server::MailboxService for crate::Server {
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
 		let req = req.into_inner();
 
+		if req.vtxos.len() > MAX_NB_MAILBOX_ARKOOR_VTXOS {
+			self::badarg!("too many vtxos, max is {}", MAX_NB_MAILBOX_ARKOOR_VTXOS);
+		}
+
 		let vtxos = req.vtxos.into_iter()
 			.map(|v| Vtxo::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
@@ -112,6 +116,20 @@ impl rpc::server::MailboxService for crate::Server {
 		}
 
 		let mailbox_id = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
+
+		// This endpoint is unauthenticated (senders aren't the recipient), so
+		// only accept vtxos the server itself cosigned: unknown ids are
+		// rejected before they can take up mailbox space. The pubkey check
+		// stops a known id from being posted with doctored content that would
+		// route it into a mailbox its owner doesn't watch.
+		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+		let stored = self.db.read(async |t| t.get_user_vtxos_by_id(&vtxo_ids).await)
+			.await.to_status()?;
+		for stored in &stored {
+			if stored.vtxo.user_pubkey() != vtxo_pubkey {
+				self::badarg!("vtxo {} doesn't belong to the provided vtxo pubkey", stored.vtxo_id);
+			}
+		}
 
 		let checkpoint = self.db.write(async |t| {
 			t.store_vtxos_in_mailbox(

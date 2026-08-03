@@ -5,13 +5,14 @@ use std::time::Duration;
 use bitcoin::secp256k1::{Keypair, rand::thread_rng};
 use futures::future::join_all;
 
-use ark::{ProtocolEncoding, ServerVtxo, SECP};
+use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoPolicy, SECP};
 use ark::lightning::PaymentHash;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::test_util::dummy::DummyTestVtxoSpec;
+use ark::vtxo::raw::RawVtxo;
 
 use server::database::{Db, MailboxPayload};
-use server_rpc::protos;
+use server_rpc::{protos, MAX_NB_MAILBOX_ARKOOR_VTXOS};
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 use ark_testing::{TestContext, btc, require_bark_version};
@@ -141,6 +142,94 @@ async fn mailbox_checkpoint_visibility_gap() {
 			 checkpoint visibility gap caused it to skip entries",
 		);
 	}
+}
+
+/// The arkoor post endpoint is unauthenticated (senders aren't the
+/// recipient), so the server must only accept vtxos it cosigned itself.
+/// Unknown ids and posts whose content claims a pubkey different from the
+/// server's records are rejected; without this anyone could grow the
+/// mailbox table with arbitrary blobs.
+#[tokio::test]
+async fn mailbox_post_arkoor_requires_known_vtxos() {
+	let ctx = TestContext::new("server/mailbox_post_arkoor_requires_known_vtxos").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let db = Db::connect(&srv.config().postgres).await.expect("connect to captaind's postgres");
+	let mut rpc = srv.get_mailbox_public_rpc().await;
+
+	let mailbox_kp = Keypair::new(&SECP, &mut thread_rng());
+	let mailbox_id = MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
+	let mailbox_pubkey = srv.ark_info().await.mailbox_pubkey;
+
+	// Seed one vtxo into the vtxo table, as if the server cosigned it.
+	let owner_kp = Keypair::new(&SECP, &mut thread_rng());
+	let (_tx, vtxo) = DummyTestVtxoSpec {
+		user_keypair: owner_kp,
+		..Default::default()
+	}.build();
+	db.write(async |t| t.upsert_vtxos([ServerVtxo::from(vtxo.clone())]).await).await
+		.expect("upsert vtxo");
+
+	// A vtxo the server never cosigned is rejected.
+	let attacker_kp = Keypair::new(&SECP, &mut thread_rng());
+	let (_tx, unknown_vtxo) = DummyTestVtxoSpec {
+		user_keypair: attacker_kp,
+		..Default::default()
+	}.build();
+	let err = rpc.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
+		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &attacker_kp).as_ref().to_vec(),
+		vtxos: vec![ProtocolEncoding::serialize(&unknown_vtxo).to_vec()],
+	}).await.unwrap_err();
+	assert!(err.message().contains("does not exist"),
+		"unexpected error for unknown vtxo: {}", err.message(),
+	);
+
+	// A known id whose content claims a different pubkey is rejected; it
+	// would route the vtxo into a mailbox its owner doesn't watch.
+	let mut raw = RawVtxo::deserialize(&ProtocolEncoding::serialize(&vtxo)).unwrap();
+	raw.policy = ServerVtxoPolicy::User(VtxoPolicy::new_pubkey(attacker_kp.public_key()));
+	let err = rpc.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
+		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &attacker_kp).as_ref().to_vec(),
+		vtxos: vec![raw.serialize()],
+	}).await.unwrap_err();
+	assert!(err.message().contains("doesn't belong to the provided vtxo pubkey"),
+		"unexpected error for pubkey mismatch: {}", err.message(),
+	);
+
+	// Nothing landed in the mailbox.
+	let entries = db.read(async |t| t.get_mailbox_entries(mailbox_id, 0, 100).await).await.unwrap();
+	assert!(entries.is_empty(), "rejected posts should not create mailbox entries");
+
+	// The genuine vtxo still goes through.
+	rpc.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
+		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &owner_kp).as_ref().to_vec(),
+		vtxos: vec![ProtocolEncoding::serialize(&vtxo).to_vec()],
+	}).await.expect("post of a known vtxo should succeed");
+
+	let entries = db.read(async |t| t.get_mailbox_entries(mailbox_id, 0, 100).await).await.unwrap();
+	assert_eq!(entries.len(), 1, "the genuine vtxo should be delivered");
+}
+
+/// The number of vtxos per arkoor post is capped so a single request can't
+/// carry an arbitrary amount of decode and database work. The cap is checked
+/// before any vtxo is deserialized.
+#[tokio::test]
+async fn mailbox_post_arkoor_caps_vtxos_per_request() {
+	let ctx = TestContext::new("server/mailbox_post_arkoor_caps_vtxos_per_request").await;
+	let srv = ctx.captaind("server").create().await;
+	let mut rpc = srv.get_mailbox_public_rpc().await;
+
+	let mailbox_kp = Keypair::new(&SECP, &mut thread_rng());
+	let mailbox_id = MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
+	let mailbox_pubkey = srv.ark_info().await.mailbox_pubkey;
+
+	let err = rpc.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
+		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &mailbox_kp).as_ref().to_vec(),
+		vtxos: vec![vec![0u8]; MAX_NB_MAILBOX_ARKOOR_VTXOS + 1],
+	}).await.unwrap_err();
+	assert!(err.message().contains("too many vtxos"),
+		"unexpected error for over-cap post: {}", err.message(),
+	);
 }
 
 /// Test that an incoming lightning payment posts an IncomingLightningPayment

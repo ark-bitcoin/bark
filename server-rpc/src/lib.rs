@@ -127,6 +127,11 @@ pub const MAX_NB_MAILBOX_RECOVERY_IDS: usize = 20;
 /// The maximum number of vtxo IDs that the server accepts per forfeit nonces request.
 pub const MAX_NB_FORFEIT_NONCE_IDS: usize = 1000;
 
+/// The maximum number of vtxos that the server accepts per arkoor mailbox
+/// post. Generous for a single payment's outputs to one recipient; clients
+/// sending more should split into multiple posts.
+pub const MAX_NB_MAILBOX_ARKOOR_VTXOS: usize = 100;
+
 
 #[derive(Debug, Clone)]
 pub struct WalletStatus {
