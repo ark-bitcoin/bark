@@ -489,6 +489,10 @@ message RoundParticipationRequest {
 	// Optional unblinded mailbox identifier for VTXO delivery.
 	// The server will post the created VTXO to this mailbox after the round completes.
 	optional bytes unblinded_mailbox_id = 4;
+	// Block height at which the refresh should happen: fees are calculated at
+	// this height and no round includes the participation before it.
+	// If omitted, the refresh happens in the next round.
+	optional uint32 scheduled_height = 5;
 }
 
 message RoundParticipationResponse {

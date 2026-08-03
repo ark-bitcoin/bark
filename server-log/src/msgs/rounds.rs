@@ -147,6 +147,9 @@ impl_slog!(RoundPaymentRegistered, TRACE, "Registered payment from a participant
 pub struct DelegatedRoundParticipationRegistered {
 	pub input_vtxos: Vec<VtxoId>,
 	pub unlock_hash: UnlockHash,
+	/// Block height at which the refresh is scheduled,
+	/// [None] for the next round.
+	pub scheduled_height: Option<BlockHeight>,
 }
 impl_slog!(DelegatedRoundParticipationRegistered, TRACE,
 	"Registered a non-interactive (delegated) round participation",

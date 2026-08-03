@@ -15,6 +15,7 @@ use ark::ProtocolEncoding;
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::lnurllib::lnurl::LnUrl;
 use bark::payment_request::ArkAddressType;
+use bark::round::RoundStatus;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;
 use bark_json::web::PendingRoundInfo;
@@ -43,6 +44,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/history", get(history))
 		.route("/send", post(send))
 		.route("/refresh/vtxos", post(refresh_vtxos))
+		.route("/refresh/delegated/vtxos", post(refresh_delegated))
 		.route("/refresh/all", post(refresh_all))
 		.route("/refresh/counterparty", post(refresh_counterparty))
 		.route("/offboard/vtxos", post(offboard_vtxos))
@@ -75,6 +77,7 @@ pub fn router() -> Router<ServerState> {
 		history,
 		send,
 		refresh_vtxos,
+		refresh_delegated,
 		refresh_all,
 		refresh_counterparty,
 		offboard_vtxos,
@@ -107,6 +110,7 @@ pub fn router() -> Router<ServerState> {
 		bark_json::web::SendRequest,
 		bark_json::web::SendResponse,
 		bark_json::web::RefreshRequest,
+		bark_json::web::DelegatedRefreshRequest,
 		bark_json::web::OffboardVtxosRequest,
 		bark_json::web::OffboardAllRequest,
 		bark_json::web::ImportVtxoRequest,
@@ -770,6 +774,58 @@ pub async fn refresh_vtxos(
 		None => {
 			badarg!("No VTXOs to refresh");
 		}
+	}
+}
+
+#[utoipa::path(
+	post,
+	path = "/refresh/delegated/vtxos",
+	summary = "Refresh VTXOs in delegated mode",
+	request_body = bark_json::web::DelegatedRefreshRequest,
+	responses(
+		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),
+		(status = 400, description = "No VTXO IDs provided, or one of the provided VTXO \
+			IDs is invalid", body = error::BadRequestError),
+		(status = 404, description = "One the VTXOs wasn't found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Registers the specified VTXOs for refresh as a delegated participation: \
+		the wallet hands the server a signed participation and the server carries it through \
+		the round, so the wallet doesn't need to follow the round interactively. The input \
+		VTXOs are locked immediately and will be forfeited once the round completes, yielding \
+		new VTXOs with a fresh expiry.\n\n\
+		Set `height` to schedule the refresh for a future block height: the refresh fee is \
+		priced at that height and the server includes the participation in the first round \
+		once the chain tip reaches it. When `height` is omitted, the participation is \
+		eligible for the next round. Use the `rounds` endpoint to track progress.",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn refresh_delegated(
+	State(state): State<ServerState>,
+	Json(body): Json<bark_json::web::DelegatedRefreshRequest>,
+) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
+	let wallet = state.require_wallet()?;
+
+	if body.vtxos.is_empty() {
+		badarg!("No VTXO IDs provided");
+	}
+
+	let vtxo_ids = body.vtxos
+		.into_iter()
+		.map(|s| ark::VtxoId::from_str(&s).badarg("Invalid VTXO id"))
+		.collect::<Result<Vec<_>, _>>()?;
+
+	let round = match body.height {
+		Some(height) => wallet.refresh_vtxos_scheduled(vtxo_ids, height).await
+			.context("Failed to store round participation")?,
+		None => wallet.refresh_vtxos_delegated(vtxo_ids).await
+			.context("Failed to store round participation")?,
+	};
+
+	match round {
+		Some(round) => Ok(axum::Json(PendingRoundInfo::new(&round, Ok(RoundStatus::Pending)))),
+		None => badarg!("No VTXOs to refresh"),
 	}
 }
 

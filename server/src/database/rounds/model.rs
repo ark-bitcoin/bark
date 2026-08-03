@@ -49,6 +49,9 @@ pub struct StoredRoundParticipation {
 	pub outputs: Vec<StoredRoundOutput>,
 	pub round_id: Option<RoundId>,
 	pub forfeited_at: Option<DateTime<Local>>,
+	/// Block height at which the refresh is scheduled,
+	/// [None] for the next round.
+	pub scheduled_height: Option<BlockHeight>,
 }
 
 #[derive(Debug, Clone)]

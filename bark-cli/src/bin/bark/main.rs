@@ -190,6 +190,10 @@ enum Command {
 		/// Perform the refresh in delegated (non-interactive) mode
 		#[arg(long)]
 		delegated: bool,
+		/// Schedule the delegated refresh at this block height instead of the next round.
+		/// Requires --delegated.
+		#[arg(long, requires = "delegated")]
+		height: Option<u32>,
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
@@ -419,7 +423,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			output_json(&movements);
 		},
 		Command::Refresh {
-			vtxos, threshold_blocks, threshold_hours, counterparty, all, delegated, no_sync,
+			vtxos, threshold_blocks, threshold_hours, counterparty, all, delegated,
+			height, no_sync,
 		} => {
 			if !no_sync {
 				info!("Syncing wallet...");
@@ -448,7 +453,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			info!("Refreshing {} vtxos...", vtxos.len());
 			if delegated {
-				if let Some(res) = wallet.refresh_vtxos_delegated(vtxos).await? {
+				let res = match height {
+					Some(height) => wallet.refresh_vtxos_scheduled(vtxos, height).await?,
+					None => wallet.refresh_vtxos_delegated(vtxos).await?,
+				};
+
+				if let Some(res) = res {
 					output_json(&json::cli::RoundStateInfo {
 						round_state_id: res.id().0,
 					});

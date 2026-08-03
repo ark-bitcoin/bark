@@ -156,6 +156,92 @@ pub struct DelegatedParticipation {
 	pub(crate) inputs: Vec<VtxoId>,
 }
 
+/// Validate the input and output amounts of a round participation.
+/// The refresh fee is checked separately by [validate_refresh_fee].
+fn validate_payment_amounts(
+	inputs: &[Vtxo<Full>],
+	outputs: impl IntoIterator<Item = impl AsRef<VtxoRequest>>,
+) -> anyhow::Result<()> {
+	let mut in_set = HashSet::with_capacity(inputs.len());
+	let mut in_sum = Amount::ZERO;
+	for input in inputs {
+		// checked_add: bitcoin::Amount addition panics on overflow, so never feed it
+		// an untrusted running total. See the output loop below for the client-facing case.
+		in_sum = in_sum.checked_add(input.amount())
+			.filter(|s| *s <= Amount::MAX_MONEY)
+			.ok_or_else(|| badarg_err!("total input amount overflow"))?;
+		if !in_set.insert(input.id()) {
+			return badarg!("duplicate input");
+		}
+	}
+
+	let mut out_sum = Amount::ZERO;
+	for output in outputs {
+		let output = output.as_ref();
+
+		if output.amount < P2TR_DUST {
+			return badarg!("vtxo amount must be at least {}", P2TR_DUST);
+		}
+
+		match output.policy {
+			VtxoPolicy::ServerHtlcRecv { .. } => {
+				return badarg!("invalid vtxo policy: {:?}", output.policy);
+			},
+			VtxoPolicy::ServerHtlcSend { .. } => {
+				return badarg!("invalid vtxo policy: {:?}", output.policy);
+			},
+			VtxoPolicy::Pubkey { .. } => {
+				// Output amounts are attacker-controlled and unbounded (decoded via
+				// Amount::from_sat with no cap). checked_add avoids the overflow panic
+				// that bitcoin::Amount's `+` would otherwise trigger; the `out_sum >
+				// in_sum` check below still enforces value conservation.
+				out_sum = out_sum.checked_add(output.amount)
+					.ok_or_else(|| badarg_err!("total output amount overflow"))?;
+			},
+		}
+
+		if out_sum > in_sum {
+			return badarg!("total output amount ({out_sum}) exceeds total input amount ({in_sum})");
+		}
+	}
+
+	Ok(())
+}
+
+/// Validate that the input surplus covers the fee for a refresh at block
+/// height `refresh_height`. Amounts must already have been checked with
+/// [validate_payment_amounts].
+fn validate_refresh_fee(
+	inputs: &[Vtxo<Full>],
+	outputs: impl IntoIterator<Item = impl AsRef<VtxoRequest>>,
+	fees: &RefreshFees,
+	refresh_height: BlockHeight,
+	pver: u64,
+) -> anyhow::Result<()> {
+	let vtxo_fee_infos = inputs.iter()
+		.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, refresh_height));
+	let expected_fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
+		fees.calculate(vtxo_fee_infos)
+	} else {
+		#[allow(deprecated)]
+		fees.calculate_legacy(vtxo_fee_infos)
+	}.context("fee overflowed")?;
+
+	let in_sum = inputs.iter().map(|v| v.amount()).sum::<Amount>();
+	let out_sum = outputs.into_iter().map(|o| o.as_ref().amount).sum::<Amount>();
+	let actual_fee = in_sum.checked_sub(out_sum)
+		.context("total output amount exceeds total input amount")?;
+	if actual_fee < expected_fee {
+		return badarg!(
+			"insufficient refresh fee: expected at least {}, got {}",
+			expected_fee,
+			actual_fee
+		);
+	}
+
+	Ok(())
+}
+
 pub struct CollectingPayments {
 	round_data: RoundData,
 
@@ -496,9 +582,11 @@ impl CollectingPayments {
 		}
 
 		let current_height = srv.sync_manager.chain_tip().height;
-		if let Err(e) = validate_payment_amounts(
-			&input_vtxos, &vtxo_requests, &srv.config.fees.refresh, current_height, pver,
-		) {
+		let amount_check = validate_payment_amounts(&input_vtxos, &vtxo_requests)
+			.and_then(|()| validate_refresh_fee(
+				&input_vtxos, &vtxo_requests, &srv.config.fees.refresh, current_height, pver,
+			));
+		if let Err(e) = amount_check {
 			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
 				error: e.to_string(),
 			);
@@ -640,7 +728,8 @@ impl CollectingPayments {
 		srv: &Server,
 	) {
 		//TODO(stevenroose) do this streamingly to avoid allocation
-		let parts = match srv.db.read(async |t| t.get_all_pending_round_participations().await).await {
+		let tip = srv.sync_manager.chain_tip().height;
+		let parts = match srv.db.read(async |t| t.get_all_pending_round_participations(tip).await).await {
 			Ok(p) => p,
 			Err(e) => {
 				error!("Error loading pending hArk participations: {}", e);
@@ -844,79 +933,6 @@ impl CollectingPayments {
 			.map(|vtxo| vtxo.amount())
 			.sum()
 	}
-}
-
-fn validate_payment_amounts(
-	inputs: &[Vtxo<Full>],
-	outputs: impl IntoIterator<Item = impl AsRef<VtxoRequest>>,
-	fees: &RefreshFees,
-	current_height: BlockHeight,
-	pver: u64,
-) -> anyhow::Result<()> {
-	let mut in_set = HashSet::with_capacity(inputs.len());
-	let mut in_sum = Amount::ZERO;
-	for input in inputs {
-		// checked_add: bitcoin::Amount addition panics on overflow, so never feed it
-		// an untrusted running total. See the output loop below for the client-facing case.
-		in_sum = in_sum.checked_add(input.amount())
-			.filter(|s| *s <= Amount::MAX_MONEY)
-			.ok_or_else(|| badarg_err!("total input amount overflow"))?;
-		if !in_set.insert(input.id()) {
-			return badarg!("duplicate input");
-		}
-	}
-
-	let mut out_sum = Amount::ZERO;
-	for output in outputs {
-		let output = output.as_ref();
-
-		if output.amount < P2TR_DUST {
-			return badarg!("vtxo amount must be at least {}", P2TR_DUST);
-		}
-
-		match output.policy {
-			VtxoPolicy::ServerHtlcRecv { .. } => {
-				return badarg!("invalid vtxo policy: {:?}", output.policy);
-			},
-			VtxoPolicy::ServerHtlcSend { .. } => {
-				return badarg!("invalid vtxo policy: {:?}", output.policy);
-			},
-			VtxoPolicy::Pubkey { .. } => {
-				// Output amounts are attacker-controlled and unbounded (decoded via
-				// Amount::from_sat with no cap). checked_add avoids the overflow panic
-				// that bitcoin::Amount's `+` would otherwise trigger; the `out_sum >
-				// in_sum` check below still enforces value conservation.
-				out_sum = out_sum.checked_add(output.amount)
-					.ok_or_else(|| badarg_err!("total output amount overflow"))?;
-			},
-		}
-
-		if out_sum > in_sum {
-			return badarg!("total output amount ({out_sum}) exceeds total input amount ({in_sum})");
-		}
-	}
-
-	// Validate refresh fees
-	let vtxo_fee_infos = inputs.iter()
-		.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, current_height));
-	let expected_fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
-		fees.calculate(vtxo_fee_infos)
-	} else {
-		#[allow(deprecated)]
-		fees.calculate_legacy(vtxo_fee_infos)
-	}.context("fee overflowed")?;
-
-	debug_assert!(in_sum >= out_sum, "This should be guaranteed by the previous loop");
-	let actual_fee = in_sum - out_sum;
-	if actual_fee < expected_fee {
-		return badarg!(
-			"insufficient refresh fee: expected at least {}, got {}",
-			expected_fee,
-			actual_fee
-		);
-	}
-
-	Ok(())
 }
 
 enum ProcessHarkParticipationError {
@@ -1825,6 +1841,7 @@ impl Server {
 		&self,
 		inputs: Vec<DelegatedInput>,
 		outputs: Vec<StoredRoundOutput>,
+		scheduled_height: Option<BlockHeight>,
 		pver: u64,
 	) -> anyhow::Result<UnlockHash> {
 		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
@@ -1843,6 +1860,31 @@ impl Server {
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 
 		let chain_tip = self.chain_tip().height;
+
+		if let Some(height) = scheduled_height {
+			for vtxo in &vtxos {
+				if vtxo.vtxo.expiry_height() <= height {
+					return badarg!(
+						"input vtxo {} expires at height {}, before the scheduled \
+						refresh height {}",
+						vtxo.vtxo_id, vtxo.vtxo.expiry_height(), height,
+					);
+				}
+			}
+		}
+
+		// Validate the amounts and fee now, when the client can still see the
+		// error, as if the refresh happens at the scheduled height. Once the
+		// participation is stored, the server has agreed to it and follows
+		// through in the round without re-checking the fee: fees only decrease
+		// as the tip advances, so a stored participation always still covers
+		// them.
+		let input_vtxos = vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>();
+		let refresh_height = scheduled_height.unwrap_or(chain_tip);
+		validate_payment_amounts(&input_vtxos, outputs.iter())?;
+		validate_refresh_fee(
+			&input_vtxos, outputs.iter(), &self.config.fees.refresh, refresh_height, pver,
+		).badarg("refresh fee check failed")?;
 
 		// Validate inputs up-front so the client gets a structured error listing
 		// every unusable input (spent or exited) and can drop them and retry.
@@ -1865,22 +1907,14 @@ impl Server {
 				.unusable_inputs(unusable);
 		}
 
-		// Validate the amounts and fees here, when the client can still see the
-		// error. Once the participation is stored, the server has agreed to it
-		// and follows through in the round without re-checking the fee: fees
-		// only decrease as the tip advances, so a stored participation always
-		// still covers them.
-		let input_vtxos = vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>();
-		validate_payment_amounts(
-			&input_vtxos, outputs.iter(), &self.config.fees.refresh, chain_tip, pver,
-		)?;
-
 		self.db.write(async |t| {
-			t.try_store_round_participation(chain_tip, unlock_preimage, &input_ids, &outputs).await
+			t.try_store_round_participation(
+				chain_tip, unlock_preimage, &input_ids, &outputs, scheduled_height,
+			).await
 		}).await?;
 
 		slog!(DelegatedRoundParticipationRegistered,
-			input_vtxos: input_ids, unlock_hash,
+			input_vtxos: input_ids, unlock_hash, scheduled_height,
 		);
 
 		Ok(unlock_hash)
@@ -1896,7 +1930,7 @@ mod tests {
 	use bitcoin::Amount;
 	use bitcoin::secp256k1::{PublicKey, Secp256k1};
 
-	use ark::fees::{FeeSchedule, PpmExpiryFeeEntry, PpmFeeRate};
+	use ark::fees::{PpmExpiryFeeEntry, PpmFeeRate};
 	use ark::rounds::RoundAttemptAttestation;
 	use ark::test_util::VTXO_VECTORS;
 	use server_rpc::pver::PROTOCOL_VERSION_BASE;
@@ -1974,7 +2008,8 @@ mod tests {
 		let outputs = vec![create_signed_req(output_amount.to_sat(), &state.round_data)];
 
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		validate_payment_amounts(
+		validate_payment_amounts(&inputs, &outputs).unwrap();
+		validate_refresh_fee(
 			&inputs, &outputs, &fees, 1000, PROTOCOL_VERSION_PPM_FEE_TOTAL,
 		).unwrap();
 
@@ -2001,9 +2036,7 @@ mod tests {
 		)];
 
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		validate_payment_amounts(
-			&inputs, &outputs, &FeeSchedule::default().refresh, 0, PROTOCOL_VERSION_PPM_FEE_TOTAL,
-		).unwrap_err();
+		validate_payment_amounts(&inputs, &outputs).unwrap_err();
 	}
 
 	// A malicious client can request an output amount near u64::MAX. With
@@ -2030,9 +2063,7 @@ mod tests {
 
 		// Nothing upstream bounds the amount when max_vtxo_amount is None.
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		validate_payment_amounts(
-			&inputs, &outputs, &FeeSchedule::default().refresh, 0, PROTOCOL_VERSION_PPM_FEE_TOTAL,
-		).unwrap_err();
+		validate_payment_amounts(&inputs, &outputs).unwrap_err();
 	}
 
 	#[test]
@@ -2058,7 +2089,8 @@ mod tests {
 			],
 		};
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		validate_payment_amounts(
+		validate_payment_amounts(&inputs, &outputs).unwrap();
+		validate_refresh_fee(
 			&inputs, &outputs, &fees, 1_000, PROTOCOL_VERSION_PPM_FEE_TOTAL,
 		).unwrap_err();
 	}
@@ -2086,7 +2118,7 @@ mod tests {
 		let outputs = vec![create_signed_req(
 			(inputs[0].amount() - fee).to_sat(), &state.round_data,
 		)];
-		validate_payment_amounts(
+		validate_refresh_fee(
 			&inputs, &outputs, &fees, 1_000, PROTOCOL_VERSION_BASE,
 		).unwrap();
 
@@ -2094,9 +2126,48 @@ mod tests {
 		let outputs = vec![create_signed_req(
 			(inputs[0].amount() - fee).to_sat() + 1, &state.round_data,
 		)];
-		validate_payment_amounts(
+		validate_refresh_fee(
 			&inputs, &outputs, &fees, 1_000, PROTOCOL_VERSION_BASE,
 		).unwrap_err();
+	}
+
+	#[test]
+	fn test_refresh_fee_at_scheduled_height() {
+		let state = create_collecting_payments(2);
+
+		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone()];
+		let fees = RefreshFees {
+			base_fee: Amount::from_sat(100),
+			ppm_expiry_table: vec![
+				PpmExpiryFeeEntry {
+					expiry_blocks_threshold: 25_025,
+					ppm: PpmFeeRate(500),
+				},
+				PpmExpiryFeeEntry {
+					expiry_blocks_threshold: 50_505,
+					ppm: PpmFeeRate(1_000),
+				},
+			],
+		};
+
+		let current_height = 1_000;
+		// close enough to expiry that only the base fee remains
+		let scheduled_height = inputs[0].expiry_height() - 25_000;
+
+		let fee_at = |height: BlockHeight| fees.calculate(
+			inputs.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, height)),
+		).unwrap();
+		assert!(fee_at(scheduled_height) < fee_at(current_height));
+
+		// an output that only leaves room for the fee at the scheduled height
+		let output_amount = inputs[0].amount() - fee_at(scheduled_height);
+		let outputs = vec![create_signed_req(output_amount.to_sat(), &state.round_data)];
+		validate_refresh_fee(
+			&inputs, &outputs, &fees, current_height, PROTOCOL_VERSION_PPM_FEE_TOTAL,
+		).unwrap_err();
+		validate_refresh_fee(
+			&inputs, &outputs, &fees, scheduled_height, PROTOCOL_VERSION_PPM_FEE_TOTAL,
+		).unwrap();
 	}
 
 	#[test]

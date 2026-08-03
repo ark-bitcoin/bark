@@ -29,9 +29,9 @@ use bark_rest_client::apis::{
 	lightning_api, notifications_api, onchain_api, wallet_api,
 };
 use bark_rest_client::models::{
-	BoardRequest, ExitClaimAllRequest, ExitClaimVtxosRequest, ExitProgressRequest,
-	ExitStartRequest, LightningInvoiceRequest, OffboardAllRequest, RefreshRequest,
-	SendOnchainRequest, SendRequest, WaitNotificationResponse,
+	BoardRequest, DelegatedRefreshRequest, ExitClaimAllRequest, ExitClaimVtxosRequest,
+	ExitProgressRequest, ExitStartRequest, LightningInvoiceRequest, OffboardAllRequest,
+	RefreshRequest, SendOnchainRequest, SendRequest, WaitNotificationResponse,
 };
 use futures::{Stream, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
@@ -473,6 +473,20 @@ impl Barkd {
 		wallet_api::refresh_vtxos(&config, RefreshRequest {
 			vtxos: vtxo_ids,
 		}).await.expect("barkd refresh_vtxos failed")
+	}
+
+	/// Refresh specific VTXOs by ID in delegated mode, optionally scheduled
+	/// at a block height.
+	pub async fn refresh_delegated(
+		&self,
+		vtxo_ids: Vec<String>,
+		height: Option<u32>,
+	) -> PendingRoundInfo {
+		let config = self.client_config();
+		wallet_api::refresh_delegated(&config, DelegatedRefreshRequest {
+			vtxos: vtxo_ids,
+			height,
+		}).await.expect("barkd refresh_delegated failed")
 	}
 
 	/// List pending rounds.

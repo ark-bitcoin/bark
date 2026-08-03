@@ -23,6 +23,7 @@ Method | HTTP request | Description
 [**pending_rounds**](WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | List round participations
 [**refresh_all**](WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | Refresh all VTXOs
 [**refresh_counterparty**](WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | Refresh received VTXOs
+[**refresh_delegated**](WalletApi.md#refresh_delegated) | **POST** /api/v1/wallet/refresh/delegated/vtxos | Refresh VTXOs in delegated mode
 [**refresh_vtxos**](WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/refresh/vtxos | Refresh specific VTXOs
 [**send**](WalletApi.md#send) | **POST** /api/v1/wallet/send | Send a payment
 [**send_onchain**](WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | Send on-chain from Ark balance
@@ -567,6 +568,36 @@ This endpoint does not need any parameter.
 ### HTTP request headers
 
 - **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## refresh_delegated
+
+> models::PendingRoundInfo refresh_delegated(delegated_refresh_request)
+Refresh VTXOs in delegated mode
+
+Registers the specified VTXOs for refresh as a delegated participation: the wallet hands the server a signed participation and the server carries it through the round, so the wallet doesn't need to follow the round interactively. The input VTXOs are locked immediately and will be forfeited once the round completes, yielding new VTXOs with a fresh expiry.  Set `height` to schedule the refresh for a future block height: the refresh fee is priced at that height and the server includes the participation in the first round once the chain tip reaches it. When `height` is omitted, the participation is eligible for the next round. Use the `rounds` endpoint to track progress.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**delegated_refresh_request** | [**DelegatedRefreshRequest**](DelegatedRefreshRequest.md) |  | [required] |
+
+### Return type
+
+[**models::PendingRoundInfo**](PendingRoundInfo.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

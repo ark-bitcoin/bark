@@ -1943,6 +1943,22 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<Option<RoundParticipation>> {
+		self.inner_build_refresh_participation(vtxos, None).await
+	}
+
+	pub async fn build_scheduled_refresh_participation<V: VtxoRef>(
+		&self,
+		vtxos: impl IntoIterator<Item = V>,
+		height: BlockHeight,
+	) -> anyhow::Result<Option<RoundParticipation>> {
+		self.inner_build_refresh_participation(vtxos, Some(height)).await
+	}
+
+	async fn inner_build_refresh_participation<V: VtxoRef>(
+		&self,
+		vtxos: impl IntoIterator<Item = V>,
+		height: Option<BlockHeight>,
+	) -> anyhow::Result<Option<RoundParticipation>> {
 		let (vtxos, total_amount) = {
 			let iter = vtxos.into_iter();
 			let size_hint = iter.size_hint();
@@ -1982,9 +1998,13 @@ impl Wallet {
 
 		// Calculate refresh fees
 		let (_, ark_info) = self.require_server().await?;
-		let current_height = self.inner.chain.tip().await?;
+		let refresh_height = match height {
+			Some(height) => height,
+			None => self.inner.chain.tip().await?,
+		};
+
 		let vtxo_fee_infos = vtxos.iter()
-			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, current_height));
+			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, refresh_height));
 		let fee = ark_info.fees.refresh.calculate(vtxo_fee_infos).context("fee overflowed")?;
 		let output_amount = validate_and_subtract_fee_min_dust(total_amount, fee, VTXO_DUST)?;
 
@@ -2034,7 +2054,28 @@ impl Wallet {
 			None => return Ok(None),
 		};
 
-		Ok(Some(self.join_next_round_delegated(part, Some(RoundMovement::Refresh)).await?))
+		Ok(Some(self.join_delegated_round(
+			part, Some(RoundMovement::Refresh), None,
+		).await?))
+	}
+
+	/// Same as [Wallet::refresh_vtxos_delegated] but it schedules the refresh for
+	/// the given block height instead of the next round (see [Wallet::join_delegated_round]).
+	pub async fn refresh_vtxos_scheduled<V: VtxoRef>(
+		&self,
+		vtxos: impl IntoIterator<Item = V>,
+		scheduled_height: BlockHeight,
+	) -> anyhow::Result<Option<StoredRoundState<Unlocked>>> {
+		let part = match self
+			.build_scheduled_refresh_participation(vtxos, scheduled_height).await?
+		{
+			Some(participation) => participation,
+			None => return Ok(None),
+		};
+
+		Ok(Some(self.join_delegated_round(
+			part, Some(RoundMovement::Refresh), Some(scheduled_height),
+		).await?))
 	}
 
 	/// This will find all VTXOs that meets must-refresh criteria. Then, if there are some VTXOs to

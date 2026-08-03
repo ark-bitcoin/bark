@@ -1,0 +1,8 @@
+- Schedule delegated refreshes at a future block height
+  The new `Wallet::refresh_vtxos_scheduled` sets up a refresh well before the
+  VTXOs need it, pricing the refresh fee at the scheduled height (matching the
+  server) so scheduling ahead pays the lower future fee. Under the hood
+  `Wallet::join_delegated_round` takes an optional scheduled height and
+  `Wallet::build_scheduled_refresh_participation` builds the height-priced
+  participation; `join_next_round_delegated` stays as a no-schedule wrapper.
+  [#2304](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2304)

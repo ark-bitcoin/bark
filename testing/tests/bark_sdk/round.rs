@@ -3,11 +3,14 @@ use std::time::Duration;
 
 use ark::VtxoId;
 use bark::movement::MovementStatus;
+use bitcoin::hashes::Hash;
+use server_log::{NoRoundPayments, RoundFinished};
 use server_rpc::protos;
 
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::ROUND_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient, Captaind};
+use ark_testing::util::FutureExt;
 
 /// A captaind proxy that rejects any round submission — interactive
 /// (`submit_payment`) or delegated (`submit_round_participation`) — whose inputs
@@ -197,6 +200,66 @@ async fn manual_maintenance_refresh_drops_server_rejected_vtxo() {
 		untouched; final vtxos: {final_ids:?}");
 
 	assert_dropped_and_retried_movements(&wallet, bad_id, good_id).await;
+}
+
+/// A delegated refresh scheduled at a future block height must sit out rounds
+/// until the chain tip reaches that height, and be included in the first round
+/// after it does.
+#[tokio::test]
+async fn scheduled_delegated_refresh_waits_for_height() {
+	async fn participation_status(srv: &Captaind, unlock_hash: Vec<u8>) -> i32 {
+		srv.get_public_rpc().await
+			.round_participation_status(protos::RoundParticipationStatusRequest { unlock_hash })
+			.await.expect("status request failed").into_inner().status
+	}
+
+	let ctx = TestContext::new("bark_sdk/scheduled_delegated_refresh_waits_for_height").await;
+	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(300_000))
+		.create().await;
+
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.len(), 1, "expected one boarded vtxo");
+	let vtxo_id = vtxos[0].id();
+
+	// Schedule the refresh a few blocks past the round we're about to trigger.
+	let tip = srv.bitcoind().get_block_count().await as u32;
+	let scheduled_height = tip + 10;
+
+	let round = wallet.refresh_vtxos_scheduled(vec![vtxo_id], scheduled_height).await
+		.expect("submit delegated refresh")
+		.expect("a participation should have been submitted");
+	let unlock_hash = round.state().unlock_hash()
+		.expect("delegated participation carries an unlock hash")
+		.to_byte_array().to_vec();
+
+	// A round before the scheduled height must sit out the participation.
+	let mut log_no_payments = srv.subscribe_log::<NoRoundPayments>();
+	srv.trigger_round().await;
+	log_no_payments.recv().wait(Duration::from_secs(60)).await
+		.expect("round before the scheduled height should have no payments");
+	assert_eq!(
+		participation_status(&srv, unlock_hash.clone()).await,
+		protos::RoundParticipationStatus::RoundPartPending as i32,
+		"participation should still be pending before the scheduled height",
+	);
+
+	// Once the tip reaches the scheduled height, the next round includes it.
+	let tip = srv.bitcoind().get_block_count().await as u32;
+	ctx.generate_blocks(scheduled_height - tip).await;
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	let finished = log_round_finished.recv().wait(Duration::from_secs(60)).await
+		.expect("round at the scheduled height should include the refresh");
+	assert!(finished.nb_input_vtxos >= 1, "round should have refreshed the input vtxo");
+	assert_ne!(
+		participation_status(&srv, unlock_hash).await,
+		protos::RoundParticipationStatus::RoundPartPending as i32,
+		"participation should be processed once the scheduled height is reached",
+	);
 }
 
 /// When *every* VTXO due for refresh is rejected by the server as unusable, the

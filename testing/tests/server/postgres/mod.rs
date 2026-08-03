@@ -1106,14 +1106,14 @@ async fn round_participation() {
 	};
 
 	// No participations yet
-	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap();
 	assert!(pending.is_empty());
 
 	// Store a participation
-	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// One pending participation
-	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap();
 	assert_eq!(pending.len(), 1);
 
 	let unlock_hash = UnlockHash::hash(&unlock_preimage);
@@ -1122,17 +1122,28 @@ async fn round_participation() {
 	assert_eq!(part.inputs.len(), 1);
 	assert_eq!(part.inputs[0].vtxo_id, vtxo.id());
 	assert_eq!(part.outputs.len(), 1);
+	assert_eq!(part.scheduled_height, None);
 
 	// Remove it
 	let removed = db.write(async |t| t.remove_round_participation(unlock_hash).await).await.unwrap();
 	assert!(removed, "should have removed one participation");
 
-	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap();
 	assert!(pending.is_empty(), "participation removed");
 
 	// Removing again returns false
 	let removed_again = db.write(async |t| t.remove_round_participation(unlock_hash).await).await.unwrap();
 	assert!(!removed_again, "nothing to remove the second time");
+
+	// a scheduled participation only becomes pending at its height
+	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output), Some(100)).await).await.unwrap();
+
+	let pending = db.read(async |t| t.get_all_pending_round_participations(99).await).await.unwrap();
+	assert!(pending.is_empty(), "not due before the scheduled height");
+
+	let pending = db.read(async |t| t.get_all_pending_round_participations(100).await).await.unwrap();
+	assert_eq!(pending.len(), 1, "due once the scheduled height is reached");
+	assert_eq!(pending[0].scheduled_height, Some(100));
 }
 
 #[tokio::test]
@@ -1157,16 +1168,16 @@ async fn round_participation_supersedes_on_same_input() {
 
 	// First (old) delegated refresh on the vtxo.
 	let old_preimage: UnlockPreimage = [1u8; 32];
-	db.write(async |t| t.try_store_round_participation(0, old_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, old_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 	let old_hash = UnlockHash::hash(&old_preimage);
 
 	// A new request for the same vtxo supersedes the old one.
 	let new_preimage: UnlockPreimage = [2u8; 32];
-	db.write(async |t| t.try_store_round_participation(0, new_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, new_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 	let new_hash = UnlockHash::hash(&new_preimage);
 
 	// Only the new participation remains pending; the old one was dropped.
-	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap();
 	assert_eq!(pending.len(), 1, "old delegated refresh should have been dropped");
 	assert_eq!(pending[0].unlock_hash, new_hash);
 
@@ -1203,7 +1214,7 @@ async fn round_participation_forfeited_at() {
 		unblinded_mailbox_id: None,
 	};
 
-	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// newly created participation is not forfeited
 	let part = db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.unwrap()
@@ -1273,7 +1284,7 @@ async fn set_forfeit_transactions_is_idempotent() {
 		},
 		unblinded_mailbox_id: None,
 	};
-	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &input_vtxo_ids, std::iter::once(&output)).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &input_vtxo_ids, std::iter::once(&output), None).await).await.unwrap();
 
 	// `set_forfeit_transactions` has two preconditions that `finish_round`
 	// would normally have established:
@@ -1403,7 +1414,7 @@ async fn set_forfeit_transactions_rejects_non_round_spent_vtxo() {
 		},
 		unblinded_mailbox_id: None,
 	};
-	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// Attach the participation to a round, but deliberately skip the
 	// `vtxo.spend_state = 'spent'` / `spent_in_round` transition that
@@ -1467,13 +1478,13 @@ async fn round_participation_same_vtxo_multiple_pending() {
 	};
 
 	// First participation succeeds
-	db.write(async |t| t.try_store_round_participation(0, preimage1, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, preimage1, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// Second participation with same vtxo as input should remove the first participation
-	db.write(async |t| t.try_store_round_participation(0, preimage2, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, preimage2, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// Only the second participation should be stored as pending
-	let [pending] = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap()
+	let [pending] = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap()
 		.try_into().expect("Should have exactly one pending participation");
 	assert_eq!(pending.unlock_preimage, Secret::from(preimage2));
 	let [input] = pending.inputs.try_into().expect("Should have exactly one input");

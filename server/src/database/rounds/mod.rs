@@ -81,6 +81,7 @@ impl<'t> Tx<'t> {
 				part.unlock_preimage,
 				&part.inputs,
 				&part.outputs,
+				None,
 			).await.with_context(|| format!(
 				"db rejected round participation for interactive participant (unlock_hash={}) \
 				with inputs {:?}", unlock_hash, part.inputs,
@@ -183,7 +184,8 @@ impl<'t> Tx<'t> {
 		unlock_hash: UnlockHash,
 	) -> anyhow::Result<Option<StoredRoundParticipation>> {
 		let part_opt = self.query_opt(
-			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at \
+			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at, \
+				scheduled_height \
 			FROM round_participation \
 			WHERE unlock_hash = $1",
 			&[&unlock_hash.to_string()],
@@ -197,15 +199,20 @@ impl<'t> Tx<'t> {
 		Ok(Some(query::complete_round_participation(&self, part_row).await?))
 	}
 
+	/// Get all round participations not yet assigned to a round and
+	/// due at the given chain tip.
 	#[tracing::instrument(skip(self))]
 	pub async fn get_all_pending_round_participations(
 		&self,
+		chain_tip: BlockHeight,
 	) -> anyhow::Result<Vec<StoredRoundParticipation>> {
 		let parts = self.query(
-			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at \
+			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at, \
+				scheduled_height \
 			FROM round_participation \
-			WHERE round_id IS NULL",
-			&[],
+			WHERE round_id IS NULL \
+				AND (scheduled_height IS NULL OR scheduled_height <= $1)",
+			&[&(chain_tip as i32)],
 		).await?;
 
 		let mut ret = Vec::with_capacity(parts.len());
@@ -232,6 +239,7 @@ impl<'t> Tx<'t> {
 		unlock_preimage: UnlockPreimage,
 		inputs: &[VtxoId],
 		outputs: impl IntoIterator<Item = &StoredRoundOutput>,
+		scheduled_height: Option<BlockHeight>,
 	) -> anyhow::Result<()> {
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 		trace!("Storing round participation for unlock hash {} and inputs {:?}",
@@ -251,7 +259,7 @@ impl<'t> Tx<'t> {
 		}
 
 		query::store_round_participation(
-			&self, unlock_hash, unlock_preimage, inputs, outputs,
+			&self, unlock_hash, unlock_preimage, inputs, outputs, scheduled_height,
 		).await?;
 
 		Ok(())
