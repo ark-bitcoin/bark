@@ -31,10 +31,7 @@ async fn list_utxos() {
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let addr = bark.get_onchain_address().await;
-	let (_, _offb) = tokio::join!(
-		srv.trigger_round(),
-		bark.offboard_all(&addr),
-	);
+	bark.offboard_all(&addr).await;
 	ctx.generate_blocks(2).await;
 
 	let utxos = bark.utxos().await;

@@ -33,10 +33,7 @@ async fn offboard_all() {
 	let init_balance = bark1.spendable_balance().await;
 	assert_eq!(init_balance, sat(830_000));
 
-	tokio::join!(
-		srv.trigger_round(),
-		bark1.offboard_all(&address),
-	);
+	bark1.offboard_all(&address).await;
 
 	// We check that all vtxos have been offboarded
 	assert_eq!(Amount::ZERO, bark1.spendable_balance().await);
@@ -88,10 +85,7 @@ async fn offboard_vtxos() {
 	let address = ctx.bitcoind().get_new_address();
 	let vtxo_to_offboard = &vtxos[1];
 
-	tokio::join!(
-		srv.trigger_round(),
-		bark1.offboard_vtxo(vtxo_to_offboard.id, &address),
-	);
+	bark1.offboard_vtxo(vtxo_to_offboard.id, &address).await;
 
 	// We check that only selected vtxo has been touched
 	let updated_vtxos = bark1.vtxos().await
