@@ -81,19 +81,14 @@ RUN mkdir -p ~/.config/containers && \
 RUN sudo mkdir -p /etc/containers && \
 	echo '[storage]'      | sudo tee    /etc/containers/storage.conf && \
 	echo 'driver = "vfs"' | sudo tee -a /etc/containers/storage.conf
-RUN mkdir -p /home/nixuser/.config/containers
-COPY registry-auth.json /home/nixuser/.config/containers/auth.json
-RUN buildah login --authfile /home/nixuser/.config/containers/auth.json registry.2nd.dev
-RUN buildah login --authfile /home/nixuser/.config/containers/auth.json docker.io
-
 RUN curl -L https://nixos.org/nix/install | bash -s -- --daemon && \
 	sudo chown -R nixuser:nixbld /nix && \
 	. /etc/profile.d/nix.sh && \
 	nix-env --version
 
 RUN mkdir -p ~/.config/nix && \
-	echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf && \
-	echo "sandbox = false" >> ~/.config/nix/nix.conf
+	echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf # && \
+#	echo "sandbox = false" >> ~/.config/nix/nix.conf
 
 RUN mkdir -p /nix/var/nix/profiles/per-user/nixuser/channels
 
@@ -134,7 +129,7 @@ RUN cd /tmp/ && \
 
 RUN echo "Installing sccache"
 RUN cargo install --locked sccache --features memcached
-ENV SCCACHE_MEMCACHED=tcp://host.containers.internal:11211
+ENV SCCACHE_MEMCACHED=tcp://127.0.0.1:11211
 ENV SCCACHE_DIRECT=true
 ENV RUSTC_WRAPPER=sccache
 RUN echo "Installing just"
@@ -144,37 +139,29 @@ RUN mkdir -p /home/nixuser/.cargo && \
 RUN cat /home/nixuser/.cargo/config.toml
 
 RUN echo "clone bark" && \
-	git clone -b master https://gitlab.com/ark-bitcoin/bark.git
+	git clone -b ci-credentials https://gitlab.com/ark-bitcoin/bark.git
 
 RUN echo "pre-build bark" && \
 	cd /tmp && \
 	wget https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz && \
 	tar -xJf zig-linux-x86_64-${ZIG_VERSION}.tar.xz && \
 	sudo ln -s /tmp/zig-linux-x86_64-${ZIG_VERSION}/zig /usr/bin/ && \
-	cargo install cargo-zigbuild && \
-	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
 	cd ~/bark && \
-	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu      --locked --manifest-path server/Cargo.toml && \
-	cargo build                            --release --target x86_64-unknown-linux-gnu      --locked --manifest-path bark-cli/Cargo.toml && \
-	cargo build                            --release --target x86_64-pc-windows-gnu         --locked --manifest-path bark-cli/Cargo.toml && \
-	RUSTC_WRAPPER= cargo zigbuild          --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots && \
-	RUSTC_WRAPPER= cargo zigbuild          --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots && \
-	RUSTC_WRAPPER= cargo zigbuild          --release --target x86_64-apple-darwin           --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots && \
-	RUSTC_WRAPPER= cargo zigbuild          --release --target aarch64-apple-darwin          --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots
+	just install-zigbuild && \
+	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
+	just release-server && \
+	just release-bark
 
-RUN echo "build nix devShell" && \
+RUN echo "build nix devShells and pin as GC roots" && \
 	. /etc/profile.d/nix.sh && \
 	cd ~/bark && \
-	nix develop .#default --command bash -c "echo Flake devShell ready"
+	nix flake archive && \
+	mkdir -p /home/nixuser/.nix-gc-roots && \
+	nix build .#devShells.x86_64-linux.default --out-link /home/nixuser/.nix-gc-roots/dev-default && \
+	nix build .#devShells.x86_64-linux.msrv-lib --out-link /home/nixuser/.nix-gc-roots/dev-msrv-lib
 
 RUN echo "build bark" && \
 	. /etc/profile.d/nix.sh && \
 	cd ~/bark && \
-	nix develop .#default --command bash -c "\
-		cargo build --workspace && \
-		cargo install --locked --path bark-cli && \
-		cargo install --locked --path server && \
-		cargo run --example dump-sqlite-schema && \
-		cargo run --example dump-server-postgres-schema" && \
-	nix develop .#msrv-lib --command bash -c "cd testing/msrv-lib && cargo build" && \
-	nix develop .#default  --command bash -c "cd lib/ && cargo build --lib --release --target \"wasm32-unknown-unknown\" --features wasm-web"
+	nix develop .#msrv-lib --command bash -c "just build-msrv-lib" && \
+	nix develop .#default  --command bash -c "just ci-warmup"
