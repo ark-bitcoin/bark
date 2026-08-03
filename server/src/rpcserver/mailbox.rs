@@ -113,6 +113,20 @@ impl rpc::server::MailboxService for crate::Server {
 
 		let mailbox_id = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
 
+		// This endpoint is unauthenticated (senders aren't the recipient), so
+		// only accept vtxos the server itself cosigned: unknown ids are
+		// rejected before they can take up mailbox space. The pubkey check
+		// stops a known id from being posted with doctored content that would
+		// route it into a mailbox its owner doesn't watch.
+		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+		let stored = self.db.read(async |t| t.get_user_vtxos_by_id(&vtxo_ids).await)
+			.await.to_status()?;
+		for stored in &stored {
+			if stored.vtxo.user_pubkey() != vtxo_pubkey {
+				self::badarg!("vtxo {} doesn't belong to the provided vtxo pubkey", stored.vtxo_id);
+			}
+		}
+
 		let checkpoint = self.db.write(async |t| {
 			t.store_vtxos_in_mailbox(
 				MailboxType::ArkoorReceive,
