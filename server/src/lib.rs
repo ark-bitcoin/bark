@@ -51,6 +51,7 @@ use anyhow::Context;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction, Txid};
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use futures::Stream;
+use server_rpc::MAX_NB_BOARD_FUNDING_INPUTS;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
@@ -739,6 +740,12 @@ impl Server {
 
 		if self.config.require_board_funding_tx {
 			let funding_tx = funding_tx.context("missing funding_tx")?;
+
+			if funding_tx.input.len() > MAX_NB_BOARD_FUNDING_INPUTS {
+				return badarg!("invalid funding tx: too many inputs (max is {})",
+					MAX_NB_BOARD_FUNDING_INPUTS,
+				);
+			}
 
 			// validate utxo against funding tx
 			if utxo.vout as usize >= funding_tx.output.len() {
