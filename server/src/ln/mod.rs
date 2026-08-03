@@ -42,6 +42,34 @@ use crate::{Server, CAPTAIND_API_KEY};
 
 
 
+/// Guard releasing a payment hash from [Server::ln_claims_in_flux] on drop.
+struct LnClaimGuard<'a> {
+	srv: &'a Server,
+	payment_hash: PaymentHash,
+}
+
+impl<'a> LnClaimGuard<'a> {
+	/// Claim exclusive right to allocate the HTLC-recv vtxos for `payment_hash`.
+	///
+	/// Returns `None` when another task is already allocating for this hash.
+	fn try_lock(srv: &'a Server, payment_hash: PaymentHash) -> Option<LnClaimGuard<'a>> {
+		if srv.ln_claims_in_flux.lock().insert(payment_hash) {
+			Some(LnClaimGuard { srv, payment_hash })
+		} else {
+			None
+		}
+	}
+}
+
+impl Drop for LnClaimGuard<'_> {
+	fn drop(&mut self) {
+		assert!(
+			self.srv.ln_claims_in_flux.lock().remove(&self.payment_hash),
+			"LnClaimGuard already unlocked; payment_hash={}", self.payment_hash,
+		);
+	}
+}
+
 /// Validate the client-requested HTLC-recv VTXO expiry leaves at
 /// least `htlc_expiry_delta` blocks of settlement margin below the
 /// inbound Lightning HTLC expiry, both for the request and the
@@ -617,6 +645,15 @@ impl Server {
 		anti_dos: Option<protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos>,
 		pver: u64,
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo<Full>>)> {
+		// Held for the entire read-check-allocate-write below: the status only
+		// becomes `htlcs-ready` after the arkoor is persisted, so concurrent
+		// calls each allocate a full HTLC set for one invoice and can each
+		// return a different one, paying out a multiple of the invoice amount.
+		let _claim_guard = match LnClaimGuard::try_lock(self, payment_hash) {
+			Some(guard) => guard,
+			None => bail!("a claim for this payment hash is already in progress"),
+		};
+
 		let mut sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 
