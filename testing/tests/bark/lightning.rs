@@ -893,7 +893,7 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 /// Before the fix the revocation was accepted - the only settlement guard
 /// (`is_settled`) checks a *recorded* preimage, which the parked claim
 /// withholds - so the payer was refunded while the payee could still release
-/// the claim and get paid, minting `pay_amount` from server funds.
+/// the claim and get paid, granting `pay_amount` from server funds.
 ///
 /// The fix refuses the revocation while the receive side is committed
 /// (`HtlcsReady`/`Settled`), so the payer is not refunded and the total
@@ -2126,4 +2126,125 @@ async fn bark_completes_lightning_receive_after_transient_claim_failures() {
 		"no exit should have been triggered after a successful retry");
 	assert!(counter.load(Ordering::Relaxed) <= 0,
 		"proxy should have served at least the failure budget");
+}
+
+/// Lightning receive claims must ignore `max_vtxo_exit_depth`.
+///
+/// The vtxo pool re-inserts its change output after every spend without any
+/// depth cap, so the pool change chain's exit depth grows by one with each
+/// lightning receive it funds and the granted HTLC-recv vtxos eventually reach
+/// the maximum. The generic arkoor input depth check used to reject claiming
+/// them, making the receive unclaimable by construction after the preimage
+/// was revealed. Claims are recovery operations and are now exempt.
+#[tokio::test]
+async fn lightning_receive_claim_ignores_max_exit_depth() {
+	require_bark_version!(> "0.5.0");
+
+	const MAX_EXIT_DEPTH: u16 = 8;
+	// Pool leaves start a few levels deep and every receive adds one, so
+	// this many receives pushes the granted HTLC-recv vtxos past the maximum.
+	const NB_RECEIVES: u16 = MAX_EXIT_DEPTH;
+
+	let ctx = TestContext::new("lightningd/lightning_receive_claim_ignores_max_exit_depth").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("srv")
+		.lightningd(&lightning.internal)
+		.funded(btc(10))
+		.cfg(|cfg| {
+			cfg.max_vtxo_exit_depth = MAX_EXIT_DEPTH;
+			// A single large bucket: after the first spend, the change output
+			// (just under 1 BTC) is always the smallest pool vtxo covering the
+			// receive amount, so every receive extends the same change chain.
+			cfg.vtxopool.vtxo_targets = vec![
+				VtxoTarget { count: 2, amount: btc(1) },
+			];
+		})
+		.create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let external = Arc::new(lightning.external);
+
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let pay_amount = sat(100_000);
+	for i in 0..NB_RECEIVES {
+		let invoice_info = bark.bolt11_invoice(pay_amount).await;
+
+		let invoice_str = invoice_info.invoice.clone();
+		let external = external.clone();
+		let pay = tokio::spawn(async move {
+			external.try_pay_bolt11(invoice_str).await
+		});
+
+		bark.lightning_receive(&invoice_info.invoice).wait_millis(60_000).await;
+		pay.wait_millis(30_000).await.unwrap().expect("hold invoice should settle");
+		info!("lightning receive #{} claimed", i);
+	}
+
+	assert_eq!(bark.spendable_balance().await,
+		btc(2) + pay_amount * NB_RECEIVES as u64);
+
+	// Prove the boundary was actually crossed: a claim output sits two levels
+	// below its HTLC-recv input, so a claimed vtxo deeper than the maximum
+	// means the server cosigned a claim of an at-or-past-maximum HTLC.
+	let deepest = bark.vtxos().await.iter()
+		.filter_map(|v| v.exit_depth)
+		.max().expect("wallet should have vtxos");
+	assert!(deepest > MAX_EXIT_DEPTH,
+		"the deepest claimed vtxo (depth {}) should exceed the maximum of {}",
+		deepest, MAX_EXIT_DEPTH,
+	);
+}
+
+/// Lightning payment revocations must ignore `max_vtxo_exit_depth`.
+///
+/// HTLC-send vtxos are granted two levels deeper than the arkoor input that
+/// funds them (checkpoint + arkoor), so they can sit at the maximum even
+/// though the grant itself respected the limit. The generic arkoor input
+/// depth check used to reject revoking them after a failed payment,
+/// stranding the sender's funds. Revocations are recovery operations and
+/// are now exempt.
+#[tokio::test]
+async fn lightning_pay_revocation_ignores_max_exit_depth() {
+	const MAX_EXIT_DEPTH: u16 = 3;
+
+	let ctx = TestContext::new("lightningd/lightning_pay_revocation_ignores_max_exit_depth").await;
+
+	// No channel: the payment cannot be routed, so it always fails and bark
+	// revokes the HTLC-send vtxos.
+	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
+
+	let srv = ctx.captaind("srv")
+		.lightningd(&lightning.internal)
+		.funded(btc(10))
+		.cfg(|cfg| {
+			cfg.max_vtxo_exit_depth = MAX_EXIT_DEPTH;
+		})
+		.create().await;
+
+	let board_amount = btc(2);
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	// The board vtxo is at depth 1, so the HTLC-send vtxos of this payment
+	// are granted at depth 3 (checkpoint + arkoor) — exactly the maximum.
+	let invoice_amount = btc(0.5);
+	let invoice = lightning.external.invoice(Some(invoice_amount), "unroutable", "no channel").await;
+	bark.pay_lightning_wait(invoice, None).await;
+
+	// The payment failed and the HTLC-send vtxos were revoked: the full
+	// balance is restored as change + revocation vtxo, nothing stays locked.
+	assert_eq!(bark.spendable_balance().await, board_amount);
+	let vtxos = bark.vtxos().await;
+	let revocation = vtxos.iter().find(|v| v.amount == invoice_amount)
+		.expect("should have a revocation vtxo of the payment amount");
+	assert!(revocation.exit_depth.expect("exit depth is known") > MAX_EXIT_DEPTH,
+		"the revocation vtxo should be deeper than the maximum, \
+		 proving its HTLC-send input was at the maximum exit depth",
+	);
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })),
+		"should not be any locked vtxo left");
 }
