@@ -1,5 +1,0 @@
-- Add `POST /refresh/delegated/vtxos` for delegated refreshes
-  The refresh is submitted as a delegated participation the server carries
-  through the round. An optional `height` schedules it for that block height
-  instead of the next round, pricing the refresh fee at that height.
-  [#2304](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2304)
