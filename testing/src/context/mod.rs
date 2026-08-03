@@ -375,7 +375,7 @@ impl TestContext {
 				vtxo_target_issue_threshold: 50,
 				vtxo_lifetime: 432,
 				vtxo_pre_expiry: 12,
-				max_vtxo_arkoor_depth: 3,
+				max_vtxo_exit_depth: 3,
 				issue_interval: Duration::from_secs(3),
 			},
 			offboard_session_timeout: Duration::from_secs(30),

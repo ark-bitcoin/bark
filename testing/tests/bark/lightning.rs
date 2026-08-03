@@ -2160,6 +2160,10 @@ async fn lightning_receive_claim_ignores_max_exit_depth() {
 			cfg.vtxopool.vtxo_targets = vec![
 				VtxoTarget { count: 2, amount: btc(1) },
 			];
+			// Lift the pool's own change depth cap so it actually grants
+			// HTLC-recv vtxos past max_vtxo_exit_depth; this test is about
+			// recovering whatever got granted, however deep.
+			cfg.vtxopool.max_vtxo_exit_depth = 4 * MAX_EXIT_DEPTH;
 		})
 		.create().await;
 	srv.wait_for_vtxopool(&ctx).await;
@@ -2196,6 +2200,82 @@ async fn lightning_receive_claim_ignores_max_exit_depth() {
 	assert!(deepest > MAX_EXIT_DEPTH,
 		"the deepest claimed vtxo (depth {}) should exceed the maximum of {}",
 		deepest, MAX_EXIT_DEPTH,
+	);
+}
+
+/// The vtxo pool must not serve ever-deeper vtxos.
+///
+/// The pool re-inserts its change output after every spend, so without a cap
+/// the same arkoor chain funds receive after receive and the granted HTLC-recv
+/// vtxos get one level deeper each time (and correspondingly more expensive
+/// to exit unilaterally). `max_vtxo_exit_depth` bounds how deep change may
+/// be kept: once the chain reaches the cap it is dropped and the next receive
+/// is funded from a fresh pool leaf.
+#[tokio::test]
+async fn lightning_receive_pool_change_arkoor_depth_capped() {
+	require_bark_version!(> "0.5.0");
+
+	const MAX_EXIT_DEPTH: u16 = 1;
+
+	let ctx = TestContext::new("lightningd/lightning_receive_pool_change_arkoor_depth_capped").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("srv")
+		.lightningd(&lightning.internal)
+		.funded(btc(10))
+		.cfg(|cfg| {
+			cfg.vtxopool.max_vtxo_exit_depth = MAX_EXIT_DEPTH;
+			// A single large bucket, so that without the cap every receive
+			// would be funded from the same ever-deeper change chain.
+			cfg.vtxopool.vtxo_targets = vec![
+				VtxoTarget { count: 2, amount: btc(1) },
+			];
+		})
+		.create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let external = Arc::new(lightning.external);
+
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	// With a cap of 1, each pool leaf funds at most two receives (the leaf,
+	// then its change once). Four receives therefore consume both leaves and
+	// their change: leaf1, change1, leaf2, change1'.
+	let pay_amount = sat(100_000);
+	const NB_RECEIVES: u16 = 4;
+	for i in 0..NB_RECEIVES {
+		let invoice_info = bark.bolt11_invoice(pay_amount).await;
+
+		let invoice_str = invoice_info.invoice.clone();
+		let external = external.clone();
+		let pay = tokio::spawn(async move {
+			external.try_pay_bolt11(invoice_str).await
+		});
+
+		bark.lightning_receive(&invoice_info.invoice).wait_millis(60_000).await;
+		pay.wait_millis(30_000).await.unwrap().expect("hold invoice should settle");
+		info!("lightning receive #{} claimed", i);
+	}
+
+	assert_eq!(bark.spendable_balance().await,
+		btc(2) + pay_amount * NB_RECEIVES as u64);
+
+	// All claim outputs sit a constant two levels below their HTLC-recv
+	// input, so their exit depth spread mirrors the spread of the vtxos the
+	// pool served. Bounded change reuse means a spread of at most the cap;
+	// without the cap the depth would grow with every receive (spread 3).
+	let depths = bark.vtxos().await.iter()
+		.filter(|v| v.amount == pay_amount)
+		.map(|v| v.exit_depth.expect("exit depth is known"))
+		.collect::<Vec<_>>();
+	assert_eq!(depths.len(), NB_RECEIVES as usize);
+	let spread = depths.iter().max().unwrap() - depths.iter().min().unwrap();
+	assert!(spread <= MAX_EXIT_DEPTH,
+		"pool served vtxos with depth spread {} exceeding the arkoor depth \
+		 cap of {}; depths: {:?}",
+		spread, MAX_EXIT_DEPTH, depths,
 	);
 }
 

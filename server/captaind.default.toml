@@ -283,7 +283,7 @@ vtxo_lifetime = 432
 # Time in blocks before the expiry to no longer use VTXOs
 vtxo_pre_expiry = 144
 # Maximum depth for pool VTXOs
-max_vtxo_arkoor_depth = 3
+max_vtxo_exit_depth = 3
 # The interval at which to check if an issuance should be made
 issue_interval = "1m"
 

@@ -69,7 +69,7 @@ pub struct Config {
 	pub vtxo_pre_expiry: BlockDelta,
 	/// maximum arkoor depth to keep change until
 	#[serde(alias = "vtxo_max_arkoor_depth")]
-	pub max_vtxo_arkoor_depth: ArkoorDepth,
+	pub max_vtxo_exit_depth: u16,
 
 	#[serde(with = "crate::utils::serde::duration")]
 	pub issue_interval: Duration,
@@ -82,7 +82,7 @@ impl Default for Config {
 			vtxo_target_issue_threshold: 80,
 			vtxo_lifetime: 144 * 3,
 			vtxo_pre_expiry: 144,
-			max_vtxo_arkoor_depth: 3,
+			max_vtxo_exit_depth: 3,
 			issue_interval: Duration::from_secs(60),
 		}
 	}
@@ -97,10 +97,6 @@ impl Config {
 		Duration::from_secs(60 * 10 * self.vtxo_lifetime as u64 * 2)
 	}
 }
-
-
-/// To make it clear what we are storing
-type ArkoorDepth = u16;
 
 struct Data {
 	/// A quick manual index into the vtxo pool.
@@ -123,12 +119,22 @@ impl Data {
 		}
 	}
 
-	pub async fn load_from_db(db: &database::Db, bucket_amounts: Vec<Amount>) -> anyhow::Result<Self> {
+	pub async fn load_from_db(
+		db: &database::Db,
+		bucket_amounts: Vec<Amount>,
+		max_exit_depth: u16,
+	) -> anyhow::Result<Self> {
 		let stream = db.load_vtxopool().await?;
 		tokio::pin!(stream);
 
 		let mut ret = Data { pool: BTreeMap::new(), bucket_amounts };
 		while let Some(v) = stream.try_next().await? {
+			if v.exit_depth() > max_exit_depth {
+				warn!("Not serving vtxo pool vtxo {}: exit depth {} exceeds \
+					the maximum of {}", v.id(), v.exit_depth(), max_exit_depth,
+				);
+				continue;
+			}
 			ret.insert(v.id(), v.expiry_height(), v.amount());
 		}
 
@@ -372,15 +378,24 @@ impl VtxoPool {
 		}
 
 		// We stored all change output VTXOs, but in the pool we only keep the
-		// first one (nondust) to avoid later serving one whose ephemeral key was deleted
+		// first one (nondust) to avoid later serving one whose ephemeral key was deleted.
+		// Change past the arkoor depth cap is not kept either; like dust
+		// change, it is swept after expiry.
 		if let Some(change) = change.first() {
-			let new = PoolVtxo::new(change.clone());
-			if let Err(e) = srv.db.write(async |t| t.store_vtxopool_vtxo(&new).await).await {
-				// don't abort for this
-				warn!("Failed to store change from a vtxopool spend: {:#}", e);
+			if change.exit_depth() > self.config.max_vtxo_exit_depth {
+				info!("Dropping vtxo pool change {} from the pool: exit depth {} \
+					exceeds the maximum of {}",
+					change.id(), change.exit_depth(), self.config.max_vtxo_exit_depth,
+				);
 			} else {
-				self.data.lock().insert_vtxos(&[new.clone()]);
-				slog!(ChangePoolVtxo, vtxo: new.id(), amount: new.amount());
+				let new = PoolVtxo::new(change.clone());
+				if let Err(e) = srv.db.write(async |t| t.store_vtxopool_vtxo(&new).await).await {
+					// don't abort for this
+					warn!("Failed to store change from a vtxopool spend: {:#}", e);
+				} else {
+					self.data.lock().insert_vtxos(&[new.clone()]);
+					slog!(ChangePoolVtxo, vtxo: new.id(), amount: new.amount());
+				}
 			}
 		}
 
@@ -422,7 +437,7 @@ impl VtxoPool {
 			.collect::<Vec<_>>();
 		bucket_amounts.sort();
 
-		let data = Data::load_from_db(db, bucket_amounts).await?;
+		let data = Data::load_from_db(db, bucket_amounts, config.max_vtxo_exit_depth).await?;
 
 		Ok(VtxoPool {
 			config,
