@@ -140,7 +140,13 @@ async fn handle_socket(socket: WebSocket, state: ServerState) {
 			match notification_rx.next().await {
 				Some(notification) => {
 					let notification = WalletNotification::from(notification);
-					let json = serde_json::to_string(&notification).unwrap();
+					let json = match serde_json::to_string(&notification) {
+						Ok(json) => json,
+						Err(e) => {
+							error!("failed to serialize wallet notification: {:#}", e);
+							continue;
+						}
+					};
 
 					// Send the notification as a text message
 					if sender.send(Message::Text(json.into())).await.is_err() {
