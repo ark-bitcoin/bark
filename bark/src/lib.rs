@@ -2190,8 +2190,20 @@ impl Wallet {
 	/// VTXOs whose mailbox post and chain registration both succeeded once
 	/// are marked [WalletVtxo::registered] and skipped from then on, so
 	/// repeated syncs don't re-upload — or even re-read — the whole wallet.
+	///
+	/// VTXOs of boards that are still in progress are left out: the server
+	/// only gets a vtxo row for those once the board registers, and that
+	/// step posts them for recovery itself.
 	async fn catchup_recovery_vtxos(&self) -> anyhow::Result<()> {
-		let ids = self.inner.db.get_unregistered_vtxo_ids().await?;
+		let mut ids = self.inner.db.get_unregistered_vtxo_ids().await?;
+		if ids.is_empty() {
+			return Ok(());
+		}
+
+		// TODO(pc): Investigate if we should first load `WalletVtxo` in case we have other reasons
+		//  to exclude VTXOs other than pending boards. This works for now.
+		let in_progress_boards = self.boards_in_progress().await?;
+		ids.retain(|id| !in_progress_boards.iter().any(|b| b.vtxo_id == *id));
 		if ids.is_empty() {
 			return Ok(());
 		}
