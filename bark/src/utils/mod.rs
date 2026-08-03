@@ -1,4 +1,5 @@
 pub(crate) mod json_patch;
+pub(crate) mod serde;
 pub mod time;
 
 use std::time::Duration;

@@ -57,28 +57,39 @@ pub enum ArkoorAddressError {
 
 /// Split a change amount into the piece amounts of the change destinations.
 ///
-/// Change is split in two so that repeated payments build a tree of
-/// change VTXOs rather than a chain, keeping exit depth logarithmic in
-/// the number of payments. The payment plus two change pieces stays
-/// within the server's default arkoor fanout limit of 4.
+/// Change exceeding the payment is split in `split_factor` pieces
+/// (see [crate::Config::change_vtxo_split_factor]) so that repeated payments
+/// build a tree of change VTXOs rather than a chain. Pieces below the dust
+/// threshold are fine here: [ark::arkoor::ArkoorBuilder] isolates them.
 ///
-/// We only split while the change exceeds the payment, so piece sizes
-/// track the wallet's payment sizes. Pieces below the dust threshold are
-/// fine here: [ark::arkoor::ArkoorBuilder] isolates them.
-///
-/// This must remain deterministic in its inputs: a retried action
-/// rebuilds its package by calling this again (see
-/// [Wallet::create_checkpointed_arkoor_with_vtxos]), so changing the
-/// policy breaks actions persisted mid-cosign by an older version.
-/// ENG-644 tracks storing the pieces in the action to lift that.
-fn split_change_amount(change: Amount, pay: Amount) -> Vec<Amount> {
+/// Retries reuse the pieces stored on the action, so this policy can
+/// change between versions.
+pub(crate) fn split_change_amount(change: Amount, pay: Amount, split_factor: u8) -> Vec<Amount> {
 	if change == Amount::ZERO {
-		Vec::new()
-	} else if change > pay {
-		let half = change / 2;
-		vec![half, change - half]
-	} else {
-		vec![change]
+		return Vec::new();
+	}
+	let pieces = if change > pay { u64::from(split_factor.max(1)) } else { 1 };
+	let base = change / pieces;
+	let mut ret = vec![base; pieces as usize];
+	*ret.last_mut().unwrap() = change - base * (pieces - 1);
+	ret
+}
+
+/// Resolve the change outputs of an arkoor package from the pieces stored
+/// on the action. `None` means the action was persisted by a pre-split
+/// bark, which built a single whole change output.
+fn resolve_change_pieces(
+	stored: Option<Vec<Amount>>,
+	change: Amount,
+) -> anyhow::Result<Vec<Amount>> {
+	match stored {
+		Some(pieces) => {
+			let sum = pieces.iter().copied().sum::<Amount>();
+			ensure!(sum == change, "stored change pieces sum to {}, expected {}", sum, change);
+			Ok(pieces)
+		},
+		None if change == Amount::ZERO => Ok(Vec::new()),
+		None => Ok(vec![change]),
 	}
 }
 
@@ -195,6 +206,7 @@ impl Wallet {
 		arkoor_dest: ArkoorDestination,
 		inputs: impl IntoIterator<Item = WalletVtxo>,
 		change_keypair: Keypair,
+		change_pieces: Option<Vec<Amount>>,
 	) -> Result<ArkoorCreateResult, ArkoorCreateError> {
 		let (mut srv, _) = self.require_server().await?;
 		let input_ids = inputs.into_iter().map(|v| v.id()).collect::<Vec<_>>();
@@ -232,7 +244,7 @@ impl Wallet {
 
 		let change_policy = VtxoPolicy::new_pubkey(change_pubkey);
 		let mut outputs = vec![arkoor_dest.clone()];
-		for piece in split_change_amount(change_amount, arkoor_dest.total_amount) {
+		for piece in resolve_change_pieces(change_pieces, change_amount)? {
 			outputs.push(ArkoorDestination {
 				total_amount: piece,
 				policy: change_policy.clone(),
@@ -327,24 +339,42 @@ mod test {
 	use super::*;
 
 	#[test]
+	fn resolve_change_pieces_fallback_and_validation() {
+		let change = Amount::from_sat(30_000);
+		let pieces = vec![Amount::from_sat(10_000), Amount::from_sat(20_000)];
+
+		// stored pieces are used as-is when they sum to the change
+		assert_eq!(resolve_change_pieces(Some(pieces.clone()), change).unwrap(), pieces);
+
+		// a sum mismatch is an error, not a silently different package
+		assert!(resolve_change_pieces(Some(pieces), Amount::from_sat(30_001)).is_err());
+
+		// no stored pieces (pre-split checkpoint) rebuilds a single whole output
+		assert_eq!(resolve_change_pieces(None, change).unwrap(), vec![change]);
+		assert_eq!(resolve_change_pieces(None, Amount::ZERO).unwrap(), Vec::<Amount>::new());
+	}
+
+	#[test]
 	fn split_change_amount_pieces() {
 		let pay = Amount::from_sat(10_000);
 
-		// zero change yields no pieces
-		assert_eq!(split_change_amount(Amount::ZERO, pay), Vec::<Amount>::new());
+		for factor in 1..=3u8 {
+			// zero change yields no pieces
+			assert_eq!(split_change_amount(Amount::ZERO, pay, factor), Vec::<Amount>::new());
 
-		// change at or below the payment stays whole
-		for sats in [1, 5_000, 10_000] {
-			let change = Amount::from_sat(sats);
-			assert_eq!(split_change_amount(change, pay), vec![change]);
-		}
+			// change at or below the payment stays whole
+			for sats in [1, 5_000, 10_000] {
+				let change = Amount::from_sat(sats);
+				assert_eq!(split_change_amount(change, pay, factor), vec![change]);
+			}
 
-		// change above the payment splits in two halves that add back up
-		for sats in [10_001, 123_457, 100_000_000] {
-			let change = Amount::from_sat(sats);
-			let pieces = split_change_amount(change, pay);
-			assert_eq!(pieces.len(), 2);
-			assert_eq!(pieces.iter().copied().sum::<Amount>(), change);
+			// change above the payment splits into factor pieces that add back up
+			for sats in [10_001, 123_457, 100_000_000] {
+				let change = Amount::from_sat(sats);
+				let pieces = split_change_amount(change, pay, factor);
+				assert_eq!(pieces.len(), factor as usize);
+				assert_eq!(pieces.iter().copied().sum::<Amount>(), change);
+			}
 		}
 	}
 }

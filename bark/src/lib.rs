@@ -1072,6 +1072,12 @@ impl Wallet {
 		config: Config,
 		args: OpenWalletArgs,
 	) -> anyhow::Result<Wallet> {
+		if !(1..=3).contains(&config.change_vtxo_split_factor) {
+			bail!("change_vtxo_split_factor must be 1, 2 or 3, got {}",
+				config.change_vtxo_split_factor,
+			);
+		}
+
 		let fingerprint = seed.fingerprint();
 		let lock_manager = if let Some(lm) = args.lock_manager {
 			lm
