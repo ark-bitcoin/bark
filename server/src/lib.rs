@@ -771,6 +771,19 @@ impl Server {
 					return badarg!("invalid funding tx: unknown input tx {}", txid);
 				}
 			}
+
+			if let Some(ref list) = self.bitcoin_address_blocklist {
+				let res = list.check_tx(&funding_tx).await;
+				if !res.is_ok() {
+					if let Some(addr) = res.violating_address() {
+						let amount = funding_tx.output[utxo.vout as usize].value;
+						slog!(BoardAttemptBlockedAddress, vtxo: None, amount: amount,
+							address: addr.as_unchecked().clone(),
+						);
+					}
+					res.into_user_result().context("address blocklist check failed")?;
+				}
+			}
 		}
 
 		let builder = BoardBuilder::new_for_cosign(
@@ -830,7 +843,7 @@ impl Server {
 			let res = list.check_tx(&funding_tx).await;
 			if !res.is_ok() {
 				if let Some(addr) = res.violating_address() {
-					slog!(BoardAttemptBlockedAddress, vtxo: vtxo.id(), amount: vtxo.amount(),
+					slog!(BoardAttemptBlockedAddress, vtxo: Some(vtxo.id()), amount: vtxo.amount(),
 						address: addr.as_unchecked().clone(),
 					);
 				}

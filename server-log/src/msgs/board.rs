@@ -36,7 +36,8 @@ impl_slog!(UnconfirmedBoardRegisterAttempt, TRACE, "user attempted to register a
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoardAttemptBlockedAddress {
 	pub address: bitcoin::Address<NetworkUnchecked>,
-	pub vtxo: VtxoId,
+	#[serde(default)]
+	pub vtxo: Option<VtxoId>,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 }
