@@ -1081,7 +1081,7 @@ async fn intra_ark_forged_invoice_does_not_drain_server() {
 		"unexpected rejection reason: {rejection}");
 
 	// The payee tries to collect anyway: before the fix the subscription was
-	// already Accepted at this point and this claim minted `invoice_amount`
+	// already Accepted at this point and this claim took `invoice_amount`
 	// out of the vtxopool for a `forged_amount` payment.
 	let _ = bark_payee.try_lightning_receive_no_wait(&invoice_info.invoice).await;
 

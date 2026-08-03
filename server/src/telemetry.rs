@@ -494,24 +494,24 @@ impl Metrics {
 			.with_unit("sat")
 			.build();
 		let round_output_pubkey_counter = meter.u64_counter("round_output_pubkey_counter")
-			.with_description("VTXOs minted by a successful round with a pubkey policy (excludes server-generated padding)")
+			.with_description("VTXOs created by a successful round with a pubkey policy (excludes server-generated padding)")
 			.build();
 		let round_output_pubkey_volume = meter.u64_counter("round_output_pubkey_volume")
-			.with_description("Volume of pubkey-policy VTXOs minted by successful rounds, in sats")
+			.with_description("Volume of pubkey-policy VTXOs created by successful rounds, in sats")
 			.with_unit("sat")
 			.build();
 		let round_output_htlc_send_counter = meter.u64_counter("round_output_htlc_send_counter")
-			.with_description("VTXOs minted by a successful round with the server-htlc-send policy")
+			.with_description("VTXOs created by a successful round with the server-htlc-send policy")
 			.build();
 		let round_output_htlc_send_volume = meter.u64_counter("round_output_htlc_send_volume")
-			.with_description("Volume of server-htlc-send VTXOs minted by successful rounds, in sats")
+			.with_description("Volume of server-htlc-send VTXOs created by successful rounds, in sats")
 			.with_unit("sat")
 			.build();
 		let round_output_htlc_recv_counter = meter.u64_counter("round_output_htlc_recv_counter")
-			.with_description("VTXOs minted by a successful round with the server-htlc-recv policy")
+			.with_description("VTXOs created by a successful round with the server-htlc-recv policy")
 			.build();
 		let round_output_htlc_recv_volume = meter.u64_counter("round_output_htlc_recv_volume")
-			.with_description("Volume of server-htlc-recv VTXOs minted by successful rounds, in sats")
+			.with_description("Volume of server-htlc-recv VTXOs created by successful rounds, in sats")
 			.with_unit("sat")
 			.build();
 		let unilateral_exit_counter = meter.u64_counter("unilateral_exit_counter")
@@ -851,7 +851,7 @@ pub fn add_delegated_participation(input_volume_sats: u64) {
 	}
 }
 
-/// One VTXO minted by a successful round, split by output policy. Padding
+/// One VTXO created by a successful round, split by output policy. Padding
 /// VTXOs that the server inserts to meet the tree's minimum-leaves
 /// requirement are not counted.
 pub fn add_round_output_pubkey(amount_sats: u64) {

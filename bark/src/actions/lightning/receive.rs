@@ -211,7 +211,7 @@ impl WalletAction for LightningReceive {
 /// The phases of an incoming lightning receive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Progress {
-	/// Invoice minted, waiting for an inbound HTLC. No money yet.
+	/// Invoice created, waiting for an inbound HTLC. No money yet.
 	AwaitingPayment,
 	/// Server prepared HTLC-recv vtxos; we hold them locked and the
 	/// movement is created. The preimage has NOT been revealed yet, so the
