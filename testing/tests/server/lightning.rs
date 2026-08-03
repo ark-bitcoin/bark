@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -6,6 +7,7 @@ use bitcoin::Amount;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
+use futures::future::join_all;
 use log::{info, trace};
 
 use ark::{ProtocolEncoding, Vtxo, SECP};
@@ -46,6 +48,16 @@ async fn assert_vtxopool_consistency_db(db: &Db) {
 	assert!(bad.is_empty(),
 		"vtxo_pool entries with spent_at IS NULL must have spend_state = 'pool'; got: {:?}",
 		bad);
+}
+
+/// The number of HTLC-receive VTXOs the server has ever allocated.
+async fn count_htlc_recv_vtxos(db: &Db) -> usize {
+	db.read(async |t| {
+		let row = t.query_one("
+			SELECT COUNT(*) FROM vtxo WHERE policy_type = 'server-htlc-receive'
+		", &[]).await?;
+		Ok(row.get::<_, i64>(0) as usize)
+	}).await.unwrap()
 }
 
 async fn assert_vtxopool_consistency(srv: &Captaind) {
@@ -758,6 +770,113 @@ async fn server_returned_htlc_recv_vtxos_identical(
 	assert_vtxopool_consistency(srv).await;
 }
 lightning_test!(server_returned_htlc_recv_vtxos_identical);
+
+/// Hammer `prepare_lightning_receive_claim` with 100 concurrent calls for the
+/// same invoice. A single invoice must only ever pay out one set of HTLC
+/// VTXOs, no matter how many requests race.
+async fn server_concurrent_prepare_lightning_claim(
+	ctx: &TestContext,
+	_lightning: &LightningPaymentSetup,
+	srv: &Captaind,
+	pay: impl AsyncFn(String),
+) {
+	const NB_REQUESTS: usize = 100;
+
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = ctx.bark("bark-1", srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_amount = btc(1);
+	let invoice_info = bark.bolt11_invoice(invoice_amount).await;
+	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+
+	let pg_cfg = srv.config().postgres.clone();
+	let db = Db::connect(&pg_cfg).await.unwrap();
+
+	// pay blocks until the payment is claimed, which never happens here, so
+	// we race it against the wait for its HTLC to arrive and then drop it.
+	tokio::select! {
+		_ = pay(invoice_info.invoice) => panic!("pay returned before any claim"),
+		_ = async {
+			srv.get_public_rpc().await.check_lightning_receive(
+				protos::CheckLightningReceiveRequest {
+					hash: receive.payment_hash.to_vec(),
+					wait: true,
+				},
+			).wait_millis(10_000).await.unwrap();
+		} => {},
+	}
+
+	// Fire all requests at once, each over its own connection. Every call
+	// uses a fresh user pubkey, so nothing but the server's own bookkeeping
+	// ties the requests together.
+	let results = join_all((0..NB_REQUESTS).map(|_| async {
+		let mut client = srv.get_public_rpc().await;
+		client.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
+			payment_hash: receive.payment_hash.to_vec(),
+			user_pubkey: Keypair::new(&SECP, &mut bip39::rand::thread_rng())
+				.public_key().serialize().to_vec(),
+			htlc_recv_expiry: 172,
+			lightning_receive_anti_dos: None,
+		}).await
+	})).await;
+
+	// Collect every distinct HTLC vtxo the calls handed out.
+	let mut nb_success = 0;
+	let mut returned_ids = HashSet::new();
+	let mut returned_amount = Amount::ZERO;
+	for result in results {
+		if let Ok(response) = result {
+			nb_success += 1;
+			for bytes in response.into_inner().htlc_vtxos {
+				let vtxo: Vtxo<Full> = Vtxo::deserialize(&bytes)
+					.expect("server returned invalid vtxo");
+				if returned_ids.insert(vtxo.id()) {
+					returned_amount += vtxo.amount();
+				}
+			}
+		}
+	}
+	let created = count_htlc_recv_vtxos(&db).await;
+	info!("{} of {} concurrent calls succeeded, handing out {} distinct htlc-recv vtxos worth {}, {} created",
+		nb_success, NB_REQUESTS, returned_ids.len(), returned_amount, created,
+	);
+
+	// However many calls succeed, the invoice must only pay out once:
+	// the vtxos handed out must never be worth more than the invoice.
+	assert!(nb_success > 0, "not a single request succeeded");
+	assert!(returned_amount <= invoice_amount,
+		"a {} invoice handed out {} worth of htlc vtxos",
+		invoice_amount, returned_amount,
+	);
+	assert_eq!(created, returned_ids.len(),
+		"server allocated {} htlc-recv vtxos but handed out {}",
+		created, returned_ids.len(),
+	);
+
+	// The losers are told to retry, so a retry after the storm must
+	// return the winner's vtxos instead of allocating a new set.
+	let retry = srv.get_public_rpc().await
+		.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
+			payment_hash: receive.payment_hash.to_vec(),
+			user_pubkey: Keypair::new(&SECP, &mut bip39::rand::thread_rng())
+				.public_key().serialize().to_vec(),
+			htlc_recv_expiry: 172,
+			lightning_receive_anti_dos: None,
+		}).await
+		.expect("retry after the storm must succeed").into_inner();
+	let retry_ids = retry.htlc_vtxos.iter()
+		.map(|b| Vtxo::<Full>::deserialize(b).unwrap().id())
+		.collect::<HashSet<_>>();
+	assert_eq!(retry_ids, returned_ids, "retry allocated a new htlc set");
+	assert_eq!(count_htlc_recv_vtxos(&db).await, created,
+		"retry allocated extra htlc-recv vtxos",
+	);
+
+	assert_vtxopool_consistency(srv).await;
+}
+lightning_test!(server_concurrent_prepare_lightning_claim);
 
 /// The server must refuse an HTLC-recv expiry that doesn't leave at
 /// least `htlc_expiry_delta` blocks of margin below the inbound
