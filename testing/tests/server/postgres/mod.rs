@@ -1261,11 +1261,12 @@ async fn set_forfeit_transactions_is_idempotent() {
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
-	// We will create a few vtxos
+	// We will create a few vtxos, all pubkey policy: htlc vtxos are
+	// refused as round inputs
 	let input_vtxos = [
 		ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone()),
 		ServerVtxo::from(VTXO_VECTORS.round1_vtxo.clone()),
-		ServerVtxo::from(VTXO_VECTORS.round2_vtxo.clone()),
+		ServerVtxo::from(VTXO_VECTORS.arkoor2_vtxo.clone()),
 	];
 
 	let input_vtxo_ids = input_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
