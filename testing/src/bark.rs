@@ -817,6 +817,16 @@ impl Bark {
 		self.try_offboard_all(address).await.expect("offboard --all command failed")
 	}
 
+	/// Offboard everything without syncing first, so that a stale wallet
+	/// doesn't notice its vtxos already went on chain. Returns the command
+	/// output instead of panicking, so tests can assert that the server
+	/// refused.
+	pub async fn try_offboard_all_no_sync(&self, address: impl fmt::Display) -> anyhow::Result<String> {
+		self.try_run(
+			["offboard", "--all", "--no-sync", "--address", &address.to_string()],
+		).await.context("running offboard --all --no-sync command failed")
+	}
+
 	pub async fn offboard_vtxo(
 		&self,
 		vtxo: impl fmt::Display,
