@@ -1503,7 +1503,7 @@ async fn receive_payments(
 				};
 
 				if let Err(e) = res {
-					tx.send(e).expect("broken channel");
+					let _ = tx.send(e);
 					continue 'receive;
 				}
 
