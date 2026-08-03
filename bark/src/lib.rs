@@ -1748,6 +1748,8 @@ impl Wallet {
 	/// Notes:
 	/// - Exits are only synced if we detect onchain activity which has force-exited our VTXO.
 	pub async fn sync(&self) {
+		self.inner.chain.invalidate_caches().await;
+
 		futures::join!(
 			async {
 				// NB: order matters here, if syncing call fails,
