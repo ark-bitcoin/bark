@@ -2,7 +2,7 @@ use std::pin::Pin;
 use bitcoin::hashes::Hash;
 use futures::Stream;
 use futures::StreamExt;
-use server_rpc::MAX_NB_MAILBOX_RECOVERY_IDS;
+use server_rpc::{MAX_NB_MAILBOX_ARKOOR_VTXOS, MAX_NB_MAILBOX_RECOVERY_IDS};
 use tracing::{error, warn};
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier, MailboxType};
@@ -96,6 +96,10 @@ impl rpc::server::MailboxService for crate::Server {
 		req: tonic::Request<protos::mailbox_server::PostArkoorMessageRequest>,
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
 		let req = req.into_inner();
+
+		if req.vtxos.len() > MAX_NB_MAILBOX_ARKOOR_VTXOS {
+			self::badarg!("too many vtxos, max is {}", MAX_NB_MAILBOX_ARKOOR_VTXOS);
+		}
 
 		let vtxos = req.vtxos.into_iter()
 			.map(|v| Vtxo::from_bytes(v))

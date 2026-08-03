@@ -12,7 +12,7 @@ use ark::test_util::dummy::DummyTestVtxoSpec;
 use ark::vtxo::raw::RawVtxo;
 
 use server::database::{Db, MailboxPayload};
-use server_rpc::protos;
+use server_rpc::{protos, MAX_NB_MAILBOX_ARKOOR_VTXOS};
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 use ark_testing::{TestContext, btc, require_bark_version};
@@ -208,6 +208,28 @@ async fn mailbox_post_arkoor_requires_known_vtxos() {
 
 	let entries = db.read(async |t| t.get_mailbox_entries(mailbox_id, 0, 100).await).await.unwrap();
 	assert_eq!(entries.len(), 1, "the genuine vtxo should be delivered");
+}
+
+/// The number of vtxos per arkoor post is capped so a single request can't
+/// carry an arbitrary amount of decode and database work. The cap is checked
+/// before any vtxo is deserialized.
+#[tokio::test]
+async fn mailbox_post_arkoor_caps_vtxos_per_request() {
+	let ctx = TestContext::new("server/mailbox_post_arkoor_caps_vtxos_per_request").await;
+	let srv = ctx.captaind("server").create().await;
+	let mut rpc = srv.get_mailbox_public_rpc().await;
+
+	let mailbox_kp = Keypair::new(&SECP, &mut thread_rng());
+	let mailbox_id = MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
+	let mailbox_pubkey = srv.ark_info().await.mailbox_pubkey;
+
+	let err = rpc.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
+		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &mailbox_kp).as_ref().to_vec(),
+		vtxos: vec![vec![0u8]; MAX_NB_MAILBOX_ARKOOR_VTXOS + 1],
+	}).await.unwrap_err();
+	assert!(err.message().contains("too many vtxos"),
+		"unexpected error for over-cap post: {}", err.message(),
+	);
 }
 
 /// Test that an incoming lightning payment posts an IncomingLightningPayment
