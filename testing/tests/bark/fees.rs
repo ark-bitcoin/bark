@@ -602,10 +602,7 @@ async fn offboard_fee_base_deducted() {
 	// Estimate before offboard
 	let estimate = bark.estimate_offboard_all(&address).await;
 
-	tokio::join!(
-		srv.trigger_round(),
-		bark.offboard_all(&address),
-	);
+	bark.offboard_all(&address).await;
 
 	assert_eq!(bark.spendable_balance().await, sat(0));
 
@@ -669,10 +666,7 @@ async fn offboard_fee_with_ppm_expiry() {
 	// Estimate before offboard
 	let estimate = bark.estimate_offboard_all(&address).await;
 
-	tokio::join!(
-		srv.trigger_round(),
-		bark.offboard_all(&address),
-	);
+	bark.offboard_all(&address).await;
 
 	let movements = bark.history().await;
 	let offb_mvt = movements.last().unwrap();

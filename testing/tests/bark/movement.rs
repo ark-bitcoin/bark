@@ -353,7 +353,7 @@ async fn lightning_send_offer() {
 #[tokio::test]
 async fn movement_offboard() {
 	let ctx = TestContext::new("movement/movement_offboard").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board(sat(100_000)).await;
