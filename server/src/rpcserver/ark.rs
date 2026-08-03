@@ -181,9 +181,10 @@ impl rpc::server::ArkService for Server {
 			.map_err(|e| tonic::Status::invalid_argument(format!("expiry_height: {e}")))?;
 		let utxo = OutPoint::from_bytes(&req.utxo)?;
 		let pub_nonce = musig::PublicNonce::from_bytes(&req.pub_nonce)?;
+		let funding_tx = bitcoin::Transaction::from_bytes(&req.funding_tx)?;
 
 		let resp = self.cosign_board(
-			amount, user_pubkey, expiry_height, utxo, pub_nonce, pver,
+			amount, user_pubkey, expiry_height, utxo, &funding_tx, pub_nonce, pver,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp.into()))

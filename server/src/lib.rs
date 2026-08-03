@@ -694,6 +694,7 @@ impl Server {
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		utxo: OutPoint,
+		funding_tx: &Transaction,
 		user_pub_nonce: PublicNonce,
 		pver: u64,
 	) -> anyhow::Result<ark::board::BoardCosignResponse> {
@@ -734,6 +735,38 @@ impl Server {
 			return badarg!("requested VTXO lifetime {} is too high (server VTXO lifetime is {})",
 				requested_lifetime, self.config.vtxo_lifetime,
 			);
+		}
+
+		// validate utxo against funding tx
+		if utxo.vout as usize >= funding_tx.output.len() {
+			return badarg!("board outpoint does not match funding tx (vout)");
+		}
+		if utxo.txid != funding_tx.compute_txid() {
+			return badarg!("board outpoint does not match funding tx (txid)");
+		}
+
+		// validate funding tx is real
+		// check that any of the inputs is a vtxo
+		self.db.read(async |tx| {
+			// check the funding tx itself first, obviously can't exist
+			if tx.get_virtual_transaction_by_txid(utxo.txid).await?.is_some() {
+				return badarg!("invalid funding tx: input is virtual tx: {}", utxo.txid);
+			}
+			for inp in &funding_tx.input {
+				let vtxo_id = inp.previous_output.into();
+				if tx.try_get_bare_vtxo_by_id(vtxo_id).await?.is_some() {
+					return badarg!("invalid funding tx: input is a VTXO: {}", vtxo_id);
+				}
+			}
+			Ok(())
+		}).await?;
+		// check that all the inputs is known
+		for inp in &funding_tx.input {
+			let txid = inp.previous_output.txid;
+			let status = bcd::tx_status(&self.bitcoind, txid).await?;
+			if !status.is_known() {
+				return badarg!("invalid funding tx: unknown input tx {}", txid);
+			}
 		}
 
 		let builder = BoardBuilder::new_for_cosign(

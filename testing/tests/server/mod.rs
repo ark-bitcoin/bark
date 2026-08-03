@@ -1008,10 +1008,17 @@ async fn reject_overlong_board_cosign() {
 	);
 
 	// An honest client computes a sane expiry, so only a hand-built request
-	// exercises the server's validation. The expiry check runs before any signing,
-	// so a freshly generated nonce and a throwaway outpoint suffice to reach it.
+	// exercises the server's validation. The expiry check runs before any signing
+	// and before the funding tx is validated, so a freshly generated nonce, a
+	// throwaway outpoint and an empty funding tx suffice to reach it.
 	let user_key = Keypair::new(&SECP, &mut thread_rng());
 	let (_sec_nonce, pub_nonce) = musig::nonce_pair(&user_key);
+	let funding_tx = Transaction {
+		version: transaction::Version::TWO,
+		lock_time: absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
 
 	let mut rpc = srv.get_public_rpc().await;
 	let res = rpc.request_board_cosign(protos::BoardCosignRequest {
@@ -1020,6 +1027,7 @@ async fn reject_overlong_board_cosign() {
 		expiry_height,
 		user_pubkey: user_key.public_key().serialize().to_vec(),
 		pub_nonce: pub_nonce.serialize().to_vec(),
+		funding_tx: bitcoin::consensus::serialize(&funding_tx),
 	}).await;
 
 	let err = res.expect_err("server must refuse a board expiry beyond its lifetime cap");
@@ -1696,6 +1704,7 @@ async fn test_register_board() {
 		expiry_height,
 		user_pubkey: client_cosign_keypair.public_key().serialize().to_vec(),
 		pub_nonce: board_builder.user_pub_nonce().serialize().to_vec(),
+		funding_tx: bitcoin::consensus::serialize(&funding_tx),
 	};
 
 	let mut rpc = srv.get_public_rpc().await;

@@ -205,6 +205,7 @@ message BoardCosignRequest {
 	uint32 expiry_height = 3;
 	bytes user_pubkey = 4;
 	bytes pub_nonce = 5;
+	bytes funding_tx = 6;
 }
 
 message BoardCosignResponse {

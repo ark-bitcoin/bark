@@ -88,6 +88,7 @@ async fn blocklist_board_register_rejected() {
 		expiry_height,
 		user_pubkey: user_key.public_key().serialize().to_vec(),
 		pub_nonce: board_builder.user_pub_nonce().serialize().to_vec(),
+		funding_tx: bitcoin::consensus::serialize(&funding_tx),
 	}).await.unwrap().into_inner();
 
 	let board_cosign: ark::board::BoardCosignResponse = cosign_response.try_into().unwrap();

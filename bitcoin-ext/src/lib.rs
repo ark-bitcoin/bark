@@ -181,5 +181,12 @@ impl TxStatus {
 			_ => None,
 		}
 	}
+
+	pub fn is_known(&self) -> bool {
+		match self {
+			TxStatus::Confirmed(..) | TxStatus::Mempool => true,
+			TxStatus::NotFound => false,
+		}
+	}
 }
 
