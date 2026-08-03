@@ -15,7 +15,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use bitcoin::hex::FromHex;
-use bitcoin::{absolute, transaction, Address, Amount, Network, OutPoint, Transaction};
+use bitcoin::{
+	absolute, transaction, Address, Amount, Network, OutPoint, ScriptBuf, Sequence,
+	Transaction, TxIn, TxOut, Txid, Witness,
+};
 use bitcoin::secp256k1::{Keypair, PublicKey, rand::thread_rng};
 use bitcoin_ext::P2TR_DUST_SAT;
 use futures::future::join_all;
@@ -1008,10 +1011,17 @@ async fn reject_overlong_board_cosign() {
 	);
 
 	// An honest client computes a sane expiry, so only a hand-built request
-	// exercises the server's validation. The expiry check runs before any signing,
-	// so a freshly generated nonce and a throwaway outpoint suffice to reach it.
+	// exercises the server's validation. The expiry check runs before any signing
+	// and before the funding tx is validated, so a freshly generated nonce, a
+	// throwaway outpoint and an empty funding tx suffice to reach it.
 	let user_key = Keypair::new(&SECP, &mut thread_rng());
 	let (_sec_nonce, pub_nonce) = musig::nonce_pair(&user_key);
+	let funding_tx = Transaction {
+		version: transaction::Version::TWO,
+		lock_time: absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
 
 	let mut rpc = srv.get_public_rpc().await;
 	let res = rpc.request_board_cosign(protos::BoardCosignRequest {
@@ -1020,6 +1030,7 @@ async fn reject_overlong_board_cosign() {
 		expiry_height,
 		user_pubkey: user_key.public_key().serialize().to_vec(),
 		pub_nonce: pub_nonce.serialize().to_vec(),
+		funding_tx: bitcoin::consensus::serialize(&funding_tx),
 	}).await;
 
 	let err = res.expect_err("server must refuse a board expiry beyond its lifetime cap");
@@ -1028,6 +1039,176 @@ async fn reject_overlong_board_cosign() {
 		"expected a lifetime rejection, got [{}]: {}", err.code(), err.message(),
 	);
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
+}
+
+/// A tx spending `inputs` with `nb_outputs` outputs.
+///
+/// The board cosign validation only inspects the funding tx' txid, its inputs
+/// and its number of outputs, so nothing here has to be signed or spendable.
+fn dummy_funding_tx(inputs: &[OutPoint], nb_outputs: usize) -> Transaction {
+	Transaction {
+		version: transaction::Version::TWO,
+		lock_time: absolute::LockTime::ZERO,
+		input: inputs.iter().map(|p| TxIn {
+			previous_output: *p,
+			script_sig: ScriptBuf::new(),
+			sequence: Sequence::ZERO,
+			witness: Witness::new(),
+		}).collect(),
+		output: iter::repeat_with(|| TxOut {
+			value: sat(100_000),
+			script_pubkey: ScriptBuf::new(),
+		}).take(nb_outputs).collect(),
+	}
+}
+
+/// Request a board cosign for `utxo`, claiming `funding_tx` as its funding tx.
+///
+/// All the other fields are valid, so only the funding tx validation can reject
+/// this request.
+async fn request_board_cosign_with_funding_tx(
+	ctx: &TestContext,
+	srv: &Captaind,
+	utxo: OutPoint,
+	funding_tx: &Transaction,
+) -> Result<protos::BoardCosignResponse, tonic::Status> {
+	let ark_info = srv.ark_info().await;
+	let tip = ctx.bitcoind().get_block_count().await as u32;
+	let user_key = Keypair::new(&SECP, &mut thread_rng());
+	let (_sec_nonce, pub_nonce) = musig::nonce_pair(&user_key);
+
+	let mut rpc = srv.get_public_rpc().await;
+	let res = rpc.request_board_cosign(protos::BoardCosignRequest {
+		amount: sat(100_000).to_sat(),
+		utxo: utxo.serialize(),
+		expiry_height: tip + ark_info.vtxo_expiry_delta as u32,
+		user_pubkey: user_key.public_key().serialize().to_vec(),
+		pub_nonce: pub_nonce.serialize().to_vec(),
+		funding_tx: bitcoin::consensus::serialize(funding_tx),
+	}).await;
+	res.map(|r| r.into_inner())
+}
+
+/// The board utxo must be an output of the funding tx the client sends along.
+///
+/// Without this check the server cosigns a board for an outpoint it has never
+/// seen, so the client can pick any outpoint it likes.
+#[tokio::test]
+async fn reject_board_cosign_utxo_not_in_funding_tx() {
+	require_bark_version!(> "0.4.0");
+
+	let ctx = TestContext::new("server/reject_board_cosign_utxo_not_in_funding_tx").await;
+	let srv = ctx.captaind("server").create().await;
+
+	// A single-output funding tx spending a real utxo, so that only the
+	// outpoint-vs-funding-tx checks can fail.
+	let addr = ctx.bitcoind().get_new_address();
+	let input_txid = ctx.bitcoind().fund_addr(&addr, btc(1)).await;
+	ctx.generate_blocks(1).await;
+	srv.bitcoind().await_transaction(input_txid).await;
+	let funding_tx = dummy_funding_tx(&[OutPoint::new(input_txid, 0)], 1);
+	let funding_txid = funding_tx.compute_txid();
+
+	// The funding tx has only one output, so vout 1 doesn't exist.
+	let err = request_board_cosign_with_funding_tx(
+		&ctx, &srv, OutPoint::new(funding_txid, 1), &funding_tx,
+	).await.expect_err("server must refuse a board utxo the funding tx doesn't have");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
+	assert!(
+		err.message().contains("board outpoint does not match funding tx (vout)"),
+		"err: {err}",
+	);
+
+	// An outpoint of a completely different tx.
+	let err = request_board_cosign_with_funding_tx(
+		&ctx, &srv, OutPoint::new(input_txid, 0), &funding_tx,
+	).await.expect_err("server must refuse a board utxo from another tx");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
+	assert!(
+		err.message().contains("board outpoint does not match funding tx (txid)"),
+		"err: {err}",
+	);
+}
+
+/// A funding tx must spend inputs our bitcoind knows, otherwise it is made up.
+#[tokio::test]
+async fn reject_board_cosign_unknown_funding_input() {
+	require_bark_version!(> "0.4.0");
+
+	let ctx = TestContext::new("server/reject_board_cosign_unknown_funding_input").await;
+	let srv = ctx.captaind("server").create().await;
+
+	// A txid that was never broadcast anywhere.
+	let unknown_txid = Txid::from_str(
+		"0000000000000000000000000000000000000000000000000000000000000001",
+	).unwrap();
+	let funding_tx = dummy_funding_tx(&[OutPoint::new(unknown_txid, 0)], 1);
+	let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+
+	let err = request_board_cosign_with_funding_tx(&ctx, &srv, utxo, &funding_tx).await
+		.expect_err("server must refuse a funding tx spending unknown inputs");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
+	assert!(
+		err.message().contains(&format!("unknown input tx {}", unknown_txid)),
+		"err: {err}",
+	);
+}
+
+/// An unconfirmed input is known to our bitcoind, so boarding on top of a tx
+/// that is still in the mempool must keep working.
+#[tokio::test]
+async fn accept_board_cosign_with_unconfirmed_funding_input() {
+	require_bark_version!(> "0.4.0");
+
+	let ctx = TestContext::new("server/accept_board_cosign_with_unconfirmed_funding_input").await;
+	let srv = ctx.captaind("server").create().await;
+
+	// A fresh block gets both bitcoinds out of IBD, in which they don't relay
+	// mempool txs to each other.
+	let height = ctx.generate_blocks(1).await;
+	srv.bitcoind().wait_for_blockheight(height).await;
+
+	// Deliberately not confirmed: it should sit in both mempools.
+	let addr = ctx.bitcoind().get_new_address();
+	let input_txid = ctx.bitcoind().fund_addr(&addr, btc(1)).await;
+	srv.bitcoind().await_transaction(input_txid).await;
+
+	let funding_tx = dummy_funding_tx(&[OutPoint::new(input_txid, 0)], 1);
+	let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+
+	let res = request_board_cosign_with_funding_tx(&ctx, &srv, utxo, &funding_tx).await
+		.expect("server must cosign a board funded by an unconfirmed tx");
+	// A parsable response means the server did cosign.
+	let _: ark::board::BoardCosignResponse = res.try_into()
+		.expect("invalid cosign response from server");
+}
+
+/// A VTXO is not an on-chain utxo, so it can never fund a board.
+///
+/// A client boarding on a VTXO would get a board VTXO whose funding output
+/// doesn't exist on chain, which the server can never claim.
+#[tokio::test]
+async fn reject_board_cosign_funding_tx_spending_vtxo() {
+	require_bark_version!(> "0.4.0");
+
+	let ctx = TestContext::new("server/reject_board_cosign_funding_tx_spending_vtxo").await;
+	let srv = ctx.captaind("server").create().await;
+
+	// Registering the board makes the server store the VTXO.
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	bark.board_all_and_confirm_and_register(&ctx).await;
+	let [vtxo] = bark.vtxos().await.try_into().unwrap();
+
+	let funding_tx = dummy_funding_tx(&[vtxo.id.to_point()], 1);
+	let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+
+	let err = request_board_cosign_with_funding_tx(&ctx, &srv, utxo, &funding_tx).await
+		.expect_err("server must refuse a funding tx spending a VTXO");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
+	assert!(
+		err.message().contains(&format!("input is a VTXO: {}", vtxo.id)),
+		"err: {err}",
+	);
 }
 
 #[tokio::test]
@@ -1696,6 +1877,7 @@ async fn test_register_board() {
 		expiry_height,
 		user_pubkey: client_cosign_keypair.public_key().serialize().to_vec(),
 		pub_nonce: board_builder.user_pub_nonce().serialize().to_vec(),
+		funding_tx: bitcoin::consensus::serialize(&funding_tx),
 	};
 
 	let mut rpc = srv.get_public_rpc().await;

@@ -52,10 +52,19 @@ pub struct Bark {
 }
 
 impl Bark {
-	fn cmd() -> TokioCommand {
+	pub fn cmd() -> TokioCommand {
 		let e = env::var(BARK_EXEC).expect("BARK_EXEC env not set");
 		let exec = resolve_path(e).expect("failed to resolve BARK_EXEC");
 		TokioCommand::new(exec)
+	}
+
+	pub fn try_cmd() -> Option<TokioCommand> {
+		let e = env::var(BARK_EXEC).ok()?;
+		if e.is_empty() {
+			return None;
+		}
+		let exec = resolve_path(e).ok()?;
+		Some(TokioCommand::new(exec))
 	}
 
 	/// Extract the version from the BARK_EXEC binary.

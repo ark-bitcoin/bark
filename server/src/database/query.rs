@@ -135,10 +135,10 @@ pub async fn get_vtxos_by_id(
 
 /// Get a bare VTXO by id, constructed from the metadata columns
 /// without deserializing the full vtxo blob.
-pub async fn get_bare_vtxo_by_id(
+pub async fn try_get_bare_vtxo_by_id(
 	tx: &PgTransaction<'_>,
 	id: VtxoId,
-) -> anyhow::Result<VtxoState<Bare, ServerVtxoPolicy>>
+) -> anyhow::Result<Option<VtxoState<Bare, ServerVtxoPolicy>>>
 {
 	let stmt = tx.prepare_typed("
 		SELECT id, vtxo_id, expiry, exit_delta, policy_type, policy,
@@ -149,11 +149,13 @@ pub async fn get_bare_vtxo_by_id(
 		WHERE vtxo_id = $1;
 	", &[Type::TEXT]).await?;
 
-	let row = tx.query_opt(&stmt, &[&id.to_string()]).await
-		.context("Query get_bare_vtxo_by_id failed")?
-		.not_found([id], "VTXO not found")?;
-
-	Ok(VtxoState::try_from(row)?)
+	let opt = tx.query_opt(&stmt, &[&id.to_string()]).await
+		.context("Query get_bare_vtxo_by_id failed")?;
+	if let Some(row) = opt {
+		Ok(Some(VtxoState::try_from(row)?))
+	} else {
+		Ok(None)
+	}
 }
 
 pub async fn store_round_participation(

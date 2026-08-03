@@ -415,6 +415,7 @@ impl<'a> BarkBuilder<'a> {
 			self.ctx.fund_bark(&bark, amount).await;
 		}
 		if !self.board_amounts.is_empty() {
+			self.ctx.generate_blocks(1).await;
 			for amount in &self.board_amounts {
 				let b = bark.try_board(*amount).await.context("board_amount")?;
 				self.ctx.await_transaction(b.funding_tx.txid).await;

@@ -49,6 +49,7 @@ use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::encode::ProtocolEncoding;
 
+use crate::error::ContextExt;
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
 use crate::telemetry;
@@ -362,11 +363,19 @@ impl<'t> Tx<'t> {
 		query::get_vtxo_by_id(&self, id).await
 	}
 
+	pub async fn try_get_bare_vtxo_by_id(
+		&self,
+		id: VtxoId,
+	) -> anyhow::Result<Option<VtxoState<Bare, ServerVtxoPolicy>>> {
+		query::try_get_bare_vtxo_by_id(&self, id).await
+	}
+
 	pub async fn get_bare_vtxo_by_id(
 		&self,
 		id: VtxoId,
 	) -> anyhow::Result<VtxoState<Bare, ServerVtxoPolicy>> {
-		query::get_bare_vtxo_by_id(&self, id).await
+		Ok(query::try_get_bare_vtxo_by_id(&self, id).await?
+			.not_found([id], "VTXO not found")?)
 	}
 
 	pub async fn get_server_vtxos_by_id(

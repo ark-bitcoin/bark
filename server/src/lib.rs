@@ -51,6 +51,7 @@ use anyhow::Context;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction, Txid};
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use futures::Stream;
+use server_rpc::MAX_NB_BOARD_FUNDING_INPUTS;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
@@ -694,6 +695,7 @@ impl Server {
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		utxo: OutPoint,
+		funding_tx: Option<&Transaction>,
 		user_pub_nonce: PublicNonce,
 		pver: u64,
 	) -> anyhow::Result<ark::board::BoardCosignResponse> {
@@ -734,6 +736,61 @@ impl Server {
 			return badarg!("requested VTXO lifetime {} is too high (server VTXO lifetime is {})",
 				requested_lifetime, self.config.vtxo_lifetime,
 			);
+		}
+
+		if self.config.require_board_funding_tx {
+			let funding_tx = funding_tx.context("missing funding_tx")?;
+
+			if funding_tx.input.len() > MAX_NB_BOARD_FUNDING_INPUTS {
+				return badarg!("invalid funding tx: too many inputs (max is {})",
+					MAX_NB_BOARD_FUNDING_INPUTS,
+				);
+			}
+
+			// validate utxo against funding tx
+			if utxo.vout as usize >= funding_tx.output.len() {
+				return badarg!("board outpoint does not match funding tx (vout)");
+			}
+			if utxo.txid != funding_tx.compute_txid() {
+				return badarg!("board outpoint does not match funding tx (txid)");
+			}
+
+			// validate funding tx is real
+			// check that any of the inputs is a vtxo
+			self.db.read(async |tx| {
+				// check the funding tx itself first, obviously can't exist
+				if tx.get_virtual_transaction_by_txid(utxo.txid).await?.is_some() {
+					return badarg!("invalid funding tx: known as virtual tx: {}", utxo.txid);
+				}
+				for inp in &funding_tx.input {
+					let vtxo_id = inp.previous_output.into();
+					if tx.try_get_bare_vtxo_by_id(vtxo_id).await?.is_some() {
+						return badarg!("invalid funding tx: input is a VTXO: {}", vtxo_id);
+					}
+				}
+				Ok(())
+			}).await?;
+			// check that all the inputs is known
+			for inp in &funding_tx.input {
+				let txid = inp.previous_output.txid;
+				let status = bcd::tx_status(&self.bitcoind, txid).await?;
+				if !status.is_known() {
+					return badarg!("invalid funding tx: unknown input tx {}", txid);
+				}
+			}
+
+			if let Some(ref list) = self.bitcoin_address_blocklist {
+				let res = list.check_tx(&funding_tx).await;
+				if !res.is_ok() {
+					if let Some(addr) = res.violating_address() {
+						let amount = funding_tx.output[utxo.vout as usize].value;
+						slog!(BoardAttemptBlockedAddress, vtxo: None, amount: amount,
+							address: addr.as_unchecked().clone(),
+						);
+					}
+					res.into_user_result().context("address blocklist check failed")?;
+				}
+			}
 		}
 
 		let builder = BoardBuilder::new_for_cosign(
@@ -793,7 +850,7 @@ impl Server {
 			let res = list.check_tx(&funding_tx).await;
 			if !res.is_ok() {
 				if let Some(addr) = res.violating_address() {
-					slog!(BoardAttemptBlockedAddress, vtxo: vtxo.id(), amount: vtxo.amount(),
+					slog!(BoardAttemptBlockedAddress, vtxo: Some(vtxo.id()), amount: vtxo.amount(),
 						address: addr.as_unchecked().clone(),
 					);
 				}

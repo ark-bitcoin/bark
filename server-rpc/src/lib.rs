@@ -132,6 +132,9 @@ pub const MAX_NB_FORFEIT_NONCE_IDS: usize = 1000;
 /// sending more should split into multiple posts.
 pub const MAX_NB_MAILBOX_ARKOOR_VTXOS: usize = 100;
 
+/// The maximum number of inputs of a board funding tx
+pub const MAX_NB_BOARD_FUNDING_INPUTS: usize = 100;
+
 
 #[derive(Debug, Clone)]
 pub struct WalletStatus {

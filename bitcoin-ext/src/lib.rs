@@ -181,5 +181,31 @@ impl TxStatus {
 			_ => None,
 		}
 	}
+
+	pub fn is_known(&self) -> bool {
+		match self {
+			TxStatus::Confirmed(..) | TxStatus::Mempool => true,
+			TxStatus::NotFound => false,
+		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn tx_status_is_known() {
+		let block = BlockRef {
+			height: 42,
+			hash: "000000000000000000024e0e2d3a1b03bb6e39b1e79b3b4b6e30e7bd39cd6f6f"
+				.parse().unwrap(),
+		};
+		// A tx we can see, confirmed or not, is known.
+		assert!(TxStatus::Confirmed(block).is_known());
+		assert!(TxStatus::Mempool.is_known());
+		// Only a tx we've never seen isn't.
+		assert!(!TxStatus::NotFound.is_known());
+	}
 }
 

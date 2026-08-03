@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ark::fees::{
 	BoardFees, FeeSchedule, LightningReceiveFees, LightningSendFees, OffboardFees, PpmFeeRate,
@@ -26,17 +26,16 @@ use server::Server;
 use tokio::{fs, join};
 use tonic::transport::Uri;
 
+use crate::constants::TX_PROPAGATION_SLEEP_TIME;
 use crate::daemon::bitcoind::BitcoindRpcHandle;
 use crate::daemon::bitcoind::snapshot;
 use crate::daemon::captaind::proxy::ArkRpcProxyServer;
 use crate::postgres::{self, PostgresDatabaseManager};
 use crate::util::{
-	get_bark_chain_source_from_env, get_cargo_workspace, test_data_directory,
-	TestContextChainSource,
+	get_bark_chain_source_from_env, get_cargo_workspace, get_tx_propagation_timeout_millis, test_data_directory, TestContextChainSource
 };
 use crate::{
-	btc, constants, sat, Bark, Barkd, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig,
-	Lightningd,
+	btc, constants, is_bark_version, sat, Bark, Barkd, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig, Lightningd
 };
 
 pub mod builders;
@@ -450,6 +449,11 @@ impl TestContext {
 			},
 			bitcoin_address_blocklist: None,
 			bitcoin_address_blocklist_refresh_interval: None,
+			require_board_funding_tx: if crate::bark::Bark::try_cmd().is_some() {
+				is_bark_version!(> "0.4.0")
+			} else {
+				true
+			},
 		}
 	}
 
@@ -711,7 +715,21 @@ impl TestContext {
 				electrs.await_transaction(txid).await;
 			}
 		};
-		join!(bitcoin, electrs);
+		let bitcoinds = self.secondary_bitcoinds.lock().unwrap().clone();
+		let bitcoinds = join_all(bitcoinds.into_iter().map(|b| async move {
+			let client = b.client();
+			let start = Instant::now();
+			let timeout = get_tx_propagation_timeout_millis();
+			while Instant::now().duration_since(start).as_millis() < timeout as u128 {
+				if client.get_raw_transaction(&txid, None).is_ok() {
+					return;
+				} else {
+					tokio::time::sleep(TX_PROPAGATION_SLEEP_TIME).await;
+				}
+			}
+			panic!("Failed to get raw transaction: {}", txid);
+		}));
+		join!(bitcoin, electrs, bitcoinds);
 	}
 
 	/// Waits for the given transaction ID to be available in the central bitcoin and electrs, as

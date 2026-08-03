@@ -175,15 +175,27 @@ impl rpc::server::ArkService for Server {
 		let pver = req.pver()?;
 		let req = req.into_inner();
 
+		if pver < server_rpc::pver::PROTOCOL_VERSION_BOARD_FUNDING_TX
+			&& self.config.require_board_funding_tx
+		{
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to board.");
+		}
+
 		let amount = Amount::from_sat(req.amount);
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 		let expiry_height = check_block_height(req.expiry_height)
 			.map_err(|e| tonic::Status::invalid_argument(format!("expiry_height: {e}")))?;
 		let utxo = OutPoint::from_bytes(&req.utxo)?;
 		let pub_nonce = musig::PublicNonce::from_bytes(&req.pub_nonce)?;
+		let funding_tx = if self.config.require_board_funding_tx {
+			Some(bitcoin::Transaction::from_bytes(&req.funding_tx)?)
+		} else {
+			None
+		};
 
 		let resp = self.cosign_board(
-			amount, user_pubkey, expiry_height, utxo, pub_nonce, pver,
+			amount, user_pubkey, expiry_height, utxo, funding_tx.as_ref(), pub_nonce, pver,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp.into()))

@@ -22,3 +22,6 @@ pub const PROTOCOL_VERSION_LN_RECEIVE_CHECKPOINT: u64 = 3;
 /// calculates ppm expiry fees on the exact total across all VTXOs rather
 /// than per VTXO.
 pub const PROTOCOL_VERSION_PPM_FEE_TOTAL: u64 = 4;
+
+/// Version that forces clients to send their (unsigned) funding tx for boarding
+pub const PROTOCOL_VERSION_BOARD_FUNDING_TX: u64 = 4;

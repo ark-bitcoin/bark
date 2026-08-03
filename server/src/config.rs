@@ -487,6 +487,13 @@ pub struct Config {
 	/// Defaults to 1 hour. Only relevant if [Self::bitcoin_address_blocklist] is set.
 	#[serde(default, with = "utils::serde::duration::opt")]
 	pub bitcoin_address_blocklist_refresh_interval: Option<Duration>,
+
+	/// Require the board funding tx from users
+	///
+	/// This should be enforced always in prod, but in order to test backwards
+	/// compatibility, we allow disabling it in tests.
+	#[serde(default)]
+	pub require_board_funding_tx: bool,
 }
 
 impl Config {
@@ -550,6 +557,10 @@ impl Config {
 				past their timeout between checks.",
 				self.offboard_check_interval, self.offboard_session_timeout,
 			);
+		}
+
+		if self.network == bitcoin::Network::Bitcoin && !self.require_board_funding_tx {
+			bail!("Cannot turn off require_board_funding_tx on mainnet");
 		}
 
 		Ok(())

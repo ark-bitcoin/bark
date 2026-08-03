@@ -7,7 +7,7 @@ use log::{info, warn};
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::fees::validate_and_subtract_fee;
 use bitcoin_ext::BlockHeight;
-use server_rpc::protos;
+use server_rpc::{protos, MAX_NB_BOARD_FUNDING_INPUTS};
 
 use crate::{Wallet, WalletVtxo};
 use crate::actions::DriveMode;
@@ -130,6 +130,13 @@ impl Wallet {
 			} else {
 				wallet.prepare_drain_tx(addr, fee_rate).await?
 			};
+
+			if board_psbt.inputs.len() > MAX_NB_BOARD_FUNDING_INPUTS {
+				bail!("We need {} inputs to board, exceeding the limit of {}",
+					board_psbt.inputs.len(), MAX_NB_BOARD_FUNDING_INPUTS,
+				);
+			}
+
 			wallet.finish_psbt(board_psbt).await?
 		};
 
@@ -211,6 +218,7 @@ impl Wallet {
 			expiry_height,
 			user_pubkey: user_keypair.public_key().serialize().to_vec(),
 			pub_nonce: builder.user_pub_nonce().serialize().to_vec(),
+			funding_tx: bitcoin::consensus::serialize(&board_psbt.unsigned_tx),
 		}).await.context("error requesting board cosign")?
 			.into_inner().try_into().context("invalid cosign response from server")?;
 
