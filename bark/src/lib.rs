@@ -978,8 +978,9 @@ impl Wallet {
 			.server_pubkey(server_pubkey)
 			.pubkey_policy(keypair.public_key())
 			.mailbox(mailbox_pubkey, mailbox, &keypair)
-			.expect("Failed to assign mailbox")
-			.into_address().unwrap())
+			.context("failed to assign mailbox")?
+			.into_address()
+			.context("failed to build address")?)
 	}
 
 	/// Generate a new [ark::Address] and returns the index of the key used to create it.
