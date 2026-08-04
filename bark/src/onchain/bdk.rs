@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
@@ -31,6 +32,18 @@ use crate::utils::time::timestamp_secs;
 const STOP_GAP: usize = 50;
 const PARALLEL_REQS: usize = 4;
 const GENESIS_HEIGHT: u32 = 0;
+/// Minimum age (by `last_seen`) a locally-unconfirmed tx must reach before a
+/// sync is allowed to evict it for being absent from the node's mempool.
+///
+/// A tx is marked seen (`apply_unconfirmed_txs`) as soon as it's signed, not
+/// once it's actually reached the node: e.g. a board's funding tx is applied
+/// locally in `finish_psbt`, then only broadcast after a cosign round-trip
+/// with the Ark server. Without this grace period, a sync landing in that gap
+/// would see the tx as absent from the node's mempool and evict it, handing
+/// its inputs back to the next coin selection while the "evicted" tx is still
+/// in flight and about to land in the mempool anyway -- a self-inflicted
+/// double-spend. A tx that's genuinely gone just gets evicted one sync later.
+const ONCHAIN_EVICTION_GRACE_SECS: u64 = 30;
 
 impl From<LocalOutput> for LocalUtxo {
 	fn from(value: LocalOutput) -> Self {
@@ -444,7 +457,25 @@ impl OnchainWallet {
 		emitter_handle.await.context("wallet sync blocking task panicked")??;
 
 		if let Ok(mempool) = mempool_rx.await {
-			self.inner.apply_evicted_txs(mempool.evicted);
+			let now = timestamp_secs();
+			let recently_seen: HashSet<Txid> = self.inner.transactions()
+				.filter_map(|tx| match tx.chain_position {
+					ChainPosition::Unconfirmed { last_seen: Some(seen), .. }
+						if now.saturating_sub(seen) < ONCHAIN_EVICTION_GRACE_SECS => {
+						Some(tx.tx_node.txid)
+					},
+					_ => None,
+				})
+				.collect();
+			let evicted = mempool.evicted.into_iter().filter(|(txid, _)| {
+				if recently_seen.contains(txid) {
+					debug!("Not evicting recently-seen tx {} still within grace period", txid);
+					false
+				} else {
+					true
+				}
+			});
+			self.inner.apply_evicted_txs(evicted);
 			self.inner.apply_unconfirmed_txs(mempool.update);
 		}
 		self.persist().await?;
