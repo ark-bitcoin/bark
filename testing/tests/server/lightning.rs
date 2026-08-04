@@ -1289,6 +1289,31 @@ async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
 }
 
 #[tokio::test]
+async fn should_refuse_over_max_ln_receive_amount_invoice_request() {
+	let ctx = TestContext::new("server/should_refuse_over_max_ln_receive_amount_invoice_request").await;
+
+	trace!("Start lightningd-1");
+	let lightningd = ctx.lightningd("lightningd-1").create().await;
+
+	let srv = ctx.captaind("server").lightningd(&lightningd).cfg(|cfg| {
+		cfg.max_ln_receive_amount = Some(sat(100_000));
+	}).create().await;
+
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let err = bark.try_bolt11_invoice(sat(100_001)).await.unwrap_err().to_alt_string();
+	assert!(err.contains("Requested amount exceeds lightning receive limit of 0.00100000 BTC"), "err: {err}");
+
+	// At the limit is still allowed.
+	bark.try_bolt11_invoice(sat(100_000)).await.unwrap();
+
+	assert_vtxopool_consistency(&srv).await;
+}
+
+#[tokio::test]
 async fn server_can_use_multi_input_from_vtxo_pool() {
 	let ctx = TestContext::new("server/server_can_use_multi_input_from_vtxo_pool").await;
 
