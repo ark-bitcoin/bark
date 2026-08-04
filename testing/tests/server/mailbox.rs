@@ -236,7 +236,7 @@ async fn mailbox_post_arkoor_caps_vtxos_per_request() {
 /// notification to the receiver's mailbox with the payment hash.
 #[tokio::test]
 async fn mailbox_lightning_receive_pending() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/mailbox_lightning_receive_pending").await;
 
@@ -306,7 +306,7 @@ async fn mailbox_lightning_receive_pending() {
 /// notification to the sender's mailbox with the preimage.
 #[tokio::test]
 async fn mailbox_lightning_send_finished() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/mailbox_lightning_send_finished").await;
 

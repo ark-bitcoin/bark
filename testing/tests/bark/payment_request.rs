@@ -9,7 +9,7 @@ use bark::payment_request::{
 };
 use bitcoin::secp256k1::{Keypair, rand::thread_rng};
 use bitcoin::Amount;
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, TestContext};
 
 fn new_ark_address(testnet: bool) -> ark::Address {
 	let foreign_server = Keypair::new(&SECP, &mut thread_rng()).public_key();
@@ -31,6 +31,8 @@ fn new_ark_address(testnet: bool) -> ark::Address {
 /// strings, invalid-network literals) are constructed manually.
 #[tokio::test]
 async fn parse_payment_request() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/parse_payment_request").await;
 
 	// Server needs a lightning node so bark can create bolt11 invoices.

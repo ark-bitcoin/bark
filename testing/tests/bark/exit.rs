@@ -395,7 +395,7 @@ async fn double_exit_call() {
 
 #[tokio::test]
 async fn exit_bolt11_change() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/exit_bolt11_change").await;
 
@@ -437,7 +437,7 @@ async fn exit_bolt11_change() {
 
 #[tokio::test]
 async fn exit_revoked_lightning_payment() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/exit_revoked_lightning_payment").await;
 
@@ -605,7 +605,7 @@ async fn bark_should_exit_a_pending_board() {
 
 #[tokio::test]
 async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke").await;
 
@@ -753,7 +753,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 #[tokio::test]
 async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke").await;
 
@@ -1121,7 +1121,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 
 #[tokio::test]
 async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
-	require_bark_version!(> "0.3.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign").await;
 	let ctx = Arc::new(ctx);
@@ -1295,7 +1295,7 @@ async fn vtxo_remains_spendable_while_exit_pending() {
 
 	// Terminal exits drop out of the default listing and surface via --include-finished.
 	let version = BarkVersion::parse(&Bark::version().await);
-	let cutoff = BarkVersion::parse("0.3.0");	
+	let cutoff = BarkVersion::parse("0.3.0");
 	let exits = if version > cutoff {
 		assert!(bark.list_exits().await.is_empty(),
 			"finished exit should not appear in the default exit list");

@@ -184,6 +184,8 @@ async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
 /// topologies via the `lightning_test!` harness.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_receive() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_receive").await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 	let srv = ctx.captaind("server")
@@ -234,6 +236,8 @@ async fn recovered_wallet_finds_lightning_receive() {
 /// rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_send_change() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_send_change").await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 	let srv = ctx.captaind("server")
@@ -290,6 +294,8 @@ async fn recovered_wallet_finds_lightning_send_change() {
 /// After recovering from the seed, both must be rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_send_revocation() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_send_revocation").await;
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 	let srv = ctx.captaind("server")

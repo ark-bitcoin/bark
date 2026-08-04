@@ -1480,6 +1480,8 @@ async fn should_refuse_oor_with_invalid_attestation() {
 
 #[tokio::test]
 async fn should_refuse_ln_pay_with_invalid_attestation() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/should_refuse_ln_pay_with_invalid_attestation").await;
 
 	let lightningd = ctx.lightningd("lightningd").create().await;

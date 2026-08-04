@@ -168,6 +168,8 @@ async fn exit_start() {
 
 #[tokio::test]
 async fn lightning_send_invoice_receive() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/lightning_send_invoice_receive").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).create().await;
@@ -251,6 +253,8 @@ async fn lightning_send_invoice_receive() {
 
 #[tokio::test]
 async fn lightning_send_invoice_revoke() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/lightning_send_invoice_revoke").await;
 	let ln = ctx.new_lightning_setup_no_channel("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).create().await;
@@ -298,6 +302,8 @@ async fn lightning_send_invoice_revoke() {
 
 #[tokio::test]
 async fn lightning_send_offer() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/lightning_send_offer").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).create().await;

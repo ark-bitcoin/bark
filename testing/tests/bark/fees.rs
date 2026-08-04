@@ -786,7 +786,7 @@ async fn send_onchain_fee_deducted() {
 
 #[tokio::test]
 async fn lightning_receive_fee_deducted() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("fees/lightning_receive_fee_deducted").await;
 
@@ -844,7 +844,7 @@ async fn lightning_receive_fee_deducted() {
 
 #[tokio::test]
 async fn lightning_receive_fee_rejects_when_fee_exceeds_amount() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("fees/lightning_receive_fee_rejects_when_fee_exceeds_amount").await;
 
@@ -877,7 +877,7 @@ async fn lightning_receive_fee_rejects_when_fee_exceeds_amount() {
 
 #[tokio::test]
 async fn lightning_send_fee_deducted() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("fees/lightning_send_fee_deducted").await;
 
@@ -929,7 +929,7 @@ async fn lightning_send_fee_deducted() {
 
 #[tokio::test]
 async fn lightning_send_fee_min_fee_applies() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("fees/lightning_send_fee_min_fee_applies").await;
 
@@ -980,7 +980,7 @@ async fn lightning_send_fee_min_fee_applies() {
 
 #[tokio::test]
 async fn lightning_send_fee_ppm_expiry_table() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("fees/lightning_send_fee_ppm_expiry_table").await;
 

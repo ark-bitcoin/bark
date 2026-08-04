@@ -130,7 +130,7 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	// Block cooperative settlement so the only path to settle
 	// the hold invoice is via on-chain preimage extraction.
@@ -209,6 +209,8 @@ lightning_test!(server_settles_invoice_from_on_chain_htlc_preimage, |cfg| {
 ///    the error message.
 #[tokio::test]
 async fn reject_revocation_on_successful_lightning_payment() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/reject_revocation_on_successful_lightning_payment").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -261,6 +263,8 @@ async fn reject_revocation_on_successful_lightning_payment() {
 /// a single request, which isn't reproducible without fault injection.
 #[tokio::test]
 async fn reject_revocation_when_settled_but_status_regressed() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/reject_revocation_when_settled_but_status_regressed").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -348,6 +352,8 @@ async fn request_second_htlc_cosign(
 /// HTLC VTXOs should not be accepted as inputs for spends (arkoor, rounds or offboards).
 #[tokio::test]
 async fn refuse_generic_spends_of_htlc_send_vtxo_while_payment_in_flight() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new(
 		"server/refuse_generic_spends_of_htlc_send_vtxo_while_payment_in_flight",
 	).await;
@@ -420,6 +426,8 @@ async fn refuse_generic_spends_of_htlc_send_vtxo_while_payment_in_flight() {
 /// outside of an ongoing lightning payment.
 #[tokio::test]
 async fn refuse_generic_spends_of_htlc_send_vtxo_with_no_payment_in_flight() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new(
 		"server/refuse_generic_spends_of_htlc_send_vtxo_with_no_payment_in_flight",
 	).await;
@@ -505,6 +513,8 @@ async fn refuse_generic_spends_of_htlc_send_vtxo_with_no_payment_in_flight() {
 /// provide a Pubkey VTXO.
 #[tokio::test]
 async fn revoked_htlc_send_vtxo_can_be_offboarded() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/revoked_htlc_send_vtxo_can_be_offboarded").await;
 
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
@@ -536,6 +546,8 @@ async fn revoked_htlc_send_vtxo_can_be_offboarded() {
 
 #[tokio::test]
 async fn server_refuse_claim_invoice_not_settled() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/server_refuse_claim_invoice_not_settled").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -573,6 +585,8 @@ async fn server_refuse_claim_invoice_not_settled() {
 
 #[tokio::test]
 async fn server_should_release_hold_invoice_when_subscription_is_canceled() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/server_should_release_hold_invoice_when_subscription_is_canceled").await;
 	let cfg_htlc_forward_timeout = Duration::from_secs(5);
 
@@ -615,6 +629,8 @@ async fn server_should_release_hold_invoice_when_subscription_is_canceled() {
 
 #[tokio::test]
 async fn server_generated_invoice_has_configured_expiry() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/server_generated_invoice_has_configured_expiry").await;
 	let cfg_invoice_expiry = Duration::from_secs(5);
 
@@ -659,8 +675,8 @@ async fn server_claim_lightning_receive_is_idempotent(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
-	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.3.0");
+	// The new ServerHtlcRecv policy breaks LN receive for bark 0.5.0 and older
+	require_bark_version!(> "0.5.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -705,8 +721,8 @@ async fn server_returned_htlc_recv_vtxos_identical(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
-	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.3.0");
+	// The new ServerHtlcRecv policy breaks LN receive for bark 0.5.0 and older
+	require_bark_version!(> "0.5.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -780,6 +796,8 @@ async fn server_concurrent_prepare_lightning_claim(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	require_bark_version!(> "0.5.0");
+
 	const NB_REQUESTS: usize = 100;
 
 	srv.wait_for_vtxopool(&ctx).await;
@@ -888,6 +906,8 @@ async fn refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	require_bark_version!(> "0.5.0");
+
 	srv.wait_for_vtxopool(&ctx).await;
 
 	let bark = ctx.bark("bark-1", srv).funded(btc(3)).create().await;
@@ -1088,6 +1108,8 @@ async fn refuse_receive_claim_after_incoming_htlc_expiry() {
 
 #[tokio::test]
 async fn should_refuse_paying_invoice_not_matching_htlcs() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/should_refuse_paying_invoice_not_matching_htlcs").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1127,6 +1149,8 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 
 #[tokio::test]
 async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1168,7 +1192,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 
 #[tokio::test]
 async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/should_refuse_ln_pay_input_vtxo_that_is_being_exited").await;
 
@@ -1233,6 +1257,8 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 
 #[tokio::test]
 async fn should_allow_dust_lightning_receive_request() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/should_allow_dust_lightning_receive_request").await;
 
 	trace!("Start lightningd-1");
@@ -1252,6 +1278,8 @@ async fn should_allow_dust_lightning_receive_request() {
 
 #[tokio::test]
 async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/should_refuse_over_max_vtxo_amount_lightning_receive_request").await;
 
 	trace!("Start lightningd-1");
@@ -1315,6 +1343,8 @@ async fn should_refuse_over_max_ln_receive_amount_invoice_request() {
 
 #[tokio::test]
 async fn server_can_use_multi_input_from_vtxo_pool() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/server_can_use_multi_input_from_vtxo_pool").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1358,6 +1388,8 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 
 #[tokio::test]
 async fn server_can_use_vtxo_pool_change_for_next_receive() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/server_can_use_vtxo_pool_change_for_next_receive").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1424,6 +1456,8 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 
 #[tokio::test]
 async fn initiate_lightning_payment_fails_without_register_vtxo_transactions() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/initiate_lightning_payment_fails_without_register_vtxo_transactions").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1568,6 +1602,8 @@ async fn refuse_receive_with_unlock_hash_as_payment_hash() {
 /// domains at once.
 #[tokio::test]
 async fn refuse_send_with_unlock_hash_as_payment_hash() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/refuse_send_with_unlock_hash_as_payment_hash").await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;

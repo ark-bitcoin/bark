@@ -235,6 +235,8 @@ async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 
 #[tokio::test]
 async fn watchman_sweeps_lightning_vtxos() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/watchman_sweeps_lightning_vtxos").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
@@ -373,7 +375,7 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 
 #[tokio::test]
 async fn watchman_sweeps_vtxopool_with_exit() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/watchman_sweeps_vtxopool_with_exit").await;
 	let ln = ctx.new_lightning_setup("ln").await;
@@ -823,6 +825,8 @@ async fn offboard_exit_attack(test_name: &str, n_vtxos: usize) -> bitcoin::Amoun
 /// never force-exited in either case.
 #[tokio::test]
 async fn watchman_force_exit_lightning_vtxo_blocks_refresh() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/watchman_force_exit_lightning_vtxo_blocks_refresh").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
