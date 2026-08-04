@@ -49,7 +49,7 @@ impl Wallet {
 	}
 
 	/// Returns every in-progress board checkpoint.
-	async fn boards_in_progress(&self) -> anyhow::Result<Vec<Board>> {
+	pub(crate) async fn boards_in_progress(&self) -> anyhow::Result<Vec<Board>> {
 		Ok(self.inner.db.get_all_wallet_action_checkpoints().await?
 			.into_iter()
 			.filter_map(|cp| cp.into_board())
