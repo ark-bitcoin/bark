@@ -42,7 +42,7 @@ pub fn expiry_clause(server_pubkey: PublicKey, expiry_height: BlockHeight) -> Sc
 ///
 /// It is used hidden in the leaf taproot as only script or used in the forfeit output.
 pub fn unlock_clause(pubkey: XOnlyPublicKey, unlock_hash: UnlockHash) -> ScriptBuf {
-	scripts::hash_and_sign(unlock_hash, pubkey)
+	scripts::hash_and_sign_v0(unlock_hash, pubkey)
 }
 
 /// The taproot of the leaf policy, i.e. of the output that is spent by the leaf tx

@@ -196,7 +196,7 @@ pub mod scripts {
 	///
 	/// The expected spending script witness is the preimage followed by
 	/// the signature.
-	pub fn hash_and_sign(hash: sha256::Hash, pubkey: XOnlyPublicKey) -> ScriptBuf {
+	pub fn hash_and_sign_v0(hash: sha256::Hash, pubkey: XOnlyPublicKey) -> ScriptBuf {
 		let hash_160 = ripemd160::Hash::hash(&hash[..]);
 
 		bitcoin::Script::builder()
@@ -208,7 +208,7 @@ pub mod scripts {
 			.into_script()
 	}
 
-	pub fn hash_delay_sign(
+	pub fn hash_delay_sign_v0(
 		hash: sha256::Hash,
 		delay_blocks: BlockDelta,
 		pubkey: XOnlyPublicKey,

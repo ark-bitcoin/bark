@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use tracing::{error, trace, warn};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
-use ark::vtxo::policy::clause::HashDelaySignClause;
+use ark::vtxo::policy::clause::HashDelaySignClause_v0;
 use bitcoin_ext::BlockHeight;
 
 use crate::database::Db;
@@ -174,7 +174,7 @@ fn try_extract_preimage(vtxo: &ServerVtxo, witness: &Witness) -> Option<ark::lig
 		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv(p)) => p.payment_hash,
 		_ => return None,
 	};
-	let preimage = HashDelaySignClause::extract_preimage_from_witness(witness, payment_hash);
+	let preimage = HashDelaySignClause_v0::extract_preimage_from_witness(witness, payment_hash);
 	if preimage.is_none() {
 		// Not necessarily an error: the VTXO may have been spent via the
 		// arkoor path by its next owner after the HTLC was settled between

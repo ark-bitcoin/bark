@@ -42,7 +42,7 @@ use crate::lightning::PaymentHash;
 use crate::tree::signed::UnlockHash;
 use crate::vtxo::TapScriptClause;
 use crate::vtxo::policy::clause::{
-	DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause, HashSignClause,
+	DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause_v0, HashSignClause_v0,
 	TimelockSignClause, VtxoClause,
 };
 
@@ -382,9 +382,9 @@ impl HarkLeafVtxoPolicy {
 	}
 
 	/// Creates the unlock clause requiring a preimage and aggregate signature.
-	pub fn unlock_clause(&self, server_pubkey: PublicKey) -> HashSignClause {
+	pub fn unlock_clause(&self, server_pubkey: PublicKey) -> HashSignClause_v0 {
 		let agg_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
-		HashSignClause { pubkey: agg_pk, hash: self.unlock_hash }
+		HashSignClause_v0 { pubkey: agg_pk, hash: self.unlock_hash }
 	}
 
 	/// Returns the clauses for this policy.
@@ -453,8 +453,8 @@ impl ServerHtlcSendVtxoPolicy {
 		&self,
 		server_pubkey: PublicKey,
 		exit_delta: BlockDelta,
-	) -> HashDelaySignClause {
-		HashDelaySignClause {
+	) -> HashDelaySignClause_v0 {
+		HashDelaySignClause_v0 {
 			pubkey: server_pubkey,
 			hash: self.payment_hash.to_sha256_hash(),
 			block_delta: exit_delta
@@ -529,8 +529,8 @@ impl ServerHtlcRecvVtxoPolicy {
 	/// greater exit delta delay than server's clause. Alice must use this
 	/// path if she revealed the preimage but server refused to cosign
 	/// claim VTXO.
-	pub fn user_reveals_preimage_clause(&self, exit_delta: BlockDelta) -> HashDelaySignClause {
-		HashDelaySignClause {
+	pub fn user_reveals_preimage_clause(&self, exit_delta: BlockDelta) -> HashDelaySignClause_v0 {
+		HashDelaySignClause_v0 {
 			pubkey: self.user_pubkey,
 			hash: self.payment_hash.to_sha256_hash(),
 			block_delta: self.htlc_expiry_delta.checked_add(exit_delta)
@@ -595,8 +595,8 @@ impl HarkForfeitVtxoPolicy {
 	pub fn server_claim_clause(
 		&self,
 		server_pubkey: PublicKey,
-	) -> HashSignClause {
-		HashSignClause {
+	) -> HashSignClause_v0 {
+		HashSignClause_v0 {
 			pubkey: server_pubkey,
 			hash: self.unlock_hash,
 		}

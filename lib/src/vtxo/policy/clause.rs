@@ -234,13 +234,14 @@ impl Into<VtxoClause> for DelayedTimelockSignClause {
 /// A clause that allows to sign and spend the UTXO after a relative
 /// timelock, if preimage matching the hash is provided.
 #[derive(Debug, Clone)]
-pub struct HashDelaySignClause {
+#[allow(non_camel_case_types)]
+pub struct HashDelaySignClause_v0 {
 	pub pubkey: PublicKey,
 	pub hash: sha256::Hash,
 	pub block_delta: BlockDelta,
 }
 
-impl HashDelaySignClause {
+impl HashDelaySignClause_v0 {
 	/// Returns the input sequence for this clause.
 	pub fn sequence(&self) -> Sequence {
 		Sequence::from_height(self.block_delta)
@@ -270,11 +271,11 @@ impl HashDelaySignClause {
 	}
 }
 
-impl TapScriptClause for HashDelaySignClause {
+impl TapScriptClause for HashDelaySignClause_v0 {
 	type WitnessData = (schnorr::Signature, [u8; 32]);
 
 	fn tapscript(&self) -> ScriptBuf {
-		scripts::hash_delay_sign(
+		scripts::hash_delay_sign_v0(
 			self.hash,
 			self.block_delta,
 			self.pubkey.x_only_public_key().0,
@@ -313,9 +314,9 @@ impl TapScriptClause for HashDelaySignClause {
 	}
 }
 
-impl Into<VtxoClause> for HashDelaySignClause {
+impl Into<VtxoClause> for HashDelaySignClause_v0 {
 	fn into(self) -> VtxoClause {
-		VtxoClause::HashDelaySign(self)
+		VtxoClause::HashDelaySign_v0(self)
 	}
 }
 
@@ -324,16 +325,17 @@ impl Into<VtxoClause> for HashDelaySignClause {
 /// This is used for the unlock clause in hArk leaf outputs, where the aggregate
 /// pubkey of user+server must sign, and a preimage must be revealed.
 #[derive(Debug, Clone)]
-pub struct HashSignClause {
+#[allow(non_camel_case_types)]
+pub struct HashSignClause_v0 {
 	pub pubkey: PublicKey,
 	pub hash: sha256::Hash,
 }
 
-impl TapScriptClause for HashSignClause {
+impl TapScriptClause for HashSignClause_v0 {
 	type WitnessData = (schnorr::Signature, [u8; 32]);
 
 	fn tapscript(&self) -> ScriptBuf {
-		scripts::hash_and_sign(self.hash, self.pubkey.x_only_public_key().0)
+		scripts::hash_and_sign_v0(self.hash, self.pubkey.x_only_public_key().0)
 	}
 
 	fn witness(
@@ -370,9 +372,9 @@ impl TapScriptClause for HashSignClause {
 	}
 }
 
-impl Into<VtxoClause> for HashSignClause {
+impl Into<VtxoClause> for HashSignClause_v0 {
 	fn into(self) -> VtxoClause {
-		VtxoClause::HashSign(self)
+		VtxoClause::HashSign_v0(self)
 	}
 }
 
@@ -381,8 +383,10 @@ pub enum VtxoClause {
 	DelayedSign(DelayedSignClause),
 	TimelockSign(TimelockSignClause),
 	DelayedTimelockSign(DelayedTimelockSignClause),
-	HashDelaySign(HashDelaySignClause),
-	HashSign(HashSignClause),
+	#[allow(non_camel_case_types)]
+	HashDelaySign_v0(HashDelaySignClause_v0),
+	#[allow(non_camel_case_types)]
+	HashSign_v0(HashSignClause_v0),
 }
 
 impl VtxoClause {
@@ -392,8 +396,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => c.pubkey,
 			Self::TimelockSign(c) => c.pubkey,
 			Self::DelayedTimelockSign(c) => c.pubkey,
-			Self::HashDelaySign(c) => c.pubkey,
-			Self::HashSign(c) => c.pubkey,
+			Self::HashDelaySign_v0(c) => c.pubkey,
+			Self::HashSign_v0(c) => c.pubkey,
 		}
 	}
 
@@ -404,8 +408,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => c.tapscript(),
 			Self::TimelockSign(c) => c.tapscript(),
 			Self::DelayedTimelockSign(c) => c.tapscript(),
-			Self::HashDelaySign(c) => c.tapscript(),
-			Self::HashSign(c) => c.tapscript(),
+			Self::HashDelaySign_v0(c) => c.tapscript(),
+			Self::HashSign_v0(c) => c.tapscript(),
 		}
 	}
 
@@ -415,8 +419,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => Some(c.sequence()),
 			Self::TimelockSign(_) => None,
 			Self::DelayedTimelockSign(c) => Some(c.sequence()),
-			Self::HashDelaySign(c) => Some(c.sequence()),
-			Self::HashSign(_) => None,
+			Self::HashDelaySign_v0(c) => Some(c.sequence()),
+			Self::HashSign_v0(_) => None,
 		}
 	}
 
@@ -426,8 +430,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => c.control_block(vtxo),
 			Self::TimelockSign(c) => c.control_block(vtxo),
 			Self::DelayedTimelockSign(c) => c.control_block(vtxo),
-			Self::HashDelaySign(c) => c.control_block(vtxo),
-			Self::HashSign(c) => c.control_block(vtxo),
+			Self::HashDelaySign_v0(c) => c.control_block(vtxo),
+			Self::HashSign_v0(c) => c.control_block(vtxo),
 		}
 	}
 
@@ -437,8 +441,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => c.witness_size(vtxo),
 			Self::TimelockSign(c) => c.witness_size(vtxo),
 			Self::DelayedTimelockSign(c) => c.witness_size(vtxo),
-			Self::HashDelaySign(c) => c.witness_size(vtxo),
-			Self::HashSign(c) => c.witness_size(vtxo),
+			Self::HashDelaySign_v0(c) => c.witness_size(vtxo),
+			Self::HashSign_v0(c) => c.witness_size(vtxo),
 		}
 	}
 }
@@ -470,8 +474,8 @@ mod tests {
 			VtxoClause::DelayedSign(_) => true,
 			VtxoClause::TimelockSign(_) => true,
 			VtxoClause::DelayedTimelockSign(_) => true,
-			VtxoClause::HashDelaySign(_) => true,
-			VtxoClause::HashSign(_) => true,
+			VtxoClause::HashDelaySign_v0(_) => true,
+			VtxoClause::HashSign_v0(_) => true,
 		}
 	}
 
@@ -621,7 +625,7 @@ mod tests {
 	fn test_hash_delay_clause() {
 		let preimage = [0; 32];
 
-		let clause = HashDelaySignClause {
+		let clause = HashDelaySignClause_v0 {
 			pubkey: USER_KEYPAIR.public_key(),
 			hash: sha256::Hash::hash(&preimage),
 			block_delta: 24,
@@ -656,7 +660,7 @@ mod tests {
 		let preimage_bytes = [42u8; 32];
 		let payment_hash = sha256::Hash::hash(&preimage_bytes);
 
-		let clause = HashDelaySignClause {
+		let clause = HashDelaySignClause_v0 {
 			pubkey: USER_KEYPAIR.public_key(),
 			hash: payment_hash,
 			block_delta: 24,
@@ -681,7 +685,7 @@ mod tests {
 		let witness = clause.witness(&(sig, preimage_bytes), &cb);
 
 		// Extract should succeed with correct payment hash
-		let extracted = HashDelaySignClause::extract_preimage_from_witness(
+		let extracted = HashDelaySignClause_v0::extract_preimage_from_witness(
 			&witness,
 			payment_hash.into(),
 		);
@@ -690,7 +694,7 @@ mod tests {
 
 		// Extract should fail with wrong payment hash
 		let wrong_hash = sha256::Hash::hash(&[0u8; 32]);
-		let extracted = HashDelaySignClause::extract_preimage_from_witness(
+		let extracted = HashDelaySignClause_v0::extract_preimage_from_witness(
 			&witness,
 			wrong_hash.into(),
 		);
@@ -698,7 +702,7 @@ mod tests {
 
 		// Extract should fail with wrong witness length
 		let short_witness = Witness::from_slice(&[&sig[..], &preimage_bytes[..]]);
-		let extracted = HashDelaySignClause::extract_preimage_from_witness(
+		let extracted = HashDelaySignClause_v0::extract_preimage_from_witness(
 			&short_witness,
 			payment_hash.into(),
 		);
@@ -713,7 +717,7 @@ mod tests {
 		// HashSignClause uses an x-only aggregate public key
 		let agg_pk = musig::combine_keys([USER_KEYPAIR.public_key(), SERVER_KEYPAIR.public_key()]);
 
-		let clause = HashSignClause {
+		let clause = HashSignClause_v0 {
 			pubkey: agg_pk,
 			hash,
 		};
