@@ -153,6 +153,9 @@ pub struct CreateWalletRequest {
 	pub network: BarkNetwork,
 	/// An optional birthday height to start syncing the wallet from
 	pub birthday_height: Option<u32>,
+	/// Proceed even if the datadir contains unexpected files
+	#[serde(default)]
+	pub force: bool,
 }
 
 /// Networks bark can be used on
@@ -403,6 +406,11 @@ pub struct LightningInvoiceRequest {
 	/// Optional description embedded in the invoice as its memo.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub description: Option<String>,
+	/// Optional lightning receive token for authentication of the claim, if
+	/// the server requires one and there are no existing spendable VTXOs to
+	/// prove ownership of.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub token: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

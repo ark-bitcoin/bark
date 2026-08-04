@@ -3697,6 +3697,10 @@
               }
             ]
           },
+          "force": {
+            "type": "boolean",
+            "description": "Proceed even if the datadir contains unexpected files"
+          },
           "mnemonic": {
             "type": [
               "string",
@@ -5319,6 +5323,13 @@
               "null"
             ],
             "description": "Optional description embedded in the invoice as its memo."
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional lightning receive token for authentication of the claim, if\nthe server requires one and there are no existing spendable VTXOs to\nprove ownership of."
           }
         }
       },

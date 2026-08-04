@@ -275,7 +275,7 @@ fn wallet_create_request_to_create_opts(req: CreateWalletRequest) -> anyhow::Res
 	}
 
 	Ok(CreateOpts {
-		force: false,
+		force: req.force,
 		use_filestore: false,
 		mainnet: req.network == BarkNetwork::Mainnet,
 		regtest: req.network == BarkNetwork::Regtest,
