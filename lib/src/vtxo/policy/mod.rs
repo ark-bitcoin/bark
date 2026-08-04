@@ -852,7 +852,7 @@ impl VtxoPolicy {
 		payment_hash: PaymentHash,
 		htlc_expiry: BlockHeight,
 	) -> Self {
-		Self::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy { user_pubkey, payment_hash, htlc_expiry })
+		Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry })
 	}
 
 	/// Creates a new htlc from server to client
@@ -881,9 +881,9 @@ impl VtxoPolicy {
 		}
 	}
 
-	pub fn as_server_htlc_send(&self) -> Option<&ServerHtlcSend_v0_VtxoPolicy> {
+	pub fn as_server_htlc_send(&self) -> Option<&ServerHtlcSendVtxoPolicy> {
 		match self {
-			Self::ServerHtlcSend_v0(v) => Some(v),
+			Self::ServerHtlcSend(v) => Some(v),
 			_ => None,
 		}
 	}

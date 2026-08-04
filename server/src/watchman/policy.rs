@@ -163,7 +163,7 @@ fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 	Action::Wait
 }
 
-/// Determine action for ServerHtlcSend_v0 (outgoing Lightning payment).
+/// Determine action for ServerHtlcSend (outgoing Lightning payment).
 ///
 /// The server can claim with preimage after `exit_delta` from confirmation.
 /// The user can reclaim after `htlc_expiry` AND `2*exit_delta` from confirmation.

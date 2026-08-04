@@ -818,7 +818,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	let desired_height = {
 		let bark = bark_1.client().await;
 		let htlc = bark.vtxos().await.unwrap().into_iter().find(
-			|v| v.policy_type() == VtxoPolicyKind::ServerHtlcSend_v0
+			|v| v.policy_type() == VtxoPolicyKind::ServerHtlcSend
 		).unwrap();
 		htlc.expiry_height() - bark.config().vtxo_refresh_expiry_threshold + 1
 	};
