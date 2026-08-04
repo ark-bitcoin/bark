@@ -57,7 +57,7 @@ build:
         src="$(readlink target)/ci"
         rm target
         mkdir -p target/ci
-        cp -aL "$src/captaind" "$src/watchmand" "$src/bark" "$src/bark-legacy" "$src/barkd" target/ci/
+        cp -aL "$src/captaind" "$src/watchmand" "$src/bark" "$src/bark-cli" "$src/bark-legacy" "$src/barkd" target/ci/
         cp -aL "$src/examples" target/ci/
       fi
   artifacts:
@@ -66,6 +66,7 @@ build:
       - target/ci/captaind
       - target/ci/watchmand
       - target/ci/bark
+      - target/ci/bark-cli
       - target/ci/bark-legacy
       - target/ci/barkd
     expire_in: 1 day
@@ -257,6 +258,7 @@ bark-esplora:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
@@ -286,6 +288,7 @@ bark-mempool:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
@@ -312,6 +315,7 @@ bark-btc30:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
@@ -345,6 +349,7 @@ bark-filestore:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
@@ -394,6 +399,7 @@ core-server:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-core-prebuilt
 
@@ -421,6 +427,33 @@ bark-sdk:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - bash ./contrib/ci-run-test.sh test-integration-bark-sdk-prebuilt
 
+bark-client:
+  interruptible: true
+  stage: test
+  tags:
+    - integration
+    - datastore
+  extends: .test-rules-no-tags
+  needs:
+    - prechecks
+    - check-commits
+    - build
+    - build-test-archives
+  variables:
+    TEST_DIRECTORY: ./test/bark-client
+    NEXTEST_TEST_THREADS: "4"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
+    - bash ./contrib/ci-run-test.sh test-integration-bark-client-prebuilt
+
 bark-int-action-reentrancy:
   interruptible: true
   stage: test
@@ -447,6 +480,7 @@ bark-int-action-reentrancy:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark-legacy
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-int-prebuilt
 
@@ -785,6 +819,8 @@ tar-and-print-test-data:
     - job: core-server
       optional: true
     - job: bark-sdk
+      optional: true
+    - job: bark-client
       optional: true
     - job: bark-int-action-reentrancy
       optional: true

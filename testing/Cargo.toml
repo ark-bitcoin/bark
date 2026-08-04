@@ -25,6 +25,10 @@ name = "barkd"
 path = "tests/barkd/mod.rs"
 
 [[test]]
+name = "bark-client"
+path = "tests/bark_client/mod.rs"
+
+[[test]]
 name = "core"
 path = "tests/core/mod.rs"
 

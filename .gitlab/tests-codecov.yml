@@ -54,6 +54,8 @@ test-integration-btc30-codecov:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/debug/captaind
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/debug/bark-legacy
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/debug/bark-cli
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/debug/barkd
     - bash ./contrib/ci-run-test.sh test-integration-codecov
 
 code-coverage:

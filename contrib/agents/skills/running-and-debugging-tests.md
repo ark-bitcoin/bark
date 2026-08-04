@@ -6,7 +6,7 @@ How to run, debug, and investigate test failures in this codebase.
 
 **Never run integration tests directly with `cargo test`!**
 
-Integration tests require environment variables `CAPTAIND_EXEC` and `BARK_EXEC` to point to the built binaries. The `just int` command sets these automatically.
+Integration tests require environment variables `CAPTAIND_EXEC`, `BARK_EXEC` and `BARK_CLIENT_EXEC` to point to the built binaries. The `just int` command sets these automatically.
 
 Running `cargo test --package ark-testing` directly will fail because the test framework won't be able to find the executables.
 
