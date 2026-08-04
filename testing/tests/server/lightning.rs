@@ -951,6 +951,142 @@ async fn refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry(
 }
 lightning_test!(refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry);
 
+/// Reproduces a theft vector in the lightning receive flow.
+///
+/// The granted HTLC-recv VTXOs are an outgoing HTLC for the server, covered by
+/// the inbound Lightning HTLC the payer locked into the server's hold invoice.
+/// The server may only release the granted value (cosign the claim) while it
+/// can still settle the hold invoice, i.e. while the inbound HTLC is live.
+///
+/// A malicious receiver requests an invoice with a small `min_cltv_delta`
+/// (the server only enforces a maximum), pays it from their own node, prepares
+/// the claim and then simply waits for the inbound HTLC to expire: their own
+/// node gets refunded, while the subscription stays `HtlcsReady`. The server
+/// must refuse the cooperative claim at that point. Otherwise the receiver
+/// walks away with the granted VTXO value *and* the refunded payment, and the
+/// server's hold settler keeps retrying a settle that can never succeed.
+#[tokio::test]
+#[ignore = "reproduces theft vector: claim after incoming HTLC expiry currently succeeds"]
+async fn refuse_receive_claim_after_incoming_htlc_expiry() {
+	let ctx = TestContext::new("server/refuse_receive_claim_after_incoming_htlc_expiry").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx
+		.captaind("server")
+		.lightningd(&lightning.internal)
+		.funded(btc(10))
+		.create()
+		.await;
+
+	let bark = ctx.bark("bark-1", &srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	// The attacker drives the receive flow directly at the RPC layer so they
+	// can pick a small min_cltv_delta and control the timing of the claim.
+	let preimage = ark::lightning::Preimage::from([7u8; 32]);
+	let payment_hash = preimage.compute_payment_hash();
+	let min_cltv_delta = 2u32;
+	let mut rpc = srv.get_public_rpc().await;
+	let invoice = rpc
+		.start_lightning_receive(protos::StartLightningReceiveRequest {
+			payment_hash: payment_hash.as_ref().to_vec(),
+			amount_sat: btc(1).to_sat(),
+			min_cltv_delta,
+			mailbox_id: None,
+			description: None,
+		})
+		.await
+		.expect("start receive failed")
+		.into_inner()
+		.bolt11;
+
+	// The attacker's own node pays the hold invoice. The payment blocks until
+	// it settles or fails, so it runs in the background.
+	let payer = lightning.external;
+	let pay_task = {
+		let invoice = invoice.clone();
+		tokio::spawn(async move { payer.try_pay_bolt11(invoice).await })
+	};
+
+	// Wait until the server holds the inbound HTLC.
+	rpc.check_lightning_receive(protos::CheckLightningReceiveRequest {
+		hash: payment_hash.as_ref().to_vec(),
+		wait: true,
+	})
+	.wait_millis(10_000)
+	.await
+	.expect("inbound HTLC never arrived");
+
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	let sub = db
+		.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
+		.await
+		.unwrap()
+		.expect("subscription should exist");
+	let lowest = sub
+		.lowest_incoming_htlc_expiry
+		.expect("Accepted subscription must record lowest incoming HTLC expiry");
+
+	// Prepare the claim while the inbound HTLC is still live. The granted
+	// HTLC-recv VTXOs are now outstanding value of the server.
+	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let granted = rpc
+		.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
+			payment_hash: payment_hash.as_ref().to_vec(),
+			user_pubkey: keypair.public_key().serialize().to_vec(),
+			htlc_recv_expiry: lowest - srv.config().htlc_expiry_delta as BlockHeight,
+			lightning_receive_anti_dos: None,
+		})
+		.await
+		.expect("prepare should succeed while the inbound HTLC is live")
+		.into_inner()
+		.htlc_vtxos
+		.into_iter()
+		.map(|b| Vtxo::deserialize(&b).expect("server returned invalid vtxo"))
+		.collect::<Vec<Vtxo<Full>>>();
+
+	// Wait until the inbound HTLC expired: the attacker's node gets refunded.
+	let tip = ctx.bitcoind().get_block_count().await as BlockHeight;
+	assert!(
+		tip < lowest,
+		"test premise broken: tip {tip} already past lowest {lowest}"
+	);
+	ctx.generate_blocks(lowest - tip + 1).await;
+
+	// The attack: claim the granted VTXOs cooperatively. The inbound HTLC is
+	// expired, so the server can never settle its hold invoice: cosigning here
+	// pays the attacker twice (granted VTXOs plus the refunded payment).
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		granted.iter().cloned(),
+		ark::VtxoPolicy::new_pubkey(
+			Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key(),
+		),
+	)
+	.unwrap()
+	.generate_user_nonces(&[keypair])
+	.unwrap();
+
+	let err = rpc
+		.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
+			payment_hash: payment_hash.as_ref().to_vec(),
+			payment_preimage: preimage.as_ref().to_vec(),
+			cosign_request: Some(protos::ArkoorPackageCosignRequest::from(
+				builder.cosign_request(),
+			)),
+		})
+		.await
+		.expect_err("server must refuse a claim it can no longer settle the inbound HTLC for");
+	assert_eq!(
+		err.code(),
+		tonic::Code::InvalidArgument,
+		"unexpected error: {err:?}"
+	);
+
+	pay_task.abort();
+	assert_vtxopool_consistency(&srv).await;
+}
+
 #[tokio::test]
 async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	let ctx = TestContext::new("server/should_refuse_paying_invoice_not_matching_htlcs").await;
