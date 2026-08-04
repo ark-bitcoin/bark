@@ -435,6 +435,13 @@ pub struct Config {
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
 
+	/// Maximum amount for which the server will issue lightning receive
+	/// invoices.
+	///
+	/// Unset means no limit.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_ln_receive_amount: Option<Amount>,
+
 	/// The fraction of the fee we charge that we allow CLN to claim at most
 	///
 	/// E.g. if a user wants to pay 1000 sat, we charge him 0.4%, so 4 sats,

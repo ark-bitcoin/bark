@@ -570,6 +570,12 @@ impl Server {
 			}
 		}
 
+		if let Some(max) = self.config.max_ln_receive_amount {
+			if amount > max {
+				return badarg!("Requested amount exceeds lightning receive limit of {}", max);
+			}
+		}
+
 		let subscriptions = self.db.read(async |t| t.get_htlc_subscriptions_by_payment_hash(payment_hash).await).await?;
 
 		let subscriptions_by_status = subscriptions.iter()
