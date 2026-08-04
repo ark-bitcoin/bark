@@ -477,7 +477,7 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 			.context("received invalid HTLC VTXO from server")?;
 		htlc_amount += vtxo.amount();
 
-		if let VtxoPolicy::ServerHtlcRecv_v0(p) = vtxo.policy() {
+		if let VtxoPolicy::ServerHtlcRecv(p) = vtxo.policy() {
 			if p.payment_hash != payment_hash {
 				return Err(anyhow!("invalid payment hash on HTLC VTXOs received from server: {}",
 					p.payment_hash).into());
@@ -746,7 +746,7 @@ pub(crate) async fn is_htlc_near_expiry(
 	let id = *htlcs.vtxo_ids.first().context("no HTLC vtxos on receive")?;
 	let vtxo = wallet.get_vtxo_by_id(id).await?;
 	let expiry = match vtxo.vtxo.policy() {
-		VtxoPolicy::ServerHtlcRecv_v0(p) => p.htlc_expiry,
+		VtxoPolicy::ServerHtlcRecv(p) => p.htlc_expiry,
 		other => bail!("HTLC receive vtxo has unexpected policy: {:?}", other),
 	};
 	let tip = wallet.inner.chain.tip().await?;

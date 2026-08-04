@@ -7,8 +7,8 @@ use bitcoin::TapSighash;
 use bitcoin::Witness;
 use tracing::error;
 
-use ark::{ServerVtxoPolicy, Vtxo};
-use ark::vtxo::policy::clause::{TapScriptClause, VtxoClause};
+use ark::vtxo::{HashDelaySignClause, HashDelaySignClause_v0, ServerVtxoPolicy, Vtxo};
+use ark::vtxo::policy::clause::{TapScriptClause, VtxoClause, HashSignClause, HashSignClause_v0};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::KeypairExt;
 
@@ -51,18 +51,22 @@ impl WatchmanSigner {
 	/// and reclaim forfeits or refund paid HTLCs on-chain while we stood by.
 	async fn get_preimage(&self, clause: &VtxoClause) -> Option<Secret<[u8; 32]>> {
 		match clause {
-			VtxoClause::HashSign_v0(c) => {
+			VtxoClause::HashSign(HashSignClause { hash, ..})
+				| VtxoClause::HashSign_v0(HashSignClause_v0 { hash, ..}) =>
+			{
 				let hark = self.db.read(async |t|
-					t.get_round_participation_by_unlock_hash(c.hash).await
+					t.get_round_participation_by_unlock_hash(*hash).await
 				).await.ok()??;
-				self.log_if_duplicate_hash(c.hash, true).await;
+				self.log_if_duplicate_hash(*hash, true).await;
 				Some(hark.unlock_preimage)
 			},
-			VtxoClause::HashDelaySign_v0(c) => {
+			VtxoClause::HashDelaySign(HashDelaySignClause { hash, .. })
+				| VtxoClause::HashDelaySign_v0(HashDelaySignClause_v0 { hash, .. }) =>
+			{
 				let settlement = self.db.read(async |t|
-					t.get_htlc_settlement_by_payment_hash(c.hash.into()).await
+					t.get_htlc_settlement_by_payment_hash((*hash).into()).await
 				).await.ok()??;
-				self.log_if_duplicate_hash(c.hash, false).await;
+				self.log_if_duplicate_hash(*hash, false).await;
 				Some(Secret::new(settlement.into()))
 			},
 			_ => None,

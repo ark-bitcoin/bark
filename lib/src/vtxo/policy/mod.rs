@@ -869,7 +869,7 @@ impl VtxoPolicy {
 		htlc_expiry: BlockHeight,
 		htlc_expiry_delta: BlockDelta,
 	) -> Self {
-		Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy {
+		Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
 			user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
 		})
 	}
@@ -888,9 +888,9 @@ impl VtxoPolicy {
 		}
 	}
 
-	pub fn as_server_htlc_recv(&self) -> Option<&ServerHtlcRecv_v0_VtxoPolicy> {
+	pub fn as_server_htlc_recv(&self) -> Option<&ServerHtlcRecvVtxoPolicy> {
 		match self {
-			Self::ServerHtlcRecv_v0(v) => Some(v),
+			Self::ServerHtlcRecv(v) => Some(v),
 			_ => None,
 		}
 	}

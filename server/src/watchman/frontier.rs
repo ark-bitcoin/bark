@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use tracing::{error, trace, warn};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
-use ark::vtxo::policy::clause::HashDelaySignClause_v0;
+use ark::vtxo::policy::clause::{HashDelaySignClause, HashDelaySignClause_v0};
 use bitcoin_ext::BlockHeight;
 
 use crate::database::Db;
@@ -170,11 +170,15 @@ impl VtxoExitFrontier {
 /// ServerHtlcSend is not checked because the server already learns the
 /// preimage from the downstream Lightning node when the payment succeeds.
 fn try_extract_preimage(vtxo: &ServerVtxo, witness: &Witness) -> Option<ark::lightning::Preimage> {
-	let payment_hash = match vtxo.policy() {
-		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv_v0(p)) => p.payment_hash,
+	let (payment_hash, preimage) = match vtxo.policy() {
+		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv(p)) => {
+			(p.payment_hash, HashDelaySignClause::extract_preimage_from_witness(witness, p.payment_hash))
+		},
+		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv_v0(p)) => {
+			(p.payment_hash, HashDelaySignClause_v0::extract_preimage_from_witness(witness, p.payment_hash))
+		},
 		_ => return None,
 	};
-	let preimage = HashDelaySignClause_v0::extract_preimage_from_witness(witness, payment_hash);
 	if preimage.is_none() {
 		// Not necessarily an error: the VTXO may have been spent via the
 		// arkoor path by its next owner after the HTLC was settled between
