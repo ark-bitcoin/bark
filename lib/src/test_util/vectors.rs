@@ -19,7 +19,7 @@ use crate::encode::ProtocolEncoding;
 use crate::lightning::PaymentHash;
 use crate::tree::signed::{UnlockHash, UnlockPreimage, VtxoLeafSpec, VtxoTreeSpec};
 use crate::test_util::encoding_roundtrip;
-use crate::vtxo::{Full, PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy};
+use crate::vtxo::{Full, PubkeyVtxoPolicy, ServerHtlcSend_v0_VtxoPolicy};
 
 #[allow(unused)]
 #[macro_export]
@@ -167,7 +167,7 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 	let payment_hash = PaymentHash::from(sha256::Hash::hash("arkoor1".as_bytes()).to_byte_array());
 	let arkoor1_dest1 = ArkoorDestination {
 		total_amount: Amount::from_sat(9000),
-		policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
+		policy: VtxoPolicy::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy {
 			user_pubkey: arkoor_htlc_out_user_key.public_key(),
 			payment_hash,
 			htlc_expiry: expiry_height - 1000,

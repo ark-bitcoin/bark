@@ -187,7 +187,7 @@ impl Server {
 		let input_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
 
 		let htlc_vtxos = request.all_outputs()
-			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
+			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend_v0(..)))
 			.collect::<Vec<_>>();
 
 		if htlc_vtxos.is_empty() {

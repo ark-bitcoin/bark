@@ -163,7 +163,7 @@ fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 	Action::Wait
 }
 
-/// Determine action for ServerHtlcSend (outgoing Lightning payment).
+/// Determine action for ServerHtlcSend_v0 (outgoing Lightning payment).
 ///
 /// The server can claim with preimage after `exit_delta` from confirmation.
 /// The user can reclaim after `htlc_expiry` AND `2*exit_delta` from confirmation.
@@ -258,7 +258,7 @@ impl ActionContextFetcher<'_> {
 
 				decide_action_pubkey(&params)
 			},
-			ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcSend(p)) => {
+			ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcSend_v0(p)) => {
 				let params = params.with_policy_extras(HtlcSendExtra {
 					next_tx: self.fetch_progress(vtxo).await,
 					htlc_expiry: p.htlc_expiry,

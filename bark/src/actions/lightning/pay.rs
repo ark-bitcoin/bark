@@ -426,7 +426,7 @@ pub(crate) async fn request_lightning_send_htlcs(
 		.build_signed_vtxos();
 
 	let (htlc_vtxos, change_vtxos) = vtxos.clone().into_iter()
-		.partition::<Vec<_>, _>(|v| matches!(v.policy(), VtxoPolicy::ServerHtlcSend(_)));
+		.partition::<Vec<_>, _>(|v| matches!(v.policy(), VtxoPolicy::ServerHtlcSend_v0(_)));
 
 	let mut effective_balance = Amount::ZERO;
 	for vtxo in &htlc_vtxos {

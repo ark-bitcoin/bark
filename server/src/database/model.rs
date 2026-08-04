@@ -178,7 +178,7 @@ impl<G, P: Policy> VtxoState<G, P> {
 	/// one gate where an HTLC vtxo is the expected input.
 	pub fn check_htlc_send_spendable(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
 		let policy = self.vtxo.policy().policy_type();
-		if policy != VtxoPolicyKind::ServerHtlcSend {
+		if policy != VtxoPolicyKind::ServerHtlcSend_v0 {
 			return badarg!("vtxo {} is not an htlc-send vtxo (policy: {})", self.vtxo_id, policy);
 		}
 		self.check_state_spendable(chain_tip)
