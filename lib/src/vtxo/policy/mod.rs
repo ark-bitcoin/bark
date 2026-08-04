@@ -149,6 +149,8 @@ pub enum VtxoPolicyKind {
 	/// Standard VTXO output protected with a public key.
 	Pubkey,
 	/// A VTXO that represents an HTLC with the Ark server to send money.
+	ServerHtlcSend,
+	/// A VTXO that represents an HTLC with the Ark server to send money.
 	#[allow(non_camel_case_types)]
 	ServerHtlcSend_v0,
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
@@ -173,6 +175,7 @@ impl fmt::Display for VtxoPolicyKind {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
 			Self::Pubkey => f.write_str("pubkey"),
+			Self::ServerHtlcSend => f.write_str("server-htlc-send-v1"),
 			Self::ServerHtlcRecv => f.write_str("server-htlc-receive-v1"),
 			Self::ServerHtlcSend_v0 => f.write_str("server-htlc-send"),
 			Self::ServerHtlcRecv_v0 => f.write_str("server-htlc-receive"),
@@ -190,6 +193,7 @@ impl FromStr for VtxoPolicyKind {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		Ok(match s {
 			"pubkey" => Self::Pubkey,
+			"server-htlc-send-v1" => Self::ServerHtlcSend,
 			"server-htlc-receive-v1" => Self::ServerHtlcRecv,
 			"server-htlc-send" => Self::ServerHtlcSend_v0,
 			"server-htlc-receive" => Self::ServerHtlcRecv_v0,
@@ -506,6 +510,88 @@ impl ServerHtlcSend_v0_VtxoPolicy {
 	}
 }
 
+/// Policy enabling outgoing Lightning payments.
+///
+/// This will build a taproot with 3 clauses:
+/// 1. The keyspend path allows Alice and Server to collaborate to spend
+/// the HTLC. The Server can use this path to revoke the HTLC if payment
+/// failed
+///
+/// 2. The script-spend path contains one leaf that allows Server to spend
+/// the HTLC after the expiry, if it knows the preimage. Server can use
+/// this path if Alice tries to spend using her clause.
+///
+/// 3. The second leaf allows Alice to spend the HTLC after its expiry
+/// and with a delay. Alice must use this path if the server fails to
+/// provide the preimage and refuse to revoke the HTLC. It will either
+/// force the Server to reveal the preimage (by spending using her clause)
+/// or give Alice her money back.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ServerHtlcSendVtxoPolicy {
+	pub user_pubkey: PublicKey,
+	pub payment_hash: PaymentHash,
+	pub htlc_expiry: BlockHeight,
+}
+
+impl ServerHtlcSendVtxoPolicy {
+	/// Allows Server to spend the HTLC after the delta, if it knows the
+	/// preimage. Server can use this path if Alice tries to spend using her
+	/// clause.
+	pub fn server_reveals_preimage_clause(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+	) -> HashDelaySignClause {
+		HashDelaySignClause {
+			pubkey: server_pubkey,
+			hash: self.payment_hash.to_sha256_hash(),
+			block_delta: exit_delta
+		}
+	}
+
+	/// Allows Alice to spend the HTLC after its expiry and with a delay.
+	/// Alice must use this path if the server fails to provide the preimage
+	/// and refuse to revoke the HTLC. It will either force the server to
+	/// reveal the preimage (by spending using its clause) or give Alice her
+	/// money back.
+	pub fn user_claim_after_expiry_clause(
+		&self,
+		exit_delta: BlockDelta,
+	) -> DelayedTimelockSignClause {
+		DelayedTimelockSignClause {
+			pubkey: self.user_pubkey,
+			timelock_height: self.htlc_expiry,
+			block_delta: exit_delta.checked_mul(2)
+				.expect("2*exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant"),
+		}
+	}
+
+	pub fn clauses(&self, exit_delta: BlockDelta, server_pubkey: PublicKey) -> Vec<VtxoClause> {
+		vec![
+			self.server_reveals_preimage_clause(server_pubkey, exit_delta).into(),
+			self.user_claim_after_expiry_clause(exit_delta).into(),
+		]
+	}
+
+	pub fn taproot(&self, server_pubkey: PublicKey, exit_delta: BlockDelta) -> taproot::TaprootSpendInfo {
+		let server_reveals_preimage_clause = self.server_reveals_preimage_clause(server_pubkey, exit_delta);
+		let user_claim_after_expiry_clause = self.user_claim_after_expiry_clause(exit_delta);
+
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
+		bitcoin::taproot::TaprootBuilder::new()
+			.add_leaf(1, server_reveals_preimage_clause.tapscript()).unwrap()
+			.add_leaf(1, user_claim_after_expiry_clause.tapscript()).unwrap()
+			.finalize(&SECP, combined_pk).unwrap()
+	}
+}
+
+impl From<ServerHtlcSendVtxoPolicy> for VtxoPolicy {
+	fn from(policy: ServerHtlcSendVtxoPolicy) -> Self {
+		Self::ServerHtlcSend(policy)
+	}
+}
+
 
 /// Policy enabling incoming Lightning payments.
 ///
@@ -745,6 +831,8 @@ pub enum VtxoPolicy {
 	/// - change from a LN payment
 	Pubkey(PubkeyVtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to send money.
+	ServerHtlcSend(ServerHtlcSendVtxoPolicy),
+	/// A VTXO that represents an HTLC with the Ark server to send money.
 	#[allow(non_camel_case_types)]
 	ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
@@ -811,6 +899,7 @@ impl VtxoPolicy {
 	pub fn policy_type(&self) -> VtxoPolicyKind {
 		match self {
 			Self::Pubkey { .. } => VtxoPolicyKind::Pubkey,
+			Self::ServerHtlcSend { .. } => VtxoPolicyKind::ServerHtlcSend,
 			Self::ServerHtlcRecv { .. } => VtxoPolicyKind::ServerHtlcRecv,
 			Self::ServerHtlcSend_v0 { .. } => VtxoPolicyKind::ServerHtlcSend_v0,
 			Self::ServerHtlcRecv_v0 { .. } => VtxoPolicyKind::ServerHtlcRecv_v0,
@@ -821,6 +910,7 @@ impl VtxoPolicy {
 	pub fn is_arkoor_compatible(&self) -> bool {
 		match self {
 			Self::Pubkey { .. } => true,
+			Self::ServerHtlcSend { .. } => false,
 			Self::ServerHtlcRecv { .. } => false,
 			Self::ServerHtlcSend_v0 { .. } => false,
 			Self::ServerHtlcRecv_v0 { .. } => false,
@@ -833,6 +923,7 @@ impl VtxoPolicy {
 	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
+			Self::ServerHtlcSend { .. } => None,
 			Self::ServerHtlcRecv { .. } => None,
 			Self::ServerHtlcSend_v0 { .. } => None,
 			Self::ServerHtlcRecv_v0 { .. } => None,
@@ -843,6 +934,7 @@ impl VtxoPolicy {
 	pub fn user_pubkey(&self) -> PublicKey {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => *user_pubkey,
+			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 			Self::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 			Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy { user_pubkey, .. }) => *user_pubkey,
@@ -858,6 +950,7 @@ impl VtxoPolicy {
 		let _ = expiry_height; // not used by user-facing policies
 		match self {
 			Self::Pubkey(policy) => policy.taproot(server_pubkey, exit_delta),
+			Self::ServerHtlcSend(policy) => policy.taproot(server_pubkey, exit_delta),
 			Self::ServerHtlcRecv(policy) => policy.taproot(server_pubkey, exit_delta),
 			Self::ServerHtlcSend_v0(policy) => policy.taproot(server_pubkey, exit_delta),
 			Self::ServerHtlcRecv_v0(policy) => policy.taproot(server_pubkey, exit_delta),
@@ -894,6 +987,7 @@ impl VtxoPolicy {
 	) -> Vec<VtxoClause> {
 		match self {
 			Self::Pubkey(policy) => policy.clauses(exit_delta),
+			Self::ServerHtlcSend(policy) => policy.clauses(exit_delta, server_pubkey),
 			Self::ServerHtlcRecv(policy) => policy.clauses(exit_delta, server_pubkey),
 			Self::ServerHtlcSend_v0(policy) => policy.clauses(exit_delta, server_pubkey),
 			Self::ServerHtlcRecv_v0(policy) => policy.clauses(exit_delta, server_pubkey),

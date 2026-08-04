@@ -258,6 +258,14 @@ impl ActionContextFetcher<'_> {
 
 				decide_action_pubkey(&params)
 			},
+			ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcSend(p)) => {
+				let params = params.with_policy_extras(HtlcSendExtra {
+					next_tx: self.fetch_progress(vtxo).await,
+					htlc_expiry: p.htlc_expiry,
+					has_preimage: self.check_have_payment_preimage(p.payment_hash).await,
+				});
+				decide_action_server_htlc_send(&params)
+			},
 			ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcSend_v0(p)) => {
 				let params = params.with_policy_extras(HtlcSendExtra {
 					next_tx: self.fetch_progress(vtxo).await,
