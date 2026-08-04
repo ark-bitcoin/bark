@@ -158,7 +158,7 @@ impl Server {
 			match v.vtxo.policy() {
 				VtxoPolicy::Pubkey( ..) => {},
 				VtxoPolicy::ServerHtlcSend( ..) => return badarg!("server htlc send vtxo not supported"),
-				VtxoPolicy::ServerHtlcRecv( ..) => return badarg!("server htlc recv vtxo not supported"),
+				VtxoPolicy::ServerHtlcRecv_v0( ..) => return badarg!("server htlc recv vtxo not supported"),
 			}
 		}
 

@@ -151,7 +151,8 @@ pub enum VtxoPolicyKind {
 	/// A VTXO that represents an HTLC with the Ark server to send money.
 	ServerHtlcSend,
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
-	ServerHtlcRecv,
+	#[allow(non_camel_case_types)]
+	ServerHtlcRecv_v0,
 	/// Simple VTXO owned by the server key
 	ServerOwned,
 	/// A public policy that grants bitcoin back to the server after expiry
@@ -170,7 +171,7 @@ impl fmt::Display for VtxoPolicyKind {
 		match self {
 			Self::Pubkey => f.write_str("pubkey"),
 			Self::ServerHtlcSend => f.write_str("server-htlc-send"),
-			Self::ServerHtlcRecv => f.write_str("server-htlc-receive"),
+			Self::ServerHtlcRecv_v0 => f.write_str("server-htlc-receive"),
 			Self::ServerOwned => f.write_str("server-owned"),
 			Self::Checkpoint => f.write_str("checkpoint"),
 			Self::Expiry => f.write_str("expiry"),
@@ -186,7 +187,7 @@ impl FromStr for VtxoPolicyKind {
 		Ok(match s {
 			"pubkey" => Self::Pubkey,
 			"server-htlc-send" => Self::ServerHtlcSend,
-			"server-htlc-receive" => Self::ServerHtlcRecv,
+			"server-htlc-receive" => Self::ServerHtlcRecv_v0,
 			"server-owned" => Self::ServerOwned,
 			"checkpoint" => Self::Checkpoint,
 			"expiry" => Self::Expiry,
@@ -517,14 +518,15 @@ impl ServerHtlcSendVtxoPolicy {
 /// Alice must use this path if she revealed the preimage but Server
 /// refused to collaborate.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ServerHtlcRecvVtxoPolicy {
+#[allow(non_camel_case_types)]
+pub struct ServerHtlcRecv_v0_VtxoPolicy {
 	pub user_pubkey: PublicKey,
 	pub payment_hash: PaymentHash,
 	pub htlc_expiry_delta: BlockDelta,
 	pub htlc_expiry: BlockHeight,
 }
 
-impl ServerHtlcRecvVtxoPolicy {
+impl ServerHtlcRecv_v0_VtxoPolicy {
 	/// Allows Alice to spend the HTLC if she knows the preimage, but with a
 	/// greater exit delta delay than server's clause. Alice must use this
 	/// path if she revealed the preimage but server refused to cosign
@@ -573,9 +575,9 @@ impl ServerHtlcRecvVtxoPolicy {
 	}
 }
 
-impl From<ServerHtlcRecvVtxoPolicy> for VtxoPolicy {
-	fn from(policy: ServerHtlcRecvVtxoPolicy) -> Self {
-		Self::ServerHtlcRecv(policy)
+impl From<ServerHtlcRecv_v0_VtxoPolicy> for VtxoPolicy {
+	fn from(policy: ServerHtlcRecv_v0_VtxoPolicy) -> Self {
+		Self::ServerHtlcRecv_v0(policy)
 	}
 }
 
@@ -660,7 +662,8 @@ pub enum VtxoPolicy {
 	/// A VTXO that represents an HTLC with the Ark server to send money.
 	ServerHtlcSend(ServerHtlcSendVtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
-	ServerHtlcRecv(ServerHtlcRecvVtxoPolicy),
+	#[allow(non_camel_case_types)]
+	ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy),
 }
 
 impl VtxoPolicy {
@@ -690,7 +693,7 @@ impl VtxoPolicy {
 		htlc_expiry: BlockHeight,
 		htlc_expiry_delta: BlockDelta,
 	) -> Self {
-		Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
+		Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy {
 			user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
 		})
 	}
@@ -709,9 +712,9 @@ impl VtxoPolicy {
 		}
 	}
 
-	pub fn as_server_htlc_recv(&self) -> Option<&ServerHtlcRecvVtxoPolicy> {
+	pub fn as_server_htlc_recv(&self) -> Option<&ServerHtlcRecv_v0_VtxoPolicy> {
 		match self {
-			Self::ServerHtlcRecv(v) => Some(v),
+			Self::ServerHtlcRecv_v0(v) => Some(v),
 			_ => None,
 		}
 	}
@@ -721,7 +724,7 @@ impl VtxoPolicy {
 		match self {
 			Self::Pubkey { .. } => VtxoPolicyKind::Pubkey,
 			Self::ServerHtlcSend { .. } => VtxoPolicyKind::ServerHtlcSend,
-			Self::ServerHtlcRecv { .. } => VtxoPolicyKind::ServerHtlcRecv,
+			Self::ServerHtlcRecv_v0 { .. } => VtxoPolicyKind::ServerHtlcRecv_v0,
 		}
 	}
 
@@ -730,7 +733,7 @@ impl VtxoPolicy {
 		match self {
 			Self::Pubkey { .. } => true,
 			Self::ServerHtlcSend { .. } => false,
-			Self::ServerHtlcRecv { .. } => false,
+			Self::ServerHtlcRecv_v0 { .. } => false,
 		}
 	}
 
@@ -741,7 +744,7 @@ impl VtxoPolicy {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
 			Self::ServerHtlcSend { .. } => None,
-			Self::ServerHtlcRecv { .. } => None,
+			Self::ServerHtlcRecv_v0 { .. } => None,
 		}
 	}
 
@@ -750,7 +753,7 @@ impl VtxoPolicy {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => *user_pubkey,
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
-			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
+			Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 		}
 	}
 
@@ -764,7 +767,7 @@ impl VtxoPolicy {
 		match self {
 			Self::Pubkey(policy) => policy.taproot(server_pubkey, exit_delta),
 			Self::ServerHtlcSend(policy) => policy.taproot(server_pubkey, exit_delta),
-			Self::ServerHtlcRecv(policy) => policy.taproot(server_pubkey, exit_delta),
+			Self::ServerHtlcRecv_v0(policy) => policy.taproot(server_pubkey, exit_delta),
 		}
 	}
 
@@ -799,7 +802,7 @@ impl VtxoPolicy {
 		match self {
 			Self::Pubkey(policy) => policy.clauses(exit_delta),
 			Self::ServerHtlcSend(policy) => policy.clauses(exit_delta, server_pubkey),
-			Self::ServerHtlcRecv(policy) => policy.clauses(exit_delta, server_pubkey),
+			Self::ServerHtlcRecv_v0(policy) => policy.clauses(exit_delta, server_pubkey),
 		}
 	}
 }

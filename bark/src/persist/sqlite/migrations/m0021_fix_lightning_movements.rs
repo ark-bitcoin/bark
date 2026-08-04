@@ -49,7 +49,7 @@ impl Migration for Migration0021 {
 			let is_htlc = match vtxo.policy() {
 				VtxoPolicy::Pubkey(_) => false,
 				VtxoPolicy::ServerHtlcSend(_) => true,
-				VtxoPolicy::ServerHtlcRecv(_) => true,
+				VtxoPolicy::ServerHtlcRecv_v0(_) => true,
 			};
 			let movement_id = match (is_htlc, state) {
 				(true, VtxoState::Locked { holder: Some(VtxoLockHolder::Movement { id }) }) => id,

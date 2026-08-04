@@ -171,7 +171,7 @@ impl VtxoExitFrontier {
 /// preimage from the downstream Lightning node when the payment succeeds.
 fn try_extract_preimage(vtxo: &ServerVtxo, witness: &Witness) -> Option<ark::lightning::Preimage> {
 	let payment_hash = match vtxo.policy() {
-		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv(p)) => p.payment_hash,
+		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv_v0(p)) => p.payment_hash,
 		_ => return None,
 	};
 	let preimage = HashDelaySignClause_v0::extract_preimage_from_witness(witness, payment_hash);

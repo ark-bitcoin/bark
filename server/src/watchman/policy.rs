@@ -266,7 +266,7 @@ impl ActionContextFetcher<'_> {
 				});
 				decide_action_server_htlc_send(&params)
 			},
-			ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv(p)) => {
+			ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv_v0(p)) => {
 				let params = params.with_policy_extras(HtlcRecvExtra {
 					next_tx: self.fetch_progress(vtxo).await,
 					htlc_expiry: p.htlc_expiry,
