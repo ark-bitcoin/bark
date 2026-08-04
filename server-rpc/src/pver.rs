@@ -25,3 +25,15 @@ pub const PROTOCOL_VERSION_PPM_FEE_TOTAL: u64 = 4;
 
 /// Version that forces clients to send their (unsigned) funding tx for boarding
 pub const PROTOCOL_VERSION_BOARD_FUNDING_TX: u64 = 4;
+
+/// Version that introduces the new hashlock clause scripts, which add a
+/// preimage size check.
+///
+/// This covers the new `ServerHtlcRecv` and `ServerHtlcSend` policies for
+/// Lightning, as well as the new `HarkLeaf` and `HarkForfeit` policies and
+/// the new `HashLockedCosigned` genesis transition used in rounds.
+///
+/// Old clients cannot parse the new policies' encoding and build the old
+/// scripts, so the server rejects Lightning sends and receives and round
+/// participations from clients below this version with an upgrade error.
+pub const PROTOCOL_VERSION_HASHLOCK_CLAUSES: u64 = 5;

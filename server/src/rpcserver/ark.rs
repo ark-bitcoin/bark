@@ -276,7 +276,13 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
+
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to send Lightning payments.");
+		}
 
 		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
 			.context("Failed to parse request")?;
@@ -294,6 +300,11 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let pver = req.pver()?;
 		let req = req.into_inner();
+
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to send Lightning payments.");
+		}
 
 		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
 			.map(VtxoId::from_bytes)
@@ -382,6 +393,11 @@ impl rpc::server::ArkService for Server {
 		let pver = req.pver()?;
 		let req = req.into_inner();
 
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to receive Lightning payments.");
+		}
+
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		let amount = Amount::from_sat(req.amount_sat);
 
@@ -422,6 +438,11 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<protos::PrepareLightningReceiveClaimResponse>, tonic::Status> {
 		let pver = req.pver()?;
 		let req = req.into_inner();
+
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to receive Lightning payments.");
+		}
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 
@@ -530,6 +551,11 @@ impl rpc::server::ArkService for Server {
 		let pver = req.pver()?;
 		let req = req.into_inner();
 
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to participate in rounds.");
+		}
+
 		let inputs =  req.input_vtxos.iter().map(|input| {
 			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
 			let attestation = RoundAttemptAttestation::from_bytes(&input.attestation)?;
@@ -572,7 +598,13 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::VtxoSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
+
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to participate in rounds.");
+		}
 
 		let (tx, rx) = oneshot::channel();
 		let inp = RoundInput::VtxoSignatures {
@@ -600,6 +632,11 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<protos::RoundParticipationResponse>, tonic::Status> {
 		let pver = req.pver()?;
 		let req = req.into_inner();
+
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to participate in rounds.");
+		}
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
 			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
@@ -690,7 +727,13 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::LeafVtxoCosignRequest>,
 	) -> Result<tonic::Response<protos::LeafVtxoCosignResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
+
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to participate in rounds.");
+		}
 
 		let vtxo_id = VtxoId::from_bytes(req.vtxo_id)?;
 
@@ -706,7 +749,13 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ForfeitNoncesRequest>,
 	) -> Result<tonic::Response<protos::ForfeitNoncesResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
+
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to participate in rounds.");
+		}
 
 		if req.vtxo_ids.len() > rpc::MAX_NB_FORFEIT_NONCE_IDS {
 			macros::badarg!("too many vtxo ids, max is {}", rpc::MAX_NB_FORFEIT_NONCE_IDS);
@@ -727,7 +776,13 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ForfeitVtxosRequest>,
 	) -> Result<tonic::Response<protos::ForfeitVtxosResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
+
+		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
+			macros::badarg!("Your client version is too old, you need to update \
+				in order to be able to participate in rounds.");
+		}
 
 		let forfeits = req.forfeit_bundles.iter()
 			.map(|v| HashLockedForfeitBundle::from_bytes(v))
