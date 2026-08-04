@@ -67,8 +67,8 @@ pub use self::policy::{
 	ServerHtlcRecv_v0_VtxoPolicy, ServerHtlcSend_v0_VtxoPolicy
 };
 pub use self::policy::clause::{
-	VtxoClause, DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause_v0,
-	TapScriptClause,
+	VtxoClause, DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause,
+	HashDelaySignClause_v0, TapScriptClause,
 };
 
 /// Type alias for a server-internal VTXO that may have policies without user pubkeys.

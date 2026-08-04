@@ -234,6 +234,94 @@ impl Into<VtxoClause> for DelayedTimelockSignClause {
 /// A clause that allows to sign and spend the UTXO after a relative
 /// timelock, if preimage matching the hash is provided.
 #[derive(Debug, Clone)]
+pub struct HashDelaySignClause {
+	pub pubkey: PublicKey,
+	pub hash: sha256::Hash,
+	pub block_delta: BlockDelta,
+}
+
+impl HashDelaySignClause {
+	/// Returns the input sequence for this clause.
+	pub fn sequence(&self) -> Sequence {
+		Sequence::from_height(self.block_delta)
+	}
+
+	/// Try to extract the preimage from a witness that spends this clause.
+	///
+	/// Witness layout: `[signature, preimage, tapscript, control_block]`.
+	/// Returns the preimage if it is 32 bytes and hashes to the given payment hash.
+	pub fn extract_preimage_from_witness(
+		witness: &Witness,
+		payment_hash: PaymentHash,
+	) -> Option<Preimage> {
+		if witness.len() != 4 {
+			return None;
+		}
+
+		let bytes = witness.nth(1)?;
+		let bytes: [u8; 32] = bytes.try_into().ok()?;
+
+		let preimage = Preimage::from(bytes);
+		if preimage.compute_payment_hash() != payment_hash {
+			return None;
+		}
+
+		Some(preimage)
+	}
+}
+
+impl TapScriptClause for HashDelaySignClause {
+	type WitnessData = (schnorr::Signature, [u8; 32]);
+
+	fn tapscript(&self) -> ScriptBuf {
+		scripts::hash_delay_sign(
+			self.hash,
+			self.block_delta,
+			self.pubkey.x_only_public_key().0,
+		)
+	}
+
+	fn witness(
+		&self,
+		data: &Self::WitnessData,
+		control_block: &ControlBlock,
+	) -> Witness {
+		let (signature, preimage) = data;
+		Witness::from_slice(&[
+			&signature[..],
+			&preimage[..],
+			self.tapscript().as_bytes(),
+			&control_block.serialize()[..],
+		])
+	}
+
+	// See `TapScriptClause::witness_size` for the overflow analysis.
+	#[allow(clippy::arithmetic_side_effects)]
+	fn witness_size<G, P: Policy>(&self, vtxo: &Vtxo<G, P>) -> usize {
+		let cb_size = self.control_block(vtxo).size();
+		let tapscript_size = self.tapscript().as_bytes().len();
+
+		1 // byte for the number of witness elements
+		+ 1  // schnorr signature size byte
+		+ SCHNORR_SIGNATURE_SIZE // schnorr sig bytes
+		+ 1  // preimage size byte
+		+ 32 // preimage bytes
+		+ VarInt::from(tapscript_size).size()  // tapscript size bytes
+		+ tapscript_size // tapscript bytes
+		+ VarInt::from(cb_size).size()  // control block size bytes
+		+ cb_size // control block bytes
+	}
+}
+
+impl Into<VtxoClause> for HashDelaySignClause {
+	fn into(self) -> VtxoClause {
+		VtxoClause::HashDelaySign(self)
+	}
+}
+
+/// A clause that allows to sign and spend the UTXO after a relative
+/// timelock, if preimage matching the hash is provided.
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct HashDelaySignClause_v0 {
 	pub pubkey: PublicKey,
@@ -325,6 +413,61 @@ impl Into<VtxoClause> for HashDelaySignClause_v0 {
 /// This is used for the unlock clause in hArk leaf outputs, where the aggregate
 /// pubkey of user+server must sign, and a preimage must be revealed.
 #[derive(Debug, Clone)]
+pub struct HashSignClause {
+	pub pubkey: PublicKey,
+	pub hash: sha256::Hash,
+}
+
+impl TapScriptClause for HashSignClause {
+	type WitnessData = (schnorr::Signature, [u8; 32]);
+
+	fn tapscript(&self) -> ScriptBuf {
+		scripts::hash_and_sign(self.hash, self.pubkey.x_only_public_key().0)
+	}
+
+	fn witness(
+		&self,
+		data: &Self::WitnessData,
+		control_block: &ControlBlock,
+	) -> Witness {
+		let (signature, preimage) = data;
+		Witness::from_slice(&[
+			&signature[..],
+			&preimage[..],
+			self.tapscript().as_bytes(),
+			&control_block.serialize()[..],
+		])
+	}
+
+	// See `TapScriptClause::witness_size` for the overflow analysis.
+	#[allow(clippy::arithmetic_side_effects)]
+	fn witness_size<G, P: Policy>(&self, vtxo: &Vtxo<G, P>) -> usize {
+		let cb_size = self.control_block(vtxo).size();
+		let tapscript_size = self.tapscript().as_bytes().len();
+
+		1 // byte for the number of witness elements
+		+ 1  // schnorr signature size byte
+		+ SCHNORR_SIGNATURE_SIZE // schnorr sig bytes
+		+ 1  // preimage size byte
+		+ 32 // preimage bytes
+		+ VarInt::from(tapscript_size).size()  // tapscript size bytes
+		+ tapscript_size // tapscript bytes
+		+ VarInt::from(cb_size).size()  // control block size bytes
+		+ cb_size // control block bytes
+	}
+}
+
+impl Into<VtxoClause> for HashSignClause {
+	fn into(self) -> VtxoClause {
+		VtxoClause::HashSign(self)
+	}
+}
+
+/// A clause that allows spending by revealing a preimage and providing a signature.
+///
+/// This is used for the unlock clause in hArk leaf outputs, where the aggregate
+/// pubkey of user+server must sign, and a preimage must be revealed.
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct HashSignClause_v0 {
 	pub pubkey: PublicKey,
@@ -383,6 +526,8 @@ pub enum VtxoClause {
 	DelayedSign(DelayedSignClause),
 	TimelockSign(TimelockSignClause),
 	DelayedTimelockSign(DelayedTimelockSignClause),
+	HashDelaySign(HashDelaySignClause),
+	HashSign(HashSignClause),
 	#[allow(non_camel_case_types)]
 	HashDelaySign_v0(HashDelaySignClause_v0),
 	#[allow(non_camel_case_types)]
@@ -396,6 +541,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => c.pubkey,
 			Self::TimelockSign(c) => c.pubkey,
 			Self::DelayedTimelockSign(c) => c.pubkey,
+			Self::HashDelaySign(c) => c.pubkey,
+			Self::HashSign(c) => c.pubkey,
 			Self::HashDelaySign_v0(c) => c.pubkey,
 			Self::HashSign_v0(c) => c.pubkey,
 		}
@@ -408,6 +555,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => c.tapscript(),
 			Self::TimelockSign(c) => c.tapscript(),
 			Self::DelayedTimelockSign(c) => c.tapscript(),
+			Self::HashDelaySign(c) => c.tapscript(),
+			Self::HashSign(c) => c.tapscript(),
 			Self::HashDelaySign_v0(c) => c.tapscript(),
 			Self::HashSign_v0(c) => c.tapscript(),
 		}
@@ -419,6 +568,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => Some(c.sequence()),
 			Self::TimelockSign(_) => None,
 			Self::DelayedTimelockSign(c) => Some(c.sequence()),
+			Self::HashDelaySign(c) => Some(c.sequence()),
+			Self::HashSign(_) => None,
 			Self::HashDelaySign_v0(c) => Some(c.sequence()),
 			Self::HashSign_v0(_) => None,
 		}
@@ -430,6 +581,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => c.control_block(vtxo),
 			Self::TimelockSign(c) => c.control_block(vtxo),
 			Self::DelayedTimelockSign(c) => c.control_block(vtxo),
+			Self::HashDelaySign(c) => c.control_block(vtxo),
+			Self::HashSign(c) => c.control_block(vtxo),
 			Self::HashDelaySign_v0(c) => c.control_block(vtxo),
 			Self::HashSign_v0(c) => c.control_block(vtxo),
 		}
@@ -441,6 +594,8 @@ impl VtxoClause {
 			Self::DelayedSign(c) => c.witness_size(vtxo),
 			Self::TimelockSign(c) => c.witness_size(vtxo),
 			Self::DelayedTimelockSign(c) => c.witness_size(vtxo),
+			Self::HashDelaySign(c) => c.witness_size(vtxo),
+			Self::HashSign(c) => c.witness_size(vtxo),
 			Self::HashDelaySign_v0(c) => c.witness_size(vtxo),
 			Self::HashSign_v0(c) => c.witness_size(vtxo),
 		}
@@ -474,6 +629,8 @@ mod tests {
 			VtxoClause::DelayedSign(_) => true,
 			VtxoClause::TimelockSign(_) => true,
 			VtxoClause::DelayedTimelockSign(_) => true,
+			VtxoClause::HashDelaySign(_) => true,
+			VtxoClause::HashSign(_) => true,
 			VtxoClause::HashDelaySign_v0(_) => true,
 			VtxoClause::HashSign_v0(_) => true,
 		}

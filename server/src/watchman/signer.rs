@@ -104,7 +104,9 @@ impl VtxoSigner<ServerVtxoPolicy> for WatchmanSigner {
 
 		// then check for other witness items
 		match clause {
+			VtxoClause::HashDelaySign(_) => self.get_preimage(clause).await.is_some(),
 			VtxoClause::HashDelaySign_v0(_) => self.get_preimage(clause).await.is_some(),
+			VtxoClause::HashSign(_) => self.get_preimage(clause).await.is_some(),
 			VtxoClause::HashSign_v0(_) => self.get_preimage(clause).await.is_some(),
 			// others are simple signatures
 			VtxoClause::DelayedSign(_) => true,
@@ -153,7 +155,15 @@ impl VtxoSigner<ServerVtxoPolicy> for WatchmanSigner {
 			VtxoClause::TimelockSign(c) => Some(c.witness(&signature, control_block)),
 			VtxoClause::DelayedSign(c) => Some(c.witness(&signature, control_block)),
 			VtxoClause::DelayedTimelockSign(c) => Some(c.witness(&signature, control_block)),
+			VtxoClause::HashDelaySign(c) => {
+				let preimage = self.get_preimage(clause).await?;
+				Some(c.witness(&(signature, *preimage.leak_ref()), control_block))
+			},
 			VtxoClause::HashDelaySign_v0(c) => {
+				let preimage = self.get_preimage(clause).await?;
+				Some(c.witness(&(signature, *preimage.leak_ref()), control_block))
+			},
+			VtxoClause::HashSign(c) => {
 				let preimage = self.get_preimage(clause).await?;
 				Some(c.witness(&(signature, *preimage.leak_ref()), control_block))
 			},
