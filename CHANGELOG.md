@@ -6,6 +6,135 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.5.0
+
+- `bark`
+  - Forward Lightning receives to Ark addresses
+    Wallets can claim incoming Lightning payments directly to another wallet's
+    Ark address, allowing delivery while the recipient is offline. The claim
+    arkoor is signed directly to the destination's own policy, so the
+    claiming wallet never has custodial control over the funds and cannot
+    redirect them. It can still strand them: delivering the
+    signed output to the destination's mailbox is a separate step only the
+    claiming wallet can perform, and no one else can discover or recover
+    that output until it happens. This step resumes automatically on
+    restart, so a crash recovers on its own — but for as long as the
+    claiming wallet stays offline (or simply never delivers), the
+    destination can't claim funds already signed to it. Forwarding through
+    a third party means trusting it to come back online and deliver, not
+    trusting it with custody.
+    [#2146](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2146)
+    - **BREAKING:** `LightningReceive` adds a public
+      `claim_destination: Option<ark::Address>` field.
+  - Recover a wallet's VTXOs from its seed
+    A wallet now posts the ids of VTXOs it creates or receives to a seed-derived
+    recovery mailbox, and re-derives that mailbox on first open to rebuild its
+    spendable VTXO set from the seed alone — no local state required. Already-spent
+    and unilaterally-exited VTXOs are skipped, the mailbox scan is bounded so an
+    uncooperative server can't stall it indefinitely, and any VTXOs that could not
+    be checked due to errors are reported so recovery can be retried.
+    [#2193](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2193)
+    - Recovery runs automatically on wallet open; set the new
+      `OpenWalletArgs::skip_recovery` flag to opt out.
+    - The new `OpenWalletArgs::on_recovery_finished` callback receives a
+      `RecoveryReport` summarising the recovered, skipped, foreign, exited, and
+      failed VTXOs.
+    - The new `Wallet::recover_vtxos` method recovers a caller-supplied set of
+      VTXO ids on demand, returning a `RecoveryReport`.
+  - Schedule delegated refreshes at a future block height
+    The new `Wallet::refresh_vtxos_scheduled` sets up a refresh well before the
+    VTXOs need it, pricing the refresh fee at the scheduled height (matching the
+    server) so scheduling ahead pays the lower future fee. Under the hood
+    `Wallet::join_delegated_round` takes an optional scheduled height and
+    `Wallet::build_scheduled_refresh_participation` builds the height-priced
+    participation; `join_next_round_delegated` stays as a no-schedule wrapper.
+    [#2304](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2304)
+  - Re-register owned VTXOs with the server on wallet sync
+    Syncing a wallet now re-posts the IDs of all non-spent (spendable, locked
+    and exited) VTXOs to the server's recovery mailbox and re-registers their
+    fully-signed transaction chains. This catches up VTXOs that were stored
+    before this mechanism existed or whose post failed transiently, so a wallet
+    recovering from seed can rebuild its state. Exited VTXOs are backed up too,
+    since their exit transactions being broadcast doesn't mean the on-chain
+    outputs were claimed. Both server endpoints are idempotent, and the
+    catch-up is best-effort: an unreachable server logs a warning without
+    interrupting the sync.
+    VTXOs whose mailbox post and chain registration both succeeded once are
+    marked registered (new `registered` column on `bark_vtxo`, exposed as
+    `WalletVtxo::registered`) and skipped by later syncs, so the catch-up
+    only re-uploads what the server may still be missing. If a server-side
+    recovery issue is ever discovered, a migration can reset the flag to force
+    a full re-upload.
+    [#2309](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2309)
+
+- `bark-cli`
+  - Add Lightning invoices for Ark address delivery
+    `bark lightning invoice-for-address` creates an invoice whose claimed VTXO
+    is delivered to another wallet's Ark address. The claim is signed directly
+    to that address, so this wallet has no custodial control over the payment
+    and cannot redirect it. Delivery is still a separate step only
+    this wallet can perform, and the recipient has no independent way to
+    recover the funds until it happens. This step resumes automatically on
+    restart, so a crash recovers on its own — but running this for someone
+    else means they're trusting you to stay online and eventually deliver,
+    not trusting you with custody.
+    [#2146](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2146)
+  - Add `--height` to `refresh --delegated`
+    Schedule a delegated refresh at a future block height instead of the next round.
+    [#2304](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2304)
+  - Disable the barkd mnemonic endpoint by default
+    `GET /api/v1/wallet/mnemonic` returned the wallet's BIP-39 seed phrase to
+    anyone who could reach the API, so it is now opt-in: start barkd with
+    `--expose-mnemonic` (or `BARKD_EXPOSE_MNEMONIC=true`) to enable it.
+    [#2308](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2308)
+    - **BREAKING:** the endpoint now responds with 404 unless mnemonic exposure
+      is explicitly enabled.
+
+- `bark-json`
+  - Add a request model for forwarded Lightning receives
+    `LightningInvoiceForAddressRequest` describes invoices whose claimed VTXO
+    is delivered to a supplied Ark address.
+    [#2146](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2146)
+
+- `bark-rest`
+  - Create Lightning invoices for Ark address delivery
+    The new `POST /receives/invoice/for-address` endpoint forwards the claimed
+    VTXO to the supplied Ark address mailbox. The claim is signed directly to
+    that address, so the wallet operating this endpoint has no custodial
+    control over the payment and cannot redirect it. Delivery is
+    still a separate step only this wallet can perform, and the recipient has
+    no independent way to recover the funds until it happens. This step
+    resumes automatically on restart, so a crash recovers on its own — but
+    callers of this endpoint are trusting the operator to stay online and
+    eventually deliver, not trusting it with custody.
+    [#2146](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2146)
+  - Add `POST /refresh/delegated/vtxos` for delegated refreshes
+    The refresh is submitted as a delegated participation the server carries
+    through the round. An optional `height` schedules it for that block height
+    instead of the next round, pricing the refresh fee at that height.
+    [#2304](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2304)
+
+- `server`
+  - Store fully-signed VTXOs on registration
+    The server now persists the complete, fully-signed VTXO when it is registered,
+    so it can later serve the full VTXO to clients rebuilding their wallet from
+    seed via the recovery mailbox.
+    [#2193](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2193)
+  - Support scheduling delegated refreshes by block height
+    A delegated round participation can now carry a scheduled height: the server
+    prices its refresh fee at that height and holds it out of rounds until the
+    chain tip reaches it, letting clients set up a refresh ahead of time.
+    [#2304](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2304)
+  - Accept unregistered VTXOs as lightning-receive anti-DoS proof
+    The anti-DoS ownership proof only demonstrates that the claimant controls a
+    genuine stake in the Ark; it never spends the VTXO, so the server no longer
+    requires the proof VTXO's signed transaction chain to be registered first.
+    This fixes lightning receives failing when the client happened to pick a
+    VTXO the server still tracks as `Unregistered` (e.g. an arkoor output whose
+    chain upload had not landed yet). Banned and otherwise unspendable VTXOs are
+    still rejected.
+    [#2307](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2307)
+
 # v0.4.0
 
 - `ark-lib`
