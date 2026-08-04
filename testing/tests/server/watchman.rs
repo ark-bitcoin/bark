@@ -1,4 +1,5 @@
 
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ use bark_json::primitives::VtxoStateInfo;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoin_ext::TxStatus;
 use server::config::OptionalService;
+use server::database::Db;
 use server::vtxopool::VtxoTarget;
 use server_log::{
 	ClaimBroadcast, ClaimBroadcastFailure, ClaimChunkBroadcastFailure, ProgressBroadcast,
@@ -503,7 +505,133 @@ async fn watchman_sweeps_exit_after_forfeit() {
 	assert_eq!(msg.vtxo_ids[0].to_point().txid, progress_log.txid);
 }
 
-/// After bark1 and bark2 both board and refresh into round vtxos, bark1 gets cloned.
+/// Cross-domain hash reuse: the same 32-byte secret exists in two tables at once.
+///
+/// - `round_participation`: the hArk unlock preimage, stored when a user
+///   participates in a round;
+/// - `htlc_settlement`: a Lightning preimage, stored when a payment with the
+///   same payment hash settles.
+///
+/// This state is reachable through entirely legitimate flows: a user learns
+/// their unlock preimage when they forfeit, so nothing stops them from
+/// settling a Lightning payment (send or receive) whose payment hash equals
+/// their unlock hash afterwards. Here we plant the state directly.
+///
+/// The watchman must keep claiming hArk forfeit outputs in this state: the
+/// forfeit claim's `HashSign` clause belongs to the hArk domain, and the
+/// participation preimage is the only secret that can satisfy it. Refusing to
+/// sign "because the hash is ambiguous" leaves the forfeit output unclaimed
+/// until the user's `exit_delta` clause matures, letting a malicious user
+/// reclaim the forfeited coins while keeping their new round vtxos.
+#[tokio::test]
+#[ignore = "reproduces theft vector: cross-domain ambiguity refusal blocks the forfeit claim"]
+async fn watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table() {
+	let ctx =
+		TestContext::new("server/watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table")
+			.await;
+	let srv = ctx
+		.captaind("server")
+		.funded(btc(10))
+		.cfg(|cfg| {
+			cfg.watchman = OptionalService::Disabled;
+			cfg.vtxopool.vtxo_targets = vec![];
+		})
+		.create()
+		.await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = ctx
+		.watchmand("watchman")
+		.cfg(|cfg| {
+			cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		})
+		.create(&srv)
+		.await;
+	wm.add_slog_handler(failures.clone());
+
+	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
+
+	// Board some funds with bark1
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(500_000)).create().await;
+	bark1
+		.board_and_confirm_and_register(&ctx, sat(200_000))
+		.await;
+
+	// fund the watchman
+	ctx.bitcoind()
+		.fund_addr(wm.wait_wallet_address().await, sat(100_000))
+		.await;
+
+	// Clone bark1 before refresh — bark2 retains the stale board vtxo state
+	let bark1_old = bark1.full_clone("bark2").await;
+
+	// bark1 refreshes its board vtxo into a round vtxo. The hArk round stores
+	// the participation's unlock hash and preimage in round_participation.
+	ctx.refresh_all(&srv, &[&bark1]).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark1.sync().await;
+
+	// Plant the cross-domain state: record the same preimage as a settled
+	// Lightning payment hash.
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	let unlock_preimage = db
+		.read(async |t| {
+			let row = t
+				.query_one(
+					"SELECT unlock_preimage FROM round_participation ORDER BY id DESC LIMIT 1",
+					&[],
+				)
+				.await?;
+			let hex: String = row.get(0);
+			Ok(ark::lightning::Preimage::from_str(&hex).expect("invalid unlock preimage"))
+		})
+		.await
+		.unwrap();
+	db.write(async |t| t.store_htlc_settlement(unlock_preimage).await)
+		.await
+		.unwrap();
+
+	// bark1_old, holding the stale board vtxo, starts a malicious exit
+	bark1_old.start_exit_all().await;
+
+	// Progress until the exit transaction is confirmed on-chain (AwaitingDelta state).
+	progress_exit_until_awaiting_delta(&ctx, &bark1_old).await;
+
+	// Advance past watchman's progress grace period
+	let tip = ctx
+		.generate_blocks(wm.config().watchman.progress_grace_period as u32)
+		.await;
+	wm.wait_for_sync_height(tip).await;
+
+	// first sweep: the watchman broadcasts the forfeit (progress) transaction via CPFP.
+	let mut log_progress = wm.subscribe_log::<ProgressBroadcast>();
+	wm.trigger_sweep().await;
+	let progress_log = log_progress
+		.recv()
+		.wait_millis(10_000)
+		.await
+		.expect("watchman should broadcast progress (forfeit) tx");
+
+	// Confirm the forfeit tx so the resulting HarkForfeit vtxo enters the frontier.
+	ctx.await_transactions_across_nodes([progress_log.cpfp_txid], [wm.bitcoind().as_ref()])
+		.await;
+	let tip = ctx.generate_blocks(1).await;
+	wm.wait_for_sync_height(tip).await;
+
+	// second sweep: the watchman must claim the HarkForfeit vtxo. The preimage
+	// for its HashSign clause is the hArk unlock preimage; the Lightning
+	// settlement row for the same hash must not block this.
+	wm.trigger_sweep().await;
+	let msg = log_claim
+		.recv()
+		.wait_millis(15_000)
+		.await
+		.expect("watchman must claim the HarkForfeit vtxo despite the cross-domain preimage");
+	failures.assert_empty();
+	println!("malicious exit sweep: {:#?}", msg);
+	assert_eq!(1, msg.vtxo_ids.len());
+	assert_eq!(msg.vtxo_ids[0].to_point().txid, progress_log.txid);
+}
+
 /// One clone sends an OOR payment to bark2 and bark2 refreshes (forfeiting the OOR vtxo
 /// in a round), which makes the server store the signed OOR transaction and set
 /// server_may_own_descendant on bark1's round vtxo exit tx. The other clone (bark1_old)
