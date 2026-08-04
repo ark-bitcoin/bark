@@ -13,7 +13,10 @@ use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::{info, trace, warn};
 use server_rpc::{self as rpc, protos};
 
-use crate::rpcserver::{middleware, StatusContext, ToStatusResult, RPC_RICH_ERRORS};
+use crate::rpcserver::{
+	middleware, StatusContext, ToStatusResult,
+	DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS, RPC_RICH_ERRORS,
+};
 use crate::system::RuntimeManager;
 use crate::Server;
 
@@ -183,6 +186,7 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.add_service(rpc::server::BanAdminServiceServer::from_arc(srv.clone()));
 
 	tonic::transport::Server::builder()
+		.http2_max_pending_accept_reset_streams(Some(DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS))
 		.layer(OtelGrpcLayer::default())
 		.layer(middleware::TelemetryMetricsLayer)
 		.add_routes(routes)
@@ -205,6 +209,7 @@ pub async fn run_watchmand_admin_rpc_server(
 		.add_service(rpc::server::SweepAdminServiceServer::from_arc(daemon));
 
 	tonic::transport::Server::builder()
+		.http2_max_pending_accept_reset_streams(Some(DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS))
 		.layer(OtelGrpcLayer::default())
 		.layer(middleware::TelemetryMetricsLayer)
 		.add_routes(routes)

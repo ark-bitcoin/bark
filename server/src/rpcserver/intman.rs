@@ -6,7 +6,7 @@ use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::{error, info};
 use server_rpc::protos;
 
-use crate::rpcserver::{StatusContext, ToStatusResult};
+use crate::rpcserver::{StatusContext, ToStatusResult, DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS};
 use crate::Server;
 
 #[async_trait]
@@ -144,6 +144,10 @@ pub async fn run_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
 	let integration_server = server_rpc::server::IntegrationServiceServer::from_arc(server.clone());
 
 	tonic::transport::Server::builder()
+		.http2_max_pending_accept_reset_streams(Some(
+			server.config.rpc.max_pending_accept_reset_streams
+				.unwrap_or(DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS)
+		))
 		.layer(OtelGrpcLayer::default())
 		.layer(crate::rpcserver::middleware::TelemetryMetricsLayer)
 		.layer(crate::rpcserver::middleware::RemoteAddrLayer)

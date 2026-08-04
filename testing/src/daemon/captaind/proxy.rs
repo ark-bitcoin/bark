@@ -223,7 +223,11 @@ impl ArkRpcProxyServer {
 			// So we have to ignore the port usage error and then check if
 			// the future yields fast.
 			let server_res = tokio::spawn(async move {
+				// Allow bursts of client cancellations without h2 killing the
+				// connection; see HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS in
+				// captaind's rpcserver module for the full rationale.
 				let ret = tonic::transport::Server::builder()
+					.http2_max_pending_accept_reset_streams(Some(1000))
 					.add_service(ark_server)
 					.add_service(mailbox_server)
 					.serve_with_shutdown(addr, stop_rx).await;
