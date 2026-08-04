@@ -392,6 +392,11 @@ impl DaemonHelper for BitcoindHelper {
 		if !regtest_dir.exists() {
 			if let Some(snapshot_dir) = &self.config.snapshot_dir {
 				debug!("Copying snapshot from {:?}", snapshot_dir);
+				// Take the snapshot lock shared while copying. A concurrent
+				// regeneration holds it exclusive, so it cannot delete the
+				// snapshot while we copy it.
+				let lock_file = snapshot::open_lock_file(snapshot_dir);
+				lock_file.lock_shared().expect("failed to lock snapshot for copying");
 				let status = Command::new("cp")
 					.arg("-a")
 					.arg(snapshot_dir.join("regtest"))

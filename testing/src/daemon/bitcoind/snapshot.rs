@@ -14,6 +14,24 @@ fn is_snapshot_valid(snapshot_dir: &Path) -> bool {
 	stored == Bitcoind::version()
 }
 
+/// Open the lock file for `snapshot_dir`, creating it if needed.
+///
+/// Snapshot regeneration takes this lock exclusive. Processes that copy
+/// the snapshot take it shared. This prevents a regeneration from
+/// deleting the snapshot while another process is copying it.
+pub fn open_lock_file(snapshot_dir: &Path) -> std::fs::File {
+	// Ensure the parent directory exists so we can create the lock file.
+	if let Some(parent) = snapshot_dir.parent() {
+		std::fs::create_dir_all(parent).expect("failed to create snapshot parent dir");
+	}
+	std::fs::File::options()
+		.create(true)
+		.write(true)
+		.truncate(false)
+		.open(snapshot_dir.with_extension("lock"))
+		.expect("failed to open snapshot lock file")
+}
+
 /// Ensure a valid bitcoind snapshot exists at `snapshot_dir`.
 ///
 /// Uses file locking so that concurrent test processes don't race to
@@ -27,20 +45,8 @@ pub async fn ensure_snapshot(snapshot_dir: &Path) {
 		return;
 	}
 
-	// Ensure the parent directory exists so we can create the lock file.
-	if let Some(parent) = snapshot_dir.parent() {
-		std::fs::create_dir_all(parent).expect("failed to create snapshot parent dir");
-	}
-
-	let lock_path = snapshot_dir.with_extension("lock");
-	let lock_file = std::fs::File::options()
-		.create(true)
-		.write(true)
-		.truncate(false)
-		.open(&lock_path)
-		.expect("failed to open snapshot lock file");
-
 	// Acquire an exclusive lock (blocking — other processes wait here).
+	let lock_file = open_lock_file(snapshot_dir);
 	lock_file.lock().expect("failed to lock snapshot lock file");
 
 	// Double-check: another process may have generated the snapshot while
