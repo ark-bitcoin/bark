@@ -966,7 +966,6 @@ lightning_test!(refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry);
 /// walks away with the granted VTXO value *and* the refunded payment, and the
 /// server's hold settler keeps retrying a settle that can never succeed.
 #[tokio::test]
-#[ignore = "reproduces theft vector: claim after incoming HTLC expiry currently succeeds"]
 async fn refuse_receive_claim_after_incoming_htlc_expiry() {
 	let ctx = TestContext::new("server/refuse_receive_claim_after_incoming_htlc_expiry").await;
 
