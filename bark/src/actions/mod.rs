@@ -221,11 +221,15 @@ pub fn park_with_backoff<A: WalletAction>(state: A, attempts: u32) -> Advance<A>
 }
 
 /// Whether to double-drive each action step to check reentrancy, set via the
-/// `BARK_DOUBLE_DRIVE_ACTIONS` env var. Debug-only, compiled out of release.
+/// `BARK_DOUBLE_DRIVE_ACTIONS` env var. Empty, `0` and `false` count as unset.
+/// Debug-only, compiled out of release.
 /// See `just int-bark-sdk-action-reentrancy`.
 #[cfg(debug_assertions)]
 fn double_drive_actions() -> bool {
-	std::env::var_os("BARK_DOUBLE_DRIVE_ACTIONS").is_some()
+	match std::env::var("BARK_DOUBLE_DRIVE_ACTIONS") {
+		Ok(v) => !matches!(v.trim(), "" | "0" | "false"),
+		Err(_) => false,
+	}
 }
 
 /// Assert advancing the same state twice produced an equivalent outcome (same
