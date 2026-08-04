@@ -179,6 +179,19 @@ impl<'t> Tx<'t> {
 		))
 	}
 
+	/// Whether any participation exists with this unlock hash, without
+	/// loading or completing the row.
+	pub async fn unlock_hash_exists(
+		&self,
+		unlock_hash: UnlockHash,
+	) -> anyhow::Result<bool> {
+		let row = self.query_opt(
+			"SELECT 1 FROM round_participation WHERE unlock_hash = $1",
+			&[&unlock_hash.to_string()],
+		).await?;
+		Ok(row.is_some())
+	}
+
 	pub async fn get_round_participation_by_unlock_hash(
 		&self,
 		unlock_hash: UnlockHash,

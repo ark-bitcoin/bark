@@ -165,6 +165,12 @@ impl Server {
 		// We will mask the old value
 		let request = request.set_vtxos(input_vtxos.iter().map(|v| v.vtxo.clone()))?;
 
+		// Locking value for a lightning payment whose payment hash is an
+		// hArk unlock hash would put the same secret in two domains at once.
+		if self.db.read(async |t| t.get_round_participation_by_unlock_hash(payment_hash.to_sha256_hash()).await).await?.is_some() {
+			return badarg!("payment hash collides with an existing unlock hash");
+		}
+
 		// Bail early if this invoice was already paid to avoid setting up HTLCs
 		// just to have them revoked some time later.
 		if self.htlc_settler.is_settled(payment_hash).await?.is_some() {
@@ -484,6 +490,12 @@ impl Server {
 		pver: u64,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
+
+		// Reusing an hArk unlock hash as a lightning payment hash would put
+		// the same secret in two domains at once.
+		if self.db.read(async |t| t.get_round_participation_by_unlock_hash(payment_hash.to_sha256_hash()).await).await?.is_some() {
+			return badarg!("payment hash collides with an existing unlock hash");
+		}
 
 		if amount == Amount::ZERO {
 			return badarg!("Cannot create invoice for 0 sats (this would create an explicit 0 sat invoice, not an any-amount invoice)");
