@@ -524,7 +524,6 @@ async fn watchman_sweeps_exit_after_forfeit() {
 /// until the user's `exit_delta` clause matures, letting a malicious user
 /// reclaim the forfeited coins while keeping their new round vtxos.
 #[tokio::test]
-#[ignore = "reproduces theft vector: cross-domain ambiguity refusal blocks the forfeit claim"]
 async fn watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table() {
 	let ctx =
 		TestContext::new("server/watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table")
