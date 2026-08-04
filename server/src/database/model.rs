@@ -537,8 +537,8 @@ mod test {
 	#[test]
 	fn htlc_vtxos_are_never_generically_spendable() {
 		for (v, policy) in [
-			(htlc_send(), "server-htlc-send"),
-			(htlc_recv(), "server-htlc-receive"),
+			(htlc_send(), "server-htlc-send-v1"),
+			(htlc_recv(), "server-htlc-receive-v1"),
 		] {
 			let err = format!("{}", v.check_spendable(100).unwrap_err());
 			assert!(err.contains("not spendable as a") && err.contains(policy), "got: {err}");

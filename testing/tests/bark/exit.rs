@@ -204,7 +204,7 @@ async fn exit_vtxo() {
 
 	bark.claim_all_exits(bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark.onchain_balance().await, sat(995_408));
+	assert_eq!(bark.onchain_balance().await, sat(995_403));
 }
 
 #[tokio::test]
@@ -245,7 +245,7 @@ async fn exit_and_send_vtxo() {
 	bark.claim_exits([exit.vtxo_id], bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark.onchain_balance().await, sat(995_408));
+	assert_eq!(bark.onchain_balance().await, sat(995_403));
 }
 
 #[tokio::test]
@@ -1201,7 +1201,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	// Drive the exit past Claimable → Claimed now that the drain has confirmed.
 	bark.progress_exit().await;
 
-	assert_eq!(bark.onchain_balance().await, sat(109_993_699));
+	assert_eq!(bark.onchain_balance().await, sat(109_993_689));
 
 	// Check that we have a lightning receive -> exit movement chain
 	let movements = bark.history().await;
@@ -1466,5 +1466,5 @@ async fn detect_and_claim_force_exited_vtxo() {
 	ctx.generate_blocks(1).await;
 
 	let balance = bark.onchain_balance().await;
-	assert_eq!(balance, sat(696_053), "wallet should have recovered the force-exited vtxos");
+	assert_eq!(balance, sat(696_048), "wallet should have recovered the force-exited vtxos");
 }

@@ -54,7 +54,7 @@ async fn assert_vtxopool_consistency_db(db: &Db) {
 async fn count_htlc_recv_vtxos(db: &Db) -> usize {
 	db.read(async |t| {
 		let row = t.query_one("
-			SELECT COUNT(*) FROM vtxo WHERE policy_type = 'server-htlc-receive'
+			SELECT COUNT(*) FROM vtxo WHERE policy_type = 'server-htlc-receive-v1'
 		", &[]).await?;
 		Ok(row.get::<_, i64>(0) as usize)
 	}).await.unwrap()
