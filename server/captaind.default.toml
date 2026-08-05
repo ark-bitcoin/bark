@@ -211,7 +211,12 @@ ln_max_fee_ppm = 900000
 #############
 [watchman]
 enabled = true
-process_interval = "60s"
+# How often to react to on-chain exit activity: progressing exit chains and
+# claiming VTXOs before a counterparty's timelock matures.
+reaction_interval = "10m"
+# How often to sweep VTXOs only the watchman can spend. Sweeps have no
+# deadline, so this can be much longer than reaction_interval.
+sweep_interval = "2h"
 progress_grace_period = 2
 claim_chunksize = 20
 incremental_relay_fee = "100 sat/kvb"

@@ -93,7 +93,7 @@ fn try_progress<T>(
 		}
 	}
 
-	Some(Action::Progress { txid, deadline: Some(deadline) })
+	Some(Action::Progress { txid, deadline })
 }
 
 /// Determine the action for an ServerOwned policy
@@ -103,7 +103,7 @@ fn try_progress<T>(
 /// be swept.
 fn decide_server_owned(params: &ActionParams) -> Action {
 	if params.chain_tip_height >= params.expiry_height {
-		Action::Claim { deadline: None }
+		Action::Sweep
 	} else {
 		Action::Wait
 	}
@@ -111,10 +111,10 @@ fn decide_server_owned(params: &ActionParams) -> Action {
 
 /// Determine the action for an Expiry policy
 ///
-/// Claim if expired, otherwise wait
+/// Sweep if expired, otherwise wait
 fn decide_action_expiry(params: &ActionParams) -> Action {
 	if params.chain_tip_height >= params.expiry_height {
-		Action::Claim { deadline: None }
+		Action::Sweep
 	} else {
 		Action::Wait
 	}
@@ -126,7 +126,7 @@ fn decide_action_expiry(params: &ActionParams) -> Action {
 fn decide_action_hark_forfeit(params: &ActionParams) -> Action {
 	let deadline = params.confirmed_at.checked_add(BlockHeight::from(params.exit_delta))
 		.expect("confirmed_at + exit_delta within u32 by MAX_BLOCK_HEIGHT invariant");
-	Action::Claim { deadline: Some(deadline) }
+	Action::Claim { deadline }
 }
 
 /// Determine action for Pubkey policy.
@@ -135,7 +135,7 @@ fn decide_action_hark_forfeit(params: &ActionParams) -> Action {
 /// longer the rightful owner — try to progress as watchtower for the new
 /// owner, even if we still hold the ephemeral key. Otherwise, if we know
 /// the key (e.g. an unspent pool vtxo whose parent tx hit the chain via a
-/// sibling exit), claim after the exit delta.
+/// sibling exit), sweep after the exit delta.
 fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 	let after_exit_delta = params.confirmed_at.checked_add(BlockHeight::from(params.exit_delta))
 		.expect("confirmed_at + exit_delta within u32 by MAX_BLOCK_HEIGHT invariant");
@@ -157,7 +157,7 @@ fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 	if params.policy_extras.server_knows_key
 		&& params.chain_tip_height >= after_exit_delta
 	{
-		return Action::Claim { deadline: None };
+		return Action::Sweep;
 	}
 
 	Action::Wait
@@ -184,7 +184,7 @@ fn decide_action_server_htlc_send(params: &ActionParams<HtlcSendExtra>) -> Actio
 		let claim_height = params.confirmed_at.checked_add(BlockHeight::from(params.exit_delta))
 			.expect("confirmed_at + exit_delta within u32 by MAX_BLOCK_HEIGHT invariant");
 		if params.chain_tip_height >= claim_height {
-			return Action::Claim { deadline: Some(deadline) };
+			return Action::Claim { deadline };
 		}
 	}
 
@@ -210,7 +210,7 @@ fn decide_action_server_htlc_recv(params: &ActionParams<HtlcRecvExtra>) -> Actio
 
 	let claim_height = std::cmp::max(params.policy_extras.htlc_expiry, confirmed_plus_exit);
 	if params.chain_tip_height >= claim_height {
-		return Action::Claim { deadline: Some(deadline) };
+		return Action::Claim { deadline };
 	}
 
 	Action::Wait
@@ -294,21 +294,25 @@ impl ActionContextFetcher<'_> {
 		};
 
 		match &action {
-			Action::Progress { deadline: Some(d), .. } if self.chain_tip_height > *d => {
+			Action::Progress { deadline: d, .. } if self.chain_tip_height > *d => {
 				slog!(ProgressDeadlineExceeded,
 					vtxo_id: vtxo.id(),
 					deadline: *d,
 					current_height: self.chain_tip_height,
 				);
 			},
-			Action::Claim { deadline: Some(d) } if self.chain_tip_height > *d => {
+			Action::Claim { deadline: d } if self.chain_tip_height > *d => {
 				slog!(ClaimDeadlineExceeded,
 					vtxo_id: vtxo.id(),
 					deadline: *d,
 					current_height: self.chain_tip_height,
 				);
 			},
-			Action::Wait | Action::Progress { .. } | Action::Claim { .. } => {},
+			Action::Wait
+				| Action::Sweep
+				| Action::Progress { .. }
+				| Action::Claim { .. }
+			=> {},
 		}
 
 		action
@@ -447,7 +451,7 @@ mod tests {
 			},
 		};
 		// deadline = confirmed_at + exit_delta = 100 + 144 = 244
-		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: 244 });
 	}
 
 	/// If no progress is available, the server waits even if the wait
@@ -509,10 +513,10 @@ mod tests {
 		assert_eq!(decide_action_pubkey(&params), Action::Wait);
 	}
 
-	/// When the server knows the key and the exit delta has passed, it claims
-	/// with no deadline (it owns the key directly, no competing expiry).
+	/// When the server knows the key and the exit delta has passed, the vtxo
+	/// is swept: the server owns the key directly, so nobody competes for it.
 	#[test]
-	fn pubkey_knows_key_claims_at_exit_delta() {
+	fn pubkey_knows_key_sweeps_at_exit_delta() {
 		let params = ActionParams {
 			vtxo_id: test_vtxo_id(),
 			chain_tip_height: 244,
@@ -526,8 +530,8 @@ mod tests {
 			},
 		};
 		// after_exit_delta = 100 + 144 = 244, chain_tip >= after_exit_delta
-		// deadline is None: server owns the key directly, no competing expiry
-		assert_eq!(decide_action_pubkey(&params), Action::Claim { deadline: None });
+		// no deadline: server owns the key directly, no competing expiry
+		assert_eq!(decide_action_pubkey(&params), Action::Sweep);
 	}
 
 	/// When the server still holds the ephemeral key (e.g. for a pool vtxo)
@@ -549,7 +553,7 @@ mod tests {
 				server_knows_key: true,
 			},
 		};
-		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: 244 });
 	}
 
 	/// If the next tx exists but is not signed, wait for the signature
@@ -592,7 +596,7 @@ mod tests {
 			},
 		};
 		// after_exit_delta = 244; tip is at 900, well past it. Still progress.
-		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: 244 });
 	}
 
 	/// Even when the server doesn't know the key, a signed `next_tx` whose
@@ -613,7 +617,7 @@ mod tests {
 				server_knows_key: false,
 			},
 		};
-		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: 244 });
 	}
 
 	/// When the server holds the key and a signed `next_tx` is available
@@ -655,7 +659,7 @@ mod tests {
 				server_knows_key: true,
 			},
 		};
-		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: 244 });
 	}
 
 	/// A signed checkpoint tx is broadcast once the grace period passes,
@@ -676,7 +680,7 @@ mod tests {
 			},
 		};
 		// deadline = confirmed_at + exit_delta = 100 + 144 = 244
-		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: 244 });
 	}
 
 	/// Server waits for the safety margin before broadcasting progress,
@@ -719,7 +723,7 @@ mod tests {
 			},
 		};
 		// deadline = min(htlc_expiry, confirmed_at + 2*exit_delta) = min(500, 100 + 288) = 388
-		assert_eq!(decide_action_server_htlc_send(&params), Action::Progress { txid, deadline: Some(388) });
+		assert_eq!(decide_action_server_htlc_send(&params), Action::Progress { txid, deadline: 388 });
 	}
 
 	/// Server has the preimage but must wait until the claim height
@@ -762,7 +766,7 @@ mod tests {
 		};
 		// claim_height = 100 + 144 = 244, chain_tip >= claim_height
 		// deadline = min(500, 100 + 288) = 388
-		assert_eq!(decide_action_server_htlc_send(&params), Action::Claim { deadline: Some(388) });
+		assert_eq!(decide_action_server_htlc_send(&params), Action::Claim { deadline: 388 });
 	}
 
 	/// Without a preimage or progress tx, the server can only wait.
@@ -825,7 +829,7 @@ mod tests {
 		// deadline = confirmed_at + htlc_expiry_delta + exit_delta = 100 + 40 + 144 = 284
 		assert_eq!(
 			decide_action_server_htlc_recv(&params),
-			Action::Progress { txid, deadline: Some(284) },
+			Action::Progress { txid, deadline: 284 },
 		);
 	}
 
@@ -869,6 +873,6 @@ mod tests {
 		};
 		// claim_height = max(500, 244) = 500, chain_tip >= claim_height
 		// deadline = 100 + 40 + 144 = 284
-		assert_eq!(decide_action_server_htlc_recv(&params), Action::Claim { deadline: Some(284) });
+		assert_eq!(decide_action_server_htlc_recv(&params), Action::Claim { deadline: 284 });
 	}
 }

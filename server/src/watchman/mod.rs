@@ -19,6 +19,7 @@ pub use self::signer::WatchmanSigner;
 
 /// Control messages that can be sent to a running [Watchman].
 pub enum Ctrl {
+	/// Run both the reaction and the sweep loop right now.
 	TriggerSweep,
 }
 
@@ -29,6 +30,7 @@ pub struct WatchmanHandle {
 }
 
 impl WatchmanHandle {
+	/// Make the watchman process the entire frontier right now.
 	pub fn trigger_sweep(&self) {
 		let _ = self.ctrl_tx.try_send(Ctrl::TriggerSweep);
 	}
@@ -83,6 +85,9 @@ struct MempoolSpend {
 }
 
 /// The action the watchman should take for a VTXO.
+///
+/// Every action other than [Action::Sweep] is reactive: some party started an
+/// exit on chain and we are racing the timelock that lets them take the money.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
 	/// No action needed yet.
@@ -92,13 +97,37 @@ pub enum Action {
 		/// The txid of the next transaction to broadcast.
 		txid: bitcoin::Txid,
 		/// The block height before which the next transaction must be confirmed.
-		deadline: Option<BlockHeight>,
+		deadline: BlockHeight,
 	},
-	/// Claim the VTXO directly to the server's drain address.
+	/// Claim the VTXO directly to the server's drain address, competing with
+	/// the party that can spend it once the deadline passes.
 	Claim {
 		/// The block height before which the claim must be confirmed.
-		deadline: Option<BlockHeight>,
+		deadline: BlockHeight,
 	},
+	/// Sweep the VTXO to the server's drain address.
+	Sweep,
+}
+
+/// The actionable work found on the frontier, grouped by the loop that
+/// handles it.
+struct FrontierWork {
+	/// Progress txs to broadcast, soonest deadline first.
+	progress: Vec<(Txid, ServerVtxo)>,
+	/// VTXOs to claim before a counterparty's timelock matures,
+	/// soonest deadline first.
+	claims: Vec<ServerVtxo>,
+	/// VTXOs to sweep, which have no deadline.
+	sweeps: Vec<ServerVtxo>,
+}
+
+impl FrontierWork {
+	/// All VTXOs for which we intend to broadcast a transaction.
+	fn actionable_vtxos(&self) -> impl Iterator<Item = &ServerVtxo> {
+		self.claims.iter()
+			.chain(self.sweeps.iter())
+			.chain(self.progress.iter().map(|(_, v)| v))
+	}
 }
 
 /// VTXO processing watchman that handles claim and progress txs.
@@ -182,24 +211,44 @@ impl Watchman {
 			warn!("Error syncing legacy unfrontiered funding at startup: {:#}", e);
 		}
 
-		let mut timer = tokio::time::interval(self.config.process_interval);
+		let mut reaction_timer = tokio::time::interval(self.config.reaction_interval);
+		let mut sweep_timer = tokio::time::interval(self.config.sweep_interval);
 		loop {
 			tokio::select! {
-				_ = timer.tick() => {},
+				_ = reaction_timer.tick() => {
+					self.process_reactions_logged().await;
+					reaction_timer.reset();
+				},
+				_ = sweep_timer.tick() => {
+					self.process_sweeps_logged().await;
+					sweep_timer.reset();
+				},
 				Some(ctrl) = ctrl_rx.recv() => match ctrl {
-					Ctrl::TriggerSweep => {},
+					// a manual trigger runs both loops so we fully catch up
+					Ctrl::TriggerSweep => {
+						self.process_reactions_logged().await;
+						self.process_sweeps_logged().await;
+						reaction_timer.reset();
+						sweep_timer.reset();
+					},
 				},
 				_ = rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting Watchman...");
 					return;
 				},
 			}
+		}
+	}
 
-			if let Err(e) = self.process_all().await {
-				warn!("Error processing watchman: {:#}", e);
-			}
+	async fn process_reactions_logged(&self) {
+		if let Err(e) = self.process_reactions().await {
+			warn!("Error processing watchman reactions: {:#}", e);
+		}
+	}
 
-			timer.reset();
+	async fn process_sweeps_logged(&self) {
+		if let Err(e) = self.process_sweeps().await {
+			warn!("Error processing watchman sweeps: {:#}", e);
 		}
 	}
 
@@ -246,18 +295,17 @@ impl Watchman {
 		Ok(())
 	}
 
-	/// Process all VTXOs in the frontier.
+	/// Scan the frontier and collect the work to be done, grouped by loop.
 	///
-	/// Iterates over all VTXOs, determines the appropriate action for each,
-	/// and dispatches to the corresponding handler:
-	/// - Wait: no action needed
-	/// - Progress: passed to progress
-	/// - Claim: passed to process_claims
-	pub async fn process_all(&self) -> anyhow::Result<()> {
+	/// This determines the action for every VTXO in the frontier, reports the
+	/// frontier telemetry and drops cached mempool spends for VTXOs that no
+	/// longer need any action.
+	async fn scan_frontier(&self) -> FrontierWork {
 		let frontier = self.frontier.read().await;
 
 		let mut claims = Vec::new();
 		let mut progress = Vec::new();
+		let mut sweeps = Vec::new();
 		let mut wait_volume = Amount::ZERO;
 
 		let ctx = ActionContextFetcher {
@@ -277,44 +325,81 @@ impl Watchman {
 				Action::Claim { deadline } => {
 					claims.push((deadline, vtxo.clone()));
 				},
+				Action::Sweep => {
+					sweeps.push(vtxo.clone());
+				},
 			}
 		}
 		drop(frontier); // Release read lock before processing
 
 		let claim_volume = claims.iter().map(|(_, v)| v.amount()).sum::<Amount>();
 		let progress_volume = progress.iter().map(|(_, _, v)| v.amount()).sum::<Amount>();
+		let sweep_volume = sweeps.iter().map(|v| v.amount()).sum::<Amount>();
 		crate::telemetry::set_frontier_metrics(
 			claim_volume.to_sat(),
 			progress_volume.to_sat(),
+			sweep_volume.to_sat(),
 			wait_volume.to_sat(),
 		);
 
-		// Sort by deadline (soonest first, None last)
-		claims.sort_by_key(|(d, _)| d.map(|h| (0u8, h)).unwrap_or((1u8, 0)));
-		progress.sort_by_key(|(d, _, _)| d.map(|h| (0u8, h)).unwrap_or((1u8, 0)));
+		// Sort by deadline, soonest first
+		claims.sort_by_key(|(d, _)| *d);
+		progress.sort_by_key(|(d, _, _)| *d);
 
-		let claims = claims.into_iter().map(|(_, v)| v).collect::<Vec<_>>();
-		let progress = progress.into_iter().map(|(_, txid, v)| (txid, v)).collect::<Vec<_>>();
+		let work = FrontierWork {
+			claims: claims.into_iter().map(|(_, v)| v).collect(),
+			progress: progress.into_iter().map(|(_, txid, v)| (txid, v)).collect(),
+			sweeps,
+		};
 
-		// Clean and update on combined list
-		let progress_vtxos = progress.iter().map(|(_, v)| v);
-		let all_vtxos = claims.iter().chain(progress_vtxos);
-		self.clean_mempool_spends(all_vtxos.clone().map(|v| v.id()));
-		for vtxo in all_vtxos {
+		self.clean_mempool_spends(work.actionable_vtxos().map(|v| v.id()));
+
+		work
+	}
+
+	/// React to on-chain exit activity: progress exit chains and claim VTXOs
+	/// before a counterparty's timelock matures.
+	///
+	/// This is the time-critical half of the watchman's work and runs on the
+	/// short [Config::reaction_interval].
+	pub async fn process_reactions(&self) -> anyhow::Result<()> {
+		let work = self.scan_frontier().await;
+
+		let vtxos = work.claims.iter().chain(work.progress.iter().map(|(_, v)| v));
+		for vtxo in vtxos {
 			self.update_mempool_spend(vtxo.id()).await;
 		}
 
-		if !claims.is_empty() {
-			self.process_claims(claims).await?;
+		if !work.claims.is_empty() {
+			self.process_claims(work.claims).await?;
 		}
-		if !progress.is_empty() {
-			self.process_progress_txs(progress).await?;
+		if !work.progress.is_empty() {
+			self.process_progress_txs(work.progress).await?;
 		}
 
 		Ok(())
 	}
 
-	/// Process vtxos that need to be claimed by the server.
+	/// Sweep VTXOs that only we can spend.
+	///
+	/// Sweeps have no deadline, so this runs on the much longer
+	/// [Config::sweep_interval].
+	pub async fn process_sweeps(&self) -> anyhow::Result<()> {
+		let work = self.scan_frontier().await;
+
+		for vtxo in &work.sweeps {
+			self.update_mempool_spend(vtxo.id()).await;
+		}
+
+		if !work.sweeps.is_empty() {
+			self.process_claims(work.sweeps).await?;
+		}
+
+		Ok(())
+	}
+
+	/// Process vtxos that need to be claimed by the server, either to beat a
+	/// counterparty deadline or to sweep them.
 	///
 	/// Filters vtxos by broadcast status (skipping those already broadcast with good feerate),
 	/// then builds and broadcasts claim txs in chunks.

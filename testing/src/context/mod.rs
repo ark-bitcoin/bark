@@ -360,7 +360,8 @@ impl TestContext {
 			otel_deployment_name: db_name,
 			watchman: server::config::OptionalService::Enabled(
 				server::watchman::Config {
-					process_interval: std::time::Duration::from_secs(1),
+					reaction_interval: std::time::Duration::from_secs(1),
+					sweep_interval: std::time::Duration::from_secs(1),
 					progress_grace_period: 2,
 					claim_chunksize: 15.try_into().unwrap(),
 					incremental_relay_fee: FeeRate::from_sat_per_kvb_ceil(100),
@@ -474,7 +475,8 @@ impl TestContext {
 		server::config::watchmand::Config {
 			postgres: srv.config().postgres.clone(),
 			watchman: server::watchman::Config {
-				process_interval: std::time::Duration::from_secs(1),
+				reaction_interval: std::time::Duration::from_secs(1),
+				sweep_interval: std::time::Duration::from_secs(1),
 				progress_grace_period: 2,
 				claim_chunksize: 15.try_into().unwrap(),
 				incremental_relay_fee: FeeRate::from_sat_per_kvb_ceil(100),

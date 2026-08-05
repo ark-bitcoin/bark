@@ -70,7 +70,8 @@ async fn watchman_sweeps_boards() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -111,7 +112,8 @@ async fn watchman_sweeps_round_vtxos() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -156,7 +158,8 @@ async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -202,7 +205,8 @@ async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -253,7 +257,8 @@ async fn watchman_sweeps_lightning_vtxos() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -304,7 +309,8 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.claim_chunksize = 20.try_into().unwrap();
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
@@ -396,7 +402,8 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -460,7 +467,8 @@ async fn watchman_sweeps_exit_after_forfeit() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -549,7 +557,8 @@ async fn watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table() {
 	let wm = ctx
 		.watchmand("watchman")
 		.cfg(|cfg| {
-			cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+			cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+			cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 		})
 		.create(&srv)
 		.await;
@@ -655,7 +664,8 @@ async fn watchman_sweeps_exit_after_oor_then_forfeit() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -736,7 +746,8 @@ async fn offboard_exit_attack(test_name: &str, n_vtxos: usize) -> bitcoin::Amoun
 		cfg.vtxopool.vtxo_targets = vec![];
 	}).create().await;
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 
 	// fund the watchman so it can pay CPFP fees for its forfeit/connector broadcasts
@@ -846,7 +857,8 @@ async fn watchman_force_exit_lightning_vtxo_blocks_refresh() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -999,7 +1011,8 @@ async fn watchman_force_exit_checkpointed_arkoor_stays_spendable() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -1149,7 +1162,8 @@ async fn offboard_after_exit(test_name: &str, depth: ExitDepth) -> OffboardAfter
 		cfg.vtxopool.vtxo_targets = vec![];
 	}).create().await;
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 
 	// fund the watchman so it can pay CPFP fees for any confiscation broadcast
