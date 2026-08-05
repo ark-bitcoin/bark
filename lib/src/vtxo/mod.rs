@@ -63,7 +63,7 @@ pub use self::policy::{Policy, VtxoPolicy, VtxoPolicyKind, ServerVtxoPolicy};
 pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
 
 pub use self::policy::{
-	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ExpiryVtxoPolicy, HarkLeafVtxoPolicy,
+	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ExpiryVtxoPolicy, HarkLeaf_v0_VtxoPolicy,
 	ServerHtlcRecv_v0_VtxoPolicy, ServerHtlcSend_v0_VtxoPolicy, ServerHtlcRecvVtxoPolicy,
 	ServerHtlcSendVtxoPolicy,
 };
@@ -1012,8 +1012,8 @@ const VTXO_POLICY_CHECKPOINT: u8 = 0x03;
 /// The byte used to encode the [ServerVtxoPolicy::Expiry] output type.
 const VTXO_POLICY_EXPIRY: u8 = 0x04;
 
-/// The byte used to encode the [ServerVtxoPolicy::HarkLeaf] output type.
-const VTXO_POLICY_HARK_LEAF: u8 = 0x05;
+/// The byte used to encode the [ServerVtxoPolicy::HarkLeaf_v0] output type.
+const VTXO_POLICY_HARK_LEAF_V0: u8 = 0x05;
 
 /// The byte used to encode the [ServerVtxoPolicy::HarkForfeit] output type.
 const VTXO_POLICY_HARK_FORFEIT: u8 = 0x06;
@@ -1148,8 +1148,8 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 				w.emit_u8(VTXO_POLICY_EXPIRY)?;
 				internal_key.encode(w)?;
 			},
-			Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, unlock_hash }) => {
-				w.emit_u8(VTXO_POLICY_HARK_LEAF)?;
+			Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, unlock_hash }) => {
+				w.emit_u8(VTXO_POLICY_HARK_LEAF_V0)?;
 				user_pubkey.encode(w)?;
 				unlock_hash.encode(w)?;
 			},
@@ -1179,10 +1179,10 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 				let internal_key = XOnlyPublicKey::decode(r)?;
 				Ok(Self::Expiry(ExpiryVtxoPolicy { internal_key }))
 			},
-			VTXO_POLICY_HARK_LEAF => {
+			VTXO_POLICY_HARK_LEAF_V0 => {
 				let user_pubkey = PublicKey::decode(r)?;
 				let unlock_hash = sha256::Hash::decode(r)?;
-				Ok(Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, unlock_hash }))
+				Ok(Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, unlock_hash }))
 			},
 			VTXO_POLICY_HARK_FORFEIT => {
 				let user_pubkey = PublicKey::decode(r)?;

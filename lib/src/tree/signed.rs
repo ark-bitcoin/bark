@@ -1905,7 +1905,7 @@ mod test {
 				// Verify the policies
 				if idx < nb_vtxos as usize {
 					// All leafs have the HarkLeafPolicy
-					matches!(vtxo.policy(), ServerVtxoPolicy::HarkLeaf(_));
+					matches!(vtxo.policy(), ServerVtxoPolicy::HarkLeaf_v0(_));
 				} else {
 					matches!(vtxo.policy(), ServerVtxoPolicy::Expiry(_));
 				}
