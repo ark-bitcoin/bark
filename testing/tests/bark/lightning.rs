@@ -2330,6 +2330,8 @@ async fn lightning_receive_pool_change_arkoor_depth_capped() {
 /// are now exempt.
 #[tokio::test]
 async fn lightning_pay_revocation_ignores_max_exit_depth() {
+	require_bark_version!(> "0.5.0");
+
 	const MAX_EXIT_DEPTH: u16 = 3;
 
 	let ctx = TestContext::new("lightningd/lightning_pay_revocation_ignores_max_exit_depth").await;
