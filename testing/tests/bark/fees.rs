@@ -241,7 +241,7 @@ async fn board_fee_rejects_when_fee_exceeds_amount() {
 
 #[tokio::test]
 async fn refresh_fee_base_only() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("fees/refresh_fee_base_only").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
@@ -282,7 +282,7 @@ async fn refresh_fee_base_only() {
 
 #[tokio::test]
 async fn refresh_fee_with_ppm_expiry() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("fees/refresh_fee_with_ppm_expiry").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
@@ -325,7 +325,7 @@ async fn refresh_fee_with_ppm_expiry() {
 
 #[tokio::test]
 async fn refresh_fee_with_multiple_vtxos() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("fees/refresh_fee_with_multiple_vtxos").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
@@ -377,6 +377,8 @@ async fn refresh_fee_with_multiple_vtxos() {
 
 #[tokio::test]
 async fn refresh_should_refresh_vtxos() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("fees/refresh_should_refresh_vtxos").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -471,6 +473,8 @@ async fn refresh_should_refresh_vtxos() {
 
 #[tokio::test]
 async fn refresh_should_refresh_vtxos_no_dust() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("fees/refresh_should_refresh_vtxos_no_dust").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -544,7 +548,7 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 
 #[tokio::test]
 async fn refresh_fee_rejects_dust_output() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("fees/refresh_fee_rejects_dust_output").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {

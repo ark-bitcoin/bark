@@ -411,6 +411,8 @@ async fn movement_offboard() {
 
 #[tokio::test]
 async fn round_refresh() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/round_refresh").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
@@ -450,6 +452,8 @@ async fn round_refresh() {
 
 #[tokio::test]
 async fn movement_send_onchain() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/movement_send_onchain").await;
 	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -509,6 +513,8 @@ async fn movement_send_onchain() {
 
 #[tokio::test]
 async fn list_movements() {
+	require_bark_version!(> "0.5.0");
+
 	// Initialize the test
 	let ctx = TestContext::new("bark/list_movements").await;
 

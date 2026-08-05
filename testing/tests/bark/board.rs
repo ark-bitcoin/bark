@@ -103,7 +103,7 @@ async fn board_all_bark() {
 /// failed) instead of re-broadcasting and retrying forever.
 #[tokio::test]
 async fn board_fails_when_funding_tx_double_spent() {
-	require_bark_version!(> "0.3.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/board_fails_when_funding_tx_double_spent").await;
 	let srv = ctx.captaind("server").create().await;
