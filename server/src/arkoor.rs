@@ -25,8 +25,14 @@ pub(crate) struct ArkoorCosignRequestValidationParams {
 	pub disallow_unnecessary_dust: bool,
 	/// maximum allowed exit depth (genesis items) of each input VTXO;
 	/// requests where any input exceeds this are rejected to prevent
-	/// unbounded genesis chain growth
-	pub max_input_exit_depth: u16,
+	/// unbounded genesis chain growth.
+	///
+	/// `None` disables the check and is reserved for recovery operations
+	/// (lightning receive claims and payment revocations): they unwind an
+	/// existing contract into a single claim-all output, so they can't
+	/// grow a chain, while refusing them would leave the vtxo with no
+	/// spend path other than a unilateral exit.
+	pub max_input_exit_depth: Option<u16>,
 }
 
 impl Server {
@@ -62,13 +68,15 @@ impl Server {
 		};
 
 		for (idx, b) in ret.builders.iter().enumerate() {
-			let depth = b.input().exit_depth();
-			if depth >= params.max_input_exit_depth {
-				bail!(
-					"input VTXO {} (#{}) exit depth {} meets or exceeds the maximum of {}; \
-					 refresh the VTXO in a round before making further OOR payments",
-					b.input().id(), idx, depth, params.max_input_exit_depth,
-				);
+			if let Some(max_exit_depth) = params.max_input_exit_depth {
+				let depth = b.input().exit_depth();
+				if depth >= max_exit_depth {
+					bail!(
+						"input VTXO {} (#{}) exit depth {} meets or exceeds the maximum of {}; \
+						 refresh the VTXO in a round before making further OOR payments",
+						b.input().id(), idx, depth, max_exit_depth,
+					);
+				}
 			}
 
 			let nb_outputs = b.all_outputs().count();
@@ -161,7 +169,7 @@ impl Server {
 			use_checkpoints: true,
 			max_outputs_per_input: self.config.max_arkoor_fanout,
 			disallow_unnecessary_dust: true,
-			max_input_exit_depth: self.config.max_vtxo_exit_depth,
+			max_input_exit_depth: Some(self.config.max_vtxo_exit_depth),
 		};
 		let builder = self.validate_cosign_request(validation, request)
 			.badarg("invalid cosign request")?;
