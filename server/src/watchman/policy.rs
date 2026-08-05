@@ -247,7 +247,7 @@ impl ActionContextFetcher<'_> {
 				// when they expire and don't have to do anything otherwise
 				decide_action_expiry(&params)
 			},
-			ServerVtxoPolicy::HarkForfeit(_) => {
+			ServerVtxoPolicy::HarkForfeit_v0(_) => {
 				decide_action_hark_forfeit(&params)
 			},
 			ServerVtxoPolicy::User(VtxoPolicy::Pubkey(p)) => {

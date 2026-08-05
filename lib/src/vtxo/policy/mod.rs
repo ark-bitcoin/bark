@@ -169,7 +169,8 @@ pub enum VtxoPolicyKind {
 	#[allow(non_camel_case_types)]
 	HarkLeaf_v0,
 	/// hArk forfeit tx output policy
-	HarkForfeit,
+	#[allow(non_camel_case_types)]
+	HarkForfeit_v0,
 }
 
 impl fmt::Display for VtxoPolicyKind {
@@ -184,7 +185,7 @@ impl fmt::Display for VtxoPolicyKind {
 			Self::Checkpoint => f.write_str("checkpoint"),
 			Self::Expiry => f.write_str("expiry"),
 			Self::HarkLeaf_v0 => f.write_str("hark-leaf"),
-			Self::HarkForfeit => f.write_str("hark-forfeit"),
+			Self::HarkForfeit_v0 => f.write_str("hark-forfeit"),
 		}
 	}
 }
@@ -202,7 +203,7 @@ impl FromStr for VtxoPolicyKind {
 			"checkpoint" => Self::Checkpoint,
 			"expiry" => Self::Expiry,
 			"hark-leaf" => Self::HarkLeaf_v0,
-			"hark-forfeit" => Self::HarkForfeit,
+			"hark-forfeit" => Self::HarkForfeit_v0,
 			_ => return Err(format!("unknown VtxoPolicyKind: {}", s)),
 		})
 	}
@@ -760,12 +761,13 @@ impl From<ServerHtlcRecvVtxoPolicy> for VtxoPolicy {
 /// the hArk unlock preimage or allow the user to recover its money in case
 /// the server doesn't.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct HarkForfeitVtxoPolicy {
+#[allow(non_camel_case_types)]
+pub struct HarkForfeit_v0_VtxoPolicy {
 	pub user_pubkey: PublicKey,
 	pub unlock_hash: UnlockHash,
 }
 
-impl HarkForfeitVtxoPolicy {
+impl HarkForfeit_v0_VtxoPolicy {
 	/// Server claims the forfeit revealing the unlock preimage
 	pub fn server_claim_clause(
 		&self,
@@ -812,9 +814,9 @@ impl HarkForfeitVtxoPolicy {
 	}
 }
 
-impl From<HarkForfeitVtxoPolicy> for ServerVtxoPolicy {
-	fn from(v: HarkForfeitVtxoPolicy) -> Self {
-	    ServerVtxoPolicy::HarkForfeit(v)
+impl From<HarkForfeit_v0_VtxoPolicy> for ServerVtxoPolicy {
+	fn from(v: HarkForfeit_v0_VtxoPolicy) -> Self {
+	    ServerVtxoPolicy::HarkForfeit_v0(v)
 	}
 }
 
@@ -1015,7 +1017,8 @@ pub enum ServerVtxoPolicy {
 	#[allow(non_camel_case_types)]
 	HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy),
 	/// hArk forfeit tx output policy
-	HarkForfeit(HarkForfeitVtxoPolicy),
+	#[allow(non_camel_case_types)]
+	HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy),
 }
 
 impl From<VtxoPolicy> for ServerVtxoPolicy {
@@ -1048,7 +1051,7 @@ impl ServerVtxoPolicy {
 	}
 
 	pub fn new_hark_forfeit(user_pubkey: PublicKey, unlock_hash: UnlockHash) -> Self {
-		Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash })
+		Self::HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy { user_pubkey, unlock_hash })
 	}
 
 	/// The policy type id.
@@ -1059,7 +1062,7 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint { .. } => VtxoPolicyKind::Checkpoint,
 			Self::Expiry { .. } => VtxoPolicyKind::Expiry,
 			Self::HarkLeaf_v0 { .. } => VtxoPolicyKind::HarkLeaf_v0,
-			Self::HarkForfeit { .. } => VtxoPolicyKind::HarkForfeit,
+			Self::HarkForfeit_v0 { .. } => VtxoPolicyKind::HarkForfeit_v0,
 		}
 	}
 
@@ -1071,7 +1074,7 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint { .. } => true,
 			Self::Expiry { .. } => false,
 			Self::HarkLeaf_v0 { .. } => false,
-			Self::HarkForfeit { .. } => false,
+			Self::HarkForfeit_v0 { .. } => false,
 		}
 	}
 
@@ -1083,7 +1086,7 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
 			Self::Expiry { .. } => None,
 			Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
-			Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
+			Self::HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 		}
 	}
 
@@ -1102,7 +1105,7 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::Expiry(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::HarkLeaf_v0(policy) => policy.taproot(server_pubkey, expiry_height),
-			Self::HarkForfeit(policy) => policy.taproot(server_pubkey, exit_delta),
+			Self::HarkForfeit_v0(policy) => policy.taproot(server_pubkey, exit_delta),
 		}
 	}
 
@@ -1127,7 +1130,7 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::Expiry(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::HarkLeaf_v0(policy) => policy.clauses(expiry_height, server_pubkey),
-			Self::HarkForfeit(policy) => policy.clauses(exit_delta, server_pubkey),
+			Self::HarkForfeit_v0(policy) => policy.clauses(exit_delta, server_pubkey),
 		}
 	}
 

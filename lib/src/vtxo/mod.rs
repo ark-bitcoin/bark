@@ -90,7 +90,7 @@ use bitcoin::taproot::TapTweakHash;
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, NonStandardOutput, TxOutExt, P2TR_DUST, P2TR_DUST_SAT};
 
-use crate::vtxo::policy::{check_block_delta, check_block_height, HarkForfeitVtxoPolicy};
+use crate::vtxo::policy::{check_block_delta, check_block_height, HarkForfeit_v0_VtxoPolicy};
 use crate::scripts;
 use crate::encode::{
 	LengthPrefixedVector, MAX_VEC_SIZE, OversizedVectorError, ProtocolDecodingError,
@@ -1015,8 +1015,8 @@ const VTXO_POLICY_EXPIRY: u8 = 0x04;
 /// The byte used to encode the [ServerVtxoPolicy::HarkLeaf_v0] output type.
 const VTXO_POLICY_HARK_LEAF_V0: u8 = 0x05;
 
-/// The byte used to encode the [ServerVtxoPolicy::HarkForfeit] output type.
-const VTXO_POLICY_HARK_FORFEIT: u8 = 0x06;
+/// The byte used to encode the [ServerVtxoPolicy::HarkForfeit_v0] output type.
+const VTXO_POLICY_HARK_FORFEIT_V0: u8 = 0x06;
 
 /// The byte used to encode the [ServerVtxoPolicy::ServerOwned] output type.
 const VTXO_POLICY_SERVER_OWNED: u8 = 0x07;
@@ -1153,8 +1153,8 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 				user_pubkey.encode(w)?;
 				unlock_hash.encode(w)?;
 			},
-			Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash }) => {
-				w.emit_u8(VTXO_POLICY_HARK_FORFEIT)?;
+			Self::HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy { user_pubkey, unlock_hash }) => {
+				w.emit_u8(VTXO_POLICY_HARK_FORFEIT_V0)?;
 				user_pubkey.encode(w)?;
 				unlock_hash.encode(w)?;
 			},
@@ -1184,10 +1184,10 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 				let unlock_hash = sha256::Hash::decode(r)?;
 				Ok(Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, unlock_hash }))
 			},
-			VTXO_POLICY_HARK_FORFEIT => {
+			VTXO_POLICY_HARK_FORFEIT_V0 => {
 				let user_pubkey = PublicKey::decode(r)?;
 				let unlock_hash = sha256::Hash::decode(r)?;
-				Ok(Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash }))
+				Ok(Self::HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy { user_pubkey, unlock_hash }))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid ServerVtxoPolicy type byte: {v:#x}",
