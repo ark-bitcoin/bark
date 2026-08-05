@@ -712,6 +712,7 @@ impl<P: Policy> Vtxo<Full, P> {
 	/// Returns the "hArk" unlock hash if this is a hArk leaf VTXO
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
 		match self.genesis.items.last()?.transition {
+			GenesisTransition::HashLockedCosigned(ref inner) => Some(inner.unlock.hash()),
 			GenesisTransition::HashLockedCosigned_v0(ref inner) => Some(inner.unlock.hash()),
 			_ => None,
 		}
@@ -722,6 +723,10 @@ impl<P: Policy> Vtxo<Full, P> {
 	/// Returns true if this VTXO was an unfinalized hArk VTXO.
 	pub fn provide_unlock_signature(&mut self, signature: schnorr::Signature) -> bool {
 		match self.genesis.items.last_mut().map(|g| &mut g.transition) {
+			Some(GenesisTransition::HashLockedCosigned(inner)) => {
+				inner.signature.replace(signature);
+				true
+			},
 			Some(GenesisTransition::HashLockedCosigned_v0(inner)) => {
 				inner.signature.replace(signature);
 				true
@@ -735,6 +740,14 @@ impl<P: Policy> Vtxo<Full, P> {
 	/// Returns true if this VTXO was an unfinalized hArk VTXO and the preimage matched.
 	pub fn provide_unlock_preimage(&mut self, preimage: UnlockPreimage) -> bool {
 		match self.genesis.items.last_mut().map(|g| &mut g.transition) {
+			Some(GenesisTransition::HashLockedCosigned(ref mut inner)) => {
+				if inner.unlock.hash() == UnlockHash::hash(&preimage) {
+					inner.unlock = MaybePreimage::Preimage(preimage);
+					true
+				} else {
+					false
+				}
+			},
 			Some(GenesisTransition::HashLockedCosigned_v0(ref mut inner)) => {
 				if inner.unlock.hash() == UnlockHash::hash(&preimage) {
 					inner.unlock = MaybePreimage::Preimage(preimage);
@@ -1225,6 +1238,9 @@ const GENESIS_TRANSITION_TYPE_ARKOOR: u8 = 2;
 /// The byte used to encode the [GenesisTransition::HashLockedCosigned_v0] gen transition type.
 const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0: u8 = 3;
 
+/// The byte used to encode the [GenesisTransition::HashLockedCosigned] gen transition type.
+const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED: u8 = 4;
+
 impl ProtocolEncoding for GenesisTransition {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
@@ -1232,6 +1248,21 @@ impl ProtocolEncoding for GenesisTransition {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_COSIGNED)?;
 				LengthPrefixedVector::new(&t.pubkeys).encode(w)?;
 				t.signature.encode(w)?;
+			},
+			Self::HashLockedCosigned(t) => {
+				w.emit_u8(GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED)?;
+				t.user_pubkey.encode(w)?;
+				t.signature.encode(w)?;
+				match t.unlock {
+					MaybePreimage::Preimage(p) => {
+						w.emit_u8(0)?;
+						w.emit_slice(&p[..])?;
+					},
+					MaybePreimage::Hash(h) => {
+						w.emit_u8(1)?;
+						w.emit_slice(&h[..])?;
+					},
+				}
 			},
 			Self::HashLockedCosigned_v0(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0)?;
@@ -1269,6 +1300,20 @@ impl ProtocolEncoding for GenesisTransition {
 				}
 				let signature = Option::<schnorr::Signature>::decode(r)?;
 				Ok(Self::new_cosigned(pubkeys, signature))
+			},
+			GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED => {
+				let user_pubkey = PublicKey::decode(r)?;
+				let signature = Option::<schnorr::Signature>::decode(r)?;
+				let unlock = match r.read_u8()? {
+					0 => MaybePreimage::Preimage(r.read_byte_array()?),
+					1 => MaybePreimage::Hash(ProtocolEncoding::decode(r)?),
+					v => return Err(ProtocolDecodingError::invalid(format_args!(
+						"invalid MaybePreimage type byte: {v:#x}",
+					))),
+				};
+				Ok(Self::HashLockedCosigned(genesis::HashLockedCosignedGenesis {
+					user_pubkey, signature, unlock,
+				}))
 			},
 			GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0 => {
 				let user_pubkey = PublicKey::decode(r)?;

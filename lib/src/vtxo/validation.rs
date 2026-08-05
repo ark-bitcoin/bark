@@ -85,6 +85,9 @@ fn verify_transition<P: Policy>(
 			GenesisTransition::Arkoor(inner) => {
 				inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey)?
 			}
+			GenesisTransition::HashLockedCosigned(inner) => {
+				inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
+			}
 			GenesisTransition::HashLockedCosigned_v0(inner) => {
 				inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
 			}

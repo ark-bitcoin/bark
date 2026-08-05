@@ -17,6 +17,9 @@ impl Vtxo<Full> {
 		let item = self.genesis.items.last_mut().unwrap();
 		match item.transition {
 			GenesisTransition::Cosigned(ref mut inner) => inner.signature = Some(fake),
+			GenesisTransition::HashLockedCosigned(ref mut inner) => {
+				inner.signature.replace(fake).expect("didn't have signature");
+			},
 			GenesisTransition::HashLockedCosigned_v0(ref mut inner) => {
 				inner.signature.replace(fake).expect("didn't have signature");
 			},
