@@ -1,3 +1,9 @@
+//! The admin gRPC interface of captaind and watchmand.
+//!
+//! This interface deliberately has no authentication, authorization or transport encryption. It is
+//! an operator plane as privileged as shell access on the host, kept unreachable by deployment and
+//! not by the daemon.
+
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{atomic, Arc};
@@ -160,7 +166,7 @@ impl rpc::server::BanAdminService for Server {
 	}
 }
 
-/// Run the public gRPC endpoint.
+/// Run the captaind admin gRPC endpoint.
 pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	RPC_RICH_ERRORS.store(srv.config.rpc_rich_errors, atomic::Ordering::Relaxed);
 

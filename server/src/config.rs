@@ -179,6 +179,8 @@ pub struct Rpc {
 	/// The socket to bind to for the public Ark gRPC.
 	pub public_address: SocketAddr,
 	/// The socket to bind to for the private admin gRPC.
+	///
+	/// Unauthenticated by design, see [crate::rpcserver::admin]. Keep it on loopback.
 	pub admin_address: Option<SocketAddr>,
 	/// The socket to bind to for the integrations gRPC.
 	pub integration_address: Option<SocketAddr>,
@@ -624,6 +626,8 @@ pub mod watchmand {
 
 		/// Address to expose the admin gRPC server on (e.g. "127.0.0.1:3538").
 		/// If absent, no admin RPC server is started.
+		///
+		/// Unauthenticated by design, see [crate::rpcserver::admin]. Keep it on loopback.
 		pub admin_address: Option<std::net::SocketAddr>,
 
 		pub postgres: Postgres,

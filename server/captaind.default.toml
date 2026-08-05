@@ -322,7 +322,9 @@ fallback_fee_rate_slow = "4sat/vb"
 [rpc]
 # Listen address for the public gRPC API
 public_address = "127.0.0.1:3535"
-# Listen address for the private admin gRPC API
+# Listen address for the private admin gRPC API.
+# Unauthenticated by design and as privileged as shell access to this host.
+# Keep it on loopback, or comment it out to not start it.
 admin_address = "127.0.0.1:3536"
 # Listen address for the integration manager gRPC API
 integration_address = "127.0.0.1:3537"
