@@ -712,7 +712,7 @@ impl<P: Policy> Vtxo<Full, P> {
 	/// Returns the "hArk" unlock hash if this is a hArk leaf VTXO
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
 		match self.genesis.items.last()?.transition {
-			GenesisTransition::HashLockedCosigned(ref inner) => Some(inner.unlock.hash()),
+			GenesisTransition::HashLockedCosigned_v0(ref inner) => Some(inner.unlock.hash()),
 			_ => None,
 		}
 	}
@@ -722,7 +722,7 @@ impl<P: Policy> Vtxo<Full, P> {
 	/// Returns true if this VTXO was an unfinalized hArk VTXO.
 	pub fn provide_unlock_signature(&mut self, signature: schnorr::Signature) -> bool {
 		match self.genesis.items.last_mut().map(|g| &mut g.transition) {
-			Some(GenesisTransition::HashLockedCosigned(inner)) => {
+			Some(GenesisTransition::HashLockedCosigned_v0(inner)) => {
 				inner.signature.replace(signature);
 				true
 			},
@@ -735,7 +735,7 @@ impl<P: Policy> Vtxo<Full, P> {
 	/// Returns true if this VTXO was an unfinalized hArk VTXO and the preimage matched.
 	pub fn provide_unlock_preimage(&mut self, preimage: UnlockPreimage) -> bool {
 		match self.genesis.items.last_mut().map(|g| &mut g.transition) {
-			Some(GenesisTransition::HashLockedCosigned(ref mut inner)) => {
+			Some(GenesisTransition::HashLockedCosigned_v0(ref mut inner)) => {
 				if inner.unlock.hash() == UnlockHash::hash(&preimage) {
 					inner.unlock = MaybePreimage::Preimage(preimage);
 					true
@@ -1222,8 +1222,8 @@ const GENESIS_TRANSITION_TYPE_COSIGNED: u8 = 1;
 /// The byte used to encode the [GenesisTransition::Arkoor] gen transition type.
 const GENESIS_TRANSITION_TYPE_ARKOOR: u8 = 2;
 
-/// The byte used to encode the [GenesisTransition::HashLockedCosigned] gen transition type.
-const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED: u8 = 3;
+/// The byte used to encode the [GenesisTransition::HashLockedCosigned_v0] gen transition type.
+const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0: u8 = 3;
 
 impl ProtocolEncoding for GenesisTransition {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
@@ -1233,8 +1233,8 @@ impl ProtocolEncoding for GenesisTransition {
 				LengthPrefixedVector::new(&t.pubkeys).encode(w)?;
 				t.signature.encode(w)?;
 			},
-			Self::HashLockedCosigned(t) => {
-				w.emit_u8(GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED)?;
+			Self::HashLockedCosigned_v0(t) => {
+				w.emit_u8(GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0)?;
 				t.user_pubkey.encode(w)?;
 				t.signature.encode(w)?;
 				match t.unlock {
@@ -1270,7 +1270,7 @@ impl ProtocolEncoding for GenesisTransition {
 				let signature = Option::<schnorr::Signature>::decode(r)?;
 				Ok(Self::new_cosigned(pubkeys, signature))
 			},
-			GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED => {
+			GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0 => {
 				let user_pubkey = PublicKey::decode(r)?;
 				let signature = Option::<schnorr::Signature>::decode(r)?;
 				let unlock = match r.read_u8()? {
@@ -1902,7 +1902,7 @@ mod test {
 		use crate::encode::ProtocolEncoding;
 		use crate::test_util::encoding_roundtrip;
 		use super::genesis::{
-			GenesisTransition, CosignedGenesis, HashLockedCosignedGenesis, ArkoorGenesis,
+			GenesisTransition, CosignedGenesis, HashLockedCosignedGenesis_v0, ArkoorGenesis,
 		};
 		use super::MaybePreimage;
 
@@ -1964,7 +1964,7 @@ mod test {
 		#[test]
 		fn hash_locked_cosigned_with_preimage() {
 			let preimage = [0x42u8; 32];
-			let transition = GenesisTransition::HashLockedCosigned(HashLockedCosignedGenesis {
+			let transition = GenesisTransition::HashLockedCosigned_v0(HashLockedCosignedGenesis_v0 {
 				user_pubkey: test_pubkey(),
 				signature: Some(test_signature()),
 				unlock: MaybePreimage::Preimage(preimage),
@@ -1975,7 +1975,7 @@ mod test {
 		#[test]
 		fn hash_locked_cosigned_with_hash() {
 			let hash = sha256::Hash::hash(b"test preimage");
-			let transition = GenesisTransition::HashLockedCosigned(HashLockedCosignedGenesis {
+			let transition = GenesisTransition::HashLockedCosigned_v0(HashLockedCosignedGenesis_v0 {
 				user_pubkey: test_pubkey(),
 				signature: Some(test_signature()),
 				unlock: MaybePreimage::Hash(hash),
@@ -1986,7 +1986,7 @@ mod test {
 		#[test]
 		fn hash_locked_cosigned_without_signature() {
 			let preimage = [0x42u8; 32];
-			let transition = GenesisTransition::HashLockedCosigned(HashLockedCosignedGenesis {
+			let transition = GenesisTransition::HashLockedCosigned_v0(HashLockedCosignedGenesis_v0 {
 				user_pubkey: test_pubkey(),
 				signature: None,
 				unlock: MaybePreimage::Preimage(preimage),

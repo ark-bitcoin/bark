@@ -11,13 +11,14 @@ use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
 use crate::SECP;
 use crate::musig;
-use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause};
+use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot_v0, unlock_clause_v0};
 use crate::vtxo::MaybePreimage;
 
 /// Represents the kind of [GenesisTransition]
 pub enum TransitionKind {
 	Cosigned,
-	HashLockedCosigned,
+	#[allow(non_camel_case_types)]
+	HashLockedCosigned_v0,
 	Arkoor,
 }
 
@@ -25,7 +26,7 @@ impl TransitionKind {
 	pub fn as_str(&self) -> &'static str {
 		match self {
 			Self::Cosigned => "cosigned",
-			Self::HashLockedCosigned => "hash-locked-cosigned",
+			Self::HashLockedCosigned_v0 => "hash-locked-cosigned",
 			Self::Arkoor => "arkoor",
 		}
 	}
@@ -122,7 +123,8 @@ impl CosignedGenesis {
 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HashLockedCosignedGenesis {
+#[allow(non_camel_case_types)]
+pub struct HashLockedCosignedGenesis_v0 {
 	/// User pubkey that is combined with the server pubkey
 	pub user_pubkey: PublicKey,
 	/// The script-spend signature
@@ -131,13 +133,13 @@ pub struct HashLockedCosignedGenesis {
 	pub unlock: MaybePreimage,
 }
 
-impl HashLockedCosignedGenesis {
+impl HashLockedCosignedGenesis_v0 {
 	pub fn input_taproot(
 		&self,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 	) -> taproot::TaprootSpendInfo {
-		leaf_cosign_taproot(self.user_pubkey, server_pubkey, expiry_height, self.unlock.hash())
+		leaf_cosign_taproot_v0(self.user_pubkey, server_pubkey, expiry_height, self.unlock.hash())
 	}
 
 	pub fn input_txout(
@@ -169,11 +171,11 @@ impl HashLockedCosignedGenesis {
 		};
 
 		let unlock_hash = sha256::Hash::hash(&preimage);
-		let taproot = leaf_cosign_taproot(
+		let taproot = leaf_cosign_taproot_v0(
 			self.user_pubkey, server_pubkey, expiry_height, unlock_hash,
 		);
 
-		let clause = unlock_clause(taproot.internal_key(), unlock_hash);
+		let clause = unlock_clause_v0(taproot.internal_key(), unlock_hash);
 		let script_leaf = (clause, LeafVersion::TapScript);
 		let cb = taproot.control_block(&script_leaf)
 			.expect("unlock clause not found in hArk taproot");
@@ -214,7 +216,7 @@ impl HashLockedCosignedGenesis {
 		let mut shc = sighash::SighashCache::new(tx);
 		let agg_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
 			.x_only_public_key().0;
-		let script = unlock_clause(agg_pk, self.unlock.hash());
+		let script = unlock_clause_v0(agg_pk, self.unlock.hash());
 		let leaf = TapLeafHash::from_script(&script, bitcoin::taproot::LeafVersion::TapScript);
 		let tapsighash = shc.taproot_script_spend_signature_hash(
 			input_idx, &sighash::Prevouts::All(&[prev_txout]), leaf, sighash::TapSighashType::Default,
@@ -323,7 +325,8 @@ pub enum GenesisTransition {
 	/// Refraining from any optimizations, this type is implemented the naive way:
 	/// - the keyspend path is currently unused, could be used later
 	/// - witness will always contain the cosignature and preimage in the script spend
-	HashLockedCosigned(HashLockedCosignedGenesis),
+	#[allow(non_camel_case_types)]
+	HashLockedCosigned_v0(HashLockedCosignedGenesis_v0),
 	/// A regular arkoor spend, using the co-signed p2tr key-spend path.
 	Arkoor(ArkoorGenesis),
 }
@@ -338,8 +341,8 @@ impl GenesisTransition {
 		signature: Option<schnorr::Signature>,
 		unlock: MaybePreimage
 	) -> Self {
-		Self::HashLockedCosigned(
-			HashLockedCosignedGenesis { user_pubkey, signature, unlock }
+		Self::HashLockedCosigned_v0(
+			HashLockedCosignedGenesis_v0 { user_pubkey, signature, unlock }
 		)
 	}
 
@@ -362,7 +365,7 @@ impl GenesisTransition {
 	) -> TxOut {
 		match self {
 			Self::Cosigned(inner) => inner.input_txout(amount, server_pubkey, expiry_height),
-			Self::HashLockedCosigned(inner) => inner.input_txout(amount, server_pubkey, expiry_height),
+			Self::HashLockedCosigned_v0(inner) => inner.input_txout(amount, server_pubkey, expiry_height),
 			Self::Arkoor(inner) => inner.input_txout(amount, server_pubkey),
 		}
 	}
@@ -375,7 +378,7 @@ impl GenesisTransition {
 	) -> Witness {
 		match self {
 			Self::Cosigned(inner) => inner.witness(),
-			Self::HashLockedCosigned(inner) => inner.witness(server_pubkey, expiry_height),
+			Self::HashLockedCosigned_v0(inner) => inner.witness(server_pubkey, expiry_height),
 			Self::Arkoor(inner) => inner.witness(),
 		}
 	}
@@ -385,7 +388,7 @@ impl GenesisTransition {
 	pub fn has_all_witnesses(&self) -> bool {
 		match self {
 			Self::Cosigned(inner) => inner.has_all_witnesses(),
-			Self::HashLockedCosigned(inner) => inner.has_all_witnesses(),
+			Self::HashLockedCosigned_v0(inner) => inner.has_all_witnesses(),
 			Self::Arkoor(inner) => inner.has_all_witnesses(),
 		}
 	}
@@ -394,7 +397,7 @@ impl GenesisTransition {
 	pub fn kind(&self) -> TransitionKind {
 		match self {
 			Self::Cosigned { .. } => TransitionKind::Cosigned,
-			Self::HashLockedCosigned { .. } => TransitionKind::HashLockedCosigned,
+			Self::HashLockedCosigned_v0 { .. } => TransitionKind::HashLockedCosigned_v0,
 			Self::Arkoor { .. } => TransitionKind::Arkoor,
 		}
 	}
