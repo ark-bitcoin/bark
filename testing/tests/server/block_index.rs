@@ -212,7 +212,6 @@ impl ChainEventListener for FailOnceReorgListener {
 /// Otherwise the next sync cycle no longer detects the reorg and wedges on the
 /// duplicate block inserts.
 #[tokio::test]
-#[ignore = "fails until org_out_blocks_above is fixed to update sync height last"]
 async fn test_block_index_reorg_retry() {
 	let mut ctx = TestContext::new_minimal("block_index/reorg_retry").await;
 
