@@ -130,7 +130,9 @@ impl Wallet {
 		// Not all policies are supported for sending arkoor
 		match address.policy() {
 			VtxoPolicy::Pubkey(_) => {},
-			VtxoPolicy::ServerHtlcRecv_v0(_) | VtxoPolicy::ServerHtlcSend_v0(_) => {
+			VtxoPolicy::ServerHtlcRecv_v0(_) | VtxoPolicy::ServerHtlcSend_v0(_)
+				| VtxoPolicy::ServerHtlcRecv(_) =>
+			{
 				return Err(ArkoorAddressError::PolicyNotSupported(address.policy().clone()));
 			}
 		}

@@ -64,7 +64,7 @@ pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
 
 pub use self::policy::{
 	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ExpiryVtxoPolicy, HarkLeafVtxoPolicy,
-	ServerHtlcRecv_v0_VtxoPolicy, ServerHtlcSend_v0_VtxoPolicy
+	ServerHtlcRecv_v0_VtxoPolicy, ServerHtlcSend_v0_VtxoPolicy, ServerHtlcRecvVtxoPolicy,
 };
 pub use self::policy::clause::{
 	VtxoClause, DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause,
@@ -1020,6 +1020,9 @@ const VTXO_POLICY_HARK_FORFEIT: u8 = 0x06;
 /// The byte used to encode the [ServerVtxoPolicy::ServerOwned] output type.
 const VTXO_POLICY_SERVER_OWNED: u8 = 0x07;
 
+/// The byte used to encode the [VtxoPolicy::ServerHtlcRecv] output type.
+const VTXO_POLICY_SERVER_HTLC_RECV: u8 = 0x08;
+
 impl ProtocolEncoding for VtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
@@ -1032,6 +1035,15 @@ impl ProtocolEncoding for VtxoPolicy {
 				user_pubkey.encode(w)?;
 				payment_hash.to_sha256_hash().encode(w)?;
 				w.emit_u32(*htlc_expiry)?;
+			},
+			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
+				user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
+			}) => {
+				w.emit_u8(VTXO_POLICY_SERVER_HTLC_RECV)?;
+				user_pubkey.encode(w)?;
+				payment_hash.to_sha256_hash().encode(w)?;
+				w.emit_u32(*htlc_expiry)?;
+				w.emit_u16(*htlc_expiry_delta)?;
 			},
 			Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy {
 				user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
@@ -1070,6 +1082,17 @@ fn decode_vtxo_policy<R: io::Read + ?Sized>(
 			let htlc_expiry = check_block_height(r.read_u32()?)
 				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry"))?;
 			Ok(VtxoPolicy::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
+		},
+		VTXO_POLICY_SERVER_HTLC_RECV => {
+			let user_pubkey = PublicKey::decode(r)?;
+			let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
+			let htlc_expiry = check_block_height(r.read_u32()?)
+				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry"))?;
+			let htlc_expiry_delta = check_block_delta(r.read_u16()?)
+				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry_delta"))?;
+			Ok(VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
+				user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
+			}))
 		},
 		VTXO_POLICY_SERVER_HTLC_RECV_V0 => {
 			let user_pubkey = PublicKey::decode(r)?;
@@ -1123,7 +1146,9 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		let type_byte = r.read_u8()?;
 		match type_byte {
-			VTXO_POLICY_PUBKEY | VTXO_POLICY_SERVER_HTLC_SEND_V0 | VTXO_POLICY_SERVER_HTLC_RECV_V0 => {
+			VTXO_POLICY_PUBKEY | VTXO_POLICY_SERVER_HTLC_SEND_V0 | VTXO_POLICY_SERVER_HTLC_RECV_V0
+				| VTXO_POLICY_SERVER_HTLC_RECV =>
+			{
 				Ok(Self::User(decode_vtxo_policy(type_byte, r)?))
 			},
 			VTXO_POLICY_SERVER_OWNED => Ok(Self::ServerOwned),

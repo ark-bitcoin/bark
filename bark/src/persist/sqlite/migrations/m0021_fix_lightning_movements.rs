@@ -48,6 +48,7 @@ impl Migration for Migration0021 {
 
 			let is_htlc = match vtxo.policy() {
 				VtxoPolicy::Pubkey(_) => false,
+				VtxoPolicy::ServerHtlcRecv(_) => true,
 				VtxoPolicy::ServerHtlcSend_v0(_) => true,
 				VtxoPolicy::ServerHtlcRecv_v0(_) => true,
 			};
