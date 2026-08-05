@@ -63,6 +63,8 @@ pub struct BarkdHelper {
 	auth_token: AuthToken,
 	/// Extra environment variables passed to the spawned barkd process.
 	env: parking_lot::Mutex<HashMap<String, String>>,
+	/// Extra command-line arguments passed to the spawned barkd process.
+	args: parking_lot::Mutex<Vec<String>>,
 }
 
 impl BarkdHelper {
@@ -97,6 +99,7 @@ impl Barkd {
 			port: parking_lot::Mutex::new(0),
 			auth_token: AuthToken::new(secret),
 			env: parking_lot::Mutex::new(HashMap::new()),
+			args: parking_lot::Mutex::new(Vec::new()),
 		};
 		Daemon::wrap(helper)
 	}
@@ -109,6 +112,12 @@ impl Barkd {
 
 	pub fn datadir(&self) -> PathBuf {
 		self.inner.datadir.clone()
+	}
+
+	/// Add an extra command-line argument to the spawned barkd process.
+	/// Must be called before [`Daemon::start`].
+	pub fn add_arg(&self, arg: impl Into<String>) {
+		self.inner.args.lock().push(arg.into());
 	}
 
 	pub fn base_url(&self) -> String {
@@ -690,6 +699,7 @@ impl DaemonHelper for BarkdHelper {
 			"--port", &self.port().to_string(),
 			"--verbose",
 		]);
+		cmd.args(self.args.lock().iter());
 		Ok(cmd)
 	}
 
