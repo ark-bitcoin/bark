@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -106,6 +107,14 @@ struct Cli {
 	/// disabled by an inherited environment.
 	#[arg(long)]
 	no_auth: bool,
+
+	/// Disables all authentication and permits a non-loopback bind.
+	///
+	/// Implies --no-auth, so it is passed on its own. Anything that can route
+	/// to the bind address gets full wallet access, so only use this when
+	/// something else restricts who can reach the port.
+	#[arg(long)]
+	dangerously_allow_remote_no_auth: bool,
 }
 
 #[derive(Subcommand)]
@@ -166,6 +175,27 @@ impl Cli {
 		cfg.allowed_origins = self.allowed_origins.clone();
 		Ok(cfg)
 	}
+
+	/// Either flag disables auth; only the dangerous one also permits a
+	/// non-loopback bind.
+	fn auth_disabled(&self) -> bool {
+		self.no_auth || self.dangerously_allow_remote_no_auth
+	}
+}
+
+/// Refuse to run without auth on a bind address other hosts can reach, unless
+/// the operator asked for exactly that with the dangerous flag.
+fn check_remote_no_auth(host: IpAddr, allow_remote: bool) -> anyhow::Result<()> {
+	if host.is_loopback() || allow_remote {
+		return Ok(());
+	}
+
+	bail!(
+		"refusing to start: --no-auth with bind host {host} would give full wallet access \
+		to every client that can reach the port. Bind a loopback address, or use \
+		--dangerously-allow-remote-no-auth instead if reachability is restricted by other \
+		means (and terminate TLS in front of barkd)",
+	);
 }
 
 /// Runs a thread that will watch for SIGTERM and ctrl-c signals and
@@ -352,7 +382,8 @@ async fn main() -> anyhow::Result<()>{
 
 	let _barkd_lock = connection::acquire_barkd_lock(&datadir)?;
 
-	let auth_token = if cli.no_auth {
+	let auth_token = if cli.auth_disabled() {
+		check_remote_no_auth(config.host, cli.dangerously_allow_remote_no_auth)?;
 		if cli.allowed_origins.is_empty() {
 			warn!("Auth is disabled and no CORS origins are configured — \
 				any client that can reach this port has full API access.");
@@ -487,16 +518,40 @@ mod test {
 		assert_eq!(cli.to_config().unwrap().port, 3001);
 	}
 
-	/// `--no-auth` is a bare presence flag with no env-var form; that it can't
-	/// be set through the environment is covered by the barkd integration tests.
+	/// Both flags are bare presence flags with no env-var form; that auth can't
+	/// be disabled through the environment is covered by the barkd integration
+	/// tests.
 	#[test]
 	fn no_auth_flag_parsing() {
 		let cli = Cli::try_parse_from(["barkd"])
 			.expect("bare invocation should parse");
-		assert!(!cli.no_auth, "auth must be required by default");
+		assert!(!cli.auth_disabled(), "auth must be required by default");
+		assert!(!cli.dangerously_allow_remote_no_auth, "remote must be off by default");
 
 		let cli = Cli::try_parse_from(["barkd", "--no-auth"])
 			.expect("--no-auth should parse");
-		assert!(cli.no_auth, "--no-auth must disable auth");
+		assert!(cli.auth_disabled(), "--no-auth must disable auth");
+		assert!(!cli.dangerously_allow_remote_no_auth, "--no-auth must not permit remote binds");
+
+		// The dangerous flag stands on its own: it disables auth too.
+		let cli = Cli::try_parse_from(["barkd", "--dangerously-allow-remote-no-auth"])
+			.expect("--dangerously-allow-remote-no-auth should parse");
+		assert!(cli.auth_disabled(), "the dangerous flag must disable auth on its own");
+		assert!(cli.dangerously_allow_remote_no_auth, "the dangerous flag must permit remote binds");
+	}
+
+	#[test]
+	fn remote_no_auth_needs_dangerous_flag() {
+		let addr = |s: &str| s.parse::<IpAddr>().unwrap();
+
+		check_remote_no_auth(addr("127.0.0.1"), false).expect("IPv4 loopback");
+		check_remote_no_auth(addr("::1"), false).expect("IPv6 loopback");
+
+		for host in ["0.0.0.0", "192.168.1.10", "::"] {
+			check_remote_no_auth(addr(host), false)
+				.expect_err(&format!("{host} is reachable from other hosts"));
+			check_remote_no_auth(addr(host), true)
+				.unwrap_or_else(|e| panic!("{host} should be allowed by the flag: {e:#}"));
+		}
 	}
 }
