@@ -1,0 +1,14 @@
+- Only let command-line flags disable barkd authentication
+  Disabling authentication is now a decision that has to be visible in the
+  command line, and `--no-auth` no longer starts at all on a bind address
+  other hosts can reach. barkd serves plaintext HTTP with no TLS of its own,
+  so a reachable port with no auth hands full wallet access to every client
+  that can route to it. Privately disclosed by the Red Team.
+  [#2361](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2361)
+  - **BREAKING:** `BARKD_NO_AUTH` is no longer read. A deployment relying on
+    it starts with authentication enabled and generates a token, so clients
+    that sent no `Authorization` header now get 401s. Pass `--no-auth` to
+    keep the old behaviour.
+  - Adds `--dangerously-allow-remote-no-auth`, which disables authentication
+    *and* permits a non-loopback `--host`. It implies `--no-auth`, so it is
+    passed on its own.
