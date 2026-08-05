@@ -4,35 +4,17 @@ use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, T
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
-use bitcoin::taproot::{self, TaprootSpendInfo};
 
 use bitcoin_ext::{fee, TaprootSpendInfoExt, P2TR_DUST};
 
 use crate::{musig, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, SECP};
 use crate::connectors::ConnectorChain;
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
-use crate::tree::signed::{unlock_clause, UnlockHash};
-use crate::vtxo::{exit_clause, Full, GenesisItem, GenesisTransition};
+use crate::tree::signed::UnlockHash;
+use crate::vtxo::{Full, GenesisItem, GenesisTransition};
+use crate::vtxo::policy::HarkForfeitVtxoPolicy;
 use crate::vtxo::genesis::ArkoorGenesis;
 
-
-/// The taproot for the policy of the output of the hArk forfeit tx
-///
-/// This policy allows the server to spend by revealing the unlock preimage,
-/// but still has a timeout to the user after exit delta.
-#[inline]
-pub fn hark_forfeit_claim_taproot<G>(
-	vtxo: &Vtxo<G>,
-	unlock_hash: UnlockHash,
-) -> TaprootSpendInfo {
-	let agg_pk = musig::combine_keys([vtxo.user_pubkey(), vtxo.server_pubkey()])
-		.x_only_public_key().0;
-	debug_assert_eq!(agg_pk, vtxo.output_taproot().internal_key());
-	taproot::TaprootBuilder::new()
-		.add_leaf(1, exit_clause(vtxo.user_pubkey(), vtxo.exit_delta())).unwrap()
-		.add_leaf(1, unlock_clause(vtxo.server_pubkey().x_only_public_key().0, unlock_hash)).unwrap()
-		.finalize(&SECP, agg_pk).unwrap()
-}
 
 /// Construct the forfeit tx in the hArk forfeit protocol
 #[inline]
@@ -41,7 +23,15 @@ pub fn create_hark_forfeit_tx<G>(
 	unlock_hash: UnlockHash,
 	signature: Option<&schnorr::Signature>,
 ) -> Transaction {
-	let claim_taproot = hark_forfeit_claim_taproot(vtxo, unlock_hash);
+	let claim_policy = HarkForfeitVtxoPolicy {
+		user_pubkey: vtxo.user_pubkey(),
+		unlock_hash: unlock_hash,
+	};
+	debug_assert_eq!(
+		musig::combine_keys([vtxo.user_pubkey(), vtxo.server_pubkey()]).x_only_public_key().0,
+		vtxo.output_taproot().internal_key(),
+	);
+
 	Transaction {
 		version: bitcoin::transaction::Version(3),
 		lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -56,7 +46,9 @@ pub fn create_hark_forfeit_tx<G>(
 		output: vec![
 			TxOut {
 				value: vtxo.amount(),
-				script_pubkey: claim_taproot.script_pubkey(),
+				script_pubkey: claim_policy
+					.taproot(vtxo.server_pubkey(), vtxo.exit_delta())
+					.script_pubkey(),
 			},
 			fee::fee_anchor(),
 		],
@@ -438,10 +430,10 @@ mod test {
 
 		// verify a hard-coded example from a previous run of this test
 		let server_sec_nonce = musig::SecretNonce::dangerous_from_bytes(FromHex::from_hex(
-			"220edcf1809809618e44cd084675b2becbc20dd85e5d53b09285a9131e521a789479dc3c2d87ff532b77323eb0094d56e72aba1b3ad3fd2ed0d560a99d7c80858e8ac7cf622bf70a8243580d1879746ffe940588c5ad9d478d1b46e2bb9318743312a8657f684b47f963f7a0e95927b2c71005112d8edc5821a3f6f0f7bd6354947ff8ac",
+			"220edcf1d46691a2dfbe551a844ae8f75eed5f8ad2688462483e8370f04722fd9f670876f0f537d230adf1a3d29f61d13c2331fe3ec398e5e8acd9cf9a509d4946552dfe622bf70a8243580d1879746ffe940588c5ad9d478d1b46e2bb9318743312a8657f684b47f963f7a0e95927b2c71005112d8edc5821a3f6f0f7bd6354947ff8ac",
 		).unwrap());
-		let server_pub_nonce = musig::PublicNonce::from_str("02c40596f7e313646c3c58673dc6a5f429de2a46e99415e2ab2f9c693a6d08758f03a5f35e83408c093e3d9ce9d665ed5ce5a0325f3a3792c6a46c235da14fa3f556").unwrap();
-		let bundle = HashLockedForfeitBundle::deserialize_hex("01212a0fa58fe448a151bfd381c7007c62439bfa923b83777a57ad563bae9a3f6e000000003d5491373df6a016f78b3f46d65a4fc6948824c43a59620404e8719cfee05d1a03fb7f9f26e80c1233f7705d5cdff7504aefee4aafbed3cdc463c67ea9b1f06836026e6b8abc2f1d4e7bb26e5c8bc01df6ee6f79f614b0fd956376b57ebf85be8f68452ff8f9a4551664b6bbc0da52e07a6a1c46dbd81d0bba82de3c167eead547a6").unwrap();
+		let server_pub_nonce = musig::PublicNonce::from_str("02f5a392b7955dbb03d3a0a45461fb4827d994c1155856019c7568f0124b4b378f025b57cfe6135439d99d5955d9bf869cefc611add518cce3817189c5738a69065d").unwrap();
+		let bundle = HashLockedForfeitBundle::deserialize_hex("01212a0fa58fe448a151bfd381c7007c62439bfa923b83777a57ad563bae9a3f6e000000003d5491373df6a016f78b3f46d65a4fc6948824c43a59620404e8719cfee05d1a034027d391a36cc171a5cb56e87ea3ab13551ab9d097a801ee3896b5b474b20403031df80a2f99d0a4a083e53461a0938a543ce52db1885d9c75dea341453549adaf4b2b64dd23969b7ada0374dd4318b1d9352234e26cba37b8e837c225dab0fcc0").unwrap();
 
 		println!("verifying hard-coded forfeits");
 		verify_hark_forfeits(vtxo, unlock_preimage, server_sec_nonce, &server_pub_nonce, bundle);

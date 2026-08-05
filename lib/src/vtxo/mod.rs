@@ -94,7 +94,6 @@ use bitcoin_ext::{fee, BlockDelta, BlockHeight, NonStandardOutput, TxOutExt, P2T
 use crate::vtxo::policy::{
 	check_block_delta, check_block_height, HarkForfeitVtxoPolicy, HarkForfeit_v0_VtxoPolicy,
 };
-use crate::scripts;
 use crate::encode::{
 	LengthPrefixedVector, MAX_VEC_SIZE, OversizedVectorError, ProtocolDecodingError,
 	ProtocolEncoding, ReadExt, WriteExt,
@@ -301,14 +300,6 @@ impl ProtocolEncoding for VtxoId {
 
 		Ok(VtxoId(array))
 	}
-}
-
-/// Returns the clause to unilaterally spend a VTXO
-pub(crate) fn exit_clause(
-	user_pubkey: PublicKey,
-	exit_delta: BlockDelta,
-) -> ScriptBuf {
-	scripts::delayed_sign(exit_delta, user_pubkey.x_only_public_key().0)
 }
 
 /// Create an exit tx.

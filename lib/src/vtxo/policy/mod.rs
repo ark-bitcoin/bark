@@ -1192,7 +1192,7 @@ impl ServerVtxoPolicy {
 	}
 
 	pub fn new_hark_forfeit(user_pubkey: PublicKey, unlock_hash: UnlockHash) -> Self {
-		Self::HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy { user_pubkey, unlock_hash })
+		Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash })
 	}
 
 	/// The policy type id.
