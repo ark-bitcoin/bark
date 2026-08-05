@@ -17,9 +17,8 @@ async fn ln_receive_via_mailbox(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
-	// Requires daemon_manual_sync config and POST /sync/mailbox endpoint,
-	// neither of which exist in 0.1.3 or earlier.
-	require_bark_version!(> "0.1.3");
+	// The new ServerHtlcRecv policy breaks LN receive for bark 0.5.0 and older
+	require_bark_version!(> "0.5.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 

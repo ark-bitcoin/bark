@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use ark::vtxo::VtxoValidationError;
+use ark::vtxo::{TransitionKind, VtxoValidationError};
 use bdk_esplora::esplora_client::Amount;
 use bip39::rand;
 use bitcoin::{OutPoint, SignedAmount, Transaction, Txid};
@@ -44,9 +44,6 @@ use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 const ROUND_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 use crate::subsystem::{RoundMovement, Subsystem};
 
-
-/// The type string for the hArk leaf transition
-const HARK_TRANSITION_KIND: &str = "hash-locked-cosigned";
 
 /// Struct to communicate your specific participation for an Ark round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -867,7 +864,8 @@ fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo<Full>) -> an
 	match vtxo.validate(funding_tx) {
 		Err(VtxoValidationError::GenesisTransition {
 			genesis_idx, genesis_len, transition_kind, ..
-		}) if genesis_idx + 1 == genesis_len && transition_kind == HARK_TRANSITION_KIND => Ok(()),
+		}) if genesis_idx + 1 == genesis_len
+			&& transition_kind == TransitionKind::HashLockedCosigned.as_str() => Ok(()),
 		Ok(()) => Err(anyhow!("new un-unlocked VTXO should fail validation but doesn't: {}",
 			vtxo.serialize_hex(),
 		)),

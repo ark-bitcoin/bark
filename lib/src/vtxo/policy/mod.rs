@@ -40,10 +40,10 @@ use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 use crate::{SECP, musig };
 use crate::lightning::PaymentHash;
 use crate::tree::signed::UnlockHash;
-use crate::vtxo::TapScriptClause;
+use crate::vtxo::{HashDelaySignClause, TapScriptClause};
 use crate::vtxo::policy::clause::{
-	DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause, HashSignClause,
-	TimelockSignClause, VtxoClause,
+	DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause_v0, HashSignClause,
+	HashSignClause_v0, TimelockSignClause, VtxoClause,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -150,8 +150,14 @@ pub enum VtxoPolicyKind {
 	Pubkey,
 	/// A VTXO that represents an HTLC with the Ark server to send money.
 	ServerHtlcSend,
+	/// A VTXO that represents an HTLC with the Ark server to send money.
+	#[allow(non_camel_case_types)]
+	ServerHtlcSend_v0,
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
 	ServerHtlcRecv,
+	/// A VTXO that represents an HTLC with the Ark server to receive money.
+	#[allow(non_camel_case_types)]
+	ServerHtlcRecv_v0,
 	/// Simple VTXO owned by the server key
 	ServerOwned,
 	/// A public policy that grants bitcoin back to the server after expiry
@@ -161,21 +167,31 @@ pub enum VtxoPolicyKind {
 	Expiry,
 	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
 	HarkLeaf,
+	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
+	#[allow(non_camel_case_types)]
+	HarkLeaf_v0,
 	/// hArk forfeit tx output policy
 	HarkForfeit,
+	/// hArk forfeit tx output policy
+	#[allow(non_camel_case_types)]
+	HarkForfeit_v0,
 }
 
 impl fmt::Display for VtxoPolicyKind {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
 			Self::Pubkey => f.write_str("pubkey"),
-			Self::ServerHtlcSend => f.write_str("server-htlc-send"),
-			Self::ServerHtlcRecv => f.write_str("server-htlc-receive"),
+			Self::ServerHtlcSend => f.write_str("server-htlc-send-v1"),
+			Self::ServerHtlcRecv => f.write_str("server-htlc-receive-v1"),
+			Self::ServerHtlcSend_v0 => f.write_str("server-htlc-send"),
+			Self::ServerHtlcRecv_v0 => f.write_str("server-htlc-receive"),
 			Self::ServerOwned => f.write_str("server-owned"),
 			Self::Checkpoint => f.write_str("checkpoint"),
 			Self::Expiry => f.write_str("expiry"),
-			Self::HarkLeaf => f.write_str("hark-leaf"),
-			Self::HarkForfeit => f.write_str("hark-forfeit"),
+			Self::HarkLeaf => f.write_str("hark-leaf-v1"),
+			Self::HarkLeaf_v0 => f.write_str("hark-leaf"),
+			Self::HarkForfeit => f.write_str("hark-forfeit-v1"),
+			Self::HarkForfeit_v0 => f.write_str("hark-forfeit"),
 		}
 	}
 }
@@ -185,13 +201,17 @@ impl FromStr for VtxoPolicyKind {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		Ok(match s {
 			"pubkey" => Self::Pubkey,
-			"server-htlc-send" => Self::ServerHtlcSend,
-			"server-htlc-receive" => Self::ServerHtlcRecv,
+			"server-htlc-send-v1" => Self::ServerHtlcSend,
+			"server-htlc-receive-v1" => Self::ServerHtlcRecv,
+			"server-htlc-send" => Self::ServerHtlcSend_v0,
+			"server-htlc-receive" => Self::ServerHtlcRecv_v0,
 			"server-owned" => Self::ServerOwned,
 			"checkpoint" => Self::Checkpoint,
 			"expiry" => Self::Expiry,
-			"hark-leaf" => Self::HarkLeaf,
-			"hark-forfeit" => Self::HarkForfeit,
+			"hark-leaf-v1" => Self::HarkLeaf,
+			"hark-leaf" => Self::HarkLeaf_v0,
+			"hark-forfeit-v1" => Self::HarkForfeit,
+			"hark-forfeit" => Self::HarkForfeit_v0,
 			_ => return Err(format!("unknown VtxoPolicyKind: {}", s)),
 		})
 	}
@@ -416,6 +436,66 @@ impl HarkLeafVtxoPolicy {
 	}
 }
 
+/// Policy for hArk leaf outputs (intermediate outputs spent by leaf txs).
+///
+/// These are the outputs that feed into the final leaf transactions in a signed
+/// VTXO tree. They are locked by:
+/// 1. An expiry clause allowing the server to sweep after expiry
+/// 2. An unlock clause requiring a preimage and a signature from user+server
+///
+/// The internal key is set to the MuSig of user's VTXO key + server pubkey.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(non_camel_case_types)]
+pub struct HarkLeaf_v0_VtxoPolicy {
+	pub user_pubkey: PublicKey,
+	pub unlock_hash: UnlockHash,
+}
+
+impl HarkLeaf_v0_VtxoPolicy {
+	/// Creates the expiry clause allowing the server to sweep after expiry.
+	pub fn expiry_clause(
+		&self,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> TimelockSignClause {
+		TimelockSignClause { pubkey: server_pubkey, timelock_height: expiry_height }
+	}
+
+	/// Creates the unlock clause requiring a preimage and aggregate signature.
+	pub fn unlock_clause(&self, server_pubkey: PublicKey) -> HashSignClause_v0 {
+		let agg_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		HashSignClause_v0 { pubkey: agg_pk, hash: self.unlock_hash }
+	}
+
+	/// Returns the clauses for this policy.
+	pub fn clauses(
+		&self,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> Vec<VtxoClause> {
+		vec![
+			self.expiry_clause(expiry_height, server_pubkey).into(),
+			self.unlock_clause(server_pubkey).into(),
+		]
+	}
+
+	/// Build the taproot spend info for this policy.
+	pub fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> taproot::TaprootSpendInfo {
+		let agg_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		let expiry_clause = self.expiry_clause(expiry_height, server_pubkey);
+		let unlock_clause = self.unlock_clause(server_pubkey);
+
+		taproot::TaprootBuilder::new()
+			.add_leaf(1, expiry_clause.tapscript()).unwrap()
+			.add_leaf(1, unlock_clause.tapscript()).unwrap()
+			.finalize(&SECP, agg_pk.x_only_public_key().0).unwrap()
+	}
+}
+
 /// Policy enabling outgoing Lightning payments.
 ///
 /// This will build a taproot with 3 clauses:
@@ -433,19 +513,20 @@ impl HarkLeafVtxoPolicy {
 /// force the Server to reveal the preimage (by spending using her clause)
 /// or give Alice her money back.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ServerHtlcSendVtxoPolicy {
+#[allow(non_camel_case_types)]
+pub struct ServerHtlcSend_v0_VtxoPolicy {
 	pub user_pubkey: PublicKey,
 	pub payment_hash: PaymentHash,
 	pub htlc_expiry: BlockHeight,
 }
 
-impl From<ServerHtlcSendVtxoPolicy> for VtxoPolicy {
-	fn from(policy: ServerHtlcSendVtxoPolicy) -> Self {
-		Self::ServerHtlcSend(policy)
+impl From<ServerHtlcSend_v0_VtxoPolicy> for VtxoPolicy {
+	fn from(policy: ServerHtlcSend_v0_VtxoPolicy) -> Self {
+		Self::ServerHtlcSend_v0(policy)
 	}
 }
 
-impl ServerHtlcSendVtxoPolicy {
+impl ServerHtlcSend_v0_VtxoPolicy {
 	/// Allows Server to spend the HTLC after the delta, if it knows the
 	/// preimage. Server can use this path if Alice tries to spend using her
 	/// clause.
@@ -453,8 +534,8 @@ impl ServerHtlcSendVtxoPolicy {
 		&self,
 		server_pubkey: PublicKey,
 		exit_delta: BlockDelta,
-	) -> HashDelaySignClause {
-		HashDelaySignClause {
+	) -> HashDelaySignClause_v0 {
+		HashDelaySignClause_v0 {
 			pubkey: server_pubkey,
 			hash: self.payment_hash.to_sha256_hash(),
 			block_delta: exit_delta
@@ -499,6 +580,168 @@ impl ServerHtlcSendVtxoPolicy {
 	}
 }
 
+/// Policy enabling outgoing Lightning payments.
+///
+/// This will build a taproot with 3 clauses:
+/// 1. The keyspend path allows Alice and Server to collaborate to spend
+/// the HTLC. The Server can use this path to revoke the HTLC if payment
+/// failed
+///
+/// 2. The script-spend path contains one leaf that allows Server to spend
+/// the HTLC after the expiry, if it knows the preimage. Server can use
+/// this path if Alice tries to spend using her clause.
+///
+/// 3. The second leaf allows Alice to spend the HTLC after its expiry
+/// and with a delay. Alice must use this path if the server fails to
+/// provide the preimage and refuse to revoke the HTLC. It will either
+/// force the Server to reveal the preimage (by spending using her clause)
+/// or give Alice her money back.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ServerHtlcSendVtxoPolicy {
+	pub user_pubkey: PublicKey,
+	pub payment_hash: PaymentHash,
+	pub htlc_expiry: BlockHeight,
+}
+
+impl ServerHtlcSendVtxoPolicy {
+	/// Allows Server to spend the HTLC after the delta, if it knows the
+	/// preimage. Server can use this path if Alice tries to spend using her
+	/// clause.
+	pub fn server_reveals_preimage_clause(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+	) -> HashDelaySignClause {
+		HashDelaySignClause {
+			pubkey: server_pubkey,
+			hash: self.payment_hash.to_sha256_hash(),
+			block_delta: exit_delta
+		}
+	}
+
+	/// Allows Alice to spend the HTLC after its expiry and with a delay.
+	/// Alice must use this path if the server fails to provide the preimage
+	/// and refuse to revoke the HTLC. It will either force the server to
+	/// reveal the preimage (by spending using its clause) or give Alice her
+	/// money back.
+	pub fn user_claim_after_expiry_clause(
+		&self,
+		exit_delta: BlockDelta,
+	) -> DelayedTimelockSignClause {
+		DelayedTimelockSignClause {
+			pubkey: self.user_pubkey,
+			timelock_height: self.htlc_expiry,
+			block_delta: exit_delta.checked_mul(2)
+				.expect("2*exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant"),
+		}
+	}
+
+	pub fn clauses(&self, exit_delta: BlockDelta, server_pubkey: PublicKey) -> Vec<VtxoClause> {
+		vec![
+			self.server_reveals_preimage_clause(server_pubkey, exit_delta).into(),
+			self.user_claim_after_expiry_clause(exit_delta).into(),
+		]
+	}
+
+	pub fn taproot(&self, server_pubkey: PublicKey, exit_delta: BlockDelta) -> taproot::TaprootSpendInfo {
+		let server_reveals_preimage_clause = self.server_reveals_preimage_clause(server_pubkey, exit_delta);
+		let user_claim_after_expiry_clause = self.user_claim_after_expiry_clause(exit_delta);
+
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
+		bitcoin::taproot::TaprootBuilder::new()
+			.add_leaf(1, server_reveals_preimage_clause.tapscript()).unwrap()
+			.add_leaf(1, user_claim_after_expiry_clause.tapscript()).unwrap()
+			.finalize(&SECP, combined_pk).unwrap()
+	}
+}
+
+impl From<ServerHtlcSendVtxoPolicy> for VtxoPolicy {
+	fn from(policy: ServerHtlcSendVtxoPolicy) -> Self {
+		Self::ServerHtlcSend(policy)
+	}
+}
+
+
+/// Policy enabling incoming Lightning payments.
+///
+/// This will build a taproot with 3 clauses:
+/// 1. The keyspend path allows Alice and Server to collaborate to spend
+/// the HTLC. This is the expected path to be used. Server should only
+/// accept to collaborate if Alice reveals the preimage.
+///
+/// 2. The script-spend path contains one leaf that allows Server to spend
+/// the HTLC after the expiry, with an exit delta delay. Server can use
+/// this path if Alice tries to spend the HTLC using the 3rd path after
+/// the HTLC expiry
+///
+/// 3. The second leaf allows Alice to spend the HTLC if she knows the
+/// preimage, but with a greater exit delta delay than server's clause.
+/// Alice must use this path if she revealed the preimage but Server
+/// refused to collaborate.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(non_camel_case_types)]
+pub struct ServerHtlcRecv_v0_VtxoPolicy {
+	pub user_pubkey: PublicKey,
+	pub payment_hash: PaymentHash,
+	pub htlc_expiry_delta: BlockDelta,
+	pub htlc_expiry: BlockHeight,
+}
+
+impl ServerHtlcRecv_v0_VtxoPolicy {
+	/// Allows Alice to spend the HTLC if she knows the preimage, but with a
+	/// greater exit delta delay than server's clause. Alice must use this
+	/// path if she revealed the preimage but server refused to cosign
+	/// claim VTXO.
+	pub fn user_reveals_preimage_clause(&self, exit_delta: BlockDelta) -> HashDelaySignClause_v0 {
+		HashDelaySignClause_v0 {
+			pubkey: self.user_pubkey,
+			hash: self.payment_hash.to_sha256_hash(),
+			block_delta: self.htlc_expiry_delta.checked_add(exit_delta)
+				.expect("htlc_expiry_delta+exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant"),
+		}
+	}
+
+	/// Allows Server to spend the HTLC after the HTLC expiry, with an exit
+	/// delta delay. Server can use this path if Alice tries to spend the
+	/// HTLC using her clause after the HTLC expiry.
+	pub fn server_claim_after_expiry_clause(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+	) -> DelayedTimelockSignClause {
+		DelayedTimelockSignClause {
+			pubkey: server_pubkey,
+			timelock_height: self.htlc_expiry,
+			block_delta: exit_delta
+		}
+	}
+
+	pub fn clauses(&self, exit_delta: BlockDelta, server_pubkey: PublicKey) -> Vec<VtxoClause> {
+		vec![
+			self.user_reveals_preimage_clause(exit_delta).into(),
+			self.server_claim_after_expiry_clause(server_pubkey, exit_delta).into(),
+		]
+	}
+
+	pub fn taproot(&self, server_pubkey: PublicKey, exit_delta: BlockDelta) -> taproot::TaprootSpendInfo {
+		let server_claim_after_expiry_clause = self.server_claim_after_expiry_clause(server_pubkey, exit_delta);
+		let user_reveals_preimage_clause = self.user_reveals_preimage_clause(exit_delta);
+
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
+		bitcoin::taproot::TaprootBuilder::new()
+			.add_leaf(1, server_claim_after_expiry_clause.tapscript()).unwrap()
+			.add_leaf(1, user_reveals_preimage_clause.tapscript()).unwrap()
+			.finalize(&SECP, combined_pk).unwrap()
+	}
+}
+
+impl From<ServerHtlcRecv_v0_VtxoPolicy> for VtxoPolicy {
+	fn from(policy: ServerHtlcRecv_v0_VtxoPolicy) -> Self {
+		Self::ServerHtlcRecv_v0(policy)
+	}
+}
 
 /// Policy enabling incoming Lightning payments.
 ///
@@ -643,6 +886,71 @@ impl From<HarkForfeitVtxoPolicy> for ServerVtxoPolicy {
 	}
 }
 
+/// The server-only VTXO policy on hArk forfeit txs
+///
+/// This policy allows the server to claim the forfeited coins by revealing
+/// the hArk unlock preimage or allow the user to recover its money in case
+/// the server doesn't.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(non_camel_case_types)]
+pub struct HarkForfeit_v0_VtxoPolicy {
+	pub user_pubkey: PublicKey,
+	pub unlock_hash: UnlockHash,
+}
+
+impl HarkForfeit_v0_VtxoPolicy {
+	/// Server claims the forfeit revealing the unlock preimage
+	pub fn server_claim_clause(
+		&self,
+		server_pubkey: PublicKey,
+	) -> HashSignClause_v0 {
+		HashSignClause_v0 {
+			pubkey: server_pubkey,
+			hash: self.unlock_hash,
+		}
+	}
+
+	/// If the server doesn't reveal the preimage, the user can claim the funds
+	pub fn user_exit_clause(
+		&self,
+		exit_delta: BlockDelta,
+	) -> DelayedSignClause {
+		DelayedSignClause {
+			pubkey: self.user_pubkey,
+			block_delta: exit_delta
+		}
+	}
+
+	pub fn clauses(&self, exit_delta: BlockDelta, server_pubkey: PublicKey) -> Vec<VtxoClause> {
+		vec![
+			self.server_claim_clause(server_pubkey).into(),
+			self.user_exit_clause(exit_delta).into(),
+		]
+	}
+
+	pub fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+	) -> taproot::TaprootSpendInfo {
+		let server_claim_clause = self.server_claim_clause(server_pubkey);
+		let user_exit_clause = self.user_exit_clause(exit_delta);
+
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
+		bitcoin::taproot::TaprootBuilder::new()
+			.add_leaf(1, server_claim_clause.tapscript()).unwrap()
+			.add_leaf(1, user_exit_clause.tapscript()).unwrap()
+			.finalize(&SECP, combined_pk).unwrap()
+	}
+}
+
+impl From<HarkForfeit_v0_VtxoPolicy> for ServerVtxoPolicy {
+	fn from(v: HarkForfeit_v0_VtxoPolicy) -> Self {
+	    ServerVtxoPolicy::HarkForfeit_v0(v)
+	}
+}
+
 /// User-facing VTXO output policy.
 ///
 /// All variants have an associated user public key, accessible via the infallible
@@ -659,8 +967,14 @@ pub enum VtxoPolicy {
 	Pubkey(PubkeyVtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to send money.
 	ServerHtlcSend(ServerHtlcSendVtxoPolicy),
+	/// A VTXO that represents an HTLC with the Ark server to send money.
+	#[allow(non_camel_case_types)]
+	ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
 	ServerHtlcRecv(ServerHtlcRecvVtxoPolicy),
+	/// A VTXO that represents an HTLC with the Ark server to receive money.
+	#[allow(non_camel_case_types)]
+	ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy),
 }
 
 impl VtxoPolicy {
@@ -722,6 +1036,8 @@ impl VtxoPolicy {
 			Self::Pubkey { .. } => VtxoPolicyKind::Pubkey,
 			Self::ServerHtlcSend { .. } => VtxoPolicyKind::ServerHtlcSend,
 			Self::ServerHtlcRecv { .. } => VtxoPolicyKind::ServerHtlcRecv,
+			Self::ServerHtlcSend_v0 { .. } => VtxoPolicyKind::ServerHtlcSend_v0,
+			Self::ServerHtlcRecv_v0 { .. } => VtxoPolicyKind::ServerHtlcRecv_v0,
 		}
 	}
 
@@ -731,6 +1047,8 @@ impl VtxoPolicy {
 			Self::Pubkey { .. } => true,
 			Self::ServerHtlcSend { .. } => false,
 			Self::ServerHtlcRecv { .. } => false,
+			Self::ServerHtlcSend_v0 { .. } => false,
+			Self::ServerHtlcRecv_v0 { .. } => false,
 		}
 	}
 
@@ -742,6 +1060,8 @@ impl VtxoPolicy {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
 			Self::ServerHtlcSend { .. } => None,
 			Self::ServerHtlcRecv { .. } => None,
+			Self::ServerHtlcSend_v0 { .. } => None,
+			Self::ServerHtlcRecv_v0 { .. } => None,
 		}
 	}
 
@@ -751,6 +1071,8 @@ impl VtxoPolicy {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => *user_pubkey,
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
+			Self::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy { user_pubkey, .. }) => *user_pubkey,
+			Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 		}
 	}
 
@@ -765,6 +1087,8 @@ impl VtxoPolicy {
 			Self::Pubkey(policy) => policy.taproot(server_pubkey, exit_delta),
 			Self::ServerHtlcSend(policy) => policy.taproot(server_pubkey, exit_delta),
 			Self::ServerHtlcRecv(policy) => policy.taproot(server_pubkey, exit_delta),
+			Self::ServerHtlcSend_v0(policy) => policy.taproot(server_pubkey, exit_delta),
+			Self::ServerHtlcRecv_v0(policy) => policy.taproot(server_pubkey, exit_delta),
 		}
 	}
 
@@ -800,6 +1124,8 @@ impl VtxoPolicy {
 			Self::Pubkey(policy) => policy.clauses(exit_delta),
 			Self::ServerHtlcSend(policy) => policy.clauses(exit_delta, server_pubkey),
 			Self::ServerHtlcRecv(policy) => policy.clauses(exit_delta, server_pubkey),
+			Self::ServerHtlcSend_v0(policy) => policy.clauses(exit_delta, server_pubkey),
+			Self::ServerHtlcRecv_v0(policy) => policy.clauses(exit_delta, server_pubkey),
 		}
 	}
 }
@@ -820,8 +1146,14 @@ pub enum ServerVtxoPolicy {
 	Expiry(ExpiryVtxoPolicy),
 	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
 	HarkLeaf(HarkLeafVtxoPolicy),
+	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
+	#[allow(non_camel_case_types)]
+	HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy),
 	/// hArk forfeit tx output policy
 	HarkForfeit(HarkForfeitVtxoPolicy),
+	/// hArk forfeit tx output policy
+	#[allow(non_camel_case_types)]
+	HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy),
 }
 
 impl From<VtxoPolicy> for ServerVtxoPolicy {
@@ -833,6 +1165,12 @@ impl From<VtxoPolicy> for ServerVtxoPolicy {
 impl From<HarkLeafVtxoPolicy> for ServerVtxoPolicy {
 	fn from(p: HarkLeafVtxoPolicy) -> Self {
 		Self::HarkLeaf(p)
+	}
+}
+
+impl From<HarkLeaf_v0_VtxoPolicy> for ServerVtxoPolicy {
+	fn from(p: HarkLeaf_v0_VtxoPolicy) -> Self {
+		Self::HarkLeaf_v0(p)
 	}
 }
 
@@ -865,7 +1203,9 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint { .. } => VtxoPolicyKind::Checkpoint,
 			Self::Expiry { .. } => VtxoPolicyKind::Expiry,
 			Self::HarkLeaf { .. } => VtxoPolicyKind::HarkLeaf,
+			Self::HarkLeaf_v0 { .. } => VtxoPolicyKind::HarkLeaf_v0,
 			Self::HarkForfeit { .. } => VtxoPolicyKind::HarkForfeit,
+			Self::HarkForfeit_v0 { .. } => VtxoPolicyKind::HarkForfeit_v0,
 		}
 	}
 
@@ -877,7 +1217,9 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint { .. } => true,
 			Self::Expiry { .. } => false,
 			Self::HarkLeaf { .. } => false,
+			Self::HarkLeaf_v0 { .. } => false,
 			Self::HarkForfeit { .. } => false,
+			Self::HarkForfeit_v0 { .. } => false,
 		}
 	}
 
@@ -889,7 +1231,9 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
 			Self::Expiry { .. } => None,
 			Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
+			Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 			Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
+			Self::HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 		}
 	}
 
@@ -908,7 +1252,9 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::Expiry(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::HarkLeaf(policy) => policy.taproot(server_pubkey, expiry_height),
+			Self::HarkLeaf_v0(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::HarkForfeit(policy) => policy.taproot(server_pubkey, exit_delta),
+			Self::HarkForfeit_v0(policy) => policy.taproot(server_pubkey, exit_delta),
 		}
 	}
 
@@ -933,7 +1279,9 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::Expiry(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::HarkLeaf(policy) => policy.clauses(expiry_height, server_pubkey),
+			Self::HarkLeaf_v0(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::HarkForfeit(policy) => policy.clauses(exit_delta, server_pubkey),
+			Self::HarkForfeit_v0(policy) => policy.clauses(exit_delta, server_pubkey),
 		}
 	}
 

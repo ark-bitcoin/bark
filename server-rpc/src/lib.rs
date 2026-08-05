@@ -116,7 +116,7 @@ pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_BASE;
 /// The maximum protocol version supported by the client.
 ///
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
-pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_PPM_FEE_TOTAL;
+pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES;
 
 /// The string used in the gRPC HTTP header for the protocol version.
 pub const PROTOCOL_VERSION_HEADER: &str = "pver";

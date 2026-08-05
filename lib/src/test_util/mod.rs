@@ -20,6 +20,9 @@ impl Vtxo<Full> {
 			GenesisTransition::HashLockedCosigned(ref mut inner) => {
 				inner.signature.replace(fake).expect("didn't have signature");
 			},
+			GenesisTransition::HashLockedCosigned_v0(ref mut inner) => {
+				inner.signature.replace(fake).expect("didn't have signature");
+			},
 			GenesisTransition::Arkoor(ref mut inner) => {
 				inner.signature.replace(fake).expect("didn't have arkoor signature");
 			},

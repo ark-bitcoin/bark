@@ -23,6 +23,8 @@ use ark_testing::util::FutureExt;
 
 #[tokio::test]
 async fn large_round() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/large_round").await;
 	#[cfg(not(feature = "slow_test"))]
 	const N: usize = 9;
@@ -57,6 +59,8 @@ async fn large_round() {
 
 #[tokio::test]
 async fn refresh_all() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/refresh_all").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
@@ -85,6 +89,8 @@ async fn refresh_all() {
 
 #[tokio::test]
 async fn refresh_counterparty() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/refresh_counterparty").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
@@ -128,6 +134,8 @@ async fn refresh_counterparty() {
 #[tokio::test]
 async fn second_round_attempt() {
 	//! test that we can recover from an error in the round
+
+	require_bark_version!(> "0.5.0");
 
 	/// This proxy will drop the very first request to provide_vtxo_signatures.
 	#[derive(Clone)]
@@ -190,6 +198,8 @@ async fn bark_can_sign_up_to_round_during_signup_phase() {
 	//! able to join the ongoing round during the signup phase, even though it
 	//! wasn't listening when the round started.
 
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/bark_can_sign_up_to_round_during_signup_phase").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -221,6 +231,8 @@ async fn bark_can_sign_up_to_round_during_signup_phase() {
 
 #[tokio::test]
 async fn delegated_maintenance_refresh() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/delegated_maintenance_refresh").await;
 	let srv = ctx.captaind("server").funded(btc(1)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
@@ -308,7 +320,7 @@ async fn delegated_refresh_must_not_leave_server_trace_on_failure() {
 	//! forfeits exactly our VTXO as a tracked refresh) or it fails with no
 	//! server-side trace (the triggered round sits out with no payments).
 
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/delegated_refresh_must_not_leave_server_trace_on_failure").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -370,7 +382,7 @@ async fn delegated_refresh_must_not_leave_server_trace_on_failure() {
 
 #[tokio::test]
 async fn delegated_refresh_dropped_when_input_spent_before_round() {
-	require_bark_version!(> "0.3.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/delegated_refresh_dropped_when_input_spent_before_round").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -402,7 +414,7 @@ async fn delegated_refresh_dropped_when_input_spent_before_round() {
 
 #[tokio::test]
 async fn delegated_refresh_then_unsynced_spend_is_rejected() {
-	require_bark_version!(> "0.3.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/delegated_refresh_then_unsynced_spend_is_rejected").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -434,7 +446,7 @@ async fn delegated_refresh_then_unsynced_spend_is_rejected() {
 
 #[tokio::test]
 async fn delegated_refresh_sync_cleans_up_after_input_spent_elsewhere() {
-	require_bark_version!(> "0.3.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/delegated_refresh_sync_cleans_up_after_input_spent_elsewhere").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -480,7 +492,7 @@ async fn stepwise_round() {
 	//! this test tests that the bark rust api can be used to participate
 	//! in rounds stepwise by manually feeding events into the wallet
 
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/stepwise_round").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
@@ -581,7 +593,7 @@ async fn stepwise_round() {
 
 #[tokio::test]
 async fn multiple_round_participations_dont_race() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/multiple_round_participations_dont_race").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -646,7 +658,7 @@ async fn multiple_round_participations_dont_race() {
 
 #[tokio::test]
 async fn refresh_vtxos_and_participate_ongoing_rounds_dont_race() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/refresh_vtxos_and_participate_ongoing_rounds_dont_race").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -712,7 +724,7 @@ async fn refresh_vtxos_and_participate_ongoing_rounds_dont_race() {
 /// (participate_ongoing_rounds locks the round state).
 #[tokio::test]
 async fn participate_round_and_progress_pending_dont_race() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/participate_round_and_progress_pending_dont_race").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -795,7 +807,7 @@ async fn participate_round_and_progress_pending_dont_race() {
 /// on the same round state (participate_ongoing_rounds locks the round state).
 #[tokio::test]
 async fn participate_round_and_event_stream_processing_dont_race() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/participate_round_and_event_stream_processing_dont_race").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -874,6 +886,8 @@ async fn participate_round_and_event_stream_processing_dont_race() {
 
 #[tokio::test]
 async fn refresh_consolidates_vtxos() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/refresh_consolidates_vtxos").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;

@@ -136,6 +136,47 @@ pub(crate) fn validate_intra_ark_payment(
 }
 
 
+/// The margin (in blocks) the server requires between the current chain tip
+/// and the lowest incoming HTLC expiry when cosigning a lightning receive
+/// claim.
+///
+/// Cosigning the claim releases the granted HTLC-recv VTXOs; the server only
+/// recovers that value by settling its hold invoice, which must happen while
+/// the inbound Lightning HTLC is still live. Settling is a fast RPC, so a few
+/// blocks of margin are ample; the check exists to stop a malicious (or very
+/// late) receiver from claiming after the inbound HTLC can no longer be
+/// collected.
+///
+/// This must stay well below `Config::htlc_expiry_delta`: receivers prepare
+/// their claim with that larger margin, so an honest receiver claiming
+/// promptly is never affected.
+const RECEIVE_CLAIM_EXPIRY_MARGIN: BlockDelta = 3;
+
+/// Validates that a lightning receive claim can still be collected on.
+///
+/// Cosigning the claim releases the granted HTLC-recv VTXOs (outgoing value).
+/// The server recovers it by settling the hold invoice (incoming value),
+/// which requires the inbound Lightning HTLC to still be live when the settle
+/// lands. We therefore refuse claims once the tip gets within
+/// [RECEIVE_CLAIM_EXPIRY_MARGIN] of the lowest incoming HTLC expiry.
+fn validate_receive_claim(
+	lowest_incoming_htlc_expiry: BlockHeight,
+	chain_tip: BlockHeight,
+) -> anyhow::Result<()> {
+	let margin = BlockHeight::from(RECEIVE_CLAIM_EXPIRY_MARGIN);
+
+	let tip_plus_margin = chain_tip.checked_add(margin)
+		.context("chain_tip + RECEIVE_CLAIM_EXPIRY_MARGIN overflows BlockHeight")?;
+	if tip_plus_margin > lowest_incoming_htlc_expiry {
+		return badarg!(
+			"Lowest incoming HTLC expiry {} is too close to the current chaintip {} \
+			to safely settle the hold invoice",
+			lowest_incoming_htlc_expiry, chain_tip,
+		);
+	}
+	Ok(())
+}
+
 impl Server {
 	#[tracing::instrument(skip(self, request))]
 	pub async fn request_lightning_pay_htlc_cosign(
@@ -529,6 +570,12 @@ impl Server {
 			}
 		}
 
+		if let Some(max) = self.config.max_ln_receive_amount {
+			if amount > max {
+				return badarg!("Requested amount exceeds lightning receive limit of {}", max);
+			}
+		}
+
 		let subscriptions = self.db.read(async |t| t.get_htlc_subscriptions_by_payment_hash(payment_hash).await).await?;
 
 		let subscriptions_by_status = subscriptions.iter()
@@ -840,8 +887,31 @@ impl Server {
 		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 
-		if !matches!(sub.status, LightningHtlcSubscriptionStatus::HtlcsReady|LightningHtlcSubscriptionStatus::Settled) {
-			return badarg!("payment status in incorrect state: {}", sub.status)
+		match sub.status {
+			// Cosigning releases the granted HTLC-recv VTXOs; that is only safe
+			// while the incoming side can still be collected. For intra-ark
+			// self-payments the incoming side is the sender's HTLC vtxos, which
+			// are marked ln-spent as the claim settles (and can always be
+			// claimed on-chain with the recorded preimage), so no margin check
+			// is needed. For external receives the server can only recover the
+			// grant by settling the hold invoice while the inbound HTLC lives.
+			LightningHtlcSubscriptionStatus::HtlcsReady => {
+				let is_self_payment = self.db.read(async |t|
+					t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await
+				).await?.map(|attempt| attempt.is_self_payment).unwrap_or(false);
+				if !is_self_payment {
+					let lowest_incoming_htlc_expiry = sub.lowest_incoming_htlc_expiry
+						.context("no incoming HTLCs found for this payment")?;
+					validate_receive_claim(
+						lowest_incoming_htlc_expiry,
+						self.sync_manager.chain_tip().height,
+					)?;
+				}
+			},
+			// Idempotent retry of an already-settled claim; the value was
+			// released with the first claim, nothing new is at stake.
+			LightningHtlcSubscriptionStatus::Settled => {},
+			_ => return badarg!("payment status in incorrect state: {}", sub.status),
 		}
 		if sub.htlc_vtxos.is_empty() {
 			error!("htlc subscription without htlcs: {}", payment_hash);
@@ -1001,6 +1071,19 @@ mod tests {
 
 		validate_intra_ark_payment(&sub, &Invoice::Bolt11(amountless), Amount::from_sat(1000))
 			.expect_err("amountless invoice must be rejected");
+	}
+
+	#[test]
+	fn receive_claim_margin() {
+		// tip + margin == lowest is still ok
+		assert!(validate_receive_claim(103, 100).is_ok());
+		// one block later and the settle might not make it
+		let res = validate_receive_claim(102, 100);
+		assert!(res.is_err());
+		assert!(format!("{:#}", res.unwrap_err()).contains("too close to the current chaintip"));
+		// and certainly once it expired
+		assert!(validate_receive_claim(100, 100).is_err());
+		assert!(validate_receive_claim(99, 100).is_err());
 	}
 
 	#[test]

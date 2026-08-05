@@ -29,6 +29,8 @@ use server_rpc::protos::{
 
 #[tokio::test]
 async fn bark_pay_ln_succeeds() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_pay_ln_succeeds").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -77,6 +79,8 @@ async fn bark_pay_ln_succeeds() {
 
 #[tokio::test]
 async fn bark_pay_ln_with_multiple_inputs() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_pay_ln_with_multiple_inputs").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -114,6 +118,8 @@ async fn bark_pay_ln_with_multiple_inputs() {
 
 #[tokio::test]
 async fn bark_pay_invoice_twice() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_pay_invoice_twice").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -144,6 +150,8 @@ async fn bark_pay_invoice_twice() {
 
 #[tokio::test]
 async fn another_bark_pays_invoice_after_first() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/another_bark_pays_invoice_after_first").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -176,7 +184,7 @@ async fn another_bark_pays_invoice_after_first() {
 
 #[tokio::test]
 async fn bark_check_lightning_payment_twice_succeeds() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("lightningd/bark_check_lightning_payment_twice_succeeds").await;
 
@@ -213,6 +221,8 @@ async fn bark_check_lightning_payment_twice_succeeds() {
 
 #[tokio::test]
 async fn two_barks_try_to_pay_same_invoice() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/two_barks_try_to_pay_same_invoice").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -248,6 +258,8 @@ async fn two_barks_try_to_pay_same_invoice() {
 
 #[tokio::test]
 async fn bark_pay_ln_fails_then_succeeds() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_pay_ln_fails_then_succeeds").await;
 
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
@@ -309,6 +321,8 @@ async fn bark_pay_ln_fails_then_succeeds() {
 
 #[tokio::test]
 async fn bark_refresh_ln_change_vtxo() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_refresh_ln_change_vtxo").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -347,6 +361,8 @@ async fn bark_refresh_ln_change_vtxo() {
 
 #[tokio::test]
 async fn bark_refresh_payment_revocation() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_refresh_payment_revocation").await;
 
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
@@ -384,6 +400,8 @@ async fn bark_refresh_payment_revocation() {
 
 #[tokio::test]
 async fn bark_allows_sending_dust_bolt11_payment() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_allows_sending_dust_bolt11_payment").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -413,6 +431,8 @@ async fn bark_allows_sending_dust_bolt11_payment() {
 
 #[tokio::test]
 async fn bark_can_send_full_balance_on_lightning() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_can_send_full_balance_on_lightning").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -445,8 +465,8 @@ async fn bark_can_receive_lightning(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
-	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.3.0");
+	// The new ServerHtlcRecv policy breaks LN receive for bark 0.5.0 and older
+	require_bark_version!(> "0.5.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -536,7 +556,6 @@ async fn bark_can_receive_lightning(
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })),
 		"should not be any locked vtxo left");
 
-	require_bark_version!(> "0.1.3");
 	let invoice_info = bark.bolt11_invoice_with_description(pay_amount, description).await;
 	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
 	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
@@ -560,8 +579,8 @@ async fn bark_can_receive_lightning_when_pool_spend_creates_subdust_output(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
-	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.3.0");
+	// The new ServerHtlcRecv policy breaks LN receive for bark 0.5.0 and older
+	require_bark_version!(> "0.5.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -602,7 +621,7 @@ lightning_test!(bark_can_receive_lightning_when_pool_spend_creates_subdust_outpu
 
 #[tokio::test]
 async fn bark_can_receive_lightning_for_offline_address() {
-	require_bark_version!(> "0.4.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("lightningd/bark_can_receive_lightning_for_offline_address").await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -642,7 +661,7 @@ async fn bark_can_receive_lightning_for_offline_address() {
 
 #[tokio::test]
 async fn bark_can_receive_lightning_for_own_address() {
-	require_bark_version!(> "0.4.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("lightningd/bark_can_receive_lightning_for_own_address").await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -679,8 +698,8 @@ async fn bark_check_lightning_receive_no_wait(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
-	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.3.0");
+	// The new ServerHtlcRecv policy breaks LN receive for bark 0.5.0 and older
+	require_bark_version!(> "0.5.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -736,6 +755,8 @@ async fn bark_can_pay_ark_invoice(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	require_bark_version!(> "0.5.0");
+
 	srv.wait_for_vtxopool(&ctx).await;
 
 	let bark = Arc::new(ctx.bark("bark-1", srv).funded(btc(3)).create().await);
@@ -767,6 +788,8 @@ lightning_test!(bark_can_pay_ark_invoice);
 
 #[tokio::test]
 async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -820,6 +843,8 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 /// 2. Can revoke and recover their funds
 #[tokio::test]
 async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_can_revoke_on_intra_ark_send_when_receiver_leaves").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -900,7 +925,7 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 /// spendable across both wallets never exceeds what they funded.
 #[tokio::test]
 async fn intra_ark_revoke_then_claim_does_not_drain_server() {
-	require_bark_version!(>= "0.3.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("lightningd/intra_ark_revoke_then_claim_does_not_drain_server").await;
 
@@ -1007,7 +1032,7 @@ async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 /// of the vtxopool, and ate the difference.
 #[tokio::test]
 async fn intra_ark_forged_invoice_does_not_drain_server() {
-	require_bark_version!(>= "0.3.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("lightningd/intra_ark_forged_invoice_does_not_drain_server").await;
 
@@ -1100,6 +1125,8 @@ async fn intra_ark_forged_invoice_does_not_drain_server() {
 
 #[tokio::test]
 async fn bark_revoke_expired_pending_ln_payment() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_revoke_expired_pending_ln_payment").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1179,6 +1206,8 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 #[tokio::test]
 async fn bark_pay_ln_offer() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_pay_ln_offer").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1222,6 +1251,8 @@ async fn bark_pay_ln_offer() {
 
 #[tokio::test]
 async fn bark_pay_twice_ln_offer() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_pay_twice_ln_offer").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1266,8 +1297,8 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
-	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
-	require_bark_version!(> "0.3.0");
+	// The new ServerHtlcRecv policy breaks LN receive for bark 0.5.0 and older
+	require_bark_version!(> "0.5.0");
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.bark("bark", srv).funded(btc(3)).create().await);
@@ -1297,6 +1328,8 @@ lightning_test!(bark_sends_on_lightning_after_receiving_from_lightning);
 
 #[tokio::test]
 async fn server_allows_claim_receive_with_vtxo_proof() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/server_allows_claim_receive_with_vtxo_proof").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1329,6 +1362,8 @@ async fn server_allows_claim_receive_with_vtxo_proof() {
 
 #[tokio::test]
 async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/server_rejects_claim_receive_for_bad_vtxo_proof").await;
 
 	#[derive(Clone)]
@@ -1395,7 +1430,7 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 
 #[tokio::test]
 async fn bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta() {
-	require_bark_version!(> "0.4.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("lightningd/bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta").await;
 
@@ -1470,7 +1505,7 @@ async fn bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta() {
 
 #[tokio::test]
 async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used() {
-	require_bark_version!(> "0.3.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("lightningd/server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used").await;
 
@@ -1539,6 +1574,8 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 /// subscriptions without missing any events.
 #[tokio::test]
 async fn stress_test_track_all_stream() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/stress_test_track_all_stream").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1655,7 +1692,7 @@ async fn stress_test_track_all_stream() {
 /// leading to orphaned wallet state.
 #[tokio::test]
 async fn concurrent_payment_attempts_same_invoice() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("lightningd/concurrent_payment_attempts_same_invoice").await;
 
@@ -1802,6 +1839,8 @@ async fn bark_can_claim_all_claimable_receives(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	require_bark_version!(> "0.5.0");
+
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
@@ -1925,6 +1964,8 @@ async fn bark_cannot_cancel_lightning_receive_after_preimage_revealed() {
 /// (5 nodes total, 4 channels)
 #[tokio::test]
 async fn bark_can_receive_lightning_long_route() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("lightningd/bark_can_receive_lightning_long_route").await;
 
 	const NUM_HOPS: usize = 5;
@@ -2289,6 +2330,8 @@ async fn lightning_receive_pool_change_arkoor_depth_capped() {
 /// are now exempt.
 #[tokio::test]
 async fn lightning_pay_revocation_ignores_max_exit_depth() {
+	require_bark_version!(> "0.5.0");
+
 	const MAX_EXIT_DEPTH: u16 = 3;
 
 	let ctx = TestContext::new("lightningd/lightning_pay_revocation_ignores_max_exit_depth").await;

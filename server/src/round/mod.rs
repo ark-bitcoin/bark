@@ -184,10 +184,10 @@ fn validate_payment_amounts(
 		}
 
 		match output.policy {
-			VtxoPolicy::ServerHtlcRecv { .. } => {
+			VtxoPolicy::ServerHtlcRecv { .. } | VtxoPolicy::ServerHtlcRecv_v0 { .. } => {
 				return badarg!("invalid vtxo policy: {:?}", output.policy);
 			},
-			VtxoPolicy::ServerHtlcSend { .. } => {
+			VtxoPolicy::ServerHtlcSend { .. } | VtxoPolicy::ServerHtlcSend_v0 { .. } => {
 				return badarg!("invalid vtxo policy: {:?}", output.policy);
 			},
 			VtxoPolicy::Pubkey { .. } => {
@@ -1160,8 +1160,12 @@ impl SigningVtxoTree {
 			let amount_sats = output.amount.to_sat();
 			match output.policy {
 				VtxoPolicy::Pubkey { .. } => telemetry::add_round_output_pubkey(amount_sats),
-				VtxoPolicy::ServerHtlcSend { .. } => telemetry::add_round_output_htlc_send(amount_sats),
-				VtxoPolicy::ServerHtlcRecv { .. } => telemetry::add_round_output_htlc_recv(amount_sats),
+				VtxoPolicy::ServerHtlcSend { .. } | VtxoPolicy::ServerHtlcSend_v0 { .. } => {
+					telemetry::add_round_output_htlc_send(amount_sats);
+				},
+				VtxoPolicy::ServerHtlcRecv { .. } | VtxoPolicy::ServerHtlcRecv_v0 { .. } => {
+					telemetry::add_round_output_htlc_recv(amount_sats);
+				},
 			}
 		}
 

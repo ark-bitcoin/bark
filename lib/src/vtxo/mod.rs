@@ -61,14 +61,17 @@ mod validation;
 pub use self::validation::VtxoValidationError;
 pub use self::policy::{Policy, VtxoPolicy, VtxoPolicyKind, ServerVtxoPolicy};
 pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
+pub use self::genesis::TransitionKind;
 
 pub use self::policy::{
 	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ExpiryVtxoPolicy, HarkLeafVtxoPolicy,
-	ServerHtlcRecvVtxoPolicy, ServerHtlcSendVtxoPolicy
+	HarkLeaf_v0_VtxoPolicy,
+	ServerHtlcRecv_v0_VtxoPolicy, ServerHtlcSend_v0_VtxoPolicy, ServerHtlcRecvVtxoPolicy,
+	ServerHtlcSendVtxoPolicy,
 };
 pub use self::policy::clause::{
 	VtxoClause, DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause,
-	TapScriptClause,
+	HashDelaySignClause_v0, TapScriptClause,
 };
 
 /// Type alias for a server-internal VTXO that may have policies without user pubkeys.
@@ -89,8 +92,9 @@ use bitcoin::taproot::TapTweakHash;
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, NonStandardOutput, TxOutExt, P2TR_DUST, P2TR_DUST_SAT};
 
-use crate::vtxo::policy::{check_block_delta, check_block_height, HarkForfeitVtxoPolicy};
-use crate::scripts;
+use crate::vtxo::policy::{
+	check_block_delta, check_block_height, HarkForfeitVtxoPolicy, HarkForfeit_v0_VtxoPolicy,
+};
 use crate::encode::{
 	LengthPrefixedVector, MAX_VEC_SIZE, OversizedVectorError, ProtocolDecodingError,
 	ProtocolEncoding, ReadExt, WriteExt,
@@ -297,14 +301,6 @@ impl ProtocolEncoding for VtxoId {
 
 		Ok(VtxoId(array))
 	}
-}
-
-/// Returns the clause to unilaterally spend a VTXO
-pub(crate) fn exit_clause(
-	user_pubkey: PublicKey,
-	exit_delta: BlockDelta,
-) -> ScriptBuf {
-	scripts::delayed_sign(exit_delta, user_pubkey.x_only_public_key().0)
 }
 
 /// Create an exit tx.
@@ -718,6 +714,7 @@ impl<P: Policy> Vtxo<Full, P> {
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
 		match self.genesis.items.last()?.transition {
 			GenesisTransition::HashLockedCosigned(ref inner) => Some(inner.unlock.hash()),
+			GenesisTransition::HashLockedCosigned_v0(ref inner) => Some(inner.unlock.hash()),
 			_ => None,
 		}
 	}
@@ -731,6 +728,10 @@ impl<P: Policy> Vtxo<Full, P> {
 				inner.signature.replace(signature);
 				true
 			},
+			Some(GenesisTransition::HashLockedCosigned_v0(inner)) => {
+				inner.signature.replace(signature);
+				true
+			},
 			_ => false,
 		}
 	}
@@ -741,6 +742,14 @@ impl<P: Policy> Vtxo<Full, P> {
 	pub fn provide_unlock_preimage(&mut self, preimage: UnlockPreimage) -> bool {
 		match self.genesis.items.last_mut().map(|g| &mut g.transition) {
 			Some(GenesisTransition::HashLockedCosigned(ref mut inner)) => {
+				if inner.unlock.hash() == UnlockHash::hash(&preimage) {
+					inner.unlock = MaybePreimage::Preimage(preimage);
+					true
+				} else {
+					false
+				}
+			},
+			Some(GenesisTransition::HashLockedCosigned_v0(ref mut inner)) => {
 				if inner.unlock.hash() == UnlockHash::hash(&preimage) {
 					inner.unlock = MaybePreimage::Preimage(preimage);
 					true
@@ -999,11 +1008,11 @@ impl<'a, P: Policy> VtxoRef<P> for &'a Vtxo<Full, P> {
 /// The byte used to encode the [VtxoPolicy::Pubkey] output type.
 const VTXO_POLICY_PUBKEY: u8 = 0x00;
 
-/// The byte used to encode the [VtxoPolicy::ServerHtlcSend] output type.
-const VTXO_POLICY_SERVER_HTLC_SEND: u8 = 0x01;
+/// The byte used to encode the [VtxoPolicy::ServerHtlcSend_v0] output type.
+const VTXO_POLICY_SERVER_HTLC_SEND_V0: u8 = 0x01;
 
-/// The byte used to encode the [VtxoPolicy::ServerHtlcRecv] output type.
-const VTXO_POLICY_SERVER_HTLC_RECV: u8 = 0x02;
+/// The byte used to encode the [VtxoPolicy::ServerHtlcRecv_v0] output type.
+const VTXO_POLICY_SERVER_HTLC_RECV_V0: u8 = 0x02;
 
 /// The byte used to encode the [ServerVtxoPolicy::Checkpoint] output type.
 const VTXO_POLICY_CHECKPOINT: u8 = 0x03;
@@ -1011,14 +1020,26 @@ const VTXO_POLICY_CHECKPOINT: u8 = 0x03;
 /// The byte used to encode the [ServerVtxoPolicy::Expiry] output type.
 const VTXO_POLICY_EXPIRY: u8 = 0x04;
 
-/// The byte used to encode the [ServerVtxoPolicy::HarkLeaf] output type.
-const VTXO_POLICY_HARK_LEAF: u8 = 0x05;
+/// The byte used to encode the [ServerVtxoPolicy::HarkLeaf_v0] output type.
+const VTXO_POLICY_HARK_LEAF_V0: u8 = 0x05;
 
-/// The byte used to encode the [ServerVtxoPolicy::HarkForfeit] output type.
-const VTXO_POLICY_HARK_FORFEIT: u8 = 0x06;
+/// The byte used to encode the [ServerVtxoPolicy::HarkForfeit_v0] output type.
+const VTXO_POLICY_HARK_FORFEIT_V0: u8 = 0x06;
 
 /// The byte used to encode the [ServerVtxoPolicy::ServerOwned] output type.
 const VTXO_POLICY_SERVER_OWNED: u8 = 0x07;
+
+/// The byte used to encode the [VtxoPolicy::ServerHtlcRecv] output type.
+const VTXO_POLICY_SERVER_HTLC_RECV: u8 = 0x08;
+
+/// The byte used to encode the [VtxoPolicy::ServerHtlcSend] output type.
+const VTXO_POLICY_SERVER_HTLC_SEND: u8 = 0x09;
+
+/// The byte used to encode the [ServerVtxoPolicy::HarkLeaf] output type.
+const VTXO_POLICY_HARK_LEAF: u8 = 0x0a;
+
+/// The byte used to encode the [ServerVtxoPolicy::HarkForfeit] output type.
+const VTXO_POLICY_HARK_FORFEIT: u8 = 0x0b;
 
 impl ProtocolEncoding for VtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
@@ -1033,10 +1054,25 @@ impl ProtocolEncoding for VtxoPolicy {
 				payment_hash.to_sha256_hash().encode(w)?;
 				w.emit_u32(*htlc_expiry)?;
 			},
+			Self::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
+				w.emit_u8(VTXO_POLICY_SERVER_HTLC_SEND_V0)?;
+				user_pubkey.encode(w)?;
+				payment_hash.to_sha256_hash().encode(w)?;
+				w.emit_u32(*htlc_expiry)?;
+			},
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
 				user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
 			}) => {
 				w.emit_u8(VTXO_POLICY_SERVER_HTLC_RECV)?;
+				user_pubkey.encode(w)?;
+				payment_hash.to_sha256_hash().encode(w)?;
+				w.emit_u32(*htlc_expiry)?;
+				w.emit_u16(*htlc_expiry_delta)?;
+			},
+			Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy {
+				user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
+			}) => {
+				w.emit_u8(VTXO_POLICY_SERVER_HTLC_RECV_V0)?;
 				user_pubkey.encode(w)?;
 				payment_hash.to_sha256_hash().encode(w)?;
 				w.emit_u32(*htlc_expiry)?;
@@ -1069,7 +1105,16 @@ fn decode_vtxo_policy<R: io::Read + ?Sized>(
 			let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
 			let htlc_expiry = check_block_height(r.read_u32()?)
 				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry"))?;
-			Ok(VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
+			Ok(VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
+				user_pubkey, payment_hash, htlc_expiry,
+			}))
+		},
+		VTXO_POLICY_SERVER_HTLC_SEND_V0 => {
+			let user_pubkey = PublicKey::decode(r)?;
+			let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
+			let htlc_expiry = check_block_height(r.read_u32()?)
+				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry"))?;
+			Ok(VtxoPolicy::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
 		},
 		VTXO_POLICY_SERVER_HTLC_RECV => {
 			let user_pubkey = PublicKey::decode(r)?;
@@ -1078,7 +1123,18 @@ fn decode_vtxo_policy<R: io::Read + ?Sized>(
 				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry"))?;
 			let htlc_expiry_delta = check_block_delta(r.read_u16()?)
 				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry_delta"))?;
-			Ok(VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta }))
+			Ok(VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
+				user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
+			}))
+		},
+		VTXO_POLICY_SERVER_HTLC_RECV_V0 => {
+			let user_pubkey = PublicKey::decode(r)?;
+			let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
+			let htlc_expiry = check_block_height(r.read_u32()?)
+				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry"))?;
+			let htlc_expiry_delta = check_block_delta(r.read_u16()?)
+				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry_delta"))?;
+			Ok(VtxoPolicy::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy { user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta }))
 		},
 
 		// IMPORTANT:
@@ -1111,8 +1167,18 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 				user_pubkey.encode(w)?;
 				unlock_hash.encode(w)?;
 			},
+			Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, unlock_hash }) => {
+				w.emit_u8(VTXO_POLICY_HARK_LEAF_V0)?;
+				user_pubkey.encode(w)?;
+				unlock_hash.encode(w)?;
+			},
 			Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash }) => {
 				w.emit_u8(VTXO_POLICY_HARK_FORFEIT)?;
+				user_pubkey.encode(w)?;
+				unlock_hash.encode(w)?;
+			},
+			Self::HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy { user_pubkey, unlock_hash }) => {
+				w.emit_u8(VTXO_POLICY_HARK_FORFEIT_V0)?;
 				user_pubkey.encode(w)?;
 				unlock_hash.encode(w)?;
 			},
@@ -1123,7 +1189,9 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		let type_byte = r.read_u8()?;
 		match type_byte {
-			VTXO_POLICY_PUBKEY | VTXO_POLICY_SERVER_HTLC_SEND | VTXO_POLICY_SERVER_HTLC_RECV => {
+			VTXO_POLICY_PUBKEY | VTXO_POLICY_SERVER_HTLC_SEND | VTXO_POLICY_SERVER_HTLC_RECV
+				| VTXO_POLICY_SERVER_HTLC_SEND_V0 | VTXO_POLICY_SERVER_HTLC_RECV_V0 =>
+			{
 				Ok(Self::User(decode_vtxo_policy(type_byte, r)?))
 			},
 			VTXO_POLICY_SERVER_OWNED => Ok(Self::ServerOwned),
@@ -1140,10 +1208,20 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 				let unlock_hash = sha256::Hash::decode(r)?;
 				Ok(Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, unlock_hash }))
 			},
+			VTXO_POLICY_HARK_LEAF_V0 => {
+				let user_pubkey = PublicKey::decode(r)?;
+				let unlock_hash = sha256::Hash::decode(r)?;
+				Ok(Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, unlock_hash }))
+			},
 			VTXO_POLICY_HARK_FORFEIT => {
 				let user_pubkey = PublicKey::decode(r)?;
 				let unlock_hash = sha256::Hash::decode(r)?;
 				Ok(Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash }))
+			},
+			VTXO_POLICY_HARK_FORFEIT_V0 => {
+				let user_pubkey = PublicKey::decode(r)?;
+				let unlock_hash = sha256::Hash::decode(r)?;
+				Ok(Self::HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy { user_pubkey, unlock_hash }))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid ServerVtxoPolicy type byte: {v:#x}",
@@ -1158,8 +1236,11 @@ const GENESIS_TRANSITION_TYPE_COSIGNED: u8 = 1;
 /// The byte used to encode the [GenesisTransition::Arkoor] gen transition type.
 const GENESIS_TRANSITION_TYPE_ARKOOR: u8 = 2;
 
+/// The byte used to encode the [GenesisTransition::HashLockedCosigned_v0] gen transition type.
+const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0: u8 = 3;
+
 /// The byte used to encode the [GenesisTransition::HashLockedCosigned] gen transition type.
-const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED: u8 = 3;
+const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED: u8 = 4;
 
 impl ProtocolEncoding for GenesisTransition {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
@@ -1171,6 +1252,21 @@ impl ProtocolEncoding for GenesisTransition {
 			},
 			Self::HashLockedCosigned(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED)?;
+				t.user_pubkey.encode(w)?;
+				t.signature.encode(w)?;
+				match t.unlock {
+					MaybePreimage::Preimage(p) => {
+						w.emit_u8(0)?;
+						w.emit_slice(&p[..])?;
+					},
+					MaybePreimage::Hash(h) => {
+						w.emit_u8(1)?;
+						w.emit_slice(&h[..])?;
+					},
+				}
+			},
+			Self::HashLockedCosigned_v0(t) => {
+				w.emit_u8(GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0)?;
 				t.user_pubkey.encode(w)?;
 				t.signature.encode(w)?;
 				match t.unlock {
@@ -1216,7 +1312,23 @@ impl ProtocolEncoding for GenesisTransition {
 						"invalid MaybePreimage type byte: {v:#x}",
 					))),
 				};
-				Ok(Self::new_hash_locked_cosigned(user_pubkey, signature, unlock))
+				Ok(Self::HashLockedCosigned(genesis::HashLockedCosignedGenesis {
+					user_pubkey, signature, unlock,
+				}))
+			},
+			GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0 => {
+				let user_pubkey = PublicKey::decode(r)?;
+				let signature = Option::<schnorr::Signature>::decode(r)?;
+				let unlock = match r.read_u8()? {
+					0 => MaybePreimage::Preimage(r.read_byte_array()?),
+					1 => MaybePreimage::Hash(ProtocolEncoding::decode(r)?),
+					v => return Err(ProtocolDecodingError::invalid(format_args!(
+						"invalid MaybePreimage type byte: {v:#x}",
+					))),
+				};
+				Ok(Self::HashLockedCosigned_v0(genesis::HashLockedCosignedGenesis_v0 {
+					user_pubkey, signature, unlock,
+				}))
 			},
 			GENESIS_TRANSITION_TYPE_ARKOOR => {
 				let cosigners = LengthPrefixedVector::decode(r)?.into_inner();
@@ -1838,7 +1950,7 @@ mod test {
 		use crate::encode::ProtocolEncoding;
 		use crate::test_util::encoding_roundtrip;
 		use super::genesis::{
-			GenesisTransition, CosignedGenesis, HashLockedCosignedGenesis, ArkoorGenesis,
+			GenesisTransition, CosignedGenesis, HashLockedCosignedGenesis_v0, ArkoorGenesis,
 		};
 		use super::MaybePreimage;
 
@@ -1900,7 +2012,7 @@ mod test {
 		#[test]
 		fn hash_locked_cosigned_with_preimage() {
 			let preimage = [0x42u8; 32];
-			let transition = GenesisTransition::HashLockedCosigned(HashLockedCosignedGenesis {
+			let transition = GenesisTransition::HashLockedCosigned_v0(HashLockedCosignedGenesis_v0 {
 				user_pubkey: test_pubkey(),
 				signature: Some(test_signature()),
 				unlock: MaybePreimage::Preimage(preimage),
@@ -1911,7 +2023,7 @@ mod test {
 		#[test]
 		fn hash_locked_cosigned_with_hash() {
 			let hash = sha256::Hash::hash(b"test preimage");
-			let transition = GenesisTransition::HashLockedCosigned(HashLockedCosignedGenesis {
+			let transition = GenesisTransition::HashLockedCosigned_v0(HashLockedCosignedGenesis_v0 {
 				user_pubkey: test_pubkey(),
 				signature: Some(test_signature()),
 				unlock: MaybePreimage::Hash(hash),
@@ -1922,7 +2034,7 @@ mod test {
 		#[test]
 		fn hash_locked_cosigned_without_signature() {
 			let preimage = [0x42u8; 32];
-			let transition = GenesisTransition::HashLockedCosigned(HashLockedCosignedGenesis {
+			let transition = GenesisTransition::HashLockedCosigned_v0(HashLockedCosignedGenesis_v0 {
 				user_pubkey: test_pubkey(),
 				signature: None,
 				unlock: MaybePreimage::Preimage(preimage),

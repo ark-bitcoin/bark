@@ -1,7 +1,7 @@
 
 use std::sync::Arc;
 
-use ark_testing::{btc, sat, Bark, Captaind, TestContext, Tor, TorConfig, HiddenServiceConfig};
+use ark_testing::{btc, require_bark_version, sat, Bark, Captaind, TestContext, Tor, TorConfig, HiddenServiceConfig};
 use ark_testing::constants::{BOARD_CONFIRMATIONS};
 use ark_testing::context::LightningPaymentSetup;
 use ark_testing::util::FutureExt;
@@ -89,6 +89,9 @@ async fn smoke_test(
 	bark2.send_oor(bark1.address().await, sat(50_000)).await;
 	assert_eq!(bark1.spendable_balance().await, sat(499_062));
 	assert_eq!(bark2.spendable_balance().await, sat(900_000));
+
+	// The new HTLC policies break LN send and receive for bark 0.5.0 and older
+	require_bark_version!(> "0.5.0");
 
 	// LN send to external node
 	lightning.sync().await;

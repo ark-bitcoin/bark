@@ -61,6 +61,8 @@ async fn recovered_wallet_finds_boarded_vtxo() {
 /// was spent in the round, so the server reports it spent and recovery skips it.
 #[tokio::test]
 async fn recovered_wallet_finds_round_vtxo() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_round_vtxo").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -184,6 +186,8 @@ async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
 /// topologies via the `lightning_test!` harness.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_receive() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_receive").await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 	let srv = ctx.captaind("server")
@@ -234,6 +238,8 @@ async fn recovered_wallet_finds_lightning_receive() {
 /// rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_send_change() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_send_change").await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 	let srv = ctx.captaind("server")
@@ -290,6 +296,8 @@ async fn recovered_wallet_finds_lightning_send_change() {
 /// After recovering from the seed, both must be rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_send_revocation() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_send_revocation").await;
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 	let srv = ctx.captaind("server")
@@ -417,7 +425,7 @@ async fn recovered_wallet_is_empty_when_fully_spent() {
 async fn recovered_wallet_skips_exited_vtxo() {
 	// The daemon's background exit auto-progress (run_exits) is required to
 	// drive the CPFP broadcast to completion.
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("barkd/recovered_wallet_skips_exited_vtxo").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -455,6 +463,8 @@ async fn recovered_wallet_skips_exited_vtxo() {
 /// from the seed and assert all three are rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_mixed_origin_vtxos() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_mixed_origin_vtxos").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 

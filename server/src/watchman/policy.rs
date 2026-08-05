@@ -242,12 +242,13 @@ impl ActionContextFetcher<'_> {
 			ServerVtxoPolicy::Expiry(_)
 				| ServerVtxoPolicy::Checkpoint(_)
 				| ServerVtxoPolicy::HarkLeaf(_)
+				| ServerVtxoPolicy::HarkLeaf_v0(_)
 			=> {
 				// all these three are just an expiry for us, we can sweep them
 				// when they expire and don't have to do anything otherwise
 				decide_action_expiry(&params)
 			},
-			ServerVtxoPolicy::HarkForfeit(_) => {
+			ServerVtxoPolicy::HarkForfeit(_) | ServerVtxoPolicy::HarkForfeit_v0(_) => {
 				decide_action_hark_forfeit(&params)
 			},
 			ServerVtxoPolicy::User(VtxoPolicy::Pubkey(p)) => {
@@ -266,7 +267,23 @@ impl ActionContextFetcher<'_> {
 				});
 				decide_action_server_htlc_send(&params)
 			},
+			ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcSend_v0(p)) => {
+				let params = params.with_policy_extras(HtlcSendExtra {
+					next_tx: self.fetch_progress(vtxo).await,
+					htlc_expiry: p.htlc_expiry,
+					has_preimage: self.check_have_payment_preimage(p.payment_hash).await,
+				});
+				decide_action_server_htlc_send(&params)
+			},
 			ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv(p)) => {
+				let params = params.with_policy_extras(HtlcRecvExtra {
+					next_tx: self.fetch_progress(vtxo).await,
+					htlc_expiry: p.htlc_expiry,
+					htlc_expiry_delta: p.htlc_expiry_delta,
+				});
+				decide_action_server_htlc_recv(&params)
+			},
+			ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv_v0(p)) => {
 				let params = params.with_policy_extras(HtlcRecvExtra {
 					next_tx: self.fetch_progress(vtxo).await,
 					htlc_expiry: p.htlc_expiry,

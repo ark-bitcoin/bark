@@ -168,6 +168,8 @@ async fn exit_start() {
 
 #[tokio::test]
 async fn lightning_send_invoice_receive() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/lightning_send_invoice_receive").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).create().await;
@@ -251,6 +253,8 @@ async fn lightning_send_invoice_receive() {
 
 #[tokio::test]
 async fn lightning_send_invoice_revoke() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/lightning_send_invoice_revoke").await;
 	let ln = ctx.new_lightning_setup_no_channel("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).create().await;
@@ -298,6 +302,8 @@ async fn lightning_send_invoice_revoke() {
 
 #[tokio::test]
 async fn lightning_send_offer() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/lightning_send_offer").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).create().await;
@@ -405,6 +411,8 @@ async fn movement_offboard() {
 
 #[tokio::test]
 async fn round_refresh() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/round_refresh").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
@@ -444,6 +452,8 @@ async fn round_refresh() {
 
 #[tokio::test]
 async fn movement_send_onchain() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("movement/movement_send_onchain").await;
 	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -503,6 +513,8 @@ async fn movement_send_onchain() {
 
 #[tokio::test]
 async fn list_movements() {
+	require_bark_version!(> "0.5.0");
+
 	// Initialize the test
 	let ctx = TestContext::new("bark/list_movements").await;
 

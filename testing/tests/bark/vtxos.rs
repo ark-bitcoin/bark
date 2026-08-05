@@ -1,10 +1,12 @@
 use bitcoin::Amount;
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 
 #[tokio::test]
 async fn list_vtxos() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/list_vtxos").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
@@ -44,6 +46,8 @@ async fn list_vtxos() {
 
 #[tokio::test]
 async fn compute_balance() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/compute_balance").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
@@ -92,6 +96,8 @@ async fn bark_balance_shows_pending_board_sats_until_deeply_confirmed() {
 
 #[tokio::test]
 async fn drop_vtxos() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/drop_vtxos").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;

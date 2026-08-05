@@ -1,10 +1,12 @@
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, TestContext};
 
 /// Verify that `POST /wallet/bip321?uppercase=true` bundles an Ark address, a
 /// BOLT11 invoice, and an on-chain address into a single upper-cased URI.
 #[tokio::test]
 async fn bip321_uri_barkd() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/bip321_uri_barkd").await;
 
 	// A lightning-enabled server is required to mint the BOLT11 invoice.

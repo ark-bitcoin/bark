@@ -19,8 +19,9 @@ use crate::encode::{
 };
 use crate::error::IncorrectSigningKeyError;
 use crate::tree::{self, Tree};
-use crate::vtxo::{self, Full, GenesisItem, GenesisTransition, MaybePreimage, ServerVtxo};
-use crate::vtxo::policy::{check_block_delta, check_block_height};
+use crate::vtxo::{self, Full, GenesisItem, GenesisTransition, HarkLeafVtxoPolicy, MaybePreimage, ServerVtxo, TapScriptClause};
+use crate::vtxo::policy::{check_block_delta, check_block_height, HarkLeaf_v0_VtxoPolicy};
+use crate::vtxo::policy::clause::TimelockSignClause;
 
 
 /// Hash to lock hArk VTXOs from users before forfeits
@@ -34,8 +35,7 @@ pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 
 /// The expiry clause hidden in the node taproot as only script.
 pub fn expiry_clause(server_pubkey: PublicKey, expiry_height: BlockHeight) -> ScriptBuf {
-	let pk = server_pubkey.x_only_public_key().0;
-	scripts::timelock_sign(expiry_height, pk)
+	TimelockSignClause { pubkey: server_pubkey, timelock_height: expiry_height }.tapscript()
 }
 
 /// The hash-based unlock clause that requires a signature and a preimage
@@ -57,12 +57,29 @@ pub fn leaf_cosign_taproot(
 	expiry_height: BlockHeight,
 	unlock_hash: UnlockHash,
 ) -> taproot::TaprootSpendInfo {
-	let agg_pk = musig::combine_keys([user_pubkey, server_pubkey])
-		.x_only_public_key().0;
-	taproot::TaprootBuilder::new()
-		.add_leaf(1, expiry_clause(server_pubkey, expiry_height)).unwrap()
-		.add_leaf(1, unlock_clause(agg_pk, unlock_hash)).unwrap()
-		.finalize(&SECP, agg_pk).unwrap()
+	HarkLeafVtxoPolicy { user_pubkey, unlock_hash }.taproot(server_pubkey, expiry_height)
+}
+
+/// The hash-based unlock clause that requires a signature and a preimage
+///
+/// It is used hidden in the leaf taproot as only script or used in the forfeit output.
+pub fn unlock_clause_v0(pubkey: XOnlyPublicKey, unlock_hash: UnlockHash) -> ScriptBuf {
+	scripts::hash_and_sign_v0(unlock_hash, pubkey)
+}
+
+/// The taproot of the leaf policy, i.e. of the output that is spent by the leaf tx
+///
+/// This output is guarded by user+server key and a hash preimage.
+///
+/// The internal key is set to the MuSig of user's VTXO key + server pubkey,
+/// but the keyspend clause is currently not used in the protocol.
+pub fn leaf_cosign_taproot_v0(
+	user_pubkey: PublicKey,
+	server_pubkey: PublicKey,
+	expiry_height: BlockHeight,
+	unlock_hash: UnlockHash,
+) -> taproot::TaprootSpendInfo {
+	HarkLeaf_v0_VtxoPolicy { user_pubkey, unlock_hash }.taproot(server_pubkey, expiry_height)
 }
 
 /// The taproot spend info of an output that is spent by an internal node tx
@@ -1067,6 +1084,27 @@ pub fn hashlocked_leaf_sighash(
 	).expect("sighash error")
 }
 
+/// Calculate the scriptspend sighash of a hArk leaf transaction
+pub fn hashlocked_leaf_sighash_v0(
+	leaf_tx: &Transaction,
+	user_pubkey: PublicKey,
+	server_pubkey: PublicKey,
+	unlock_hash: UnlockHash,
+	prev_txout: &TxOut,
+) -> TapSighash {
+	let agg_pk = musig::combine_keys([user_pubkey, server_pubkey])
+		.x_only_public_key().0;
+	let clause = unlock_clause_v0(agg_pk, unlock_hash);
+	let leaf_hash = TapLeafHash::from_script(&clause, bitcoin::taproot::LeafVersion::TapScript);
+	let mut shc = SighashCache::new(leaf_tx);
+	shc.taproot_script_spend_signature_hash(
+		0, // input idx is always 0
+		&sighash::Prevouts::All(&[prev_txout]),
+		leaf_hash,
+		TapSighashType::Default,
+	).expect("sighash error")
+}
+
 /// Create the leaf tx sighash from an existing VTXO
 ///
 /// This is used after the interactive part of the round is finished by
@@ -1077,14 +1115,6 @@ fn hashlocked_leaf_sighash_from_vtxo(
 	chain_anchor: &Transaction,
 ) -> TapSighash {
 	assert_eq!(chain_anchor.compute_txid(), vtxo.chain_anchor().txid);
-	let last_genesis = vtxo.genesis.items.last().expect("at least one genesis item");
-	let (user_pubkey, unlock_hash) = match &last_genesis.transition {
-		GenesisTransition::HashLockedCosigned(inner) => {
-			(inner.user_pubkey, inner.unlock.hash())
-		},
-		_ => panic!("VTXO is not a HashLockedCosigned VTXO")
-	};
-	debug_assert_eq!(user_pubkey, vtxo.user_pubkey());
 
 	// we need the penultimate TxOut and last tx
 	let mut preleaf_txout = chain_anchor.output[vtxo.chain_anchor().vout as usize].clone();
@@ -1103,9 +1133,25 @@ fn hashlocked_leaf_sighash_from_vtxo(
 		}
 	}
 	let leaf_tx = leaf_tx.expect("at least one tx");
-	hashlocked_leaf_sighash(
-		&leaf_tx, user_pubkey, vtxo.server_pubkey(), unlock_hash, &preleaf_txout,
-	)
+
+	let last_genesis = vtxo.genesis.items.last().expect("at least one genesis item");
+	match &last_genesis.transition {
+		GenesisTransition::HashLockedCosigned(inner) => {
+			debug_assert_eq!(inner.user_pubkey, vtxo.user_pubkey());
+			hashlocked_leaf_sighash(
+				&leaf_tx, inner.user_pubkey, vtxo.server_pubkey(), inner.unlock.hash(),
+				&preleaf_txout,
+			)
+		},
+		GenesisTransition::HashLockedCosigned_v0(inner) => {
+			debug_assert_eq!(inner.user_pubkey, vtxo.user_pubkey());
+			hashlocked_leaf_sighash_v0(
+				&leaf_tx, inner.user_pubkey, vtxo.server_pubkey(), inner.unlock.hash(),
+				&preleaf_txout,
+			)
+		},
+		_ => panic!("VTXO is not a HashLockedCosigned VTXO"),
+	}
 }
 
 #[derive(Debug)]
@@ -1770,7 +1816,7 @@ mod test {
 			unsigned.internal_sighashes.iter().for_each(|h| eng.input(&h[..]));
 			siphash24::Hash::from_engine(eng)
 		};
-		assert_eq!(sighashes_hash.to_string(), "b83a4fe5937a7404");
+		assert_eq!(sighashes_hash.to_string(), "78ae911f557c0b86");
 
 		let signed = unsigned.into_signed_tree(vec![random_sig; nb_nodes]);
 

@@ -268,6 +268,8 @@ async fn fund_captaind() {
 
 #[tokio::test]
 async fn cant_spend_untrusted() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/cant_spend_untrusted").await;
 
 	const NEED_CONFS: u32 = 2;
@@ -361,6 +363,8 @@ async fn restart_key_stability() {
 #[ignore]
 #[tokio::test]
 async fn max_vtxo_amount() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/max_vtxo_amount").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.max_vtxo_amount = Some(Amount::from_sat(500_000));
@@ -457,6 +461,8 @@ async fn restart_custom_cfg_server() {
 
 #[tokio::test]
 async fn restart_server_with_payments() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/restart_server_with_payments").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create_unregistered().await;
 	let bark1 = ctx.bark("bark1", &srv).create().await;
@@ -481,6 +487,8 @@ async fn restart_server_with_payments() {
 
 #[tokio::test]
 async fn full_round() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/full_round").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_millis(100_000_000);
@@ -664,6 +672,8 @@ async fn double_spend_arkoor() {
 
 #[tokio::test]
 async fn double_spend_round() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/double_spend_round").await;
 
 	/// This proxy will duplicate all round payment submission requests.
@@ -710,6 +720,8 @@ async fn double_spend_round() {
 
 #[tokio::test]
 async fn test_participate_round_wrong_step() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/test_participate_round_wrong_step").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -800,7 +812,7 @@ async fn spend_unregistered_board() {
 
 #[tokio::test]
 async fn bad_round_input() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/bad_round_input").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
@@ -1213,7 +1225,7 @@ async fn reject_board_cosign_funding_tx_spending_vtxo() {
 
 #[tokio::test]
 async fn reject_dust_vtxo_request() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/reject_dust_vtxo_request").await;
 	let srv = ctx.captaind("server").create().await;
@@ -1307,6 +1319,8 @@ async fn run_two_captainds() {
 
 #[tokio::test]
 async fn captaind_config_change(){
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/captaind_config_change").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.vtxo_exit_delta = 12;
@@ -1480,6 +1494,8 @@ async fn should_refuse_oor_with_invalid_attestation() {
 
 #[tokio::test]
 async fn should_refuse_ln_pay_with_invalid_attestation() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/should_refuse_ln_pay_with_invalid_attestation").await;
 
 	let lightningd = ctx.lightningd("lightningd").create().await;
@@ -1719,7 +1735,7 @@ async fn mailbox_post_and_process_with_auth() {
 
 #[tokio::test]
 async fn should_refuse_round_input_vtxo_that_is_being_exited() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/should_refuse_round_input_vtxo_that_is_being_exited").await;
 
@@ -2036,6 +2052,8 @@ async fn grpc_health_check() {
 
 #[tokio::test]
 async fn undo_round() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/undo_round").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);

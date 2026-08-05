@@ -20,7 +20,7 @@ use super::helpers::{
 /// the daemon auto-progresses them to claimable.
 #[tokio::test]
 async fn exit_start_all_and_progress_barkd() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("barkd/exit_start_all_and_progress_barkd").await;
 
@@ -75,7 +75,7 @@ async fn exit_start_all_and_progress_barkd() {
 /// Verify `POST /exits/claim/all` sweeps claimable exits to an on-chain address.
 #[tokio::test]
 async fn exit_claim_all_barkd() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("barkd/exit_claim_all_barkd").await;
 
@@ -192,7 +192,7 @@ async fn exit_claim_vtxos_barkd() {
 /// even when disconnected from the Ark server.
 #[tokio::test]
 async fn exit_auto_progress_disconnected_barkd() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("barkd/exit_auto_progress_disconnected_barkd").await;
 

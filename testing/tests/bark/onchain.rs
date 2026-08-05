@@ -1,7 +1,7 @@
 use bitcoin::Amount;
 use bitcoincore_rpc::RpcApi;
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 
 #[tokio::test]
@@ -20,6 +20,8 @@ async fn bark_address_changes() {
 
 #[tokio::test]
 async fn list_utxos() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("bark/list_utxos").await;
 
 	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;

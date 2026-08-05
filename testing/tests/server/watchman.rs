@@ -60,6 +60,8 @@ impl WatchmanFailureCollector {
 
 #[tokio::test]
 async fn watchman_sweeps_boards() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/watchman_sweeps_boards").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -99,6 +101,8 @@ async fn watchman_sweeps_boards() {
 
 #[tokio::test]
 async fn watchman_sweeps_round_vtxos() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/watchman_sweeps_round_vtxos").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -235,6 +239,8 @@ async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 
 #[tokio::test]
 async fn watchman_sweeps_lightning_vtxos() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/watchman_sweeps_lightning_vtxos").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
@@ -288,7 +294,7 @@ async fn watchman_sweeps_lightning_vtxos() {
 
 #[tokio::test]
 async fn watchman_sweeps_round_leftovers_after_exits() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/watchman_sweeps_round_leftovers_after_exits").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
@@ -373,7 +379,7 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 
 #[tokio::test]
 async fn watchman_sweeps_vtxopool_with_exit() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/watchman_sweeps_vtxopool_with_exit").await;
 	let ln = ctx.new_lightning_setup("ln").await;
@@ -445,7 +451,7 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 
 #[tokio::test]
 async fn watchman_sweeps_exit_after_forfeit() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/watchman_sweeps_exit_after_forfeit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
@@ -525,6 +531,8 @@ async fn watchman_sweeps_exit_after_forfeit() {
 /// reclaim the forfeited coins while keeping their new round vtxos.
 #[tokio::test]
 async fn watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx =
 		TestContext::new("server/watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table")
 			.await;
@@ -638,7 +646,7 @@ async fn watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table() {
 /// and blocks the exit by broadcasting the OOR transaction as a progress step via CPFP.
 #[tokio::test]
 async fn watchman_sweeps_exit_after_oor_then_forfeit() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("server/watchman_sweeps_exit_after_oor_then_forfeit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
@@ -823,6 +831,8 @@ async fn offboard_exit_attack(test_name: &str, n_vtxos: usize) -> bitcoin::Amoun
 /// never force-exited in either case.
 #[tokio::test]
 async fn watchman_force_exit_lightning_vtxo_blocks_refresh() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/watchman_force_exit_lightning_vtxo_blocks_refresh").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
@@ -980,6 +990,8 @@ async fn watchman_force_exit_lightning_vtxo_blocks_refresh() {
 /// arkoors.
 #[tokio::test]
 async fn watchman_force_exit_checkpointed_arkoor_stays_spendable() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("server/watchman_force_exit_checkpointed_arkoor_stays_spendable").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;

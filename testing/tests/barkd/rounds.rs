@@ -6,7 +6,7 @@ use bark_json::movements::MovementStatus;
 use server_log::RoundFinished;
 use server_rpc::protos;
 
-use ark_testing::{btc, sat, Captaind, TestContext};
+use ark_testing::{btc, require_bark_version, sat, Captaind, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
@@ -93,6 +93,8 @@ async fn setup_barkd_with_rejected_vtxo(
 /// call) and replace the expiring VTXO.
 #[tokio::test]
 async fn maintenance_refresh_auto_barkd() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/maintenance_refresh_auto_barkd").await;
 
 	let srv = ctx.captaind("server").funded(btc(1)).create().await;
@@ -139,6 +141,8 @@ async fn maintenance_refresh_auto_barkd() {
 /// maintenance is allowed to skip rejected inputs (see the test below).
 #[tokio::test]
 async fn manual_refresh_does_not_drop_rejected_vtxo_barkd() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/manual_refresh_does_not_drop_rejected_vtxo_barkd").await;
 	let srv = ctx.captaind("server").funded(btc(1)).create().await;
 
@@ -160,6 +164,8 @@ async fn manual_refresh_does_not_drop_rejected_vtxo_barkd() {
 /// VTXO the server rejects as unusable.
 #[tokio::test]
 async fn maintenance_refresh_skips_rejected_vtxo_barkd() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/maintenance_refresh_skips_rejected_vtxo_barkd").await;
 	let srv = ctx.captaind("server").funded(btc(1)).create().await;
 

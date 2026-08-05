@@ -30,7 +30,7 @@ use ark_testing::util::BarkVersion;
 
 #[tokio::test]
 async fn simple_exit() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	// Initialize the test
 	let ctx = TestContext::new("exit/simple_exit").await;
@@ -57,7 +57,7 @@ async fn simple_exit() {
 
 #[tokio::test]
 async fn exit_round() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	// Initialize the test
 	let ctx = TestContext::new("exit/exit_round").await;
@@ -175,7 +175,7 @@ async fn exit_round() {
 
 #[tokio::test]
 async fn exit_vtxo() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/exit_vtxo").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -204,12 +204,12 @@ async fn exit_vtxo() {
 
 	bark.claim_all_exits(bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark.onchain_balance().await, sat(995_408));
+	assert_eq!(bark.onchain_balance().await, sat(995_403));
 }
 
 #[tokio::test]
 async fn exit_and_send_vtxo() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/exit_and_send_vtxo").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -245,7 +245,7 @@ async fn exit_and_send_vtxo() {
 	bark.claim_exits([exit.vtxo_id], bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark.onchain_balance().await, sat(995_408));
+	assert_eq!(bark.onchain_balance().await, sat(995_403));
 }
 
 #[tokio::test]
@@ -314,7 +314,7 @@ async fn exit_oor() {
 
 #[tokio::test]
 async fn double_exit_call() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/double_exit_call").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -395,7 +395,7 @@ async fn double_exit_call() {
 
 #[tokio::test]
 async fn exit_bolt11_change() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/exit_bolt11_change").await;
 
@@ -437,7 +437,7 @@ async fn exit_bolt11_change() {
 
 #[tokio::test]
 async fn exit_revoked_lightning_payment() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/exit_revoked_lightning_payment").await;
 
@@ -605,7 +605,7 @@ async fn bark_should_exit_a_pending_board() {
 
 #[tokio::test]
 async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke").await;
 
@@ -753,7 +753,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 #[tokio::test]
 async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke").await;
 
@@ -1121,7 +1121,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 
 #[tokio::test]
 async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
-	require_bark_version!(> "0.3.0");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign").await;
 	let ctx = Arc::new(ctx);
@@ -1201,7 +1201,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	// Drive the exit past Claimable → Claimed now that the drain has confirmed.
 	bark.progress_exit().await;
 
-	assert_eq!(bark.onchain_balance().await, sat(109_993_699));
+	assert_eq!(bark.onchain_balance().await, sat(109_993_689));
 
 	// Check that we have a lightning receive -> exit movement chain
 	let movements = bark.history().await;
@@ -1261,7 +1261,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 /// terminal `VtxoAlreadySpent` state with the exit movement Canceled.
 #[tokio::test]
 async fn vtxo_remains_spendable_while_exit_pending() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("exit/vtxo_remains_spendable_while_exit_pending").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -1295,7 +1295,7 @@ async fn vtxo_remains_spendable_while_exit_pending() {
 
 	// Terminal exits drop out of the default listing and surface via --include-finished.
 	let version = BarkVersion::parse(&Bark::version().await);
-	let cutoff = BarkVersion::parse("0.3.0");	
+	let cutoff = BarkVersion::parse("0.3.0");
 	let exits = if version > cutoff {
 		assert!(bark.list_exits().await.is_empty(),
 			"finished exit should not appear in the default exit list");
@@ -1416,7 +1416,7 @@ async fn exited_vtxo_is_not_spendable() {
 /// can complete and claim it.
 #[tokio::test]
 async fn detect_and_claim_force_exited_vtxo() {
-	require_bark_version!(> "0.2.5");
+	require_bark_version!(> "0.5.0");
 	require_bitcoind_chain_source!();
 
 	let ctx = TestContext::new("bark/detect_and_claim_force_exited_vtxo").await;
@@ -1466,5 +1466,5 @@ async fn detect_and_claim_force_exited_vtxo() {
 	ctx.generate_blocks(1).await;
 
 	let balance = bark.onchain_balance().await;
-	assert_eq!(balance, sat(696_053), "wallet should have recovered the force-exited vtxos");
+	assert_eq!(balance, sat(696_048), "wallet should have recovered the force-exited vtxos");
 }

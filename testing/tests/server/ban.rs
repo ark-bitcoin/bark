@@ -1,10 +1,12 @@
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 
 /// Ban a vtxo, verify OOR/refresh/offboard all fail, then unban and
 /// verify they succeed again.
 #[tokio::test]
 async fn banned_vtxo_cannot_be_spent() {
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("ban/spend").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;

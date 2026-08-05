@@ -126,7 +126,7 @@ async fn concurrent_mailbox_consumers_do_not_duplicate_arkoor_movement() {
 
 #[tokio::test]
 async fn accept_mailbox() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("bark/accept_mailbox").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -232,7 +232,7 @@ async fn read_recovery_vtxo_ids(
 /// - Sending arkoor (change)
 #[tokio::test]
 async fn recovery_mailbox_receives_vtxo_ids() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 	let ctx = TestContext::new("bark/recovery_mailbox_receives_vtxo_ids").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -280,7 +280,7 @@ async fn recovery_mailbox_receives_vtxo_ids() {
 /// Test that lightning send change vtxo_ids are posted to recovery mailbox
 #[tokio::test]
 async fn recovery_mailbox_lightning_send_change() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 	let ctx = TestContext::new("bark/recovery_mailbox_lightning_send_change").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -326,7 +326,7 @@ async fn recovery_mailbox_lightning_send_change() {
 /// when a payment fails (no channel exists)
 #[tokio::test]
 async fn recovery_mailbox_lightning_send_revoke() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 	let ctx = TestContext::new("bark/recovery_mailbox_lightning_send_revoke").await;
 
 	// Create lightning setup WITHOUT a channel so payment will fail
@@ -379,7 +379,7 @@ async fn recovery_mailbox_lightning_send_revoke() {
 /// Test that lightning receive claimed vtxo_ids are posted to recovery mailbox
 #[tokio::test]
 async fn recovery_mailbox_lightning_receive() {
-	require_bark_version!(> "0.1.4");
+	require_bark_version!(> "0.5.0");
 	let ctx = TestContext::new("bark/recovery_mailbox_lightning_receive").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
