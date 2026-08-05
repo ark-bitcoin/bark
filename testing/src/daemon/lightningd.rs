@@ -570,6 +570,35 @@ impl Lightningd {
 		}).await.unwrap().into_inner().bolt11
 	}
 
+	/// Create an invoice with a specific preimage (and thus payment hash).
+	pub async fn invoice_with_preimage(
+		&self,
+		amount: Option<Amount>,
+		label: impl AsRef<str>,
+		description: impl AsRef<str>,
+		preimage: [u8; 32],
+	) -> String {
+		let mut client = self.grpc_client().await;
+		client
+			.invoice(cln_rpc::InvoiceRequest {
+				description: description.as_ref().to_owned(),
+				label: label.as_ref().to_owned(),
+				amount_msat: Some(amount_or_any(amount)),
+				cltv: None,
+				fallbacks: vec![],
+				preimage: Some(
+					preimage.to_vec(),
+				),
+				expiry: None,
+				exposeprivatechannels: vec![],
+				deschashonly: None,
+			})
+			.await
+			.unwrap()
+			.into_inner()
+			.bolt11
+	}
+
 	pub async fn offer(
 		&self,
 		amount: Option<Amount>,

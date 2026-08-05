@@ -41,31 +41,48 @@ impl WatchmanSigner {
 		Self { server_keypair, ephemeral_master_key, db }
 	}
 
-	/// Get the preimage for a hash from the database
-	async fn get_preimage(
-		&self,
-		hash: sha256::Hash,
-	) -> Option<Secret<[u8; 32]>> {
-		// NB we have multiple possible sources of the hash/preimage pair
-		// In order to protect against attackers trying to use an unlock hash
-		// in a LN payment in order to extract the secret on-chain,
-		// we refuse to act when a hash exists in multiple sources.
-
-		// first payment preimages from the htlc settlement table
-		let settlement = self.db.read(async |t| t.get_htlc_settlement_by_payment_hash(hash.into()).await).await.ok()?;
-
-		// then hark unlock hashes
-		let hark = self.db.read(async |t| t.get_round_participation_by_unlock_hash(hash).await).await.ok()?;
-
-		if settlement.is_some() && hark.is_some() {
-			slog!(DuplicateSecretHash, hash);
-			return None;
+	/// Get the preimage for a hash-locked clause from the database.
+	///
+	/// The same secret can exist in `htlc_settlement` (a settled LN payment)
+	/// and `round_participation` (an hArk unlock preimage) at once through
+	/// legitimate flows. Resolve strictly by clause domain: HashSign (hArk
+	/// forfeit) uses the participation preimage, HashDelaySign (LN HTLC) the
+	/// settlement preimage. Refusing on ambiguity let users plant that state
+	/// and reclaim forfeits or refund paid HTLCs on-chain while we stood by.
+	async fn get_preimage(&self, clause: &VtxoClause) -> Option<Secret<[u8; 32]>> {
+		match clause {
+			VtxoClause::HashSign(c) => {
+				let hark = self.db.read(async |t|
+					t.get_round_participation_by_unlock_hash(c.hash).await
+				).await.ok()??;
+				self.log_if_duplicate_hash(c.hash, true).await;
+				Some(hark.unlock_preimage)
+			},
+			VtxoClause::HashDelaySign(c) => {
+				let settlement = self.db.read(async |t|
+					t.get_htlc_settlement_by_payment_hash(c.hash.into()).await
+				).await.ok()??;
+				self.log_if_duplicate_hash(c.hash, false).await;
+				Some(Secret::new(settlement.into()))
+			},
+			_ => None,
 		}
+	}
 
-		let settlement = settlement.map(|p| Secret::new(p.into()));
-		let hark = hark.map(|p| p.unlock_preimage);
-
-		settlement.or(hark)
+	/// Log when a hash exists in both secret domains. The state is reachable
+	/// through legitimate flows and never blocks signing; the log exists for
+	/// visibility only.
+	async fn log_if_duplicate_hash(&self, hash: sha256::Hash, in_hark: bool) {
+		let duplicate = if in_hark {
+			self.db.read(async |t| t.get_htlc_settlement_by_payment_hash(hash.into()).await).await
+				.ok().flatten().is_some()
+		} else {
+			self.db.read(async |t| t.get_round_participation_by_unlock_hash(hash).await).await
+				.ok().flatten().is_some()
+		};
+		if duplicate {
+			slog!(DuplicateSecretHash, hash);
+		}
 	}
 }
 
@@ -87,8 +104,8 @@ impl VtxoSigner<ServerVtxoPolicy> for WatchmanSigner {
 
 		// then check for other witness items
 		match clause {
-			VtxoClause::HashDelaySign(c) => self.get_preimage(c.hash).await.is_some(),
-			VtxoClause::HashSign(c) => self.get_preimage(c.hash).await.is_some(),
+			VtxoClause::HashDelaySign(_) => self.get_preimage(clause).await.is_some(),
+			VtxoClause::HashSign(_) => self.get_preimage(clause).await.is_some(),
 			// others are simple signatures
 			VtxoClause::DelayedSign(_) => true,
 			VtxoClause::DelayedTimelockSign(_) => true,
@@ -137,11 +154,11 @@ impl VtxoSigner<ServerVtxoPolicy> for WatchmanSigner {
 			VtxoClause::DelayedSign(c) => Some(c.witness(&signature, control_block)),
 			VtxoClause::DelayedTimelockSign(c) => Some(c.witness(&signature, control_block)),
 			VtxoClause::HashDelaySign(c) => {
-				let preimage = self.get_preimage(c.hash).await?;
+				let preimage = self.get_preimage(clause).await?;
 				Some(c.witness(&(signature, *preimage.leak_ref()), control_block))
 			},
 			VtxoClause::HashSign(c) => {
-				let preimage = self.get_preimage(c.hash).await?;
+				let preimage = self.get_preimage(clause).await?;
 				Some(c.witness(&(signature, *preimage.leak_ref()), control_block))
 			},
 		}

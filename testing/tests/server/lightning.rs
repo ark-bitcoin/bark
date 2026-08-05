@@ -1362,3 +1362,72 @@ async fn check_lightning_receive_poll_interval_fallback() {
 
 	assert_vtxopool_consistency_db(srv.database()).await;
 }
+
+/// Plant an hArk unlock hash in `round_participation`, returning its preimage.
+async fn plant_unlock_preimage(db: &Db, preimage: ark::lightning::Preimage) {
+	db.write(async |t| {
+		t.execute(
+			"INSERT INTO round_participation (unlock_hash, unlock_preimage, round_id, created_at) \
+			VALUES ($1, $2, REPEAT('0', 64), NOW())",
+			&[
+				&preimage.compute_payment_hash().to_string(),
+				&preimage.to_string(),
+			],
+		).await?;
+		Ok(())
+	}).await.unwrap();
+}
+
+/// A receive whose payment hash is an existing hArk unlock hash must be
+/// refused: it would put the same secret in two domains at once.
+#[tokio::test]
+async fn refuse_receive_with_unlock_hash_as_payment_hash() {
+	let ctx = TestContext::new("server/refuse_receive_with_unlock_hash_as_payment_hash").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	let preimage = ark::lightning::Preimage::from([7u8; 32]);
+	plant_unlock_preimage(&db, preimage).await;
+	let payment_hash = preimage.compute_payment_hash();
+
+	let mut rpc = srv.get_public_rpc().await;
+	let err = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
+		payment_hash: payment_hash.as_ref().to_vec(),
+		amount_sat: 10_000,
+		min_cltv_delta: 8,
+		mailbox_id: None,
+		description: None,
+	}).await.expect_err("must refuse a payment hash that is an existing unlock hash");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument);
+	assert!(err.message().contains("unlock hash"), "unexpected error: {err:?}");
+}
+
+/// A lightning send whose payment hash is an existing hArk unlock hash must
+/// be refused at the HTLC cosign: it would put the same secret in two
+/// domains at once.
+#[tokio::test]
+async fn refuse_send_with_unlock_hash_as_payment_hash() {
+	let ctx = TestContext::new("server/refuse_send_with_unlock_hash_as_payment_hash").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	let bark = ctx.bark("bark-1", &srv).funded(sat(500_000)).create().await;
+	bark.board_and_confirm_and_register(&ctx, sat(200_000)).await;
+
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	let unlock_preimage = ark::lightning::Preimage::from([7u8; 32]);
+	plant_unlock_preimage(&db, unlock_preimage).await;
+
+	// The attacker's own invoice with payment_hash == their unlock hash.
+	let mut preimage = [0u8; 32];
+	preimage.copy_from_slice(unlock_preimage.as_ref());
+	let invoice = lightning.external.invoice_with_preimage(
+		Some(sat(10_000)), "cross-domain", "x", preimage,
+	).await;
+
+	let err = bark.try_pay_lightning(invoice, None, false)
+		.await.expect_err("send with an unlock hash as payment hash must be refused");
+	let msg = format!("{:#}", err);
+	assert!(msg.contains("unlock hash"), "unexpected error: {msg}");
+}
