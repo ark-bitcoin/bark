@@ -241,6 +241,7 @@ impl ActionContextFetcher<'_> {
 			},
 			ServerVtxoPolicy::Expiry(_)
 				| ServerVtxoPolicy::Checkpoint(_)
+				| ServerVtxoPolicy::HarkLeaf(_)
 				| ServerVtxoPolicy::HarkLeaf_v0(_)
 			=> {
 				// all these three are just an expiry for us, we can sweep them

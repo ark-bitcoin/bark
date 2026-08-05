@@ -42,8 +42,8 @@ use crate::lightning::PaymentHash;
 use crate::tree::signed::UnlockHash;
 use crate::vtxo::{HashDelaySignClause, TapScriptClause};
 use crate::vtxo::policy::clause::{
-	DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause_v0, HashSignClause_v0,
-	TimelockSignClause, VtxoClause,
+	DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause_v0, HashSignClause,
+	HashSignClause_v0, TimelockSignClause, VtxoClause,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -166,6 +166,8 @@ pub enum VtxoPolicyKind {
 	/// Server-only policy where coins can only be swept by the server after expiry.
 	Expiry,
 	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
+	HarkLeaf,
+	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
 	#[allow(non_camel_case_types)]
 	HarkLeaf_v0,
 	/// hArk forfeit tx output policy
@@ -184,6 +186,7 @@ impl fmt::Display for VtxoPolicyKind {
 			Self::ServerOwned => f.write_str("server-owned"),
 			Self::Checkpoint => f.write_str("checkpoint"),
 			Self::Expiry => f.write_str("expiry"),
+			Self::HarkLeaf => f.write_str("hark-leaf-v1"),
 			Self::HarkLeaf_v0 => f.write_str("hark-leaf"),
 			Self::HarkForfeit_v0 => f.write_str("hark-forfeit"),
 		}
@@ -202,6 +205,7 @@ impl FromStr for VtxoPolicyKind {
 			"server-owned" => Self::ServerOwned,
 			"checkpoint" => Self::Checkpoint,
 			"expiry" => Self::Expiry,
+			"hark-leaf-v1" => Self::HarkLeaf,
 			"hark-leaf" => Self::HarkLeaf_v0,
 			"hark-forfeit" => Self::HarkForfeit_v0,
 			_ => return Err(format!("unknown VtxoPolicyKind: {}", s)),
@@ -366,6 +370,65 @@ impl ExpiryVtxoPolicy {
 		taproot::TaprootBuilder::new()
 			.add_leaf(0, server_sweeping_clause.tapscript()).unwrap()
 			.finalize(&SECP, self.internal_key).unwrap()
+	}
+}
+
+/// Policy for hArk leaf outputs (intermediate outputs spent by leaf txs).
+///
+/// These are the outputs that feed into the final leaf transactions in a signed
+/// VTXO tree. They are locked by:
+/// 1. An expiry clause allowing the server to sweep after expiry
+/// 2. An unlock clause requiring a preimage and a signature from user+server
+///
+/// The internal key is set to the MuSig of user's VTXO key + server pubkey.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HarkLeafVtxoPolicy {
+	pub user_pubkey: PublicKey,
+	pub unlock_hash: UnlockHash,
+}
+
+impl HarkLeafVtxoPolicy {
+	/// Creates the expiry clause allowing the server to sweep after expiry.
+	pub fn expiry_clause(
+		&self,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> TimelockSignClause {
+		TimelockSignClause { pubkey: server_pubkey, timelock_height: expiry_height }
+	}
+
+	/// Creates the unlock clause requiring a preimage and aggregate signature.
+	pub fn unlock_clause(&self, server_pubkey: PublicKey) -> HashSignClause {
+		let agg_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		HashSignClause { pubkey: agg_pk, hash: self.unlock_hash }
+	}
+
+	/// Returns the clauses for this policy.
+	pub fn clauses(
+		&self,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> Vec<VtxoClause> {
+		vec![
+			self.expiry_clause(expiry_height, server_pubkey).into(),
+			self.unlock_clause(server_pubkey).into(),
+		]
+	}
+
+	/// Build the taproot spend info for this policy.
+	pub fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> taproot::TaprootSpendInfo {
+		let agg_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		let expiry_clause = self.expiry_clause(expiry_height, server_pubkey);
+		let unlock_clause = self.unlock_clause(server_pubkey);
+
+		taproot::TaprootBuilder::new()
+			.add_leaf(1, expiry_clause.tapscript()).unwrap()
+			.add_leaf(1, unlock_clause.tapscript()).unwrap()
+			.finalize(&SECP, agg_pk.x_only_public_key().0).unwrap()
 	}
 }
 
@@ -1014,6 +1077,8 @@ pub enum ServerVtxoPolicy {
 	/// Server-only policy where coins can only be swept by the server after expiry.
 	Expiry(ExpiryVtxoPolicy),
 	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
+	HarkLeaf(HarkLeafVtxoPolicy),
+	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
 	#[allow(non_camel_case_types)]
 	HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy),
 	/// hArk forfeit tx output policy
@@ -1024,6 +1089,12 @@ pub enum ServerVtxoPolicy {
 impl From<VtxoPolicy> for ServerVtxoPolicy {
 	fn from(p: VtxoPolicy) -> Self {
 		Self::User(p)
+	}
+}
+
+impl From<HarkLeafVtxoPolicy> for ServerVtxoPolicy {
+	fn from(p: HarkLeafVtxoPolicy) -> Self {
+		Self::HarkLeaf(p)
 	}
 }
 
@@ -1061,6 +1132,7 @@ impl ServerVtxoPolicy {
 			Self::ServerOwned => VtxoPolicyKind::ServerOwned,
 			Self::Checkpoint { .. } => VtxoPolicyKind::Checkpoint,
 			Self::Expiry { .. } => VtxoPolicyKind::Expiry,
+			Self::HarkLeaf { .. } => VtxoPolicyKind::HarkLeaf,
 			Self::HarkLeaf_v0 { .. } => VtxoPolicyKind::HarkLeaf_v0,
 			Self::HarkForfeit_v0 { .. } => VtxoPolicyKind::HarkForfeit_v0,
 		}
@@ -1073,6 +1145,7 @@ impl ServerVtxoPolicy {
 			Self::ServerOwned => false,
 			Self::Checkpoint { .. } => true,
 			Self::Expiry { .. } => false,
+			Self::HarkLeaf { .. } => false,
 			Self::HarkLeaf_v0 { .. } => false,
 			Self::HarkForfeit_v0 { .. } => false,
 		}
@@ -1085,6 +1158,7 @@ impl ServerVtxoPolicy {
 			Self::ServerOwned => None,
 			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
 			Self::Expiry { .. } => None,
+			Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 			Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 			Self::HarkForfeit_v0(HarkForfeit_v0_VtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 		}
@@ -1104,6 +1178,7 @@ impl ServerVtxoPolicy {
 			},
 			Self::Checkpoint(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::Expiry(policy) => policy.taproot(server_pubkey, expiry_height),
+			Self::HarkLeaf(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::HarkLeaf_v0(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::HarkForfeit_v0(policy) => policy.taproot(server_pubkey, exit_delta),
 		}
@@ -1129,6 +1204,7 @@ impl ServerVtxoPolicy {
 			Self::ServerOwned => vec![], // only keyspend
 			Self::Checkpoint(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::Expiry(policy) => policy.clauses(expiry_height, server_pubkey),
+			Self::HarkLeaf(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::HarkLeaf_v0(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::HarkForfeit_v0(policy) => policy.clauses(exit_delta, server_pubkey),
 		}
