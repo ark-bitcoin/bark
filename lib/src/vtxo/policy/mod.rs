@@ -1188,7 +1188,7 @@ impl ServerVtxoPolicy {
 	}
 
 	pub fn new_hark_leaf(user_pubkey: PublicKey, unlock_hash: UnlockHash) -> Self {
-		Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, unlock_hash })
+		Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, unlock_hash })
 	}
 
 	pub fn new_hark_forfeit(user_pubkey: PublicKey, unlock_hash: UnlockHash) -> Self {
@@ -1389,7 +1389,7 @@ mod tests {
 		let preimage = [0u8; 32];
 		let unlock_hash = sha256::Hash::hash(&preimage);
 
-		let policy = HarkLeaf_v0_VtxoPolicy {
+		let policy = HarkLeafVtxoPolicy {
 			user_pubkey: USER_KEYPAIR.public_key(),
 			unlock_hash,
 		};
@@ -1462,7 +1462,7 @@ mod tests {
 		let preimage = [0u8; 32];
 		let unlock_hash = sha256::Hash::hash(&preimage);
 
-		let policy = HarkLeaf_v0_VtxoPolicy {
+		let policy = HarkLeafVtxoPolicy {
 			user_pubkey: USER_KEYPAIR.public_key(),
 			unlock_hash,
 		};

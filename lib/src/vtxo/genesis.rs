@@ -26,7 +26,7 @@ pub enum TransitionKind {
 }
 
 impl TransitionKind {
-	pub fn as_str(&self) -> &'static str {
+	pub const fn as_str(&self) -> &'static str {
 		match self {
 			Self::Cosigned => "cosigned",
 			Self::HashLockedCosigned => "hash-locked-cosigned-v1",
@@ -463,8 +463,8 @@ impl GenesisTransition {
 		signature: Option<schnorr::Signature>,
 		unlock: MaybePreimage
 	) -> Self {
-		Self::HashLockedCosigned_v0(
-			HashLockedCosignedGenesis_v0 { user_pubkey, signature, unlock }
+		Self::HashLockedCosigned(
+			HashLockedCosignedGenesis { user_pubkey, signature, unlock }
 		)
 	}
 

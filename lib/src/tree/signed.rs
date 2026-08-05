@@ -19,8 +19,9 @@ use crate::encode::{
 };
 use crate::error::IncorrectSigningKeyError;
 use crate::tree::{self, Tree};
-use crate::vtxo::{self, Full, GenesisItem, GenesisTransition, MaybePreimage, ServerVtxo};
-use crate::vtxo::policy::{check_block_delta, check_block_height};
+use crate::vtxo::{self, Full, GenesisItem, GenesisTransition, HarkLeafVtxoPolicy, MaybePreimage, ServerVtxo, TapScriptClause};
+use crate::vtxo::policy::{check_block_delta, check_block_height, HarkLeaf_v0_VtxoPolicy};
+use crate::vtxo::policy::clause::TimelockSignClause;
 
 
 /// Hash to lock hArk VTXOs from users before forfeits
@@ -34,8 +35,7 @@ pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 
 /// The expiry clause hidden in the node taproot as only script.
 pub fn expiry_clause(server_pubkey: PublicKey, expiry_height: BlockHeight) -> ScriptBuf {
-	let pk = server_pubkey.x_only_public_key().0;
-	scripts::timelock_sign(expiry_height, pk)
+	TimelockSignClause { pubkey: server_pubkey, timelock_height: expiry_height }.tapscript()
 }
 
 /// The hash-based unlock clause that requires a signature and a preimage
@@ -57,12 +57,7 @@ pub fn leaf_cosign_taproot(
 	expiry_height: BlockHeight,
 	unlock_hash: UnlockHash,
 ) -> taproot::TaprootSpendInfo {
-	let agg_pk = musig::combine_keys([user_pubkey, server_pubkey])
-		.x_only_public_key().0;
-	taproot::TaprootBuilder::new()
-		.add_leaf(1, expiry_clause(server_pubkey, expiry_height)).unwrap()
-		.add_leaf(1, unlock_clause(agg_pk, unlock_hash)).unwrap()
-		.finalize(&SECP, agg_pk).unwrap()
+	HarkLeafVtxoPolicy { user_pubkey, unlock_hash }.taproot(server_pubkey, expiry_height)
 }
 
 /// The hash-based unlock clause that requires a signature and a preimage
@@ -84,12 +79,7 @@ pub fn leaf_cosign_taproot_v0(
 	expiry_height: BlockHeight,
 	unlock_hash: UnlockHash,
 ) -> taproot::TaprootSpendInfo {
-	let agg_pk = musig::combine_keys([user_pubkey, server_pubkey])
-		.x_only_public_key().0;
-	taproot::TaprootBuilder::new()
-		.add_leaf(1, expiry_clause(server_pubkey, expiry_height)).unwrap()
-		.add_leaf(1, unlock_clause_v0(agg_pk, unlock_hash)).unwrap()
-		.finalize(&SECP, agg_pk).unwrap()
+	HarkLeaf_v0_VtxoPolicy { user_pubkey, unlock_hash }.taproot(server_pubkey, expiry_height)
 }
 
 /// The taproot spend info of an output that is spent by an internal node tx
@@ -218,7 +208,7 @@ impl VtxoTreeSpec {
 		user_pubkey: PublicKey,
 		unlock_hash: UnlockHash,
 	) -> taproot::TaprootSpendInfo {
-		leaf_cosign_taproot_v0(user_pubkey, self.server_pubkey, self.expiry_height, unlock_hash)
+		leaf_cosign_taproot(user_pubkey, self.server_pubkey, self.expiry_height, unlock_hash)
 	}
 
 	/// Calculate the taproot spend info for internal nodes
@@ -1215,7 +1205,7 @@ impl<'a> LeafVtxoCosignContext<'a> {
 
 		let pubkey = musig::combine_keys([vtxo.user_pubkey(), vtxo.server_pubkey()])
 			.x_only_public_key().0;
-		debug_assert_eq!(pubkey, leaf_cosign_taproot_v0(
+		debug_assert_eq!(pubkey, leaf_cosign_taproot(
 			vtxo.user_pubkey(),
 			vtxo.server_pubkey(),
 			vtxo.expiry_height(),
@@ -1826,7 +1816,7 @@ mod test {
 			unsigned.internal_sighashes.iter().for_each(|h| eng.input(&h[..]));
 			siphash24::Hash::from_engine(eng)
 		};
-		assert_eq!(sighashes_hash.to_string(), "b83a4fe5937a7404");
+		assert_eq!(sighashes_hash.to_string(), "78ae911f557c0b86");
 
 		let signed = unsigned.into_signed_tree(vec![random_sig; nb_nodes]);
 
@@ -1961,7 +1951,7 @@ mod test {
 				// Verify the policies
 				if idx < nb_vtxos as usize {
 					// All leafs have the HarkLeafPolicy
-					matches!(vtxo.policy(), ServerVtxoPolicy::HarkLeaf_v0(_));
+					matches!(vtxo.policy(), ServerVtxoPolicy::HarkLeaf(_));
 				} else {
 					matches!(vtxo.policy(), ServerVtxoPolicy::Expiry(_));
 				}

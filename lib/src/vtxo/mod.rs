@@ -61,6 +61,7 @@ mod validation;
 pub use self::validation::VtxoValidationError;
 pub use self::policy::{Policy, VtxoPolicy, VtxoPolicyKind, ServerVtxoPolicy};
 pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
+pub use self::genesis::TransitionKind;
 
 pub use self::policy::{
 	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ExpiryVtxoPolicy, HarkLeafVtxoPolicy,
@@ -1325,7 +1326,9 @@ impl ProtocolEncoding for GenesisTransition {
 						"invalid MaybePreimage type byte: {v:#x}",
 					))),
 				};
-				Ok(Self::new_hash_locked_cosigned(user_pubkey, signature, unlock))
+				Ok(Self::HashLockedCosigned_v0(genesis::HashLockedCosignedGenesis_v0 {
+					user_pubkey, signature, unlock,
+				}))
 			},
 			GENESIS_TRANSITION_TYPE_ARKOOR => {
 				let cosigners = LengthPrefixedVector::decode(r)?.into_inner();
