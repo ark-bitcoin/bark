@@ -6,6 +6,16 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.6.0
+
+- `server`
+  - Stop lightning receives from granting vtxos too deep to claim
+    Lightning claims and payment revocations are no longer refused for exceeding
+    `max_vtxo_exit_depth`, which could strand funds in HTLC vtxos, and the vtxo
+    pool now caps its change chain at `max_vtxo_arkoor_depth` so it stops granting
+    ever-deeper vtxos in the first place.
+    [#2331](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2331)
+
 # v0.5.0
 
 - `bark`
