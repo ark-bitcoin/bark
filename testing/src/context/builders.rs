@@ -211,6 +211,11 @@ impl<'a> BarkdBuilder<'a> {
 		self
 	}
 
+	/// Start barkd with `--no-auth`, disabling bearer-token authentication.
+	pub fn no_auth(self) -> Self {
+		self.arg("--no-auth")
+	}
+
 	pub fn cfg(mut self, f: impl FnOnce(&mut bark::Config) + 'static) -> Self {
 		self.mod_cfg = Some(Box::new(f));
 		self

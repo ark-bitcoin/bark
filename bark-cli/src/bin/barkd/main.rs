@@ -95,16 +95,16 @@ struct Cli {
 	)]
 	expose_mnemonic: bool,
 
-	/// Disable the bearer-token authentication requirement. No auth token
-	/// will be created or read. Any client that can reach the HTTP port
-	/// will have full API access, so use this only in trusted environments.
-	/// A warning is emitted when no CORS origins are configured.
-	#[arg(
-		long,
-		env = "BARKD_NO_AUTH",
-		default_value_t = false,
-		value_parser = BoolishValueParser::new(),
-	)]
+	/// Disables all authentication.
+	///
+	/// Anyone who can access the HTTP port can create invoices, spend all coins
+	/// and might retrieve the mnemonic.
+	///
+	/// This option is mainly useful for testing and development.
+	///
+	/// Deliberately has no environment variable. We don't want auth to be
+	/// disabled by an inherited environment.
+	#[arg(long)]
 	no_auth: bool,
 }
 
@@ -485,5 +485,18 @@ mod test {
 		let cli = Cli::try_parse_from(["barkd", "--port", "3001"])
 			.expect("--port 3001 should parse");
 		assert_eq!(cli.to_config().unwrap().port, 3001);
+	}
+
+	/// `--no-auth` is a bare presence flag with no env-var form; that it can't
+	/// be set through the environment is covered by the barkd integration tests.
+	#[test]
+	fn no_auth_flag_parsing() {
+		let cli = Cli::try_parse_from(["barkd"])
+			.expect("bare invocation should parse");
+		assert!(!cli.no_auth, "auth must be required by default");
+
+		let cli = Cli::try_parse_from(["barkd", "--no-auth"])
+			.expect("--no-auth should parse");
+		assert!(cli.no_auth, "--no-auth must disable auth");
 	}
 }

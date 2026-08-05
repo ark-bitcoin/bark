@@ -1,7 +1,7 @@
 
 use ark_testing::TestContext;
 use bark_rest_client::apis::configuration::Configuration;
-use bark_rest_client::apis::default_api;
+use bark_rest_client::apis::wallet_api;
 
 /// Verify that `barkd` responds to `GET /ping`.
 #[tokio::test]
@@ -83,21 +83,42 @@ async fn wallet_next_round_barkd() {
 	);
 }
 
-/// With `BARKD_NO_AUTH=true`, unauthenticated requests are accepted.
+/// With `--no-auth`, unauthenticated requests are accepted.
 #[tokio::test]
 async fn no_auth_flag_allows_unauthenticated_requests() {
 	let ctx = TestContext::new("barkd/no_auth_flag_allows_unauthenticated_requests").await;
 
 	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.barkd("barkd1", &srv)
-		.env("BARKD_NO_AUTH", "true")
+		.no_auth()
 		.create().await;
 
-	// An unauthenticated client (no Authorization header) should be able to ping.
 	let unauthed = Configuration {
 		base_path: barkd.base_url(),
 		..Configuration::default()
 	};
-	default_api::ping(&unauthed).await
-		.expect("unauthenticated ping should succeed when --no-auth is set");
+	wallet_api::wallet_exists(&unauthed).await
+		.expect("unauthenticated request should succeed when --no-auth is set");
+}
+
+/// Auth can only be disabled by the `--no-auth` flag: `BARKD_NO_AUTH` in the
+/// environment must not weaken a daemon started without the flag.
+#[tokio::test]
+async fn no_auth_env_var_is_ignored() {
+	let ctx = TestContext::new("barkd/no_auth_env_var_is_ignored").await;
+
+	let srv = ctx.captaind("server").create().await;
+	let barkd = ctx.barkd("barkd1", &srv)
+		.env("BARKD_NO_AUTH", "true")
+		.create().await;
+
+	let unauthed = Configuration {
+		base_path: barkd.base_url(),
+		..Configuration::default()
+	};
+	let err = match wallet_api::wallet_exists(&unauthed).await {
+		Err(e) => e.to_string(),
+		Ok(_) => panic!("BARKD_NO_AUTH must not disable auth"),
+	};
+	assert!(err.contains("401"), "expected 401, got: {}", err);
 }
