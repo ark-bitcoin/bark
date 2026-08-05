@@ -8,7 +8,9 @@ use lnurllib::lnurl::LnUrl;
 use log::{info, warn};
 use server_rpc::protos;
 
-use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
+use ark::lightning::{
+	offer_request_amount, Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage,
+};
 
 use crate::Wallet;
 use crate::WalletVtxo;
@@ -243,23 +245,27 @@ impl Wallet {
 			amount_sat: user_amount.map(|a| a.to_sat()),
 		};
 
-		if let Some(amt) = user_amount {
-			info!("Sending bolt12 payment of {} (user amount) to offer {}", amt, offer);
-		} else if let Some(amt) = offer.amount() {
-			info!("Sending bolt12 payment of {:?} (invoice amount) to offer {}", amt, offer);
+		// Since the server is the one fetching the invoice, it is the one building the
+		// invoice request. We need to ensure that the amount we authorize here,
+		// before the fetch, and the amount in the invoice we get back match during
+		// validation below.
+		let amount = offer_request_amount(&offer, user_amount)
+			.context("cannot determine the amount to pay for this offer")?;
+		if user_amount.is_some() {
+			info!("Sending bolt12 payment of {} (user amount) to offer {}", amount, offer);
 		} else {
-			warn!("Paying offer without amount nor user amount provided: {}", offer);
+			info!("Sending bolt12 payment of {} (offer amount) to offer {}", amount, offer);
 		}
 
 		let resp = srv.client.fetch_bolt12_invoice(req).await?.into_inner();
 		let invoice = Bolt12Invoice::try_from(resp.invoice)
 			.map_err(|e| anyhow!("invalid invoice: {:?}", e))?;
 
-		invoice.validate_issuance(&offer)
+		invoice.validate_issuance(&offer, amount)
 			.context("invalid BOLT12 invoice received from offer")?;
 
 		let invoice: Invoice = invoice.into();
-		self.make_lightning_payment(&invoice, offer.into(), None, wait).await?;
+		self.make_lightning_payment(&invoice, offer.into(), Some(amount), wait).await?;
 		info!("Paid invoice: {}", invoice);
 		Ok(invoice)
 	}

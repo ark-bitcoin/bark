@@ -225,6 +225,17 @@ pub enum CheckAmountError {
 #[error("invalid invoice signature: {0}")]
 pub struct CheckSignatureError(pub String);
 
+/// Error returned when a BOLT12 invoice fetched from an offer doesn't
+/// match the invoice we asked for.
+#[derive(Debug, thiserror::Error)]
+pub enum ValidateIssuanceError {
+	#[error(transparent)]
+	Signature(#[from] CheckSignatureError),
+	#[error("invoice amount doesn't match the requested amount: \
+		invoice={invoice_msat} msat, requested={requested_msat} msat")]
+	AmountMismatch { invoice_msat: u64, requested_msat: u64 },
+}
+
 impl Invoice {
 	pub fn into_bolt11(self) -> Option<Bolt11Invoice> {
 		match self {
@@ -330,6 +341,25 @@ fn get_invoice_payment_amount(invoice_amount: Option<Amount>, user_amount: Optio
 	}
 }
 
+/// The amount to request when fetching an invoice for `offer`: the amount the user
+/// asked to pay, or, when they didn't ask for a specific one, the offer's own amount.
+pub fn offer_request_amount(
+	offer: &Offer,
+	user_amount: Option<Amount>,
+) -> Result<Amount, CheckAmountError> {
+	if let Some(user_amount) = user_amount {
+		return Ok(user_amount);
+	}
+
+	match offer.amount() {
+		// NB the invoice will be for the rounded-up amount we request, not
+		// for the offer's sub-satoshi amount.
+		Some(amount) => amount.to_bitcoin_amount()
+			.ok_or(CheckAmountError::UnsupportedCurrency { amount }),
+		None => Err(CheckAmountError::UserAmountRequired),
+	}
+}
+
 /// Extension trait for the [Bolt11Invoice] type
 pub trait Bolt11InvoiceExt: Borrow<Bolt11Invoice> {
 	/// Get the amount to be paid. It checks both user and invoice
@@ -390,10 +420,31 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 			.map_err(|_| CheckSignatureError("invalid signature".to_string()))
 	}
 
-	/// Checks the invoice signing pubkey is the same as the offer's, then verifies the signature.
+	/// Checks that the invoice was issued for `offer` and that it commits to
+	/// `requested_amount`, the amount that was asked for when fetching it.
 	///
 	/// This method should be called before paying any invoice fetched from an offer.
-	fn validate_issuance(&self, offer: &Offer) -> Result<(), CheckSignatureError> {
+	fn validate_issuance(&self, offer: &Offer, requested_amount: Amount)
+		-> Result<(), ValidateIssuanceError>
+	{
+		self.validate_signing_key(offer)?;
+
+		// The invoice request always sets an amount, so BOLT 12 demands exact
+		// equality with it, regardless of the offer amount and quantity.
+		let invoice_msat = self.borrow().amount_msats();
+		let requested_msat = requested_amount.to_msat();
+		if invoice_msat != requested_msat {
+			return Err(ValidateIssuanceError::AmountMismatch { invoice_msat, requested_msat });
+		}
+
+		Ok(())
+	}
+
+	/// Checks the invoice signing pubkey is the same as the offer's, then verifies the signature.
+	///
+	/// This only binds the invoice to the offer's issuer, not to what we requested;
+	/// use [`Bolt12InvoiceExt::validate_issuance`] before paying.
+	fn validate_signing_key(&self, offer: &Offer) -> Result<(), CheckSignatureError> {
 		if let Some(issuer_signing_pubkey) = offer.issuer_signing_pubkey() {
 			if issuer_signing_pubkey != self.borrow().signing_pubkey() {
 				return Err(CheckSignatureError("public keys mismatch".to_string()));
@@ -538,7 +589,15 @@ mod test {
 		assert_eq!(amount, Amount::from_sat(1_000));
 
 		invoice.check_signature().unwrap();
-		invoice.validate_issuance(&offer).unwrap();
+		invoice.validate_signing_key(&offer).unwrap();
+		invoice.validate_issuance(&offer, Amount::from_sat(1_000)).unwrap();
+
+		// An invoice for another amount than the one we asked for is refused, even
+		// though it was signed by the offer's issuer.
+		let err = invoice.validate_issuance(&offer, Amount::from_sat(999)).unwrap_err();
+		assert!(matches!(err, ValidateIssuanceError::AmountMismatch {
+			invoice_msat: 1_000_000, requested_msat: 999_000,
+		}), "{:?}", err);
 	}
 
 	#[test]
@@ -582,14 +641,14 @@ mod test {
 		assert_eq!(invoice.payment_hash(), lightning::types::payment::PaymentHash([0xaa; 32]));
 
 		// Validate the invoice was issued for this offer and verify its signature
-		invoice.validate_issuance(&offer).unwrap();
+		invoice.validate_issuance(&offer, Amount::from_sat(10)).unwrap();
 		invoice.check_signature().unwrap();
 
 		// Parse the other invoice
 		let invoice_bytes = Vec::from_hex(other_offer_invoice_hex).unwrap();
 		let invoice = Bolt12Invoice::try_from(invoice_bytes).unwrap();
 
-		let err = invoice.validate_issuance(&offer).unwrap_err();
+		let err = invoice.validate_issuance(&offer, Amount::from_sat(10)).unwrap_err();
 		assert!(err.to_string().contains("public keys mismatch"), "{:?}", err);
 
 		// Parse the extra path invoice
@@ -597,8 +656,35 @@ mod test {
 		let invoice = Bolt12Invoice::try_from(invoice_bytes).unwrap();
 
 		// Validate the invoice was issued for this offer and verify its signature
-		invoice.validate_issuance(&offer).unwrap();
+		invoice.validate_issuance(&offer, Amount::from_sat(10)).unwrap();
 		invoice.check_signature().unwrap();
+	}
+
+	#[test]
+	fn offer_request_amount_sources() {
+		let offer_str = "lno1pqpzwyq2qe3k7enxv4j3pjgrrwzv24nmzfjypx2a8m264ws9vht3uxp5vpypnluuzl67n4waq78syn2tdngnvypje2da9t4emyq25n29m84dszkfggehf3z35uj56pmxqgp5vfme44926w23gc282xn3pp0j7y8pc7je8e8qxrhmtwrjrnj4kzcqyqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqjnrlnqdqf52q7jwgcnxgnuseav37nvs0zn06dyfs79hk7uk8lrxuqzqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+		let offer = offer_str.parse::<Offer>().unwrap();
+		assert_eq!(offer.amount(), Some(OfferAmount::Bitcoin { amount_msats: 10_000 }));
+
+		// The user amount takes precedence over the offer's amount.
+		assert_eq!(
+			offer_request_amount(&offer, Some(Amount::from_sat(42))).unwrap(),
+			Amount::from_sat(42),
+		);
+
+		// Without a user amount we request the offer's amount.
+		assert_eq!(offer_request_amount(&offer, None).unwrap(), Amount::from_sat(10));
+
+		// An amountless offer needs a user amount.
+		let amountless = OfferBuilder::new(pubkey(43)).build().unwrap();
+		assert!(matches!(
+			offer_request_amount(&amountless, None),
+			Err(CheckAmountError::UserAmountRequired),
+		));
+		assert_eq!(
+			offer_request_amount(&amountless, Some(Amount::from_sat(42))).unwrap(),
+			Amount::from_sat(42),
+		);
 	}
 
 	#[test]
