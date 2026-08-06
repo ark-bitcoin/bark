@@ -303,7 +303,30 @@ impl DaemonProcess {
 				if let Err(e) = wallet.sync_pending_rounds().await {
 					warn!("An error occured while syncing pending rounds: {e:#}");
 				}
+			} else {
+				info!("Wallet has been dropped. Shutting down sync processes...");
+				break;
+			}
 
+			futures::select! {
+				_ = sleep(self.sync_interval).fuse() => {},
+				_ = self.shutdown.cancelled().fuse() => {
+					info!("Shutdown signal received! Shutting down sync processes...");
+					break;
+				},
+			}
+		}
+	}
+
+	/// Periodically progress unilateral exits.
+	///
+	/// This deliberately runs in its own loop rather than as part of
+	/// [Self::run_sync_processes]: a repeatedly panicking sync step would
+	/// restart that whole task from the top, and exit progression must not
+	/// stay blocked behind it.
+	async fn run_exit_progress_process(&self) {
+		loop {
+			if let Some(wallet) = self.wallet() {
 				if wallet.inner.onchain.is_some() {
 					if let Err(e) = wallet.exit_mgr().progress_exits_with_cpfp(&wallet, None).await {
 						warn!("An error occurred while progressing exits: {:#}", e);
@@ -314,14 +337,14 @@ impl DaemonProcess {
 					}
 				}
 			} else {
-				info!("Wallet has been dropped. Shutting down sync processes...");
+				info!("Wallet has been dropped. Shutting down exit progress process...");
 				break;
 			}
 
 			futures::select! {
 				_ = sleep(self.sync_interval).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
-					info!("Shutdown signal received! Shutting down sync processes...");
+					info!("Shutdown signal received! Shutting down exit progress process...");
 					break;
 				},
 			}
@@ -373,6 +396,7 @@ impl DaemonProcess {
 				let p2 = Arc::clone(&proc);
 				let p3 = Arc::clone(&proc);
 				let p4 = Arc::clone(&proc);
+				let p5 = Arc::clone(&proc);
 				let _ = futures::join!(
 					supervised("server-connection", move || {
 						let p = Arc::clone(&p1);
@@ -386,8 +410,12 @@ impl DaemonProcess {
 						let p = Arc::clone(&p3);
 						async move { p.run_sync_processes().await }
 					}),
-					supervised("mailbox", move || {
+					supervised("exit-progress", move || {
 						let p = Arc::clone(&p4);
+						async move { p.run_exit_progress_process().await }
+					}),
+					supervised("mailbox", move || {
+						let p = Arc::clone(&p5);
 						async move { p.run_mailbox_messages_process().await }
 					}),
 				);
@@ -398,6 +426,7 @@ impl DaemonProcess {
 					self.run_server_connection_check_process(),
 					self.run_round_events_process(),
 					self.run_sync_processes(),
+					self.run_exit_progress_process(),
 					self.run_mailbox_messages_process(),
 				);
 			}
