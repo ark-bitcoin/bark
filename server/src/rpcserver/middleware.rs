@@ -139,6 +139,20 @@ impl<S> Layer<S> for RemoteAddrLayer {
 	}
 }
 
+/// Populates the request extensions with a `SocketAddr` for the client,
+/// preferring the leftmost hop of `X-Forwarded-For` when present and
+/// falling back to the TCP peer otherwise.
+///
+/// `X-Forwarded-For` is client-controlled; this layer does not validate
+/// the TCP peer. The extension is trustworthy only when the listener is
+/// reached exclusively through a proxy chain that overwrites XFF at
+/// ingress. In the Second/Ark deployment that means traefik
+/// (`forwardedHeaders.trustedIPs: []`) plus envoy
+/// (`xff_num_trusted_hops: 1`), with UFW closing the raw integration
+/// port. Under those conditions the XFF reaching this layer is
+/// proxy-attested and safe for authorization. Otherwise, use
+/// [`tonic::Request::remote_addr`] and treat the header as annotation
+/// only.
 #[derive(Clone)]
 pub struct RemoteAddrService<S> {
 	inner: S,

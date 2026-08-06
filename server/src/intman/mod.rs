@@ -122,6 +122,16 @@ impl Server {
 		).await).await?)
 	}
 
+	/// Verify an integration API key and, if the key has per-key IP filters,
+	/// check `client_address` against them.
+	///
+	/// The bearer UUID is the primary auth factor; the IP filter is
+	/// defense-in-depth and only meaningful when `client_address`
+	/// reflects the real peer. `client_address` comes from
+	/// [`crate::rpcserver::middleware::RemoteAddrService`], which prefers
+	/// `X-Forwarded-For`; see its docs for the proxy-chain + UFW
+	/// invariants that keep the derived value trustworthy. If those
+	/// break, only the bearer UUID protects the endpoint.
 	async fn verify_integration_api_key(
 		&self,
 		client_address: Option<SocketAddr>,
