@@ -1,0 +1,3 @@
+- Fix a bug where `captaind` would stop syncing if an error occurs during a reorg
+  Previously, a chain reorganization error would halt block synchronization.
+  [#2359](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2359)
