@@ -190,9 +190,6 @@ impl BlockIndex {
 	/// retries. Orphaned blocks are not provided directly - listeners can look them
 	/// up by height if needed before the database is updated.
 	async fn org_out_blocks_above(&self, block: BlockRef) -> anyhow::Result<()> {
-		// We are only synced upto this height
-		self.update_sync_height(block);
-
 		let results = join_all(self.listeners.iter().map(|listener| {
 			listener.on_reorg(block)
 		})).await;
@@ -205,6 +202,11 @@ impl BlockIndex {
 		}
 
 		self.db.write(async |t| t.remove_blocks_above(self.block_table, block.height).await).await?;
+
+		// Only advance the in-memory sync height once the listeners and the
+		// database delete have succeeded. This mirrors `add_block` and keeps
+		// the reorg retryable if a listener fails.
+		self.update_sync_height(block);
 		Ok(())
 	}
 
