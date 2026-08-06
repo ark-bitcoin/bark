@@ -321,6 +321,7 @@ impl RestServer {
 			);
 		let router = router
 			.layer(cors_layer(config))
+			.layer(axum::middleware::from_fn(error::log_errors))
 			.with_state(state)
 			.fallback(error::route_not_found);
 
