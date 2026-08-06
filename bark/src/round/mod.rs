@@ -1819,7 +1819,7 @@ impl Wallet {
 	}
 
 	pub async fn subscribe_round_events(&self)
-		-> anyhow::Result<impl Stream<Item = anyhow::Result<RoundEvent>> + Unpin>
+		-> anyhow::Result<impl Stream<Item = anyhow::Result<RoundEvent>> + Unpin + use<>>
 	{
 		let (mut srv, _) = self.require_server().await?;
 		let mut req = tonic::IntoRequest::into_request(protos::Empty {});

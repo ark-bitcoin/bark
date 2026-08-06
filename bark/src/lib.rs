@@ -2170,9 +2170,10 @@ impl Wallet {
 	/// The daemon uses the onchain wallet stored in [OpenWalletArgs::onchain] (if any)
 	/// for background onchain syncing and exit fee-bumping.
 	///
-	/// Note:
-	/// - This function doesn't check if a daemon is already running,
-	/// so it's possible to start multiple daemons by mistake.
+	/// The daemon holds only a weak reference to the wallet, so it doesn't
+	/// keep the wallet alive: when the last [Wallet] clone is dropped, the
+	/// daemon shuts itself down. Any single unit of daemon work in flight
+	/// (a sync pass, a round participation) finishes gracefully first.
 	pub fn start_daemon(&self) -> anyhow::Result<()> {
 		let mut daemon = self.inner.daemon.lock();
 		if daemon.is_some() {
@@ -2180,7 +2181,7 @@ impl Wallet {
 			return Ok(());
 		}
 
-		let handle = crate::daemon::start_daemon(self.clone());
+		let handle = crate::daemon::start_daemon(self);
 		let _ = daemon.insert(handle);
 
 		Ok(())
@@ -2328,6 +2329,12 @@ fn wrap_server_connect_error(err: ConnectError) -> anyhow::Error {
 
 impl std::ops::Drop for WalletInner {
 	fn drop(&mut self) {
+		// The daemon task holds only a Weak reference to this struct (see
+		// [crate::daemon]), precisely so that it can't keep the wallet alive
+		// after the last user-held [Wallet] clone is dropped. That also means
+		// nobody is left to stop it at that point — do it here. Cancelling
+		// the token wakes the daemon loops immediately; the task finishes
+		// detached (Drop can't await it).
 		if let Some(handle) = self.daemon.lock().take() {
 			handle.stop();
 		}

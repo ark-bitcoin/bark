@@ -1,3 +1,4 @@
+use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -8,7 +9,7 @@ use log::{info, trace, warn};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::Wallet;
+use crate::{Wallet, WalletInner};
 use crate::utils::ReconnectBackoff;
 use crate::utils::time::sleep;
 
@@ -43,7 +44,7 @@ impl DaemonHandle {
 }
 
 pub(crate) fn start_daemon(
-	wallet: Wallet,
+	wallet: &Wallet,
 ) -> DaemonHandle {
 	let shutdown = CancellationToken::new();
 	let proc = DaemonProcess::new(shutdown.clone(), wallet);
@@ -66,23 +67,55 @@ struct DaemonProcess {
 	shutdown: CancellationToken,
 
 	connected: AtomicBool,
-	wallet: Wallet,
+
+	/// Deliberately a [Weak] reference: the daemon task must not keep the
+	/// wallet alive on its own. When the last user-held [Wallet] clone is
+	/// dropped, [WalletInner]'s drop glue cancels `shutdown` and the daemon
+	/// halts. See [DaemonProcess::wallet] for the upgrade rules.
+	wallet: Weak<WalletInner>,
+
+	/// Cached from the wallet config so the timer loops don't need to
+	/// upgrade `wallet` just to know how long to sleep.
+	sync_interval: Duration,
+
+	/// Cached [crate::Config::daemon_manual_sync].
+	manual_sync: bool,
 }
 
 impl DaemonProcess {
 	fn new(
 		shutdown: CancellationToken,
-		wallet: Wallet,
+		wallet: &Wallet,
 	) -> DaemonProcess {
 		DaemonProcess {
 			connected: AtomicBool::new(false),
 			shutdown,
-			wallet,
+			sync_interval: Duration::from_secs(wallet.config().daemon_sync_interval_secs),
+			manual_sync: wallet.config().daemon_manual_sync,
+			wallet: Arc::downgrade(&wallet.inner),
 		}
 	}
 
-	fn sync_interval(&self) -> Duration {
-		Duration::from_secs(self.wallet.config().daemon_sync_interval_secs)
+	/// Upgrade the weak wallet reference for one unit of work.
+	///
+	/// The returned [Wallet] keeps the wallet alive for as long as it is
+	/// held, so holds must stay bounded: a strong reference held across an
+	/// always-on await point (like a message stream) would prevent the
+	/// wallet's drop glue from ever cancelling the daemon, reintroducing
+	/// the leak the [Weak] reference exists to fix.
+	///
+	/// Returns [None] once the last user-held [Wallet] clone is dropped;
+	/// callers must treat that as a shutdown signal. The wallet's drop glue
+	/// cancels our token in that case, but we cancel here too so a failed
+	/// upgrade is a sufficient signal on its own.
+	fn wallet(&self) -> Option<Wallet> {
+		match self.wallet.upgrade() {
+			Some(inner) => Some(Wallet { inner }),
+			None => {
+				self.shutdown.cancel();
+				None
+			},
+		}
 	}
 
 	/// Recursively resubscribe to mailbox message stream by waiting and
@@ -96,7 +129,9 @@ impl DaemonProcess {
 			let shutdown = self.shutdown.clone();
 			if self.connected.load(Ordering::Relaxed) {
 				trace!("Daemon subscribing to mailbox message stream");
-				let r = self.wallet.subscribe_process_mailbox_messages(None, shutdown).await;
+				let r = Wallet::subscribe_process_mailbox_messages_weak(
+					self.wallet.clone(), None, shutdown,
+				).await;
 				if let Err(e) = r {
 					warn!("An error occurred while processing mailbox messages: {e:#}");
 					self.connected.store(false, Ordering::Relaxed);
@@ -104,7 +139,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = sleep(self.sync_interval()).fuse() => {},
+				_ = sleep(self.sync_interval).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting mailbox messages process...");
 					break;
@@ -113,60 +148,12 @@ impl DaemonProcess {
 		}
 	}
 
-	/// Sync pending boards, register new ones if needed
-	async fn run_boards_sync(&self) {
-		if let Err(e) = self.wallet.sync_pending_boards().await {
-			warn!("An error occured while syncing pending board: {e:#}");
-		}
-	}
-
-	/// Sync pending offboards, check for confirmations
-	async fn run_offboards_sync(&self) {
-		if let Err(e) = self.wallet.sync_pending_offboards().await {
-			warn!("An error occured while syncing pending offboards: {e:#}");
-		}
-	}
-
-	/// Sync pending rounds, check for confirmations and finalize VTXOs
-	async fn run_rounds_sync(&self) {
-		if let Err(e) = self.wallet.sync_pending_rounds().await {
-			warn!("An error occured while syncing pending rounds: {e:#}");
-		}
-	}
-
-	/// Update cached fee rates from the chain source
-	async fn run_fee_rate_update(&self) {
-		if let Err(e) = self.wallet.chain().update_fee_rates(self.wallet.config().fallback_fee_rate).await {
-			warn!("An error occured while updating fee rates: {e:#}");
-		}
-	}
-
-	/// Sync onchain wallet
-	async fn run_onchain_sync(&self) {
-		if let Err(e) = self.wallet.sync_onchain().await {
-			warn!("An error occured while syncing onchain: {e:#}");
-		}
-	}
-
-	/// Progress any ongoing unilateral exits and sync the exit statuses
-	async fn run_exits(&self) {
-		if self.wallet.inner.onchain.is_some() {
-			if let Err(e) = self.wallet.exit_mgr().progress_exits_with_cpfp(&self.wallet, None).await {
-				warn!("An error occurred while progressing exits: {:#}", e);
-			}
-		} else {
-			if let Err(e) = self.wallet.exit_mgr().progress_exits(&self.wallet).await {
-				warn!("An error occurred while progressing exits: {:#}", e);
-			}
-		}
-	}
-
-	async fn handle_round_event(&self, event: &RoundEvent) -> anyhow::Result<()> {
+	async fn handle_round_event(&self, wallet: &Wallet, event: &RoundEvent) -> anyhow::Result<()> {
 		// Do a refresh if you need to
 		match &event {
 			&RoundEvent::Attempt(attempt) => {
 				if attempt.attempt_seq == 0 {
-					if let Err(err) = self.wallet.join_round_for_maintenance_refresh(attempt).await {
+					if let Err(err) = wallet.join_round_for_maintenance_refresh(attempt).await {
 						warn!("Failed to join round for maintenance refresh: {:#}", err);
 					}
 				};
@@ -174,7 +161,7 @@ impl DaemonProcess {
 			_ => {},
 		};
 
-		self.wallet.progress_pending_rounds(Some(event)).await
+		wallet.progress_pending_rounds(Some(event)).await
 	}
 
 	/// Subscribe to the round event stream and process events
@@ -186,8 +173,13 @@ impl DaemonProcess {
 		&self,
 		backoff: &mut ReconnectBackoff,
 	) -> anyhow::Result<()> {
-		trace!("Daemon subscribing to round event stream");
-		let mut events = self.wallet.subscribe_round_events().await?;
+		// Upgrade only to open the subscription: the stream owns just the
+		// gRPC connection, so waiting on it doesn't keep the wallet alive.
+		let mut events = {
+			let Some(wallet) = self.wallet() else { return Ok(()) };
+			trace!("Daemon subscribing to round event stream");
+			wallet.subscribe_round_events().await?
+		};
 		trace!("Daemon connected to round event stream");
 
 		loop {
@@ -196,7 +188,8 @@ impl DaemonProcess {
 					match res {
 						Some(Ok(event)) => {
 							backoff.reset();
-							if let Err(e) = self.handle_round_event(&event).await {
+							let Some(wallet) = self.wallet() else { return Ok(()) };
+							if let Err(e) = self.handle_round_event(&wallet, &event).await {
 								warn!("Error processing round event: {e:#}");
 							}
 						},
@@ -262,7 +255,7 @@ impl DaemonProcess {
 	async fn run_server_connection_check_process(&self) {
 		loop {
 			futures::select! {
-				_ = sleep(self.sync_interval()).fuse() => {},
+				_ = sleep(self.sync_interval).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting server connection check process...");
 					break;
@@ -273,7 +266,8 @@ impl DaemonProcess {
 				continue;
 			}
 
-			let result = self.wallet.refresh_server().await;
+			let Some(wallet) = self.wallet() else { break };
+			let result = wallet.refresh_server().await;
 			if let Err(ref e) = result {
 				warn!("Ark server reconnect failed: {:#}", e);
 			} else {
@@ -286,19 +280,71 @@ impl DaemonProcess {
 	async fn run_sync_processes(&self) {
 		// NB: tokio::time::interval needs Instant::now(), which panic on wasm
 		loop {
-			if self.connected.load(Ordering::Relaxed) {
-				self.run_fee_rate_update().await;
-				self.run_boards_sync().await;
-				self.run_offboards_sync().await;
+			// using if let to scope the wallet variable
+			if let Some(wallet) = self.wallet() {
+				if self.connected.load(Ordering::Relaxed) {
+					if let Err(e) = wallet.chain().update_fee_rates(wallet.config().fallback_fee_rate).await {
+						warn!("An error occured while updating fee rates: {e:#}");
+					}
+
+					if let Err(e) = wallet.sync_pending_boards().await {
+						warn!("An error occured while syncing pending board: {e:#}");
+					}
+
+					if let Err(e) = wallet.sync_pending_offboards().await {
+						warn!("An error occured while syncing pending offboards: {e:#}");
+					}
+				}
+
+				if let Err(e) = wallet.sync_onchain().await {
+					warn!("An error occured while syncing onchain: {e:#}");
+				}
+
+				if let Err(e) = wallet.sync_pending_rounds().await {
+					warn!("An error occured while syncing pending rounds: {e:#}");
+				}
+			} else {
+				info!("Wallet has been dropped. Shutting down sync processes...");
+				break;
 			}
-			self.run_onchain_sync().await;
-			self.run_rounds_sync().await;
-			self.run_exits().await;
 
 			futures::select! {
-				_ = sleep(self.sync_interval()).fuse() => {},
+				_ = sleep(self.sync_interval).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
-					info!("Shutdown signal received! Shutting sync processes...");
+					info!("Shutdown signal received! Shutting down sync processes...");
+					break;
+				},
+			}
+		}
+	}
+
+	/// Periodically progress unilateral exits.
+	///
+	/// This deliberately runs in its own loop rather than as part of
+	/// [Self::run_sync_processes]: a repeatedly panicking sync step would
+	/// restart that whole task from the top, and exit progression must not
+	/// stay blocked behind it.
+	async fn run_exit_progress_process(&self) {
+		loop {
+			if let Some(wallet) = self.wallet() {
+				if wallet.inner.onchain.is_some() {
+					if let Err(e) = wallet.exit_mgr().progress_exits_with_cpfp(&wallet, None).await {
+						warn!("An error occurred while progressing exits: {:#}", e);
+					}
+				} else {
+					if let Err(e) = wallet.exit_mgr().progress_exits(&wallet).await {
+						warn!("An error occurred while progressing exits: {:#}", e);
+					}
+				}
+			} else {
+				info!("Wallet has been dropped. Shutting down exit progress process...");
+				break;
+			}
+
+			futures::select! {
+				_ = sleep(self.sync_interval).fuse() => {},
+				_ = self.shutdown.cancelled().fuse() => {
+					info!("Shutdown signal received! Shutting down exit progress process...");
 					break;
 				},
 			}
@@ -307,29 +353,34 @@ impl DaemonProcess {
 
 	/// Run processes that only need to be run once on startup
 	async fn run_startup_tasks(&self) {
+		let Some(wallet) = self.wallet() else { return };
+
 		// Eagerly refresh the server connection before starting the other
 		// daemon tasks so they don't race the first connection check and
 		// skip their initial iteration with `connected = false` (which
 		// would delay mailbox subscription by `slow_interval`).
-		let result = self.wallet.refresh_server().await;
+		let result = wallet.refresh_server().await;
 		if let Err(ref e) = result {
 			warn!("Ark server refresh failed: {:#}", e);
 		}
-		let connected = self.wallet.inner.server.initialized();
+		let connected = wallet.inner.server.initialized();
 		self.connected.store(connected, Ordering::Relaxed);
 
-		if !self.wallet.config().daemon_manual_sync {
-			self.wallet.sync().await;
+		if !self.manual_sync {
+			wallet.sync().await;
 		}
 	}
 
 	pub async fn run(self) {
-		info!("Starting daemon for wallet {}", self.wallet.fingerprint());
+		{
+			let Some(wallet) = self.wallet() else { return };
+			info!("Starting daemon for wallet {}", wallet.fingerprint());
+		}
 
 		self.run_startup_tasks().await;
 		trace!("Daemon startup tasks complete, starting background processes");
 
-		if self.wallet.config().daemon_manual_sync {
+		if self.manual_sync {
 			// In manual-sync mode only the server connection heartbeat keeps
 			// running; everything else must be triggered via the REST API.
 			info!("Daemon running in manual-sync mode; background sync disabled");
@@ -337,8 +388,6 @@ impl DaemonProcess {
 		} else {
 			#[cfg(not(feature = "wasm-web"))]
 			{
-				use std::sync::Arc;
-
 				// Each loop runs in its own tokio task so that a panic in one
 				// (e.g. from a crafted round proposal) cannot silently kill the
 				// others — in particular exit monitoring / CPFP fee-bumping.
@@ -347,6 +396,7 @@ impl DaemonProcess {
 				let p2 = Arc::clone(&proc);
 				let p3 = Arc::clone(&proc);
 				let p4 = Arc::clone(&proc);
+				let p5 = Arc::clone(&proc);
 				let _ = futures::join!(
 					supervised("server-connection", move || {
 						let p = Arc::clone(&p1);
@@ -360,8 +410,12 @@ impl DaemonProcess {
 						let p = Arc::clone(&p3);
 						async move { p.run_sync_processes().await }
 					}),
-					supervised("mailbox", move || {
+					supervised("exit-progress", move || {
 						let p = Arc::clone(&p4);
+						async move { p.run_exit_progress_process().await }
+					}),
+					supervised("mailbox", move || {
+						let p = Arc::clone(&p5);
 						async move { p.run_mailbox_messages_process().await }
 					}),
 				);
@@ -372,6 +426,7 @@ impl DaemonProcess {
 					self.run_server_connection_check_process(),
 					self.run_round_events_process(),
 					self.run_sync_processes(),
+					self.run_exit_progress_process(),
 					self.run_mailbox_messages_process(),
 				);
 			}

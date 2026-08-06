@@ -7,6 +7,7 @@ pub extern crate lnurl as lnurllib;
 
 use std::collections::HashMap;
 use std::ops::ControlFlow;
+use std::sync::{Arc, Weak};
 
 use anyhow::Context;
 use ark::tree::signed::UnlockHash;
@@ -25,7 +26,7 @@ use ark::vtxo::Full;
 use server_rpc::{protos, MAX_NB_MAILBOX_RECOVERY_IDS};
 use server_rpc::protos::mailbox_server::MailboxMessage;
 
-use crate::{Wallet, SUBSCRIBE_REQUEST_TIMEOUT};
+use crate::{Wallet, WalletInner, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::actions::DriveMode;
 use crate::actions::lightning::pay::Progress;
 use crate::movement::{MovementDestination, MovementStatus};
@@ -118,7 +119,7 @@ impl Wallet {
 	pub async fn subscribe_mailbox_messages(
 		&self,
 		since_checkpoint: Option<u64>,
-	) -> anyhow::Result<impl Stream<Item = anyhow::Result<MailboxMessage>> + Unpin> {
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<MailboxMessage>> + Unpin + use<>> {
 		let (mut srv, _) = self.require_server().await?;
 
 		let checkpoint = if let Some(since) = since_checkpoint {
@@ -161,6 +162,29 @@ impl Wallet {
 		since_checkpoint: Option<u64>,
 		shutdown: CancellationToken,
 	) -> anyhow::Result<()> {
+		Wallet::subscribe_process_mailbox_messages_weak(
+			Arc::downgrade(&self.inner), since_checkpoint, shutdown,
+		).await
+	}
+
+	/// The body of [Wallet::subscribe_process_mailbox_messages], holding the
+	/// wallet only weakly.
+	///
+	/// The subscription is always-on, so this future must not own a strong
+	/// wallet reference across its lifetime: the daemon relies on the wallet's
+	/// strong count reaching zero — running [crate::WalletInner]'s drop glue —
+	/// to learn that it should shut down. The weak reference is therefore only
+	/// upgraded for one unit of work at a time (a resubscribe or a single
+	/// message); between messages this future owns just the gRPC stream.
+	///
+	/// Returns cleanly when the wallet is dropped, like on shutdown.
+	pub(crate) async fn subscribe_process_mailbox_messages_weak(
+		wallet: Weak<WalletInner>,
+		since_checkpoint: Option<u64>,
+		shutdown: CancellationToken,
+	) -> anyhow::Result<()> {
+		let upgrade = || wallet.upgrade().map(|inner| Wallet { inner });
+
 		// Count consecutive reconnects that made no progress. A delivered
 		// message resets it (the connection is healthy); enough failures in a
 		// row means the server is unreachable, so we bail and let the daemon
@@ -170,7 +194,10 @@ impl Wallet {
 		let mut backoff = ReconnectBackoff::new();
 
 		loop {
-			let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
+			let mut stream = {
+				let Some(wallet) = upgrade() else { return Ok(()) };
+				wallet.subscribe_mailbox_messages(since_checkpoint).await?
+			};
 			trace!("Connected to mailbox stream with server");
 
 			'stream: loop {
@@ -181,7 +208,8 @@ impl Wallet {
 								// A delivered message proves the connection is
 								// healthy, so stop counting reconnects as failures.
 								reconnect_count = 0;
-								if self.process_mailbox_message(message).await.is_break() {
+								let Some(wallet) = upgrade() else { return Ok(()) };
+								if wallet.process_mailbox_message(message).await.is_break() {
 									// A message failed without advancing its
 									// checkpoint. Stop consuming this stream and
 									// resubscribe from the unadvanced checkpoint
