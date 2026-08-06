@@ -20,8 +20,7 @@ use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;
 use bark_json::web::PendingRoundInfo;
 
-use crate::notifications::NotificationManager;
-use crate::{ServerState, error};
+use crate::{ServerState, ServerWallet, error};
 use crate::error::{ContextExt, HandlerResult, badarg, not_found};
 
 pub fn router() -> Router<ServerState> {
@@ -200,7 +199,10 @@ pub async fn wallet_delete(State(state): State<ServerState>, Json(req): Json<bar
 		badarg!("No wallet deletion hook configured");
 	};
 	hook().await.context("Couldn't delete wallet")?;
-	state.wallet.write().take();
+	let wallet = state.wallet.write().take();
+	if let Some(wallet) = wallet {
+		wallet.stop();
+	}
 	Ok(Json(bark_json::web::WalletDeleteResponse {
 		deleted: true,
 		message: "Wallet deleted".to_string(),
@@ -232,11 +234,10 @@ pub async fn create_wallet(
 
 	if let Some(on_wallet_create) = state.on_wallet_create.as_ref() {
 		let wallet = on_wallet_create(req).await?;
-		let notification_mngr = NotificationManager::start(wallet.clone(), state.shutdown.clone());
+		let wallet = ServerWallet::new(wallet, state.shutdown.clone());
 
 		let fingerprint = wallet.fingerprint().to_string();
 		let _ = state.wallet.write().insert(wallet);
-		let _ = state.notification_mngr.write().insert(notification_mngr);
 
 		Ok(axum::Json(bark_json::web::CreateWalletResponse { fingerprint }))
 	} else {

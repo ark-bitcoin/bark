@@ -248,8 +248,10 @@ pub async fn wait_notification(
 					last_pushed_at: Some(last_pushed_at),
 				}));
 			} else {
-				return Err(anyhow!("Notification manager returned nothing. \
-					Server might be shutting down.").into());
+				// The manager was stopped: either the wallet was deleted under
+				// us, which this reports as "No wallet set", or we're shutting down.
+				state.require_notifications()?;
+				return Err(anyhow!("Notification manager stopped").into());
 			}
 		}
 	}

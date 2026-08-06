@@ -131,13 +131,41 @@ pub struct RestServer {
 	jh: JoinHandle<()>,
 }
 
+#[derive(Clone)]
+pub struct ServerWallet {
+	wallet: Wallet,
+	notification_mngr: NotificationManager,
+}
+
+impl ServerWallet {
+	pub fn new(wallet: Wallet, shutdown: CancellationToken) -> Self {
+		Self {
+			wallet: wallet.clone(),
+			notification_mngr: NotificationManager::start(wallet, shutdown),
+		}
+	}
+
+	/// Stop the wallet's background tasks, waking any request waiting on them.
+	pub fn stop(&self) {
+		self.notification_mngr.stop();
+		self.wallet.stop_daemon();
+	}
+}
+
+impl std::ops::Deref for ServerWallet {
+	type Target = Wallet;
+
+	fn deref(&self) -> &Self::Target {
+		&self.wallet
+	}
+}
+
 /// Shared state held by the REST server.
 ///
 /// Construct via [`ServerState::builder`].
 #[derive(Clone)]
 pub struct ServerState {
-	wallet: Arc<parking_lot::RwLock<Option<Wallet>>>,
-	notification_mngr: Arc<parking_lot::RwLock<Option<NotificationManager>>>,
+	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
 	shutdown: CancellationToken,
 	auth_token: Option<AuthToken>,
 
@@ -212,14 +240,13 @@ impl ServerStateBuilder {
 	}
 
 	pub fn build(self, shutdown: CancellationToken) -> ServerState {
-		let notification_mngr = match &self.wallet {
-			Some(wallet) => Some(NotificationManager::start(wallet.clone(), shutdown.clone())),
+		let wallet_opt = match &self.wallet {
+			Some(wallet) => Some(ServerWallet::new(wallet.clone(), shutdown.clone())),
 			None => None,
 		};
 
 		ServerState {
-			wallet: Arc::new(parking_lot::RwLock::new(self.wallet)),
-			notification_mngr: Arc::new(parking_lot::RwLock::new(notification_mngr)),
+			wallet: Arc::new(parking_lot::RwLock::new(wallet_opt)),
 			shutdown: shutdown,
 			auth_token: self.auth_token,
 			on_wallet_create: self.on_wallet_create,
@@ -246,7 +273,7 @@ impl ServerState {
 		let Some(wallet) = wallet_opt.as_ref() else {
 			unprocessable!("No wallet set");
 		};
-		Ok(wallet.clone())
+		Ok(wallet.wallet.clone())
 	}
 
 	pub fn require_onchain(&self) -> Result<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>, ErrorResponse> {
@@ -258,11 +285,11 @@ impl ServerState {
 	}
 
 	pub fn require_notifications(&self) -> Result<NotificationManager, ErrorResponse> {
-		let notification_mngr_opt = self.notification_mngr.read();
-		let Some(notification_mngr) = notification_mngr_opt.as_ref() else {
-			unprocessable!("No notification manager set")
+		let wallet_opt = self.wallet.read();
+		let Some(wallet) = wallet_opt.as_ref() else {
+			unprocessable!("No wallet set");
 		};
-		Ok(notification_mngr.clone())
+		Ok(wallet.notification_mngr.clone())
 	}
 
 	pub fn auth_token(&self) -> Option<&AuthToken> {
