@@ -17,7 +17,7 @@ use server_rpc::protos;
 
 use crate::Wallet;
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId};
-use crate::arkoor::{ArkoorCreateError, DeliveryOutcome, post_arkoor_to_mailboxes};
+use crate::arkoor::{ArkoorCreateError, DeliveryOutcome, post_arkoor_to_mailboxes, split_change_amount};
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
@@ -39,6 +39,10 @@ pub struct ArkoorSend {
 	pub amount: Amount,
 	pub input_vtxo_ids: Vec<VtxoId>,
 	pub change_key_index: u32,
+	/// Change piece amounts fixed at start. `None` when persisted by a
+	/// pre-split bark, meaning one whole change output.
+	#[serde(default, with = "crate::utils::serde::opt_amount_vec_sat")]
+	pub change_pieces: Option<Vec<Amount>>,
 
 	// Mutable state:
 	pub progress: Progress,
@@ -244,6 +248,10 @@ pub(crate) async fn start_arkoor_send(
 	let inputs = wallet.select_any_vtxos_to_cover(amount).await?;
 	let input_vtxo_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 
+	let total_input = inputs.iter().map(|v| v.amount()).sum::<Amount>();
+	let change = total_input.checked_sub(amount)
+		.context("selected inputs don't cover amount")?;
+
 	let id = new_action_id();
 	wallet.lock_vtxos(
 		inputs.iter(),
@@ -256,6 +264,9 @@ pub(crate) async fn start_arkoor_send(
 		amount,
 		input_vtxo_ids,
 		change_key_index,
+		change_pieces: Some(split_change_amount(
+			change, amount, wallet.config().change_vtxo_split_factor,
+		)),
 		progress: Progress::Cosigning,
 	})
 }
@@ -301,7 +312,7 @@ async fn run_cosign(wallet: &Wallet, send: &ArkoorSend) -> Result<Progress, Adva
 	// becomes `AdvanceError::Server` so the executor can route a genuine
 	// rejection to on_rejection instead of retrying forever.
 	let arkoor = wallet.create_checkpointed_arkoor_with_vtxos(
-		dest, locked.into_iter(), change_keypair,
+		dest, locked.into_iter(), change_keypair, send.change_pieces.clone(),
 	).await?;
 
 	let initial_update = MovementUpdate::new()
@@ -385,6 +396,39 @@ async fn finalize_arkoor_send(
 #[cfg(test)]
 mod test {
 	use super::*;
+
+	fn dummy_send() -> ArkoorSend {
+		use std::str::FromStr;
+		ArkoorSend {
+			id: new_action_id(),
+			destination: ark::Address::from_str(
+				"tark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mq47jn9z",
+			).unwrap(),
+			amount: Amount::from_sat(10_000),
+			input_vtxo_ids: vec![],
+			change_key_index: 0,
+			change_pieces: Some(vec![Amount::from_sat(5_000), Amount::from_sat(5_000)]),
+			progress: Progress::Cosigning,
+		}
+	}
+
+	/// A checkpoint written before change_pieces existed must deserialize
+	/// with `None`, which rebuilds the single whole change output that
+	/// version cosigned.
+	#[test]
+	fn checkpoint_without_change_pieces_reads_as_none() {
+		let mut json = serde_json::to_value(&dummy_send()).unwrap();
+		json.as_object_mut().unwrap().remove("change_pieces").unwrap();
+		let old = serde_json::from_value::<ArkoorSend>(json).unwrap();
+		assert_eq!(old.change_pieces, None);
+	}
+
+	#[test]
+	fn change_pieces_roundtrip() {
+		let send = dummy_send();
+		let json = serde_json::to_value(&send).unwrap();
+		assert_eq!(serde_json::from_value::<ArkoorSend>(json).unwrap(), send);
+	}
 
 	/// A cosign rejection must reach the executor as `AdvanceError::Server`
 	/// so `is_server_rejection` routes it to `on_rejection` instead of the

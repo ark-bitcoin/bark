@@ -16,7 +16,7 @@ use bark::vtxo::{VtxoLockHolder, VtxoState};
 use server_log::{AttemptingRound, NoRoundPayments, RestartMissingVtxoSigs, RoundFinished, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
-use ark_testing::{TestContext, btc, require_bark_version, sat, secs, signed_sat};
+use ark_testing::{TestContext, btc, is_bark_version, require_bark_version, sat, secs, signed_sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
@@ -72,7 +72,9 @@ async fn refresh_all() {
 	ctx.refresh_all(&srv, &[&bark1]).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(400_000)).await;
 
-	// We want bark2 to have a refresh, board, round and oor vtxo
+	// We want bark2 to have change (split in two on bark > 0.5.0), board
+	// and oor vtxos
+	let nb_change = if is_bark_version!(> "0.5.0") { 2 } else { 1 };
 	let pk1 = bark1.address().await;
 	let pk2 = bark2.address().await;
 	bark2.send_oor(&pk1, sat(20_000)).await; // generates change
@@ -80,7 +82,7 @@ async fn refresh_all() {
 	bark2.board(sat(20_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	assert_eq!(3, bark2.vtxos().await.len());
+	assert_eq!(2 + nb_change, bark2.vtxos().await.len());
 	ctx.refresh_all(&srv, &[&bark2]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	assert_eq!(1, bark2.vtxos().await.len());

@@ -47,6 +47,7 @@ use server_rpc::{protos, TryFromBytes};
 
 use crate::{Wallet, WalletVtxo};
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId, BASE_RETRY_BACKOFF};
+use crate::arkoor::split_change_amount;
 use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::subsystem::{OffboardMovement, Subsystem};
@@ -108,6 +109,10 @@ pub enum OffboardKind {
 		/// Holds the arkoor change. Must differ from `arkoor_key_index`: the
 		/// arkoor builder refuses a change output paying the destination.
 		change_key_index: u32,
+		/// Change piece amounts fixed at start. `None` when persisted by a
+		/// pre-split bark, meaning one whole change output.
+		#[serde(default, with = "crate::utils::serde::opt_amount_vec_sat")]
+		change_pieces: Option<Vec<Amount>>,
 	},
 }
 
@@ -490,10 +495,17 @@ pub(crate) async fn start_offboard(
 			let (_, change_key_index) = wallet.derive_store_next_keypair().await
 				.context("failed to create new change keypair")?;
 
+			let input_total = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+			let change = input_total.checked_sub(amount + fee)
+				.context("selected inputs don't cover amount plus fee")?;
+
 			(amount, fee, OffboardKind::SendOnchain {
 				input_vtxo_ids: vtxos.iter().map(|v| v.id()).collect(),
 				arkoor_key_index,
 				change_key_index,
+				change_pieces: Some(split_change_amount(
+					change, amount + fee, wallet.config().change_vtxo_split_factor,
+				)),
 			})
 		},
 	};
@@ -546,7 +558,7 @@ async fn arkoor_split_offboard(
 	action: &Offboard,
 ) -> Result<Progress, AdvanceError> {
 	let OffboardKind::SendOnchain {
-		input_vtxo_ids, arkoor_key_index, change_key_index,
+		input_vtxo_ids, arkoor_key_index, change_key_index, change_pieces,
 	} = &action.kind
 	else {
 		return Err(anyhow!("arkoor_split_offboard called for non-SendOnchain kind").into());
@@ -569,7 +581,9 @@ async fn arkoor_split_offboard(
 		policy: VtxoPolicy::new_pubkey(keypair.public_key()),
 	};
 	let arkoor = wallet
-		.create_checkpointed_arkoor_with_vtxos(split_destination, inputs.into_iter(), change_keypair)
+		.create_checkpointed_arkoor_with_vtxos(
+			split_destination, inputs.into_iter(), change_keypair, change_pieces.clone(),
+		)
 		.await
 		.context("error preparing offboard vtxos with arkoor")?;
 

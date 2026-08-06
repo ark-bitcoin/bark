@@ -408,8 +408,55 @@ async fn max_vtxo_amount() {
 async fn max_vtxo_exit_depth() {
 	let ctx = TestContext::new("server/max_vtxo_exit_depth").await;
 
-	// Board VTXOs start at exit depth 1. Each OOR adds +2 (checkpoint + arkoor),
-	// so after 5 arkoors the resulting VTXO has depth 9, sixth should fail.
+	// Board VTXOs start at exit depth 1. Each OOR adds +2 (checkpoint + arkoor).
+	// Full-balance self-sends leave no change, so the wallet holds a single VTXO
+	// chain: depth 1 + 2k after k sends. The fifth send spends depth 9 (allowed)
+	// into depth 11, so the sixth send's input meets the maximum of 10.
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.max_vtxo_exit_depth = 10;
+	}).create().await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	// The wallet itself skips inputs that meet the server's advertised depth
+	// limit, so to exercise the server-side check we proxy the server and
+	// advertise a higher limit, making bark submit the over-depth cosign
+	// request.
+	#[derive(Clone)]
+	struct Proxy;
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn get_ark_info(
+			&self, upstream: &mut ArkClient, req: protos::Empty,
+		) -> Result<protos::ArkInfo, tonic::Status> {
+			let mut info = upstream.get_ark_info(req).await?.into_inner();
+			info.max_vtxo_exit_depth = 100;
+			Ok(info)
+		}
+	}
+	let proxy = srv.start_proxy_with_mailbox(Proxy, ()).await;
+
+	let bark1 = ctx.bark("bark1", &proxy.address).funded(sat(1_000_000)).create().await;
+
+	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	for _ in 0..5 {
+		bark1.send_oor(&bark1.address().await, sat(800_000)).await;
+	}
+
+	// Sixth OOR should fail: its input VTXO has exit depth 11 which
+	// meets the server maximum.
+	let err = bark1.try_send_oor(&bark1.address().await, sat(800_000), true).await
+		.unwrap_err().to_alt_string();
+	assert!(
+		err.contains("exit depth"),
+		"expected exit depth rejection, got: {err}",
+	);
+}
+
+#[tokio::test]
+async fn wallet_skips_vtxos_at_exit_depth_limit() {
+	let ctx = TestContext::new("server/wallet_skips_vtxos_at_exit_depth_limit").await;
+
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.max_vtxo_exit_depth = 10;
 	}).create().await;
@@ -419,18 +466,46 @@ async fn max_vtxo_exit_depth() {
 
 	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
+	// Full-balance self-sends build a single chain: depth 11 after 5 sends.
 	for _ in 0..5 {
-		bark1.send_oor(&bark1.address().await, sat(100_000)).await;
+		bark1.send_oor(&bark1.address().await, sat(800_000)).await;
 	}
 
-	// Sixth OOR should fail — the change VTXO from the first OOR has exit depth 9
-	// which meets the server maximum.
-	let err = bark1.try_send_oor(&bark1.address().await, sat(100_000), true).await
+	// The wallet's only VTXO now meets the server's depth limit. Input
+	// selection skips VTXOs the server would reject, so the send fails
+	// as insufficient funds instead of a doomed cosign request.
+	let err = bark1.try_send_oor(&bark1.address().await, sat(800_000), true).await
 		.unwrap_err().to_alt_string();
 	assert!(
-		err.contains("exit depth"),
-		"expected exit depth rejection, got: {err}",
+		err.contains("Insufficient money"),
+		"expected insufficient money, got: {err}",
 	);
+}
+
+#[tokio::test]
+async fn change_split_avoids_exit_depth_limit() {
+	let ctx = TestContext::new("server/change_split_avoids_exit_depth_limit").await;
+
+	// Change is split in two on every send, so each payment leaves a shallower
+	// change sibling behind instead of deepening a single chain. All ten sends
+	// succeed, where a single change chain would hit the depth limit at the
+	// sixth send.
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.max_vtxo_exit_depth = 10;
+	}).create().await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_500_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(5_000)).create().await;
+
+	bark1.board_and_confirm_and_register(&ctx, sat(1_000_000)).await;
+
+	for _ in 0..10 {
+		bark1.send_oor(&bark2.address().await, sat(10_000)).await;
+	}
+
+	assert_eq!(900_000, bark1.spendable_balance().await.to_sat());
+	assert_eq!(100_000, bark2.spendable_balance().await.to_sat());
 }
 
 #[tokio::test]

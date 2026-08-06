@@ -21,7 +21,8 @@ use bitcoin_ext::rpc::BitcoinRpcExt;
 use server_rpc::protos::{self, lightning_payment_status};
 
 use ark_testing::{
-	Bark, TestContext, btc, require_bark_version, require_bitcoind_chain_source, sat, signed_sat,
+	Bark, TestContext, btc, is_bark_version, require_bark_version, require_bitcoind_chain_source,
+	sat, signed_sat,
 };
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
@@ -309,7 +310,14 @@ async fn exit_oor() {
 
 	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark2.onchain_balance().await, sat(1_094_994));
+	// bark > 0.5.0 splits the sender's change, which adds sibling outputs
+	// to the checkpoint tx in bark2's exit package and raises the exit cost.
+	let expected = if is_bark_version!(> "0.5.0") {
+		sat(1_094_779)
+	} else {
+		sat(1_094_994)
+	};
+	assert_eq!(bark2.onchain_balance().await, expected);
 }
 
 #[tokio::test]
@@ -1098,8 +1106,12 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark2.progress_exit().await;
 
 	await_propagation(&ctx, &bark2, &bark1).await;
-	assert_eq!(bark1.list_exits().await.len(), 1, "We should have one exit");
-	assert_eq!(bark2.list_exits().await.len(), 2, "We have two exits");
+	// bark > 0.5.0 splits change in two and spends the deepest vtxos first, so
+	// the final holdings spread over more vtxos and each side exits a different
+	// set of leaves than it would from a single change chain.
+	let split = is_bark_version!(> "0.5.0");
+	assert_eq!(bark1.list_exits().await.len(), if split { 2 } else { 1 });
+	assert_eq!(bark2.list_exits().await.len(), if split { 3 } else { 2 });
 
 	complete_exit(&ctx, &bark1).await;
 	complete_exit(&ctx, &bark2).await;
@@ -1113,9 +1125,9 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark1.onchain_balance().await, sat(497_968));
+	assert_eq!(bark1.onchain_balance().await, if split { sat(495_867) } else { sat(497_968) });
 	assert_eq!(bark1.onchain_utxos().await.len(), 2, "We should have board change and a claim UTXO");
-	assert_eq!(bark2.onchain_balance().await, sat(1_286_175));
+	assert_eq!(bark2.onchain_balance().await, if split { sat(1_361_500) } else { sat(1_286_175) });
 	assert_eq!(bark2.onchain_utxos().await.len(), 2, "We should have the funding and a claim UTXO");
 }
 

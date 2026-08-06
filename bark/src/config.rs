@@ -194,6 +194,13 @@ pub struct Config {
 	/// Default value: 60
 	pub daemon_sync_interval_secs: u64,
 
+	/// The number of pieces to split arkoor change into, between 1 (no
+	/// splitting) and 3 (the server's default arkoor fanout limit of 4,
+	/// minus the payment output).
+	///
+	/// Default value: 2
+	pub change_vtxo_split_factor: u8,
+
 	/// When set, the daemon skips all automatic wallet syncing — startup
 	/// sync, the fast/slow sync intervals, round event subscription, and
 	/// the mailbox subscription. Only the server connection heartbeat
@@ -231,6 +238,7 @@ impl Config {
 			offboard_lost_tx_grace_period_secs: 3600,
 			daemon_sync_interval_secs: 60,
 			daemon_manual_sync: false,
+			change_vtxo_split_factor: 2,
 		};
 
 		if network != Network::Bitcoin {

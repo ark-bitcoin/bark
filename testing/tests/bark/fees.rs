@@ -504,7 +504,9 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 	bark1.send_oor(bark2.address().await, sat(331)).await;
 
 	let bark2_vtxos = bark2.vtxos().await;
-	assert_eq!(bark1.vtxos().await.len(), 1);
+	// bark > 0.5.0 splits change in two
+	let nb_change = if is_bark_version!(> "0.5.0") { 2 } else { 1 };
+	assert_eq!(bark1.vtxos().await.len(), nb_change);
 	assert_eq!(bark2_vtxos.len(), 2);
 
 	let vtxo = bark2_vtxos.iter().find(|v| v.amount == sat(200_000)).unwrap();
@@ -773,9 +775,13 @@ async fn send_onchain_fee_deducted() {
 		}).as_ref(),
 	);
 
-	// Change VTXO should be board_amount - send_amount - fee
-	let [change_vtxo] = bark1.vtxos().await.try_into().expect("should have one vtxo");
-	assert_eq!(change_vtxo.amount, input_vtxo.amount - send_amount - fee);
+	// Change (split in two on bark > 0.5.0) should total
+	// board_amount - send_amount - fee
+	let nb_change = if is_bark_version!(> "0.5.0") { 2 } else { 1 };
+	let change_vtxos = bark1.vtxos().await;
+	assert_eq!(change_vtxos.len(), nb_change);
+	let change_total = change_vtxos.iter().map(|v| v.amount).sum::<Amount>();
+	assert_eq!(change_total, input_vtxo.amount - send_amount - fee);
 
 	// Verify on-chain receipt
 	ctx.generate_blocks(1).await;

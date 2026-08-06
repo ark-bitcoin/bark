@@ -103,13 +103,14 @@ async fn recovered_wallet_finds_round_vtxo() {
 	recovered.send(&recipient.ark_address().await, Amount::from_sat(99_443)).await;
 }
 
-/// Wallet recovery from seed across a long arkoor chain.
+/// Wallet recovery from seed across an arkoor change tree.
 ///
-/// Each arkoor send spends the wallet's current change and produces a new
-/// change, so a run of sends builds a deep genesis chain and accumulates many
-/// change VTXO ids in the recovery mailbox — all but the last spent into the
-/// next. Recovery must rebuild only the single unspent leaf and skip every
-/// spent intermediate change (recognised as an ancestor of the leaf), rather
+/// The first arkoor send spends the boarded VTXO; every later send spends one
+/// of the change leaves left behind. Each send splits its change in two, the
+/// change here always dwarfing the amount paid, so a run of sends builds a
+/// genesis tree and accumulates many change VTXO ids in the recovery mailbox,
+/// every spent input an ancestor of some unspent leaf. Recovery must rebuild
+/// only the unspent leaves and skip every spent intermediate change, rather
 /// than resurrecting them.
 #[tokio::test]
 async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
@@ -128,9 +129,11 @@ async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
 		sender.send(&dest, sat(1_000)).await;
 	}
 
+	// Every send consumes one VTXO and splits its change in two,
+	// so each send grows the tree by one leaf.
 	let sender_before = sender.vtxos(None).await;
-	assert_eq!(sender_before.len(), 1,
-		"sender should hold a single change VTXO at the chain tip");
+	assert_eq!(sender_before.len(), CHAIN_LEN + 1,
+		"sender should hold one change leaf per send plus one");
 
 	// Recover from the same seed into a fresh wallet.
 	let sender_mnemonic = sender.mnemonic().await;
@@ -141,13 +144,18 @@ async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
 	sender_recovered.onchain_sync().await;
 	sender_recovered.sync().await;
 
-	// Exactly the unspent chain tip is recovered — the spent intermediate
+	// Exactly the unspent leaves are recovered — the spent intermediate
 	// changes must not be resurrected.
 	let sender_after = sender_recovered.vtxos(Some(true)).await;
-	assert_eq!(sender_after.len(), 1,
-		"recovered sender wallet should hold exactly the chain-tip VTXO");
-	assert_eq!(sender_after[0].vtxo.id, sender_before[0].vtxo.id,
-		"recovered VTXO should be the chain tip");
+	assert_eq!(sender_after.len(), sender_before.len(),
+		"recovered sender wallet should hold exactly the unspent change leaves");
+	for vtxo in sender_before.iter() {
+		assert!(
+			sender_after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
+			"recovered sender wallet should rediscover the VTXO with id {:?}",
+			vtxo.vtxo.id
+		);
+	}
 
 	let recipient_before = recipient.vtxos(None).await;
 	assert_eq!(recipient_before.len(), 8, "recipient should hold 8 arkoor receive VTXOs");
@@ -359,15 +367,16 @@ async fn recovered_wallet_finds_offboard_change() {
 	let board = barkd.vtxos(None).await;
 	let board_id = board[0].vtxo.id;
 
-	// Offboard 300k on-chain; the remainder comes back as a change VTXO.
+	// Offboard 300k on-chain; the remainder comes back as change, split in
+	// two VTXOs.
 	barkd.send_onchain(&addr.to_string(), sat(300_000)).await;
 	ctx.generate_blocks(2).await;
 
 	// Wait for the change to settle spendable so we don't capture a transient
 	// locked intermediate the server already considers spent.
-	let before = wait_for_spendable_vtxos(&barkd, 1).await;
-	let change_id = before[0].vtxo.id;
-	assert_ne!(change_id, board_id, "offboard should produce a new change VTXO");
+	let before = wait_for_spendable_vtxos(&barkd, 2).await;
+	assert!(before.iter().all(|v| v.vtxo.id != board_id),
+		"offboard should produce new change VTXOs");
 
 	// Recover from the same seed.
 	let mnemonic = barkd.mnemonic().await;
@@ -378,8 +387,12 @@ async fn recovered_wallet_finds_offboard_change() {
 	recovered.sync().await;
 
 	let after = recovered.vtxos(Some(true)).await;
-	assert_eq!(after.len(), 1, "recovered wallet should hold the offboard change VTXO");
-	assert_eq!(after[0].vtxo.id, change_id, "recovered VTXO should be the offboard change");
+	assert_eq!(after.len(), before.len(),
+		"recovered wallet should hold the offboard change VTXOs");
+	for vtxo in before.iter() {
+		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
+			"recovered wallet should rediscover the change VTXO {:?}", vtxo.vtxo.id);
+	}
 
 	// Spend recovered VTXOs in a payment
 	recovered.send(&recipient.ark_address().await, Amount::from_sat(698_505)).await;
