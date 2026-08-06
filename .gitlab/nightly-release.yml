@@ -62,6 +62,7 @@ build-and-push-to-docker-nightly:
   stage: release
   tags:
     - privileged
+  extends: .registry-auth
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
   needs:

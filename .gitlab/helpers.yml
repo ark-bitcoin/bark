@@ -38,3 +38,11 @@ check-gitlab-release:
     - prechecks
   script:
     - bash ./contrib/check-gitlab-release.sh "${CI_COMMIT_TAG}"
+
+# Points buildah/podman at auth credentials injected by GitLab as a File-type
+# CI/CD variable (`CONTAINER_AUTH_FILE`, masked+protected). The variable must
+# hold a valid containers-auth.json with entries for registry.2nd.dev and
+# docker.io. Extended by release jobs that push or pull private images.
+.registry-auth:
+  variables:
+    REGISTRY_AUTH_FILE: "$CONTAINER_AUTH_FILE"

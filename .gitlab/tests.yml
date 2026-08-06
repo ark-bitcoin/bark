@@ -94,7 +94,7 @@ test-unit:
     - build-test-archives
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "cargo nextest run --archive-file target/ci/unit-tests.tar.zst"
+    - nix develop .#default --command bash -c "just test-unit-prebuilt"
 
 test-doctests:
   interruptible: true
@@ -104,7 +104,7 @@ test-doctests:
     - prechecks
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "cargo test --doc"
+    - nix develop .#default --command bash -c "just test-doc"
 
 use-bark-as-dependency:
   interruptible: true
@@ -113,14 +113,7 @@ use-bark-as-dependency:
   needs:
     - prechecks
   script:
-    - |
-      nix develop .#default --command bash -c "
-        cargo init barktest &&
-        cd barktest &&
-        cargo add bark-wallet &&
-        cargo update &&
-        cargo build
-      "
+    - nix develop .#default --command bash -c "just check-use-bark-as-dependency"
 
 bark-as-libs:
   interruptible: true
@@ -129,21 +122,7 @@ bark-as-libs:
   needs:
     - prechecks
   script:
-    - |
-      nix develop .#default --command bash -c "
-        cargo check -p ark-lib                                               &&
-        cargo check -p ark-lib --no-default-features                         &&
-        cargo check -p bark-bitcoin-ext                                      &&
-        cargo check -p bark-bitcoin-ext --no-default-features                &&
-        cargo check -p bark-wallet                                           &&
-        cargo check -p bark-wallet -F native --no-default-features           &&
-        cargo check -p bark-json                                             &&
-        cargo check -p bark-json --no-default-features                       &&
-        cargo check -p bark-rest                                             &&
-        cargo check -p bark-rest --no-default-features                       &&
-        cargo check -p bark-rest-client                                      &&
-        echo DONE
-      "
+    - nix develop .#default --command bash -c "just check-bark-as-libs"
 
 bark-wasm:
   interruptible: true
@@ -152,19 +131,7 @@ bark-wasm:
   needs:
     - test-unit
   script:
-    - |
-      nix develop .#default --command bash -c "
-        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
-          -p ark-lib --features wasm-web &&
-        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
-          -p bark-bitcoin-ext --features wasm-web &&
-        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
-          -p bark-server-rpc --features tonic-web &&
-        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
-          -p bark-wallet --features wasm-web &&
-        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
-          -p bark-wallet --features wasm-web,indexed-db
-      "
+    - nix develop .#default --command bash -c "just build-bark-wasm"
 
 bark-wasm-indexed-db-tests:
   interruptible: true
@@ -174,10 +141,7 @@ bark-wasm-indexed-db-tests:
   needs:
     - test-unit
   script:
-    - |
-      nix develop .#default --command bash -c "
-        wasm-pack test --headless --firefox bark --no-default-features --features 'indexed-db wasm-web' --lib
-      "
+    - nix develop .#default --command bash -c "just test-bark-wasm-indexed-db"
 
 lib-msrv:
   interruptible: true
@@ -186,11 +150,7 @@ lib-msrv:
   needs:
     - prechecks
   script:
-    - |
-      nix develop .#msrv-lib --command bash -c "
-        cd testing/msrv-lib &&
-        cargo build
-      "
+    - nix develop .#msrv-lib --command bash -c "just build-msrv-lib"
 
 check-fuzz:
   interruptible: true
@@ -200,10 +160,7 @@ check-fuzz:
   needs:
     - prechecks
   script:
-    - |
-      nix develop .#default --command bash -c "
-        cargo check --manifest-path fuzz/Cargo.toml
-      "
+    - nix develop .#default --command bash -c "just check-fuzz"
 
 check-release:
   interruptible: true
@@ -212,10 +169,7 @@ check-release:
   needs:
     - prechecks
   script:
-    - |
-      nix develop .#default --command bash -c "
-        cargo check --release -p bark-cli -p bark-server
-      "
+    - nix develop .#default --command bash -c "just check-release"
 
 check-lib-arithmetic:
   interruptible: true
@@ -224,10 +178,7 @@ check-lib-arithmetic:
   needs:
     - prechecks
   script:
-    - |
-      nix develop .#default --command bash -c "
-        just check-lib-arithmetic
-      "
+    - nix develop .#default --command bash -c "just check-lib-arithmetic"
 
 bark-esplora:
   interruptible: true

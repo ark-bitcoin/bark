@@ -38,6 +38,31 @@ check-wasm-tests:
 check-lib-arithmetic:
 	cargo clippy -p ark-lib --tests
 
+check-fuzz:
+	cargo check --manifest-path fuzz/Cargo.toml
+
+check-release:
+	cargo check --release -p bark-cli -p bark-server
+
+check-bark-as-libs:
+	cargo check -p ark-lib
+	cargo check -p ark-lib --no-default-features
+	cargo check -p bark-bitcoin-ext
+	cargo check -p bark-bitcoin-ext --no-default-features
+	cargo check -p bark-wallet
+	cargo check -p bark-wallet -F native --no-default-features
+	cargo check -p bark-json
+	cargo check -p bark-json --no-default-features
+	cargo check -p bark-rest
+	cargo check -p bark-rest --no-default-features
+	cargo check -p bark-rest-client
+
+# Confirms bark-wallet is still consumable as a plain crates.io dependency.
+check-use-bark-as-dependency:
+	rm -rf barktest
+	cargo init barktest
+	cd barktest && cargo add bark-wallet && cargo update && cargo build
+
 checks: prechecks check-lib-arithmetic check-wasm-tests check
 
 check-commits:
@@ -90,6 +115,24 @@ build-codecov:
 	cargo llvm-cov clean --workspace
 	cargo build --workspace
 
+build-msrv-lib:
+	cd testing/msrv-lib && cargo build
+
+build-bark-wasm:
+	cargo build --target wasm32-unknown-unknown --lib --no-default-features \
+		-p ark-lib --features wasm-web
+	cargo build --target wasm32-unknown-unknown --lib --no-default-features \
+		-p bark-bitcoin-ext --features wasm-web
+	cargo build --target wasm32-unknown-unknown --lib --no-default-features \
+		-p bark-server-rpc --features tonic-web
+	cargo build --target wasm32-unknown-unknown --lib --no-default-features \
+		-p bark-wallet --features wasm-web
+	cargo build --target wasm32-unknown-unknown --lib --no-default-features \
+		-p bark-wallet --features wasm-web,indexed-db
+
+build-lib-wasm-release:
+	cd lib/ && cargo build --release --target wasm32-unknown-unknown --lib --features wasm-web
+
 docker-pull:
 	if [ -n "${LIGHTNINGD_DOCKER_IMAGE-""}" ]; then docker image inspect "$LIGHTNINGD_DOCKER_IMAGE" > /dev/null 2>&1 && echo "Image already exists locally." || (echo "Image not found locally. Pulling..." && docker pull "$LIGHTNINGD_DOCKER_IMAGE"); fi
 
@@ -97,6 +140,12 @@ test-unit TEST="":
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --workspace \
 		--exclude ark-testing {{TEST}}
 alias unit := test-unit
+
+test-unit-prebuilt:
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/unit-tests.tar.zst
+
+test-doc:
+	cargo test --doc
 
 test-unit-codecov TEST="":
 	cargo llvm-cov nextest --profile {{NEXTEST_PROFILE}} --workspace \
@@ -204,6 +253,9 @@ test: test-unit test-integration test-integration-esplora test-integration-mempo
 test-wasm TEST="": ensure-build-bins docker-pull
 	CHAIN_SOURCE=esplora cargo run -p wasm-testing --bin wasm-test-suite --features=bin -- "{{TEST}}"
 alias wasm := test-wasm
+
+test-bark-wasm-indexed-db:
+	wasm-pack test --headless --firefox bark --no-default-features --features 'indexed-db wasm-web' --lib
 
 codecov-report:
 	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"
@@ -317,6 +369,14 @@ generate-bark-rest-client: dump-bark-rest-openapi-schema
 	cp bark-rest/helpers/models.rs {{BARK_REST_CLIENT_DIR}}/src/models/mod.rs
 
 generate-static-files: dump-server-sql-schema dump-bark-sql-schema generate-bark-rest-client
+
+install-zigbuild:
+	cargo install cargo-zigbuild@0.21.8 --locked
+
+# `build-msrv-lib` is invoked separately from the Dockerfile because it needs
+# the .#msrv-lib nix shell rather than .#default.
+[doc("pre-run every CI recipe so the CI base image ships with a warm build cache")]
+ci-warmup: check build check-fuzz check-release check-bark-as-libs test-doc test-bark-wasm-indexed-db build-bark-wasm build-lib-wasm-release check-lib-arithmetic check-use-bark-as-dependency build-unit-tests-ci build-ci
 
 cachix-push:
 	nix develop .#default  --profile /tmp/bark-shell-dev      -c true

@@ -82,7 +82,9 @@ build-and-push-server-to-registry-githash:
   stage: release
   tags:
     - privileged
-  extends: .master-and-mr-release-rules
+  extends:
+    - .master-and-mr-release-rules
+    - .registry-auth
   needs:
     - parse-server-githash
     - build-server-githash
