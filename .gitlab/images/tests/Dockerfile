@@ -139,7 +139,7 @@ RUN mkdir -p /home/nixuser/.cargo && \
 RUN cat /home/nixuser/.cargo/config.toml
 
 RUN echo "clone bark" && \
-	git clone -b ci-credentials https://gitlab.com/ark-bitcoin/bark.git
+	git clone -b master https://gitlab.com/ark-bitcoin/bark.git
 
 RUN echo "pre-build bark" && \
 	cd /tmp && \
@@ -151,6 +151,11 @@ RUN echo "pre-build bark" && \
 	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
 	just release-server && \
 	just release-bark
+
+RUN echo "extra-trusted-users = nixuser" | sudo tee -a /etc/nix/nix.conf && \
+	echo "extra-substituters = https://bark.cachix.org" | sudo tee -a /etc/nix/nix.conf && \
+	echo "extra-trusted-public-keys = bark.cachix.org-1:Iaihe4ABbOQz1CHBoYUZS/sHVAcISasJZ+lL3I4gRB0=" | sudo tee -a /etc/nix/nix.conf
+ENV NIX_CONFIG="accept-flake-config = true"
 
 RUN echo "build nix devShells and pin as GC roots" && \
 	. /etc/profile.d/nix.sh && \
