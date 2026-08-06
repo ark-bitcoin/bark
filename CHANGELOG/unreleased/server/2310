@@ -1,0 +1,9 @@
+- Negotiate zstd compression on the gRPC services
+  The Ark and mailbox services now accept zstd-compressed requests and
+  compress responses for clients that advertise support; older clients
+  are unaffected. Only responses are compressed, so this shrinks the
+  download path (most notably mailbox reads, which ship batches of VTXO
+  data, by roughly 50-60%) rather than client uploads. This helps
+  low-bandwidth clients. Works over both native gRPC and gRPC-Web, so
+  wasm clients benefit too.
+  [#2310](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2310)

@@ -57,7 +57,7 @@ thiserror = { version = "2.0.12" }
 log = { version = "0.4.27", features = [ "kv", "kv_serde" ] }
 serde = { version = "1.0.219" }
 # grpc clients
-tonic = { version = "0.14.2", features = [ "tls-webpki-roots", "gzip" ] }
+tonic = { version = "0.14.2", features = [ "tls-webpki-roots", "gzip", "zstd" ] }
 tower = "0.5.2"
 hyper = "1.6.0"
 hyper-socks2 = { version = "0.9.1", default-features = false }

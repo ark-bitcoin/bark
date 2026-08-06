@@ -1,0 +1,5 @@
+- Advertise zstd compression to the server
+  bark advertises zstd on its gRPC connections so capable servers compress
+  their responses, which is where nearly all the savings are. Its own
+  requests are left uncompressed.
+  [#2310](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2310)
