@@ -25,6 +25,7 @@ use crate::ServerState;
 		list_receive_statuses,
 		cancel_receive,
 		pay,
+		get_send_status,
 	),
 	components(schemas(
 		bark_json::web::LightningInvoiceRequest,
@@ -33,6 +34,7 @@ use crate::ServerState;
 		bark_json::cli::LightningReceiveInfo,
 		bark_json::web::LightningPayRequest,
 		bark_json::web::LightningPayResponse,
+		bark_json::cli::LightningSendInfo,
 	)),
 	tags((name = "lightning", description = "Create Lightning invoices and track receives."))
 )]
@@ -44,6 +46,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/receives/invoice/for-address", post(generate_invoice_for_address))
 		.route("/receives/{identifier}", get(get_receive_status).delete(cancel_receive))
 		.route("/receives", get(list_receive_statuses))
+		.route("/sends/{identifier}", get(get_send_status))
 		.route("/pay", post(pay))
 }
 
@@ -159,6 +162,46 @@ pub async fn get_receive_status(
 
 #[utoipa::path(
 	get,
+	path = "/sends/{identifier}",
+	summary = "Get send status",
+	params(
+		("identifier" = String, Path, description = "Payment hash or invoice string to search for"),
+	),
+	responses(
+		(status = 200, description = "Returns the Lightning send status", body = bark_json::cli::LightningSendInfo),
+		(status = 400, description = "Bad request", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns the status of a specified outgoing Lightning payment, identified by \
+		its payment hash or invoice string. The `state` field tracks the payment lifecycle \
+		from `start` through `paid`; the preimage is included once the payment succeeded. \
+		If the wallet does not recognize the payment hash, it will return `unknown`. \
+		This is a read on the status in the db, so it does not trigger any `sync` before \
+		checking the state.",
+	tag = "lightning"
+)]
+#[debug_handler]
+pub async fn get_send_status(
+	State(state): State<ServerState>,
+	Path(identifier): Path<String>,
+) -> HandlerResult<Json<bark_json::cli::LightningSendInfo>> {
+	let wallet = state.require_wallet()?;
+
+	let payment_hash = if let Ok(h) = ark::lightning::PaymentHash::from_str(&identifier) {
+		h
+	} else if let Ok(i) = Bolt11Invoice::from_str(&identifier) {
+		i.into()
+	} else {
+		badarg!("identifier is not a valid payment hash or invoice");
+	};
+
+	let state = wallet.lightning_send_state(payment_hash).await
+		.context("Failed to get lightning send status")?;
+	Ok(axum::Json(bark_json::cli::LightningSendInfo::from_state(payment_hash, &state)))
+}
+
+#[utoipa::path(
+	get,
 	path = "/receives",
 	summary = "List all pending receive statuses",
 	responses(
@@ -253,7 +296,7 @@ pub async fn pay(
 
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
 
-	if let Ok(invoice) = Bolt11Invoice::from_str(&body.destination) {
+	let invoice = if let Ok(invoice) = Bolt11Invoice::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-11 invoices");
 		}
@@ -275,5 +318,6 @@ pub async fn pay(
 
 	Ok(axum::Json(bark_json::web::LightningPayResponse {
 		message: "Payment initiated successfully".to_string(),
+		payment_hash: Some(invoice.payment_hash()),
 	}))
 }

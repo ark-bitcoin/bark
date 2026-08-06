@@ -683,6 +683,7 @@ pub async fn send(
 			wallet.send_arkoor_payment(&addr, amount).await?;
 			return Ok(axum::Json(bark_json::web::SendResponse {
 				message: "Payment sent successfully".to_string(),
+				payment_hash: None,
 			}));
 		},
 		// Explicitly handle Arkade addresses
@@ -691,22 +692,22 @@ pub async fn send(
 		Err(_) => {}
 	};
 
-	if let Ok(inv) = Bolt11Invoice::from_str(&body.destination) {
+	let invoice = if let Ok(inv) = Bolt11Invoice::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-11 invoices");
 		}
-		wallet.pay_lightning_invoice(inv, amount, false).await?;
+		wallet.pay_lightning_invoice(inv, amount, false).await?
 	} else if let Ok(offer) = Offer::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-12 offers");
 		}
-		wallet.pay_lightning_offer(offer, amount, false).await?;
+		wallet.pay_lightning_offer(offer, amount, false).await?
 	} else if let Ok(addr) = LightningAddress::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for Lightning addresses")?;
-		wallet.pay_lightning_address(&addr, amount, body.comment, false).await?;
+		wallet.pay_lightning_address(&addr, amount, body.comment, false).await?
 	} else if let Ok(lnurl) = LnUrl::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for LNURL")?;
-		wallet.pay_lnurl(&lnurl, amount, body.comment, false).await?;
+		wallet.pay_lnurl(&lnurl, amount, body.comment, false).await?
 	} else if let Ok(addr) = bitcoin::Address::from_str(&body.destination) {
 		let _checked_addr = addr
 			.require_network(wallet.network().await?)
@@ -717,10 +718,11 @@ pub async fn send(
 	} else {
 		badarg!("Argument is not a valid destination. Supported are: \
 			ark addresses, bolt11 invoices, bolt12 offers and lightning addresses");
-	}
+	};
 
 	Ok(axum::Json(bark_json::web::SendResponse {
 		message: "Payment sent successfully".to_string(),
+		payment_hash: Some(invoice.payment_hash()),
 	}))
 }
 

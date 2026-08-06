@@ -60,6 +60,7 @@ Class | Method | HTTP request | Description
 *LightningApi* | [**generate_invoice**](docs/LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | Create a BOLT11 invoice
 *LightningApi* | [**generate_invoice_for_address**](docs/LightningApi.md#generate_invoice_for_address) | **POST** /api/v1/lightning/receives/invoice/for-address | Create a BOLT11 invoice for an Ark address
 *LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
+*LightningApi* | [**get_send_status**](docs/LightningApi.md#get_send_status) | **GET** /api/v1/lightning/sends/{identifier} | Get send status
 *LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses
 *LightningApi* | [**pay**](docs/LightningApi.md#pay) | **POST** /api/v1/lightning/pay | Send a Lightning payment
 *NotificationsApi* | [**wait_notification**](docs/NotificationsApi.md#wait_notification) | **GET** /api/v1/notifications/wait | Long-poll for wallet notifications
@@ -218,6 +219,7 @@ Class | Method | HTTP request | Description
  - [LightningReceiveFees](docs/LightningReceiveFees.md)
  - [LightningReceiveInfo](docs/LightningReceiveInfo.md)
  - [LightningSendFees](docs/LightningSendFees.md)
+ - [LightningSendInfo](docs/LightningSendInfo.md)
  - [MailboxSyncResponse](docs/MailboxSyncResponse.md)
  - [MnemonicResponse](docs/MnemonicResponse.md)
  - [Movement](docs/Movement.md)

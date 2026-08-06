@@ -5,6 +5,7 @@ use bitcoin::secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 
 use ark::VtxoId;
+use ark::lightning::PaymentHash;
 use ark::offboard::OffboardRequest;
 use ark::tree::signed::UnlockHash;
 use ark::vtxo::VtxoPolicyKind;
@@ -358,6 +359,11 @@ pub struct SendRequest {
 pub struct SendResponse {
 	/// Success message
 	pub message: String,
+	/// The payment hash, when the destination resolved to a lightning
+	/// payment. Can be used to poll the payment status.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
+	pub payment_hash: Option<PaymentHash>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -444,6 +450,11 @@ pub struct LightningPayRequest {
 pub struct LightningPayResponse {
 	/// Success message
 	pub message: String,
+	/// The payment hash of the lightning payment. Can be used to poll the
+	/// payment status.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
+	pub payment_hash: Option<PaymentHash>,
 }
 
 #[derive(Serialize, Deserialize)]

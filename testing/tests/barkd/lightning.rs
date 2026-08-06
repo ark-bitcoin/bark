@@ -5,6 +5,7 @@ use std::time::Duration;
 use ark_testing::{btc, lightning_test, require_bark_version, sat, Captaind, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::context::LightningPaymentSetup;
+use bark_rest_client::apis::lightning_api;
 
 /// Verify that lightning receives are claimed via the mailbox path by
 /// running barkd in `daemon_manual_sync` mode and driving the claim with
@@ -77,3 +78,24 @@ async fn ln_receive_via_mailbox(
 lightning_test!(ln_receive_via_mailbox, |cfg| {
 	cfg.invoice_check_interval = Duration::from_secs(1);
 });
+
+/// `GET /lightning/sends/{identifier}` reports `unknown` for a payment
+/// hash the wallet has never seen and rejects invalid identifiers.
+#[tokio::test]
+async fn lightning_send_status_unknown_for_unseen_hash() {
+	let ctx = TestContext::new("barkd/lightning_send_status_unknown_for_unseen_hash").await;
+
+	let srv = ctx.captaind("server").create().await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
+
+	let config = barkd.client_config();
+	let hash = "0000000000000000000000000000000000000000000000000000000000000000";
+	let info = lightning_api::get_send_status(&config, hash).await
+		.expect("send status for an unseen hash should not error");
+	assert_eq!(info.state, "unknown");
+	assert_eq!(info.payment_hash.to_string(), hash);
+	assert_eq!(info.preimage, None);
+
+	lightning_api::get_send_status(&config, "lnbc1invalid").await
+		.expect_err("an identifier that is neither a hash nor an invoice should be rejected");
+}
