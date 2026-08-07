@@ -8,6 +8,8 @@ Below is a more detailed summary for each version.
 
 # v0.6.0
 
+Special thanks to Philipp Hoenisch of Lendasat for the report behind a fix.
+
 - `server`
   - Stop lightning receives from granting vtxos too deep to claim
     Lightning claims and payment revocations are no longer refused for exceeding
@@ -17,6 +19,8 @@ Below is a more detailed summary for each version.
     [#2331](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2331)
 
 # v0.5.0
+
+We’re grateful to 0xaudron, benthecarman and Greg Sanders for the testing behind several of this release’s security fixes.
 
 - `bark`
   - Forward Lightning receives to Ark addresses
