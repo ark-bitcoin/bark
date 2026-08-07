@@ -1,5 +1,5 @@
 use std::cmp::PartialOrd;
-use std::ops;
+use std::{iter, ops};
 
 use bitcoin::{Amount, FeeRate, ScriptBuf, Weight};
 
@@ -531,7 +531,8 @@ pub fn validate_and_subtract_fee_min_dust(
 ///   behavior.
 ///
 /// * `vtxos` - An iterable input of `VtxoFeeInfo`, where each element contains the amount and
-///   the number of blocks until the VTXO expires, which is relevant for fee calculation.
+///   the number of blocks until the VTXO expires, which is relevant for fee calculation. The
+///   fee doesn't depend on the order they are provided in.
 ///
 /// # Returns
 ///
@@ -563,31 +564,38 @@ pub fn calc_ppm_expiry_fee(
 	ppm_expiry_table: &Vec<PpmExpiryFeeEntry>,
 	vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
 ) -> Option<Amount> {
+	// Charge per table entry (soonest-expiring first) instead of per VTXO: the last
+	// VTXO charged only pays on part of its amount, so charging one by one makes the
+	// fee depend on the order they come in. The leading pair collects the VTXOs no
+	// entry applies to, which pay nothing.
+	let mut entry_totals = iter::once((Amount::ZERO, PpmFeeRate::ZERO))
+		.chain(ppm_expiry_table.iter().map(|entry| (Amount::ZERO, entry.ppm)))
+		.collect::<Vec<(Amount, PpmFeeRate)>>();
+	for v in vtxos {
+		// The table order is expected to be validated by the server config.
+		let i = ppm_expiry_table
+			.iter()
+			.rposition(|entry| v.expiry_blocks >= entry.expiry_blocks_threshold)
+			.map_or(0, |i| i.saturating_add(1));
+		entry_totals[i].0 = entry_totals[i].0.checked_add(v.amount)?;
+	}
+
 	// We use the PpmFee type to accumulate sub-satoshi fee values which we can later round up
 	// to the nearest satoshi.
 	let mut total_fee = PpmFee::ZERO;
 	let mut remaining = fee_chargeable_amount;
-	for v in vtxos {
+	for (amount, ppm) in entry_totals {
 		// If a fee_chargeable_amount was provided, we should only account for that amount, else we
 		// should assume every VTXO will be fully spent.
 		let fee_chargeable_amount = if let Some(ref mut remaining) = remaining {
-			let amount = v.amount.min(*remaining);
+			let amount = amount.min(*remaining);
 			*remaining -= amount;
 			amount
 		} else {
-			v.amount
+			amount
 		};
 
-		// We assume the table is sorted by expiry_blocks_threshold in ascending order
-		let entry = ppm_expiry_table
-			.iter()
-			.rev()
-			.find(|entry| v.expiry_blocks >= entry.expiry_blocks_threshold);
-
-		// If we can't find an entry that is suitable, we assume no fee is necessary
-		if let Some(entry) = entry {
-			total_fee = total_fee.checked_add(fee_chargeable_amount * entry.ppm)?;
-		}
+		total_fee = total_fee.checked_add(fee_chargeable_amount * ppm)?;
 	}
 	total_fee.to_amount_ceil()
 }
@@ -1002,5 +1010,61 @@ mod tests {
 		let theirs = calc_ppm_expiry_fee(None, &table, theirs).unwrap();
 		assert_eq!(theirs, Amount::from_sat(3));
 		assert!(theirs >= ours);
+	}
+
+	/// A chargeable amount below the VTXO sum leaves one VTXO partially charged,
+	/// so the fee must not depend on the order the VTXOs come in: the client
+	/// selects them soonest-expiring first, while the server charges them in the
+	/// order they arrived on the wire.
+	#[test]
+	fn test_ppm_expiry_fee_ignores_vtxo_order() {
+		// Take the given slice and generate every single order permutation so we can validate that
+		// the result remains consistent regardless of order.
+		fn permutations(vtxos: &[VtxoFeeInfo]) -> Vec<Vec<VtxoFeeInfo>> {
+			if vtxos.len() <= 1 {
+				return vec![vtxos.to_vec()];
+			}
+			let mut out = Vec::new();
+			for i in 0..vtxos.len() {
+				let mut rest = vtxos.to_vec();
+				let head = rest.remove(i);
+				for mut p in permutations(&rest) {
+					p.insert(0, head);
+					out.push(p);
+				}
+			}
+			out
+		}
+
+		let ppm_expiry_table = vec![
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 0, ppm: PpmFeeRate(2_000) },
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 1_008, ppm: PpmFeeRate(4_000) },
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 2_016, ppm: PpmFeeRate(5_000) },
+		];
+		// A send-onchain of 208,246 sats out of five VTXOs worth 209,705, spanning
+		// all three brackets.
+		let vtxos = vec![
+			VtxoFeeInfo { amount: Amount::from_sat(27_422), expiry_blocks: 454 },
+			VtxoFeeInfo { amount: Amount::from_sat(102_408), expiry_blocks: 455 },
+			VtxoFeeInfo { amount: Amount::from_sat(68_456), expiry_blocks: 1_122 },
+			VtxoFeeInfo { amount: Amount::from_sat(1_320), expiry_blocks: 2_046 },
+			VtxoFeeInfo { amount: Amount::from_sat(10_099), expiry_blocks: 2_395 },
+		];
+
+		// Soonest-expiring first: 27,422 and 102,408 at 2,000 ppm, 68,456 at 4,000
+		// ppm, then 1,320 and 8,640 of the last VTXO at 5,000 ppm, leaving 1,459
+		// sats uncharged. 583.284 sats, rounded up.
+		let chargeable = Some(Amount::from_sat(208_246));
+		let expected = Amount::from_sat(584);
+
+		let orders = permutations(&vtxos);
+		assert_eq!(orders.len(), 120);
+		for order in orders {
+			assert_eq!(
+				calc_ppm_expiry_fee(chargeable, &ppm_expiry_table, order.clone()),
+				Some(expected),
+				"fee changed for order {:?}", order.iter().map(|v| v.amount).collect::<Vec<_>>(),
+			);
+		}
 	}
 }
