@@ -27,7 +27,7 @@ use ark_testing::{Captaind, TestContext, btc, lightning_test, require_bark_versi
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::context::LightningPaymentSetup;
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::{FutureExt, ToAltString};
+use ark_testing::util::{poll_interval, FutureExt, ToAltString};
 use ark_testing::exit::complete_exit;
 
 
@@ -650,17 +650,26 @@ async fn server_generated_invoice_has_configured_expiry() {
 	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
 	let payment_hash = invoice.payment_hash().to_byte_array().to_vec();
 
-	// Wait for the invoice to expire and for the server to process the cancellation
-	tokio::time::sleep(cfg_invoice_expiry + srv.config().invoice_check_interval).await;
+	tokio::time::sleep(cfg_invoice_expiry).await;
 
-	// Verify the server has canceled the HTLC subscription due to invoice expiry
+	// Poll for the cancellation instead of a single fixed-delay check: the
+	// expiry sweep runs on a periodic tick, so a one-shot sleep can race it
+	// under CI load.
 	let mut rpc = srv.get_public_rpc().await;
-	let resp = rpc.check_lightning_receive(protos::CheckLightningReceiveRequest {
-		hash: payment_hash,
-		wait: false,
-	}).await.unwrap().into_inner();
-	assert_eq!(resp.status, protos::LightningReceiveStatus::Canceled as i32,
-		"expected CANCELED status, got {:?}", resp.status);
+	let mut status = protos::LightningReceiveStatus::Created as i32;
+	for _ in 0..50 {
+		let resp = rpc.check_lightning_receive(protos::CheckLightningReceiveRequest {
+			hash: payment_hash.clone(),
+			wait: false,
+		}).await.unwrap().into_inner();
+		status = resp.status;
+		if status == protos::LightningReceiveStatus::Canceled as i32 {
+			break;
+		}
+		tokio::time::sleep(poll_interval()).await;
+	}
+	assert_eq!(status, protos::LightningReceiveStatus::Canceled as i32,
+		"expected CANCELED status, got {:?}", status);
 
 	// Sender also rejects expired invoice, confirming expiry was set correctly in the invoice
 	let err = lightning.internal.try_pay_bolt11(invoice_info.invoice).await.unwrap_err().to_alt_string();
