@@ -1,0 +1,6 @@
+- Keep the excess when a client overpays an offboard fee
+  A client that calculated its fee against a different chain tip can land in another
+  ppm-expiry bracket and overpay, which used to fail the offboard outright. The
+  onchain output stays the amount the client asked for, and the surplus is ours -
+  the same way refresh and lightning send already treat their fees.
+  [#2372](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2372)

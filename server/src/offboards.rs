@@ -217,7 +217,10 @@ impl Server {
 
 		// If the user is trying to perform a send-onchain then we add fees onto the request amount.
 		// If the user is performing an offboard then we deduct fees from the total VTXO sum.
-		let (net_amount, fee) = if request.deduct_fees_from_gross_amount {
+		//
+		// Our fee is a minimum: a client that calculated against a different chain tip can
+		// land in another ppm-expiry bracket and overpay, which shouldn't fail its offboard.
+		if request.deduct_fees_from_gross_amount {
 			let dust = request.script_pubkey.minimal_non_dust();
 			let fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
 				self.config.fees.offboard.calculate(
@@ -236,13 +239,12 @@ impl Server {
 				)
 			}.context("unable to calculate fee for offboard")?;
 			let net_amount = validate_and_subtract_fee_min_dust(gross_amount, fee, dust)?;
-			if net_amount != request.net_amount {
+			if request.net_amount > net_amount {
 				return badarg!(
 					"offboard net amount does not match expected amount: provided = {}, expected = {}",
-					net_amount, request.net_amount,
+					request.net_amount, net_amount,
 				);
 			}
-			(net_amount, fee)
 		} else {
 			let fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
 				self.config.fees.offboard.calculate(
@@ -261,14 +263,17 @@ impl Server {
 				)
 			}.context("unable to calculate fee for offboard")?;
 			let total = request.net_amount.checked_add(fee).context("request amount + fee overflow")?;
-			if total != gross_amount {
+			if total > gross_amount {
 				return badarg!(
-					"offboard gross amount does not match expected amount: provided = {} ({} fee), expected = {}",
-					total, fee, gross_amount,
+					"offboard gross amount does not match expected amount: provided = {}, expected = {} ({} fee)",
+					gross_amount, total, fee,
 				);
 			}
-			(request.net_amount, fee)
-		};
+		}
+
+		// Whatever their inputs exceed the onchain output by is ours, overpayment included.
+		let net_amount = request.net_amount;
+		let fee = gross_amount.checked_sub(net_amount).context("offboard fee underflow")?;
 
 		// check attestations
 		let input_ids = input_vtxos.iter().copied().collect::<Vec<VtxoId>>();
