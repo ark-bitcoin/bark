@@ -510,6 +510,12 @@ pub struct Config {
 	/// compatibility, we allow disabling it in tests.
 	#[serde(default)]
 	pub require_board_funding_tx: bool,
+
+	/// Build round vtxo trees with the legacy v0 hashlock clauses.
+	///
+	/// Only intended for testing.
+	#[serde(default)]
+	pub round_legacy_hashlock_clauses: bool,
 }
 
 impl Config {
@@ -577,6 +583,10 @@ impl Config {
 
 		if self.network == bitcoin::Network::Bitcoin && !self.require_board_funding_tx {
 			bail!("Cannot turn off require_board_funding_tx on mainnet");
+		}
+
+		if self.network == bitcoin::Network::Bitcoin && self.round_legacy_hashlock_clauses {
+			bail!("Cannot turn on round_legacy_hashlock_clauses on mainnet");
 		}
 
 		Ok(())

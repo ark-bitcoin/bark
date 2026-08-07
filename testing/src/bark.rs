@@ -193,6 +193,17 @@ impl Bark {
 		&self.config
 	}
 
+	/// Point the wallet at a new Ark server address.
+	///
+	/// Useful after a server restart, which makes the server listen on a
+	/// new port.
+	pub async fn set_server_address(&mut self, address: impl Into<String>) {
+		self.config.server_address = address.into();
+		let config_path = self.datadir.join("config.toml");
+		fs::write(&config_path, toml::to_string_pretty(&self.config).unwrap()).await
+			.expect("error writing bark config file");
+	}
+
 	pub fn timeout(&self) -> Option<Duration> {
 		self.timeout
 	}

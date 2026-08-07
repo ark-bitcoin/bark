@@ -30,7 +30,8 @@ use ark::rounds::{
 	RoundFailed,
 };
 use ark::tree::signed::{
-	CachedSignedVtxoTree, UnlockHash, UnlockPreimage, UnsignedVtxoTree, VtxoLeafSpec, VtxoTreeSpec,
+	CachedSignedVtxoTree, HashlockVersion, UnlockHash, UnlockPreimage, UnsignedVtxoTree,
+	VtxoLeafSpec, VtxoTreeSpec,
 };
 use server_log::{LogMsg, RoundVtxoCreated};
 use server_rpc::pver::PROTOCOL_VERSION_PPM_FEE_TOTAL;
@@ -829,13 +830,18 @@ impl CollectingPayments {
 			});
 		}
 
-		let vtxos_spec = VtxoTreeSpec::new(
+		let mut vtxos_spec = VtxoTreeSpec::new(
 			self.all_outputs.iter().map(|p| p.req.clone()).collect(),
 			srv.server_pubkey,
 			expiry_height,
 			srv.config.vtxo_exit_delta,
 			vec![self.cosign_key.public_key()],
 		);
+		if srv.config.round_legacy_hashlock_clauses {
+			warn!("Building round vtxo tree with legacy v0 hashlock clauses. \
+				This should only ever happen in tests.");
+			vtxos_spec.hashlock_version = HashlockVersion::V0;
+		}
 
 		let funding_tx = FundingTxSpec {
 			tree_output: TxOut {
