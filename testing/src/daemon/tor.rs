@@ -1,6 +1,5 @@
 use std::fs::{create_dir_all, write};
 use std::path::PathBuf;
-use std::time::Duration;
 
 use log::{debug, info};
 use tokio::fs::read_to_string;
@@ -11,7 +10,7 @@ use tokio::time::sleep;
 use crate::constants::env::TOR_EXEC;
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
-use crate::util::resolve_path;
+use crate::util::{poll_interval, resolve_path};
 
 pub struct HiddenService {
 	pub name: String,
@@ -170,7 +169,7 @@ impl DaemonHelper for TorHelper {
 						break;
 					}
 				}
-				sleep(Duration::from_millis(500)).await;
+				sleep(poll_interval()).await;
 			}
 		}
 
@@ -182,7 +181,7 @@ impl DaemonHelper for TorHelper {
 					break;
 				}
 			}
-			sleep(Duration::from_millis(500)).await;
+			sleep(poll_interval()).await;
 		}
 
 		Ok(())

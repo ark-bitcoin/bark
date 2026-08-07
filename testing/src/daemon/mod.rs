@@ -21,7 +21,7 @@ use tokio::process::{Command, Child};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::constants::env::DAEMON_INIT_TIMEOUT_MILLIS;
-use crate::util::{FutureExt, wait_for_completion};
+use crate::util::{FutureExt, poll_interval, wait_for_completion};
 
 /// The file inside the datadir where stderr output is logged.
 pub const STDERR_LOGFILE: &str = "stderr.log";
@@ -311,7 +311,7 @@ async fn process_log_file<P: AsRef<Path>>(
 		// dispatch once we have a full line; otherwise keep accumulating.
 		let n = reader.read_line(&mut line).await.expect("I/O error on log file handle");
 		if n == 0 || !line.ends_with('\n') {
-			tokio::time::sleep(Duration::from_millis(100)).await;
+			tokio::time::sleep(poll_interval()).await;
 			continue;
 		}
 		handlers.retain_mut(|h| !h.process_log(&line));

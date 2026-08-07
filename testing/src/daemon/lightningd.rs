@@ -24,7 +24,7 @@ use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER}
 use crate::constants::env::{LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_PLUGIN_DIR};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
-use crate::util::resolve_path;
+use crate::util::{poll_interval, resolve_path};
 
 pub type Lightningd = Daemon<LightningDHelper>;
 
@@ -377,7 +377,7 @@ impl DaemonHelper for LightningDHelper {
 			if self.is_ready().await {
 				return Ok(());
 			}
-			tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+			tokio::time::sleep(poll_interval()).await;
 		}
 	}
 
@@ -671,7 +671,7 @@ impl Lightningd {
 
 			trace!("Waiting for gossip...");
 			trace!("{:?}", res.channels);
-			tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+			tokio::time::sleep(poll_interval()).await;
 		}
 	}
 

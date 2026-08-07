@@ -12,8 +12,10 @@ use tokio::fs;
 use tokio::process::Child;
 use tokio::time::Instant;
 
+use crate::constants::DEFAULT_POLL_INTERVAL;
 use crate::constants::env::{
-	BARK_DOUBLE_DRIVE_ACTIONS, CHAIN_SOURCE, TEST_DIRECTORY, TX_PROPAGATION_TIMEOUT_MILLIS,
+	BARK_DOUBLE_DRIVE_ACTIONS, CHAIN_SOURCE, TEST_DIRECTORY, TEST_POLL_INTERVAL_MS,
+	TX_PROPAGATION_TIMEOUT_MILLIS,
 };
 use crate::daemon::electrs::ElectrsType;
 
@@ -146,7 +148,7 @@ pub async fn wait_for_completion(child: &mut Child) -> Option<ExitStatus> {
 	loop {
 		match child.try_wait() {
 			Ok(Some(status)) => return Some(status),
-			Ok(None) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+			Ok(None) => tokio::time::sleep(poll_interval()).await,
 			Err(err) => {
 				error!("Failed to get status of Child={:?}: {:?}", child, err);
 				return None;
@@ -169,6 +171,19 @@ pub fn get_tx_propagation_timeout_millis() -> u64 {
 			.expect(&format!("{} should be in milliseconds", TX_PROPAGATION_TIMEOUT_MILLIS))
 	} else {
 		30_000
+	}
+}
+
+/// The interval between attempts in poll loops.
+///
+/// Defaults to [DEFAULT_POLL_INTERVAL], can be overridden with the
+/// TEST_POLL_INTERVAL_MS env var.
+pub fn poll_interval() -> Duration {
+	if let Ok(interval) = env::var(TEST_POLL_INTERVAL_MS) {
+		Duration::from_millis(interval.parse::<u64>()
+			.expect(&format!("{} should be in milliseconds", TEST_POLL_INTERVAL_MS)))
+	} else {
+		DEFAULT_POLL_INTERVAL
 	}
 }
 
