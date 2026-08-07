@@ -43,6 +43,7 @@ use crate::rpcserver::{
 	ReceiverExt,
 	StatusContext,
 	ToStatusResult,
+	DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS,
 	MAX_PROTOCOL_VERSION,
 	MIN_PROTOCOL_VERSION,
 	RPC_RICH_ERRORS,
@@ -887,6 +888,10 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 
 	tonic::transport::Server::builder()
 		.accept_http1(true)
+		.http2_max_pending_accept_reset_streams(Some(
+			srv.config.rpc.max_pending_accept_reset_streams
+				.unwrap_or(DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS)
+		))
 		.layer(CorsLayer::permissive())
 		.layer(tonic_web::GrpcWebLayer::new())
 		.layer(OtelGrpcLayer::default())

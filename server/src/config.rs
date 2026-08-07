@@ -178,6 +178,13 @@ impl Bitcoind {
 pub struct Rpc {
 	/// The socket to bind to for the public Ark gRPC.
 	pub public_address: SocketAddr,
+
+	/// The value set for the `http2_max_pending_accept_reset_streams` variable
+	/// for public RPC endpoints (ark and intman).
+	///
+	/// Defaults to 1000.
+	pub max_pending_accept_reset_streams: Option<usize>,
+
 	/// The socket to bind to for the private admin gRPC.
 	///
 	/// Unauthenticated by design, see [crate::rpcserver::admin]. Keep it on loopback.

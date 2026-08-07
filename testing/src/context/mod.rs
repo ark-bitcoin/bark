@@ -396,6 +396,7 @@ impl TestContext {
 			rpc: server::config::Rpc {
 				// these will be overwritten on start, but can't be empty
 				public_address: SocketAddr::from_str("127.0.0.1:3535").unwrap(),
+				max_pending_accept_reset_streams: None,
 				admin_address: None,
 				integration_address: None,
 			},

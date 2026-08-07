@@ -28,6 +28,24 @@ pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_BASE;
 /// For info on protocol versions, see [server_rpc::pver] module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES;
 
+/// Default maximum number of remotely-reset HTTP/2 streams that may sit in a
+/// connection's accept queue before h2 closes the connection.
+///
+/// h2's default of 20 is a "rapid reset" (CVE-2023-44487) mitigation, but
+/// legitimate traffic hits it too: a proxy or load balancer in front of us
+/// multiplexes many clients onto a single HTTP/2 connection, so a burst of
+/// client-side cancellations (request timeouts, dropped subscription streams)
+/// arriving while we are slow to accept trips the limit and h2 tears down the
+/// whole shared connection with a GOAWAY (ENHANCE_YOUR_CALM "too_many_resets").
+/// This shows up in our logs as h2's "recv_reset; remotely-reset
+/// pending-accept streams reached limit" warning.
+///
+/// We raise the limit well above the per-connection concurrent stream limit
+/// (hyper's default is 200) so that even a peer canceling everything it has
+/// in flight at once doesn't kill the connection. Memory impact is small:
+/// only bookkeeping for the already-dead streams is kept until accepted.
+pub(crate) const DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS: usize = 1000;
+
 /// Whether to provide rich internal errors to RPC users.
 ///
 /// We keep this static because it's hard to propagate the config
