@@ -21,7 +21,7 @@ use crate::error::{BadArgument, NotFound, UnusableInputs};
 /// The minimum protocol version supported by the server.
 ///
 /// For info on protocol versions, see [server_rpc::pver] module documentation.
-pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_BASE;
+pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_PPM_FEE_TOTAL;
 
 /// The maximum protocol version supported by the server.
 ///
