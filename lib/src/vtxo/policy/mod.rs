@@ -1191,6 +1191,10 @@ impl ServerVtxoPolicy {
 		Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, unlock_hash })
 	}
 
+	pub fn new_hark_leaf_v0(user_pubkey: PublicKey, unlock_hash: UnlockHash) -> Self {
+		Self::HarkLeaf_v0(HarkLeaf_v0_VtxoPolicy { user_pubkey, unlock_hash })
+	}
+
 	pub fn new_hark_forfeit(user_pubkey: PublicKey, unlock_hash: UnlockHash) -> Self {
 		Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash })
 	}

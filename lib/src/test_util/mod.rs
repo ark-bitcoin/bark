@@ -3,11 +3,18 @@ pub mod vectors;
 pub use self::vectors::VTXO_VECTORS;
 
 
+use std::collections::HashMap;
 use std::fmt;
 
+use bitcoin::{absolute, transaction, OutPoint, Transaction};
+use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
+use bitcoin::secp256k1::Keypair;
 
-use crate::{ProtocolEncoding, Vtxo};
+use crate::{musig, ProtocolEncoding, Vtxo, VtxoRequest};
+use crate::tree::signed::{
+	HashlockVersion, SignedVtxoTreeSpec, UnlockHash, VtxoLeafSpec, VtxoTreeSpec,
+};
 use crate::vtxo::{Full, GenesisTransition};
 
 
@@ -28,6 +35,63 @@ impl Vtxo<Full> {
 			},
 		}
 	}
+}
+
+/// Build a fully cosigned VTXO tree with real cosign signatures, the way
+/// delegated round trees are built (no per-leaf cosign keys), using the
+/// given hashlock version.
+///
+/// Returns the signed tree and its funding tx.
+pub fn build_signed_tree(
+	version: HashlockVersion,
+	outputs: impl IntoIterator<Item = VtxoRequest>,
+	user_cosign_key: &Keypair,
+	server_key: &Keypair,
+	server_cosign_key: &Keypair,
+	unlock_hash: UnlockHash,
+) -> (SignedVtxoTreeSpec, Transaction) {
+	let reqs = outputs.into_iter().map(|vtxo| VtxoLeafSpec {
+		vtxo: vtxo,
+		cosign_pubkey: None,
+		unlock_hash: unlock_hash,
+	}).collect::<Vec<_>>();
+
+	let mut spec = VtxoTreeSpec::new(
+		reqs,
+		server_key.public_key(),
+		101_000,
+		24,
+		vec![user_cosign_key.public_key(), server_cosign_key.public_key()],
+	);
+	spec.hashlock_version = version;
+
+	let funding_tx = Transaction {
+		version: transaction::Version::TWO,
+		lock_time: absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![spec.funding_tx_txout()],
+	};
+	let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+	let unsigned = spec.into_unsigned_tree(utxo);
+
+	let nonces = |key: &Keypair| -> (Vec<_>, Vec<_>) {
+		unsigned.internal_sighashes.iter()
+			.map(|sh| musig::nonce_pair_with_msg(key, &sh.to_byte_array()))
+			.unzip()
+	};
+	let (user_secs, user_pubs) = nonces(user_cosign_key);
+	let (server_secs, server_pubs) = nonces(server_cosign_key);
+	let agg_nonces = user_pubs.iter().zip(&server_pubs)
+		.map(|(u, s)| musig::AggregatedNonce::new(&[u, s]))
+		.collect::<Vec<_>>();
+
+	let user_sigs = unsigned.cosign_tree(&agg_nonces, user_cosign_key, user_secs);
+	let server_sigs = unsigned.cosign_tree(&agg_nonces, server_cosign_key, server_secs);
+	let sigs = unsigned.combine_partial_signatures(
+		&agg_nonces, &HashMap::new(), &[&user_sigs, &server_sigs],
+	).expect("valid partial signatures");
+
+	(unsigned.into_signed_tree(sigs), funding_tx)
 }
 
 /// Test that the object's encoding round-trips.
