@@ -24,7 +24,7 @@ use bitcoin_ext::P2TR_DUST_SAT;
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::{debug, info, trace};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Semaphore};
 
 use ark::{
 	musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest, SECP
@@ -526,23 +526,42 @@ async fn full_round() {
 
 	let (tx, mut rx) = mpsc::unbounded_channel();
 
+	type RoundEventStream = Box<
+		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send
+	>;
+
 	/// This proxy will keep track of how many times `submit payment` has been called.
 	/// Once it reaches MAX_OUTPUTS, it asserts the next one fails.
 	/// Once that happened succesfully, it fullfils the result channel.
+	///
+	/// It also releases one `subscriptions` permit for every round event
+	/// subscription established with the server.
 	#[derive(Clone)]
-	struct Proxy(Arc<Mutex<usize>>, Arc<mpsc::UnboundedSender<tonic::Status>>);
+	struct Proxy {
+		nb_payments: Arc<Mutex<usize>>,
+		last_payment_err: Arc<mpsc::UnboundedSender<tonic::Status>>,
+		subscriptions: Arc<Semaphore>,
+	}
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn subscribe_rounds(
+			&self, upstream: &mut ArkClient, req: protos::Empty,
+		) -> Result<RoundEventStream, tonic::Status> {
+			let stream = upstream.subscribe_rounds(req).await?.into_inner();
+			self.subscriptions.add_permits(1);
+			Ok(Box::new(stream))
+		}
+
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, req: protos::SubmitPaymentRequest,
 		) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
-			let mut lock = self.0.lock().await;
+			let mut lock = self.nb_payments.lock().await;
 			let res = upstream.submit_payment(req).await;
 			// the last bark should fail being registered
 			let ret = if *lock == NB_BARKS-1 {
 				let err = res.expect_err("must error at max");
 				trace!("proxy: NOK: {}", err);
-				self.1.send(err.clone()).unwrap();
+				self.last_payment_err.send(err.clone()).unwrap();
 				Err(err)
 			} else {
 				trace!("proxy: OK (nb={})", *lock);
@@ -553,18 +572,33 @@ async fn full_round() {
 		}
 	}
 
-	let proxy = Proxy(Arc::new(Mutex::new(0)), Arc::new(tx));
+	let subscriptions = Arc::new(Semaphore::new(0));
+	let proxy = Proxy {
+		nb_payments: Arc::new(Mutex::new(0)),
+		last_payment_err: Arc::new(tx),
+		subscriptions: subscriptions.clone(),
+	};
 	let proxy = srv.start_proxy_no_mailbox(proxy).await;
 	futures::future::join_all(barks.iter().map(|bark| bark.set_ark_url(&proxy))).await;
 
 	let mut log_full = srv.subscribe_log::<FullRound>();
-	srv.trigger_round().await;
+	let subs = subscriptions.clone();
 	tokio::spawn(async move {
 		futures::future::join_all(barks.iter().map(|bark| async {
-			// ignoring error as last one will fail
-			let _ = bark.refresh_all_no_retry().await;
+			// The last bark fails only after the round has started; a bark
+			// failing before that never subscribes, so close the semaphore.
+			if bark.try_refresh_all_no_retry().await.is_err() {
+				subs.close();
+			}
 		})).await;
 	});
+
+	// Only trigger the round once every bark is subscribed: the round
+	// leaves its submit phase as soon as it fills up, and a late bark
+	// would wait forever for a next round.
+	let _ = subscriptions.acquire_many(NB_BARKS as u32).await
+		.expect("a bark failed before all barks were subscribed");
+	srv.trigger_round().await;
 
 	let full = log_full.recv().await.unwrap();
 	assert_eq!(full.max_output_vtxos, MAX_OUTPUTS);
