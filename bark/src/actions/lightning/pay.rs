@@ -481,7 +481,7 @@ pub(crate) async fn request_lightning_send_htlcs(
 
 	// Sort for a deterministic checkpoint across re-drives.
 	let mut vtxo_ids = htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-	vtxo_ids.sort();
+	vtxo_ids.sort_unstable();
 
 	Ok(Htlcs {
 		vtxo_ids,
