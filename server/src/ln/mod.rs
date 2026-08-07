@@ -15,7 +15,6 @@ use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use tracing::{error, info, trace, warn};
-use uuid::Uuid;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest, ServerVtxo};
 use ark::arkoor::ArkoorDestination;
@@ -808,9 +807,7 @@ impl Server {
 				},
 				LightningReceiveAntiDos::Token(token_string) => {
 					self.db.write(async |t| {
-						let uuid = Uuid::parse_str(CAPTAIND_API_KEY)
-							.expect("hardcoded api key is valid");
-						let api_key = t.get_integration_api_key_by_api_key(uuid).await?
+						let api_key = t.get_integration_api_key_by_api_key(CAPTAIND_API_KEY).await?
 							.context("captaind integration api key not found")?;
 						let token = match t.get_integration_token(&token_string).await? {
 							Some(token) => token,
