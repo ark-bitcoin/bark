@@ -57,7 +57,9 @@ pub(crate) struct ClnXpayClient {
 	db: database::Db,
 	rpc: ClnGrpcClient,
 	settler: Arc<HtlcSettler>,
-	/// Notifies [`LightningManager::get_payment_status`] when a payment reaches a final state.
+	/// Notifies [`LightningManager::wait_payment_status`] when a payment reaches a final state.
+	///
+	/// [`LightningManager::wait_payment_status`]: crate::ln::node_manager::LightningManager::wait_payment_status
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 }
