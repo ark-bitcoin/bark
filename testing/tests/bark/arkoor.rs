@@ -100,7 +100,7 @@ async fn send_arkoor_package() {
 
 #[tokio::test]
 async fn oor_change_split() {
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(> "0.6.0");
 
 	let ctx = TestContext::new("bark/oor_change_split").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;

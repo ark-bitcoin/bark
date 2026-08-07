@@ -310,9 +310,9 @@ async fn exit_oor() {
 
 	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	// bark > 0.5.0 splits the sender's change, which adds sibling outputs
+	// bark > 0.6.0 splits the sender's change, which adds sibling outputs
 	// to the checkpoint tx in bark2's exit package and raises the exit cost.
-	let expected = if is_bark_version!(> "0.5.0") {
+	let expected = if is_bark_version!(> "0.6.0") {
 		sat(1_094_779)
 	} else {
 		sat(1_094_994)
@@ -1106,10 +1106,10 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark2.progress_exit().await;
 
 	await_propagation(&ctx, &bark2, &bark1).await;
-	// bark > 0.5.0 splits change in two and spends the deepest vtxos first, so
+	// bark > 0.6.0 splits change in two and spends the deepest vtxos first, so
 	// the final holdings spread over more vtxos and each side exits a different
 	// set of leaves than it would from a single change chain.
-	let split = is_bark_version!(> "0.5.0");
+	let split = is_bark_version!(> "0.6.0");
 	assert_eq!(bark1.list_exits().await.len(), if split { 2 } else { 1 });
 	assert_eq!(bark2.list_exits().await.len(), if split { 3 } else { 2 });
 
