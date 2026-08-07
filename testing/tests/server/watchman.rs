@@ -18,7 +18,7 @@ use server_log::{
 	ProgressCpfpFailure,
 };
 
-use ark_testing::{TestContext, btc, is_bark_version, require_bark_version, sat};
+use ark_testing::{TestContext, btc, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::SlogHandler;
 use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
@@ -149,8 +149,6 @@ async fn watchman_sweeps_round_vtxos() {
 
 #[tokio::test]
 async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("server/watchman_sweeps_arkoor_vtxos_sender_exit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -196,8 +194,6 @@ async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 
 #[tokio::test]
 async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("server/watchman_sweeps_arkoor_vtxos_receiver_exit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -932,52 +928,33 @@ async fn watchman_force_exit_lightning_vtxo_blocks_refresh() {
 		let tip = ctx.generate_blocks(1).await;
 		wm.wait_for_sync_height(tip).await;
 	}
-	// The fix (bark >= 0.2.6, incl. DIRTY working-tree builds) checkpoints the claim, so the
-	// watchman stops at the checkpoint and never broadcasts the victim's leaf; older bark builds
-	// the checkpoint-free claim and the watchman force-exits the leaf.
-	if is_bark_version!(>= "0.2.6") {
-		// Fixed: the leaf was not force-exited and stays a refreshable off-chain VTXO.
-		// Guard against a vacuous pass: the watchman must have actually progressed the
-		// dragged-on-chain tree (up to the checkpoint), otherwise `!forced` proves nothing.
-		assert!(any_progress,
-			"watchman never broadcast any progress; the checkpoint-stop assertion is vacuous",
-		);
-		assert!(!forced,
-			"watchman must not force-exit the checkpointed ln leaf {}", victim_txid,
-		);
-		let vtxos = victim.vtxos().await;
-		let v = vtxos.iter().find(|v| v.id == victim_vtxo).expect("victim vtxo disappeared");
-		assert!(matches!(v.state, VtxoStateInfo::Spendable),
-			"victim ln leaf must stay Spendable, was {:?}", v.state,
-		);
-		let status = ctx.bitcoind().sync_client().tx_status(victim_txid)
-			.expect("status should succeed");
-		assert!(matches!(status, TxStatus::NotFound),
-			"victim ln leaf must not be on-chain, status was {:?}", status,
-		);
-		let (res, _) = tokio::join!(
-			victim.try_refresh_all_no_retry(),
-			srv.trigger_round(),
-		);
-		assert!(res.is_ok(),
-			"refresh of the non-force-exited ln leaf must succeed: {:?}", res,
-		);
-	} else {
-		// Pre-fix: the leaf was force-exited and the server rejects refresh.
-		assert!(forced,
-			"watchman never broadcast the victim's lightning vtxo funding tx {}; force-exit did not occur",
-			victim_txid,
-		);
-		let (res, _) = tokio::join!(
-			victim.try_refresh_all_no_retry(),
-			srv.trigger_round(),
-		);
-		let err = res.expect_err("refresh of a force-exited vtxo must be rejected by the server");
-		let msg = format!("{:#}", err).to_lowercase();
-		assert!(msg.contains("exit"),
-			"expected an 'already exited' rejection from the server, got: {}", msg,
-		);
-	}
+	// Fixed: the leaf was not force-exited and stays a refreshable off-chain VTXO.
+	// Guard against a vacuous pass: the watchman must have actually progressed the
+	// dragged-on-chain tree (up to the checkpoint), otherwise `!forced` proves nothing.
+	assert!(any_progress,
+		"watchman never broadcast any progress; the checkpoint-stop assertion is vacuous",
+	);
+	assert!(!forced,
+		"watchman must not force-exit the checkpointed ln leaf {}", victim_txid,
+	);
+	let vtxos = victim.vtxos().await;
+	let v = vtxos.iter().find(|v| v.id == victim_vtxo).expect("victim vtxo disappeared");
+	assert!(matches!(v.state, VtxoStateInfo::Spendable),
+		"victim ln leaf must stay Spendable, was {:?}", v.state,
+	);
+	let status = ctx.bitcoind().sync_client().tx_status(victim_txid)
+		.expect("status should succeed");
+	assert!(matches!(status, TxStatus::NotFound),
+		"victim ln leaf must not be on-chain, status was {:?}", status,
+	);
+	let (res, _) = tokio::join!(
+		victim.try_refresh_all_no_retry(),
+		srv.trigger_round(),
+	);
+	assert!(res.is_ok(),
+		"refresh of the non-force-exited ln leaf must succeed: {:?}", res,
+	);
+
 	failures.assert_empty();
 
 	// The safe VTXO should not have been broadcast because it's protected by the spend.
@@ -1106,7 +1083,6 @@ async fn watchman_force_exit_checkpointed_arkoor_stays_spendable() {
 /// `multi_input_offboard_double_spend` below.
 #[tokio::test]
 async fn watchman_defends_single_input_offboard_exit() {
-	require_bark_version!(> "0.2.0");
 	let stolen = offboard_exit_attack("server/watchman_defends_single_input_offboard_exit", 1).await;
 	assert_eq!(stolen, sat(0),
 		"single-input offboard: watchman should have confiscated the exit, attacker got {}", stolen);
@@ -1122,7 +1098,6 @@ async fn watchman_defends_single_input_offboard_exit() {
 /// proving the watchman can defend at all.
 #[tokio::test]
 async fn watchman_defends_multi_input_offboard_exit() {
-	require_bark_version!(> "0.2.0");
 	let stolen = offboard_exit_attack("server/watchman_defends_multi_input_offboard_exit", 2).await;
 	assert_eq!(stolen, sat(0),
 		"multi-input offboard double-spend was NOT prevented; attacker stole {}", stolen);
@@ -1256,8 +1231,6 @@ async fn offboard_after_exit(test_name: &str, depth: ExitDepth) -> OffboardAfter
 /// green with it.
 #[tokio::test]
 async fn server_refuses_offboard_of_claimed_exited_vtxo() {
-	require_bark_version!(> "0.4.0");
-
 	let res = offboard_after_exit(
 		"server/server_refuses_offboard_of_claimed_exited_vtxo", ExitDepth::Claimed,
 	).await;
@@ -1282,8 +1255,6 @@ async fn server_refuses_offboard_of_claimed_exited_vtxo() {
 /// confiscates the exit output.
 #[tokio::test]
 async fn offboard_of_confirmed_exited_vtxo_never_costs_server() {
-	require_bark_version!(> "0.4.0");
-
 	let res = offboard_after_exit(
 		"server/offboard_of_confirmed_exited_vtxo_never_costs_server", ExitDepth::TxConfirmed,
 	).await;

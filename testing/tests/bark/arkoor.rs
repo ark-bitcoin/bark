@@ -6,8 +6,6 @@ use futures::StreamExt;
 
 #[tokio::test]
 async fn send_simple_arkoor() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("bark/send_simple_arkoor").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(90_000)).create().await;
@@ -34,9 +32,6 @@ async fn send_simple_arkoor() {
 
 	assert_eq!(60_000, bark1.spendable_balance().await.to_sat());
 	assert_eq!(20_000, bark2_wallet.balance().await.unwrap().spendable.to_sat());
-
-	// Address lookup is only supported in beta.9 and later
-	require_bark_version!(>= "0.1.0-beta.9");
 
 	// send a second payment to the same address
 	bark1.send_oor(&addr2, sat(30_000)).await;
@@ -130,8 +125,6 @@ async fn oor_change_split() {
 
 #[tokio::test]
 async fn send_to_arkade_address_is_rejected() {
-	require_bark_version!(> "0.2.5");
-
 	let ctx = TestContext::new("bark/send_to_arkade_address_is_rejected").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(90_000)).create().await;

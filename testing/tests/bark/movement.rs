@@ -122,8 +122,6 @@ async fn board_board() {
 
 #[tokio::test]
 async fn exit_start() {
-	require_bark_version!(> "0.2.5");
-
 	let ctx = TestContext::new("movement/exit_start").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;

@@ -109,8 +109,6 @@ async fn exit_claim_all_barkd() {
 /// Verify `POST /exits/start/vtxos` exits only the specified VTXO.
 #[tokio::test]
 async fn exit_start_vtxos_barkd() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("barkd/exit_start_vtxos_barkd").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -143,8 +141,6 @@ async fn exit_start_vtxos_barkd() {
 /// Verify `POST /exits/claim/vtxos` claims only the specified exit.
 #[tokio::test]
 async fn exit_claim_vtxos_barkd() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("barkd/exit_claim_vtxos_barkd").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -216,8 +212,6 @@ async fn exit_auto_progress_disconnected_barkd() {
 
 #[tokio::test]
 async fn cancel_pending_exit_keeps_vtxo_spendable_barkd() {
-	require_bark_version!(> "0.3.0");
-
 	let ctx = TestContext::new("barkd/cancel_pending_exit_keeps_vtxo_spendable_barkd").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -281,8 +275,6 @@ async fn cancel_pending_exit_keeps_vtxo_spendable_barkd() {
 /// has a single exit transaction, so one progress pass broadcasts it.
 #[tokio::test]
 async fn cannot_cancel_broadcast_exit_barkd() {
-	require_bark_version!(> "0.3.0");
-
 	let ctx = TestContext::new("barkd/cannot_cancel_broadcast_exit_barkd").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	// Manual-sync so we control exactly when the exit tx is broadcast; funded for CPFP fees.
@@ -328,8 +320,6 @@ async fn cannot_cancel_broadcast_exit_barkd() {
 /// transactions were already broadcast and confirmed before the cancellation.
 #[tokio::test]
 async fn restart_exit_after_cancel_barkd() {
-	require_bark_version!(> "0.3.0");
-
 	let ctx = TestContext::new("barkd/restart_exit_after_cancel_barkd").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -396,8 +386,6 @@ async fn restart_exit_after_cancel_barkd() {
 /// The status endpoints split exits by liveness and the deprecated routes remain served.
 #[tokio::test]
 async fn exit_status_endpoints_barkd() {
-	require_bark_version!(> "0.3.0");
-
 	let ctx = TestContext::new("barkd/exit_status_endpoints_barkd").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 

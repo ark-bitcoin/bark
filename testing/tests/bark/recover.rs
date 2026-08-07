@@ -102,9 +102,6 @@ async fn recover_mnemonic() {
 /// registered and later syncs skip it entirely.
 #[tokio::test]
 async fn recovery_state_catches_up_on_sync() {
-	// The sync-time catch-up doesn't exist in older bark releases.
-	require_bark_version!(> "0.4.0");
-
 	let ctx = TestContext::new("bark/recovery_state_catches_up_on_sync").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -226,9 +223,6 @@ async fn recovery_state_catches_up_on_sync() {
 /// per vtxo.
 #[tokio::test]
 async fn recovery_catchup_survives_rejected_vtxo() {
-	// The sync-time catch-up doesn't exist in older bark releases.
-	require_bark_version!(> "0.4.0");
-
 	let ctx = TestContext::new("bark/recovery_catchup_survives_rejected_vtxo").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -345,9 +339,6 @@ async fn recovery_catchup_survives_rejected_vtxo() {
 /// recovering from seed must learn about the vtxo to claim the funds.
 #[tokio::test]
 async fn recovery_catchup_includes_exited_vtxos() {
-	// The sync-time catch-up doesn't exist in older bark releases.
-	require_bark_version!(> "0.4.0");
-
 	let ctx = TestContext::new("bark/recovery_catchup_includes_exited_vtxos").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 

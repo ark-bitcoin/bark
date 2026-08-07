@@ -35,7 +35,7 @@ use crate::util::{
 	test_data_directory, poll_interval, TestContextChainSource,
 };
 use crate::{
-	btc, constants, is_bark_version, sat, Bark, Barkd, Bitcoind, BitcoindConfig, Captaind, Electrs,
+	btc, constants, sat, Bark, Barkd, Bitcoind, BitcoindConfig, Captaind, Electrs,
 	ElectrsConfig, Lightningd,
 };
 
@@ -454,11 +454,7 @@ impl TestContext {
 			},
 			bitcoin_address_blocklist: None,
 			bitcoin_address_blocklist_refresh_interval: None,
-			require_board_funding_tx: if crate::bark::Bark::try_cmd().is_some() {
-				is_bark_version!(> "0.4.0")
-			} else {
-				true
-			},
+			require_board_funding_tx: true,
 			round_legacy_hashlock_clauses: false,
 		}
 	}

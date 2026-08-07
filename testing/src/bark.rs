@@ -31,7 +31,7 @@ use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
 use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::{BlockHeight, FeeRateExt};
 
-use crate::{Bitcoind, TestContext, is_bark_version};
+use crate::{Bitcoind, TestContext};
 use crate::constants::BOARD_CONFIRMATIONS;
 use crate::context::ToArkUrl;
 use crate::constants::env::{BARK_COMMAND_TIMEOUT_MILLIS, BARK_EXEC, BARK_TOKIO_WORKER_THREADS, USE_FILESTORE};
@@ -645,10 +645,6 @@ impl Bark {
 		address: impl fmt::Display,
 		amount: Amount,
 	) -> anyhow::Result<InvoiceInfo> {
-		anyhow::ensure!(
-			is_bark_version!(> "0.4.0"),
-			"lightning invoice-for-address requires bark > 0.4.0, got {}", Self::version().await,
-		);
 		let address = address.to_string();
 		let amount = amount.to_string();
 		let res = self.try_run([
