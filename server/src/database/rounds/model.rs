@@ -1,6 +1,7 @@
 
 use std::str::FromStr;
 
+use anyhow::Context;
 use bitcoin::Transaction;
 use bitcoin::consensus::deserialize;
 use chrono::{DateTime, Local};
@@ -9,7 +10,7 @@ use tokio_postgres::Row;
 use ark::{ProtocolEncoding, VtxoId, VtxoRequest};
 use ark::mailbox::MailboxIdentifier;
 use ark::rounds::{RoundId, RoundSeq};
-use ark::tree::signed::{SignedVtxoTreeSpec, UnlockHash, UnlockPreimage};
+use ark::tree::signed::{CachedSignedVtxoTree, SignedVtxoTreeSpec, UnlockHash, UnlockPreimage};
 use bitcoin_ext::BlockHeight;
 
 use crate::secret::Secret;
@@ -64,6 +65,22 @@ pub struct StoredRound {
 	pub expiry_height: BlockHeight,
 	pub swept_at: Option<DateTime<Local>>,
 	pub created_at: DateTime<Local>,
+}
+
+impl StoredRound {
+	/// Convert the signed tree into a cached tree, detecting the hashlock
+	/// version it was signed with.
+	///
+	/// Stored rounds can predate the v1 hashlock clauses and the tree
+	/// encoding doesn't record the version, so it has to be recovered from
+	/// the cosign signatures before any transactions or VTXOs are rebuilt
+	/// from the tree. Rebuilding with the wrong version yields txids and
+	/// VTXO ids that don't match what was cosigned in the round.
+	pub fn into_cached_tree(self) -> anyhow::Result<CachedSignedVtxoTree> {
+		let tree = self.signed_tree.with_detected_hashlock_version()
+			.with_context(|| format!("corrupt signed tree for round {}", self.funding_txid))?;
+		Ok(tree.into_cached_tree())
+	}
 }
 
 impl TryFrom<Row> for StoredRound {

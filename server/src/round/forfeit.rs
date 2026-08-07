@@ -180,7 +180,9 @@ impl Server {
 			// record the forfeit txid on the round inputs.
 			let round = t.get_round(round_id).await?
 				.context("round not found for participation")?;
-			let tree = round.signed_tree.into_cached_tree();
+			// NB the round can predate the v1 hashlock clauses, so the tree's
+			// hashlock version has to be detected to build the correct vtxo ids
+			let tree = round.into_cached_tree()?;
 			let output_vtxo_ids = part.outputs.iter().map(|output| {
 				let idx = tree.spec.spec.leaf_idx_of_req(&output.vtxo_request)
 					.with_context(|| format!("output req not in round {}", round_id))?;

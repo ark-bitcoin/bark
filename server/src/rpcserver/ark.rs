@@ -691,10 +691,12 @@ impl rpc::server::ArkService for Server {
 			let round_funding_tx = Some(serialize(&round.funding_tx));
 
 			let mut output_vtxos = Vec::with_capacity(part.outputs.len());
-			let tree = round.signed_tree.into_cached_tree();
+			// NB the round can predate the v1 hashlock clauses, so the tree's
+			// hashlock version has to be detected to build the correct vtxos
+			let tree = round.into_cached_tree().to_status()?;
 			for output in &part.outputs {
 				let idx = tree.spec.spec.leaf_idx_of_req(&output.vtxo_request)
-					.with_context(|| format!("output req {:?} not in round {}", output.vtxo_request, round.id))?;
+					.with_context(|| format!("output req {:?} not in round {}", output.vtxo_request, round_id))?;
 				output_vtxos.push(tree.build_vtxo(idx).serialize());
 			}
 
