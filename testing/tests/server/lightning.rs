@@ -618,11 +618,11 @@ async fn server_should_release_hold_invoice_when_subscription_is_canceled() {
 
 	// The payment should fail because the subscription was canceled (receiver didn't claim)
 	let err = payment_result.await.unwrap().unwrap_err().to_alt_string();
-	assert!(err.contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
+	assert!(err.contains("incorrect_or_unknown_payment_details"), "err: {err}");
 
 	// Verify the hold invoice was released by trying to pay again - should also fail
 	let err = sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err().to_alt_string();
-	assert!(err.contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
+	assert!(err.contains("incorrect_or_unknown_payment_details"), "err: {err}");
 
 	assert_vtxopool_consistency(&srv).await;
 }
