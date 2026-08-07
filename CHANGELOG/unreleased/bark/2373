@@ -1,0 +1,5 @@
+- Refuse servers below protocol version 4
+  bark has always calculated fees the current way, so a server still calculating
+  them per VTXO would charge a fee bark disagrees with. It now refuses those
+  servers when it connects rather than failing later on a fee mismatch.
+  [#2373](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2373)
