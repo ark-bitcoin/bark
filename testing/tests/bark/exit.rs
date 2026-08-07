@@ -115,7 +115,13 @@ async fn estimate_emergency_exit_fee_unfundable() {
 	// No confirmed on-chain coins to fund the CPFP bumps, so the exit is priced but not fundable.
 	let est = receiver.estimate_exit_fee_all().await;
 	assert_eq!(est.txs_to_broadcast, 3, "{:?}", est);
-	assert_eq!(est.exit_broadcast_fee, sat(4361), "{:?}", est);
+	// The dust-safe CPFP coin selection landed on top of 0.6.0, raising the
+	// exit broadcast fee for this vsize by a few sat.
+	if is_bark_version!(> "0.6.0") {
+		assert_eq!(est.exit_broadcast_fee, sat(4576), "{:?}", est);
+	} else {
+		assert_eq!(est.exit_broadcast_fee, sat(4361), "{:?}", est);
+	}
 	assert_eq!(est.claim_fee, sat(645), "{:?}", est);
 	assert_eq!(est.total_fee, est.exit_broadcast_fee + est.claim_fee, "{:?}", est);
 	assert!(!est.fundable, "{:?}", est);
@@ -481,7 +487,13 @@ async fn double_exit_call() {
 	if is_bark_version!(> "0.6.0") {
 		let est = bark1.estimate_exit_fee_all().await;
 		assert_eq!(est.txs_to_broadcast, 6, "{:?}", est);
-		assert_eq!(est.exit_broadcast_fee, sat(8918), "{:?}", est);
+		// The dust-safe CPFP coin selection landed on top of 0.6.0, raising the
+		// exit broadcast fee for this vsize by a few sat.
+		if is_bark_version!(> "0.6.0") {
+			assert_eq!(est.exit_broadcast_fee, sat(8923), "{:?}", est);
+		} else {
+			assert_eq!(est.exit_broadcast_fee, sat(8918), "{:?}", est);
+		}
 		assert_eq!(est.claim_fee, sat(1400), "{:?}", est);
 		assert_eq!(est.total_fee, est.exit_broadcast_fee + est.claim_fee, "{:?}", est);
 		assert!(est.fundable, "{:?}", est);
