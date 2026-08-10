@@ -3255,7 +3255,6 @@
           "round_interval",
           "nb_round_nonces",
           "vtxo_exit_delta",
-          "vtxo_lifetime",
           "htlc_send_expiry_delta",
           "htlc_expiry_delta",
           "max_vtxo_amount",

@@ -26,7 +26,7 @@ use crate::exit::ExitState;
 use crate::primitives::{TransactionInfo, WalletVtxoInfo};
 use crate::serde_utils;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ArkInfo {
 	/// The bitcoin network the server operates on
@@ -47,6 +47,7 @@ pub struct ArkInfo {
 	/// Delta between exit confirmation and coins becoming spendable
 	pub vtxo_exit_delta: BlockDelta,
 	/// The number of blocks a VTXO lives before it expires
+	#[serde(default)]
 	pub vtxo_lifetime: BlockDelta,
 	/// The number of blocks after which an HTLC-send VTXO expires once granted.
 	pub htlc_send_expiry_delta: BlockDelta,
@@ -89,6 +90,71 @@ pub struct ArkInfo {
 	#[serde(default)]
 	#[cfg_attr(feature = "utoipa", schema(required = true))]
 	pub vtxo_expiry_delta: BlockDelta,
+}
+
+impl<'de> serde::Deserialize<'de> for ArkInfo {
+	#[allow(deprecated)]
+	fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+		#[derive(Deserialize)]
+		struct ArkInfoStub {
+			network: bitcoin::Network,
+			server_pubkey: PublicKey,
+			mailbox_pubkey: PublicKey,
+			#[serde(with = "serde_utils::duration")]
+			round_interval: Duration,
+			nb_round_nonces: usize,
+			vtxo_exit_delta: BlockDelta,
+			#[serde(default)]
+			vtxo_lifetime: BlockDelta,
+			htlc_send_expiry_delta: BlockDelta,
+			htlc_expiry_delta: BlockDelta,
+			max_vtxo_amount: Option<Amount>,
+			required_board_confirmations: usize,
+			max_user_invoice_cltv_delta: u16,
+			#[serde(rename = "min_board_amount_sat", with = "bitcoin::amount::serde::as_sat")]
+			min_board_amount: Amount,
+			offboard_feerate_sat_per_kvb: u64,
+			ln_receive_anti_dos_required: bool,
+			fees: FeeSchedule,
+			max_vtxo_exit_depth: u16,
+			max_offboard_inputs: usize,
+			#[serde(default)]
+			vtxo_expiry_delta: BlockDelta,
+		}
+
+		let v = ArkInfoStub::deserialize(d)?;
+
+		let vtxo_lifetime = match (v.vtxo_lifetime, v.vtxo_expiry_delta) {
+			(0, expiry) => expiry,
+			(lifetime, 0) => lifetime,
+			(lifetime, expiry) if lifetime == expiry => lifetime,
+			(lifetime, expiry) => return Err(serde::de::Error::custom(format!(
+				"vtxo_lifetime ({}) and vtxo_expiry_delta ({}) don't match", lifetime, expiry,
+			))),
+		};
+
+		Ok(ArkInfo {
+			network: v.network,
+			server_pubkey: v.server_pubkey,
+			mailbox_pubkey: v.mailbox_pubkey,
+			round_interval: v.round_interval,
+			nb_round_nonces: v.nb_round_nonces,
+			vtxo_exit_delta: v.vtxo_exit_delta,
+			vtxo_lifetime: vtxo_lifetime,
+			vtxo_expiry_delta: vtxo_lifetime,
+			htlc_send_expiry_delta: v.htlc_send_expiry_delta,
+			htlc_expiry_delta: v.htlc_expiry_delta,
+			max_vtxo_amount: v.max_vtxo_amount,
+			required_board_confirmations: v.required_board_confirmations,
+			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta,
+			min_board_amount: v.min_board_amount,
+			offboard_feerate_sat_per_kvb: v.offboard_feerate_sat_per_kvb,
+			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
+			fees: v.fees,
+			max_vtxo_exit_depth: v.max_vtxo_exit_depth,
+			max_offboard_inputs: v.max_offboard_inputs,
+		})
+	}
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -553,6 +619,72 @@ mod test {
 		let mut json = lightning_receive_base_json();
 		json["htlc_vtxo_ids"] = serde_json::json!([]);
 		serde_json::from_value::<LightningReceiveInfo>(json).unwrap();
+	}
+
+	#[allow(deprecated)]
+	fn ark_info_base() -> ArkInfo {
+		let pubkey = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+			.parse::<PublicKey>().unwrap();
+		ArkInfo {
+			network: bitcoin::Network::Regtest,
+			server_pubkey: pubkey,
+			mailbox_pubkey: pubkey,
+			round_interval: Duration::from_secs(60),
+			nb_round_nonces: 1,
+			vtxo_exit_delta: 12,
+			vtxo_lifetime: 100,
+			vtxo_expiry_delta: 100,
+			htlc_send_expiry_delta: 100,
+			htlc_expiry_delta: 6,
+			max_vtxo_amount: None,
+			required_board_confirmations: 3,
+			max_user_invoice_cltv_delta: 100,
+			min_board_amount: Amount::from_sat(1000),
+			offboard_feerate_sat_per_kvb: 1000,
+			ln_receive_anti_dos_required: false,
+			fees: ark::fees::FeeSchedule::default().into(),
+			max_vtxo_exit_depth: 10,
+			max_offboard_inputs: 4,
+		}
+	}
+
+	#[test]
+	#[allow(deprecated)]
+	fn ark_info_vtxo_lifetime_falls_back_to_deprecated_field() {
+		// Servers from before the rename only set vtxo_expiry_delta.
+		let mut json = serde_json::to_value(ark_info_base()).unwrap();
+		json.as_object_mut().unwrap().remove("vtxo_lifetime");
+		json["vtxo_expiry_delta"] = serde_json::json!(42);
+
+		let info = serde_json::from_value::<ArkInfo>(json).unwrap();
+		assert_eq!(info.vtxo_lifetime, 42);
+		assert_eq!(info.vtxo_expiry_delta, 42);
+	}
+
+	#[test]
+	#[allow(deprecated)]
+	fn ark_info_vtxo_lifetime_kept_in_sync() {
+		let mut json = serde_json::to_value(ark_info_base()).unwrap();
+		json["vtxo_lifetime"] = serde_json::json!(42);
+		json["vtxo_expiry_delta"] = serde_json::json!(42);
+
+		let info = serde_json::from_value::<ArkInfo>(json).unwrap();
+		assert_eq!(info.vtxo_lifetime, 42);
+		assert_eq!(info.vtxo_expiry_delta, 42);
+
+		// and both fields are populated again on the way out
+		let json = serde_json::to_value(&info).unwrap();
+		assert_eq!(json["vtxo_lifetime"], 42);
+		assert_eq!(json["vtxo_expiry_delta"], 42);
+	}
+
+	#[test]
+	fn ark_info_vtxo_lifetime_rejects_diverging_fields() {
+		let mut json = serde_json::to_value(ark_info_base()).unwrap();
+		json["vtxo_lifetime"] = serde_json::json!(42);
+		json["vtxo_expiry_delta"] = serde_json::json!(100);
+
+		assert!(serde_json::from_value::<ArkInfo>(json).is_err());
 	}
 
 	#[test]
