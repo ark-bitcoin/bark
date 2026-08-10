@@ -2,26 +2,30 @@
 
 ## Step 1: Download CI Artifacts
 
-The download script has two modes:
+The download script has two modes. Both accept either a bare id or the GitLab
+URL you were given:
 
 **Pipeline mode** — downloads logs and artifacts for all failed jobs in a
 pipeline:
 
 ```bash
-python3 ./contrib/agents/download-ci-artifacts.py --pipeline <pipeline-id>
+python3 ./contrib/agents/download-ci-artifacts.py --pipeline <id-or-url>
 ```
 
 **Job mode** — downloads logs and artifacts for a single job (regardless of
 its status):
 
 ```bash
-python3 ./contrib/agents/download-ci-artifacts.py --job <job-id>
+python3 ./contrib/agents/download-ci-artifacts.py --job <job-id-or-url>
 ```
 
-The script uses `glab` for authentication and API access.
+The script only needs `python3` and `wget`. It reads the public GitLab API
+anonymously — no `glab`, no login. For a private project (e.g.
+`bark-internal`) set `GITLAB_TOKEN` in the environment first.
 
 Artifacts save to `./contrib/agents/ci-debugging/<pipeline_id>-<job_name>/`:
-- `raw.log` — full build log
+- `raw.log` — full build log, with GitLab's per-line timestamps and terminal
+  colour codes stripped
 - `btc30/bark/<test_name>/` — per-test artifacts (server logs, bark logs,
   configs, databases)
 

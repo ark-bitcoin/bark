@@ -2,73 +2,160 @@
 """
 Download CI logs and test artifacts from GitLab CI.
 
-Requires: glab (GitLab CLI) authenticated, wget (for testdata downloads).
+Uses the public GitLab API only: no `glab` and no login are needed, since the
+bark project and its CI logs are public. Set GITLAB_TOKEN in the environment
+to reach a private project.
+
+Requires: python3, wget (for testdata downloads).
 
 Usage:
-    python3 ./contrib/agents/download-ci-artifacts.py --pipeline <id>
-    python3 ./contrib/agents/download-ci-artifacts.py --job <id>
+    python3 ./contrib/agents/download-ci-artifacts.py --pipeline <id-or-url>
+    python3 ./contrib/agents/download-ci-artifacts.py --job <id-or-url>
 
 Examples:
     # Download all failed jobs in a pipeline:
-    python3 ./contrib/agents/download-ci-artifacts.py --pipeline 2411091890
+    python3 ./contrib/agents/download-ci-artifacts.py --pipeline 2747928504
+
+    # Same, passing the pipeline URL straight from the MR page:
+    python3 ./contrib/agents/download-ci-artifacts.py \
+        --pipeline https://gitlab.com/ark-bitcoin/bark/-/pipelines/2747928504
 
     # Download a specific job (even if it passed):
-    python3 ./contrib/agents/download-ci-artifacts.py --job 13666140734
+    python3 ./contrib/agents/download-ci-artifacts.py --job 15815014046
 """
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
-from urllib.parse import quote as urlquote
+from urllib.parse import quote as urlquote, urlencode
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_BASE = SCRIPT_DIR / "ci-debugging"
+GITLAB = "https://gitlab.com"
 REPO = "ark-bitcoin/bark"
+TOKEN = os.environ.get("GITLAB_TOKEN")
+
+# GitLab prefixes every log line with "<timestamp> <NN><stream><flag>", where a
+# "+" flag marks the continuation of a line that GitLab wrapped.
+LOG_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z \d\d[OE]([ +])")
+ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 
-def glab_api(endpoint, repo=None, paginate=False):
-    """Call glab api and return parsed JSON (or raw text for traces)."""
-    cmd = ["glab", "api", endpoint]
-    if repo:
-        cmd += ["-R", repo]
-    if paginate:
-        cmd += ["--paginate"]
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"ERROR: glab api failed for {endpoint}")
-        print(result.stderr.strip())
-        sys.exit(1)
+def http_get(url, what):
+    """GET a URL, returning (body, headers). Exits on failure."""
+    req = urllib.request.Request(url, headers={"User-Agent": "bark-ci-debug"})
+    if TOKEN:
+        req.add_header("PRIVATE-TOKEN", TOKEN)
 
     try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return result.stdout
+        with urllib.request.urlopen(req) as resp:
+            return resp.read().decode("utf-8", errors="replace"), resp.headers
+    except urllib.error.HTTPError as e:
+        print(f"ERROR: could not fetch {what}: HTTP {e.code} ({url})")
+        if e.code in (401, 403, 404) and not TOKEN:
+            print("If the project is private, set GITLAB_TOKEN and retry.")
+        sys.exit(1)
+    except urllib.error.URLError as e:
+        print(f"ERROR: could not fetch {what}: {e.reason}")
+        sys.exit(1)
+
+
+def api_get(path, params=None):
+    """Call the GitLab REST API. Lists are fetched across all pages."""
+    query = dict(params or {}, per_page=100)
+    items = []
+    page = 1
+    while True:
+        url = f"{GITLAB}/api/v4{path}?{urlencode(dict(query, page=page))}"
+        body, headers = http_get(url, f"API {path}")
+        data = json.loads(body)
+        if not isinstance(data, list):
+            return data
+
+        items += data
+        next_page = headers.get("X-Next-Page")
+        if not next_page:
+            return items
+        page = int(next_page)
 
 
 def get_failed_jobs(repo, pipeline_id):
     """Return list of failed jobs in a pipeline."""
     encoded = urlquote(repo, safe="")
-    return glab_api(
-        f"/projects/{encoded}/pipelines/{pipeline_id}/jobs?scope[]=failed&per_page=100",
-        paginate=True,
+    return api_get(
+        f"/projects/{encoded}/pipelines/{pipeline_id}/jobs",
+        {"scope[]": "failed"},
     )
 
 
 def get_job(repo, job_id):
-    """Return a single job object."""
-    encoded = urlquote(repo, safe="")
-    return glab_api(f"/projects/{encoded}/jobs/{job_id}")
+    """Return a single job object.
+
+    The REST endpoint for a single job requires authentication even on public
+    projects, so anonymously we use the web UI's JSON endpoint instead and
+    normalise it to the shape the jobs list returns.
+    """
+    if TOKEN:
+        encoded = urlquote(repo, safe="")
+        return api_get(f"/projects/{encoded}/jobs/{job_id}")
+
+    body, _ = http_get(f"{GITLAB}/{repo}/-/jobs/{job_id}.json", f"job {job_id}")
+    job = json.loads(body)
+    return {
+        "id": job["id"],
+        "name": job["name"],
+        "status": job.get("status", {}).get("label", "unknown"),
+        "pipeline": {"id": job["pipeline"]["id"]},
+    }
 
 
 def get_job_trace(repo, job_id):
     """Return the plain-text log of a job."""
     encoded = urlquote(repo, safe="")
-    return glab_api(f"/projects/{encoded}/jobs/{job_id}/trace")
+    # The API trace endpoint needs authentication, the web one doesn't.
+    url = (
+        f"{GITLAB}/api/v4/projects/{encoded}/jobs/{job_id}/trace" if TOKEN
+        else f"{GITLAB}/{repo}/-/jobs/{job_id}/raw"
+    )
+    body, _ = http_get(url, f"log of job {job_id}")
+    return clean_trace(body)
+
+
+def clean_trace(trace):
+    """Undo GitLab's per-line timestamping and strip terminal colour codes."""
+    lines = []
+    for line in trace.split("\n"):
+        match = LOG_PREFIX.match(line)
+        if not match:
+            lines.append(line)
+        elif match.group(1) == "+" and lines:
+            # Continuation of a wrapped line: glue it back onto the previous.
+            lines[-1] += line[match.end():]
+        else:
+            lines.append(line[match.end():])
+
+    return ANSI.sub("", "\n".join(lines))
+
+
+def parse_ref(value, kind):
+    """Parse a pipeline/job reference: either a bare id or a GitLab URL.
+
+    Returns (repo, id); a bare id is assumed to belong to the bark repo.
+    """
+    if value.isdigit():
+        return REPO, int(value)
+
+    match = re.match(rf"https?://[^/]+/(.+?)/-/{kind}s/(\d+)", value)
+    if not match:
+        sys.exit(f"ERROR: not a {kind} id or {kind} URL: {value}")
+    return match.group(1), int(match.group(2))
 
 
 def download_testdata(url, dest_dir):
@@ -128,9 +215,15 @@ def process_job(repo, job):
     # Print failed tests summary
     print()
     print("Failed tests:")
+    seen = set()
     for line in trace.splitlines():
-        if re.match(r"^---- .* stdout ----$", line) or re.match(r"^    [a-z_]+$", line):
-            print(f"  {line.strip()}")
+        # cargo-nextest reports failures and its summary indented; the
+        # `---- <test> stdout ----` form is what plain cargo test prints.
+        summary = re.match(r"^\s+((?:TRY \d+ )?FAIL|Summary) \[", line)
+        if summary or re.match(r"^---- .* stdout ----$", line):
+            if line.strip() not in seen:
+                seen.add(line.strip())
+                print(f"  {line.strip()}")
 
 
 def main():
@@ -140,27 +233,27 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--pipeline",
-        metavar="ID",
-        type=int,
+        metavar="ID_OR_URL",
         help="Download all failed jobs in a pipeline.",
     )
     group.add_argument(
         "--job",
-        metavar="ID",
-        type=int,
+        metavar="ID_OR_URL",
         help="Download a specific job (regardless of status).",
     )
     args = parser.parse_args()
 
     if args.job:
-        job = get_job(REPO, args.job)
-        print(f"Project: {REPO}, Job: {args.job} ({job['name']}), Status: {job['status']}")
-        process_job(REPO, job)
+        repo, job_id = parse_ref(args.job, "job")
+        job = get_job(repo, job_id)
+        print(f"Project: {repo}, Job: {job_id} ({job['name']}), Status: {job['status']}")
+        process_job(repo, job)
     else:
-        print(f"Project: {REPO}, Pipeline: {args.pipeline}")
-        jobs = get_failed_jobs(REPO, args.pipeline)
+        repo, pipeline_id = parse_ref(args.pipeline, "pipeline")
+        print(f"Project: {repo}, Pipeline: {pipeline_id}")
+        jobs = get_failed_jobs(repo, pipeline_id)
         if not jobs:
-            print(f"No failed jobs found in pipeline {args.pipeline}.")
+            print(f"No failed jobs found in pipeline {pipeline_id}.")
             sys.exit(0)
 
         print("Failed jobs to download:")
@@ -168,7 +261,7 @@ def main():
             print(f"  {job['name']} (id={job['id']})")
 
         for job in jobs:
-            process_job(REPO, job)
+            process_job(repo, job)
 
     print()
     print("===== All downloads complete =====")
