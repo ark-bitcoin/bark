@@ -5,6 +5,8 @@ use futures::StreamExt;
 use server_rpc::{MAX_NB_MAILBOX_ARKOOR_VTXOS, MAX_NB_MAILBOX_RECOVERY_IDS};
 use tracing::{error, warn};
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::vtxo::Full;
+use ark::vtxo::policy::VtxoPolicyKind;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier, MailboxType};
 use server_rpc::{self as rpc, protos, TryFromBytes};
 
@@ -103,9 +105,25 @@ impl rpc::server::MailboxService for crate::Server {
 
 		let vtxos = req.vtxos.into_iter()
 			.map(|v| Vtxo::from_bytes(v))
-			.collect::<Result<Vec<_>, _>>()?;
+			.collect::<Result<Vec<Vtxo<Full>>, _>>()?;
 		if vtxos.is_empty() {
 			self::badarg!("no vtxos provided");
+		}
+
+		// Only final, self-custodial payment vtxos belong in an arkoor mailbox.
+		// The legit arkoor-send and lightning-receive delivery paths only ever
+		// post Pubkey vtxos. An HTLC (or any other server-contract) vtxo dressed
+		// up as a payment lets a malicious sender hand a recipient a coin they
+		// can never spend (the server refuses HTLC vtxos as spend inputs) while
+		// the sender unwinds the value over Lightning, so refuse it here.
+		for vtxo in &vtxos {
+			let kind = vtxo.policy().policy_type();
+			if kind != VtxoPolicyKind::Pubkey {
+				self::badarg!("vtxo {} is not a final payment vtxo (policy: {}); \
+					only pubkey vtxos may be delivered to an arkoor mailbox",
+					vtxo.id(), kind,
+				);
+			}
 		}
 
 		let blinded_mailbox_id = BlindedMailboxIdentifier::from_bytes(&req.blinded_id.as_slice())?;
