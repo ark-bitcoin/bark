@@ -62,8 +62,8 @@ pub struct ArkInfo {
 	pub nb_round_nonces: usize,
 	/// Delta between exit confirmation and coins becoming spendable
 	pub vtxo_exit_delta: BlockDelta,
-	/// Expiration delta of the VTXO
-	pub vtxo_expiry_delta: BlockDelta,
+	/// The number of blocks a VTXO lives before it expires
+	pub vtxo_lifetime: BlockDelta,
 	/// The number of blocks after which an HTLC-send VTXO expires once granted.
 	pub htlc_send_expiry_delta: BlockDelta,
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries
@@ -77,6 +77,14 @@ pub struct ArkInfo {
 	pub max_user_invoice_cltv_delta: u16,
 	/// Minimum amount for a board the server will cosign
 	pub min_board_amount: Amount,
+
+	/// The number of blocks a VTXO lives before it expires.
+	///
+	/// Deprecated in favour of [ArkInfo::vtxo_lifetime]. This field is still
+	/// populated with the same value for backwards compatibility with older
+	/// clients.
+	#[deprecated(note = "renamed to vtxo_lifetime")]
+	pub vtxo_expiry_delta: BlockDelta,
 
 	/// The feerate for offboard transactions.
 	///

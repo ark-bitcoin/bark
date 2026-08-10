@@ -1126,9 +1126,9 @@ async fn reject_overlong_board_cosign() {
 	let expiry_height = tip + (offset - offset % 65_536);
 	assert!(expiry_height <= ark::vtxo::policy::MAX_BLOCK_HEIGHT);
 	assert!(
-		expiry_height - tip > ark_info.vtxo_expiry_delta as u32,
+		expiry_height - tip > ark_info.vtxo_lifetime as u32,
 		"test expiry lifetime ({}) must exceed the server's cap ({})",
-		expiry_height - tip, ark_info.vtxo_expiry_delta,
+		expiry_height - tip, ark_info.vtxo_lifetime,
 	);
 
 	// An honest client computes a sane expiry, so only a hand-built request
@@ -1202,7 +1202,7 @@ async fn request_board_cosign_with_funding_tx(
 	let res = rpc.request_board_cosign(protos::BoardCosignRequest {
 		amount: sat(100_000).to_sat(),
 		utxo: utxo.serialize(),
-		expiry_height: tip + ark_info.vtxo_expiry_delta as u32,
+		expiry_height: tip + ark_info.vtxo_lifetime as u32,
 		user_pubkey: user_key.public_key().serialize().to_vec(),
 		pub_nonce: pub_nonce.serialize().to_vec(),
 		funding_tx: bitcoin::consensus::serialize(funding_tx),
@@ -1967,7 +1967,7 @@ async fn test_register_board() {
 	// Get server info and calculate expiry height
 	let ark_info = srv.ark_info().await;
 	let current_height = ctx.generate_blocks(1).await;
-	let expiry_height = current_height + ark_info.vtxo_expiry_delta as u32;
+	let expiry_height = current_height + ark_info.vtxo_lifetime as u32;
 
 	// Create a board builder to get the funding script
 	let board_amount = sat(100_000);

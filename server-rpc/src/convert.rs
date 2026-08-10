@@ -139,7 +139,7 @@ impl_try_from_bytes_bitcoin!(Transaction, "bitcoin transaction");
 
 
 impl From<ark::ArkInfo> for protos::ArkInfo {
-	#[allow(deprecated)] // offboard_feerate_sat_vkb kept for old clients
+	#[allow(deprecated)] // vtxo_expiry_delta and offboard_feerate kept for old clients
 	fn from(v: ark::ArkInfo) -> Self {
 		protos::ArkInfo {
 			network: v.network.to_string(),
@@ -148,7 +148,10 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			round_interval_secs: v.round_interval.as_secs() as u32,
 			nb_round_nonces: v.nb_round_nonces as u32,
 			vtxo_exit_delta: v.vtxo_exit_delta as u32,
-			vtxo_expiry_delta: v.vtxo_expiry_delta as u32,
+			vtxo_lifetime: v.vtxo_lifetime as u32,
+			// we serve the deprecated field from the new one so that it
+			// can never go stale for old clients
+			vtxo_expiry_delta: v.vtxo_lifetime as u32,
 			htlc_send_expiry_delta: v.htlc_send_expiry_delta as u32,
 			htlc_expiry_delta: v.htlc_expiry_delta as u32,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| v.to_sat()),
@@ -166,8 +169,14 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 
 impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 	type Error = ConvertError;
-	#[allow(deprecated)] // offboard_feerate_sat_vkb kept for old clients
+	#[allow(deprecated)] // vtxo_expiry_delta and offboard_feerate kept for old clients
 	fn try_from(v: protos::ArkInfo) -> Result<Self, Self::Error> {
+		// Servers from before the rename only set vtxo_expiry_delta.
+		let vtxo_lifetime = check_block_delta(match v.vtxo_lifetime {
+			0 => v.vtxo_expiry_delta,
+			l => l,
+		}).map_err(|_| "invalid vtxo_lifetime")?;
+
 		Ok(ark::ArkInfo {
 			network: v.network.parse().map_err(|_| "invalid network")?,
 			server_pubkey: PublicKey::from_slice(&v.server_pubkey)
@@ -178,8 +187,8 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 			nb_round_nonces: v.nb_round_nonces as usize,
 			vtxo_exit_delta: check_block_delta(v.vtxo_exit_delta)
 				.map_err(|_| "invalid vtxo_exit_delta")?,
-			vtxo_expiry_delta: check_block_delta(v.vtxo_expiry_delta)
-				.map_err(|_| "invalid vtxo_expiry_delta")?,
+			vtxo_lifetime,
+			vtxo_expiry_delta: vtxo_lifetime,
 			htlc_send_expiry_delta: check_block_delta(v.htlc_send_expiry_delta)
 				.map_err(|_| "invalid htlc_send_expiry_delta")?,
 			htlc_expiry_delta: check_block_delta(v.htlc_expiry_delta)
@@ -786,6 +795,8 @@ mod test {
 			round_interval_secs: 60,
 			nb_round_nonces: 1,
 			vtxo_exit_delta: 12,
+			vtxo_lifetime: 100,
+			#[allow(deprecated)]
 			vtxo_expiry_delta: 100,
 			htlc_send_expiry_delta: 100,
 			htlc_expiry_delta: 6,
@@ -830,6 +841,38 @@ mod test {
 		let mut proto = baseline_ark_info_proto();
 		proto.required_board_confirmations = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
 		assert!(ark::ArkInfo::try_from(proto).is_err());
+	}
+
+	#[test]
+	#[allow(deprecated)] // vtxo_expiry_delta kept for old peers
+	fn ark_info_vtxo_lifetime_falls_back_to_deprecated_field() {
+		// Servers from before the rename only set vtxo_expiry_delta.
+		let mut proto = baseline_ark_info_proto();
+		proto.fees = Some(ark::fees::FeeSchedule::default().into());
+		proto.vtxo_lifetime = 0;
+		proto.vtxo_expiry_delta = 42;
+
+		let info = ark::ArkInfo::try_from(proto).unwrap();
+		assert_eq!(info.vtxo_lifetime, 42);
+		assert_eq!(info.vtxo_expiry_delta, 42);
+	}
+
+	#[test]
+	#[allow(deprecated)] // vtxo_expiry_delta kept for old peers
+	fn ark_info_vtxo_lifetime_takes_precedence() {
+		let mut proto = baseline_ark_info_proto();
+		proto.fees = Some(ark::fees::FeeSchedule::default().into());
+		proto.vtxo_lifetime = 42;
+		proto.vtxo_expiry_delta = 100;
+
+		let info = ark::ArkInfo::try_from(proto).unwrap();
+		assert_eq!(info.vtxo_lifetime, 42);
+		assert_eq!(info.vtxo_expiry_delta, 42);
+
+		// and both fields are populated again on the way out
+		let proto = protos::ArkInfo::from(info);
+		assert_eq!(proto.vtxo_lifetime, 42);
+		assert_eq!(proto.vtxo_expiry_delta, 42);
 	}
 
 	#[test]

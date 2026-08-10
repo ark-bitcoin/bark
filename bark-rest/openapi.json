@@ -3255,7 +3255,7 @@
           "round_interval",
           "nb_round_nonces",
           "vtxo_exit_delta",
-          "vtxo_expiry_delta",
+          "vtxo_lifetime",
           "htlc_send_expiry_delta",
           "htlc_expiry_delta",
           "max_vtxo_amount",
@@ -3266,7 +3266,8 @@
           "ln_receive_anti_dos_required",
           "fees",
           "max_vtxo_exit_depth",
-          "max_offboard_inputs"
+          "max_offboard_inputs",
+          "vtxo_expiry_delta"
         ],
         "properties": {
           "fees": {
@@ -3352,7 +3353,11 @@
           },
           "vtxo_expiry_delta": {
             "$ref": "#/components/schemas/u16",
-            "description": "Expiration delta of the VTXO"
+            "description": "The number of blocks a VTXO lives before it expires.\n\n**Deprecated**: renamed to `vtxo_lifetime`. This field is still\npopulated with the same value for backwards compatibility and will\nbe removed in a future release."
+          },
+          "vtxo_lifetime": {
+            "$ref": "#/components/schemas/u16",
+            "description": "The number of blocks a VTXO lives before it expires"
           }
         }
       },

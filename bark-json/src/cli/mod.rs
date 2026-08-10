@@ -46,8 +46,8 @@ pub struct ArkInfo {
 	pub nb_round_nonces: usize,
 	/// Delta between exit confirmation and coins becoming spendable
 	pub vtxo_exit_delta: BlockDelta,
-	/// Expiration delta of the VTXO
-	pub vtxo_expiry_delta: BlockDelta,
+	/// The number of blocks a VTXO lives before it expires
+	pub vtxo_lifetime: BlockDelta,
 	/// The number of blocks after which an HTLC-send VTXO expires once granted.
 	pub htlc_send_expiry_delta: BlockDelta,
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries
@@ -79,6 +79,16 @@ pub struct ArkInfo {
 	pub max_vtxo_exit_depth: u16,
 	/// The maximum number of inputs for an offboard
 	pub max_offboard_inputs: usize,
+
+	/// The number of blocks a VTXO lives before it expires.
+	///
+	/// **Deprecated**: renamed to `vtxo_lifetime`. This field is still
+	/// populated with the same value for backwards compatibility and will
+	/// be removed in a future release.
+	#[deprecated(note = "renamed to `vtxo_lifetime`")]
+	#[serde(default)]
+	#[cfg_attr(feature = "utoipa", schema(required = true))]
+	pub vtxo_expiry_delta: BlockDelta,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -89,7 +99,7 @@ pub struct NextRoundStart {
 }
 
 impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
-	#[allow(deprecated)] // offboard_feerate kept for old clients
+	#[allow(deprecated)] // vtxo_expiry_delta and offboard_feerate kept for old clients
 	fn from(v: T) -> Self {
 		let v = v.borrow();
 	    ArkInfo {
@@ -99,7 +109,10 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			round_interval: v.round_interval,
 			nb_round_nonces: v.nb_round_nonces,
 			vtxo_exit_delta: v.vtxo_exit_delta,
-			vtxo_expiry_delta: v.vtxo_expiry_delta,
+			vtxo_lifetime: v.vtxo_lifetime,
+			// we serve the deprecated field from the new one so that it
+			// can never go stale for old clients
+			vtxo_expiry_delta: v.vtxo_lifetime,
 			htlc_send_expiry_delta: v.htlc_send_expiry_delta,
 			htlc_expiry_delta: v.htlc_expiry_delta,
 			max_vtxo_amount: v.max_vtxo_amount,
@@ -556,6 +569,7 @@ mod test {
 				round_interval: j.round_interval,
 				nb_round_nonces: j.nb_round_nonces,
 				vtxo_exit_delta: j.vtxo_exit_delta,
+				vtxo_lifetime: j.vtxo_lifetime,
 				vtxo_expiry_delta: j.vtxo_expiry_delta,
 				htlc_send_expiry_delta: j.htlc_send_expiry_delta,
 				htlc_expiry_delta: j.htlc_expiry_delta,

@@ -78,7 +78,7 @@ async fn blocklist_board_cosign_rejected() {
 
 	let ark_info = srv.ark_info().await;
 	let tip_height = ctx.bitcoind().get_block_count().await as u32;
-	let expiry_height = tip_height + ark_info.vtxo_expiry_delta as u32;
+	let expiry_height = tip_height + ark_info.vtxo_lifetime as u32;
 
 	let user_key = Keypair::new(&SECP, &mut thread_rng());
 	let board_amount = btc(1) - sat(2_000);
@@ -147,7 +147,7 @@ async fn blocklist_board_register_rejected() {
 
 	let ark_info = srv.ark_info().await;
 	let tip_height = ctx.bitcoind().get_block_count().await as u32;
-	let expiry_height = tip_height + ark_info.vtxo_expiry_delta as u32;
+	let expiry_height = tip_height + ark_info.vtxo_lifetime as u32;
 
 	let user_key = Keypair::new(&SECP, &mut thread_rng());
 	let board_amount = btc(1) - sat(2_000);
