@@ -1,0 +1,2 @@
+- deprecate ArkInfo::vtxo_expiry_delta and rename to ArkInfo::vtxo_lifetime
+  [#2385](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2385)
