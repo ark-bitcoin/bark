@@ -323,7 +323,7 @@ impl ExitTransactionManager {
 			fee_info: None,
 		});
 		self.index.insert(child_txid, Arc::downgrade(&package));
-		self.status.insert(exit_txid, TxStatus::NotFound);
+		self.status.insert(exit_txid, TxStatus::Mempool);
 		self.persister.store_exit_child_tx(exit_txid, &child_tx, origin).await
 			.map_err(|e| ExitError::DatabaseChildStoreFailure { error: e.to_string() })?;
 		Ok(child_txid)
@@ -357,6 +357,49 @@ impl ExitTransactionManager {
 		};
 		self.status.insert(package.exit.txid, status);
 		Ok(status)
+	}
+
+	/// Broadcast a freshly-built CPFP `child_tx` for `exit_txid` and commit it to the
+	/// exit package **only if it was accepted**.
+	///
+	/// Returns whether the child was committed.
+	pub async fn broadcast_and_set_child(
+		&mut self,
+		exit_txid: Txid,
+		child_tx: Transaction,
+		origin: ExitTxOrigin,
+	) -> Result<bool, ExitError> {
+		let parent_tx = self.get_package(exit_txid)?.read().await.exit.tx.clone();
+		match self.chain_source.broadcast_package(&[&parent_tx, &child_tx]).await {
+			Ok(()) => {
+				info!("Successfully broadcast exit package: {}", exit_txid);
+				self.set_wallet_child_tx(exit_txid, child_tx, origin).await?;
+				Ok(true)
+			},
+			// An input is already spent by a confirmed tx, so this CPFP can never confirm —
+			// for a freshly-built CPFP that's our own fee input, consumed by a sibling exit
+			// tx's CPFP that reused the same wallet UTXO. Don't commit it: the exit stays in
+			// AwaitingCpfpBroadcast and a fresh CPFP is built next tick. (A competing CPFP
+			// contesting the *shared anchor* instead surfaces as a mempool conflict and is
+			// resolved by `update_package_from_network`, which RBFs or adopts it — so it
+			// doesn't reach here, and not committing is safe either way.)
+			Err(BroadcastError::MissingOrSpentInputs) => {
+				warn!("Discarding exit CPFP for {}: an input is already spent — will rebuild \
+					from spendable UTXOs", exit_txid,
+				);
+				Ok(false)
+			},
+			// An equivalent CPFP is already in the mempool, or RBF rejected our bump: commit
+			// ours anyway, the in-mempool package will confirm the exit.
+			Err(ref e) if e.is_mempool_conflict() => {
+				warn!("CPFP broadcast conflict for {}: {} — another CPFP may already be in \
+					mempool", exit_txid, e,
+				);
+				self.set_wallet_child_tx(exit_txid, child_tx, origin).await?;
+				Ok(true)
+			},
+			Err(e) => Err(ExitError::ExitPackageBroadcastFailure { txid: exit_txid, error: e }),
+		}
 	}
 
 	async fn tip(&self) -> anyhow::Result<BlockHeight, ExitError> {

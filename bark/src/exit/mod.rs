@@ -886,20 +886,11 @@ impl Exit {
 		let origin = ExitTxOrigin::Wallet { confirmed_in: None };
 		let mut guard = self.inner.write().await;
 		let inner = &mut *guard;
-		inner.tx_manager.set_wallet_child_tx(exit_txid, child_tx, origin).await?;
 
-		let package = inner.tx_manager.get_package(exit_txid)?;
-		let pkg_guard = package.read().await;
-		match inner.tx_manager.broadcast_package(&*pkg_guard).await {
-			Ok(_) => {},
-			Err(ExitError::ExitPackageBroadcastFailure { ref error, .. })
-				if error.is_mempool_conflict() =>
-			{
-				warn!("CPFP broadcast conflict for {}: {} — another CPFP may already be in mempool", exit_txid, error);
-			},
-			Err(e) => return Err(e),
+		// Broadcast the package first and only commit the child if it's accepted
+		if !inner.tx_manager.broadcast_and_set_child(exit_txid, child_tx, origin).await? {
+			return Ok(());
 		}
-		drop(pkg_guard);
 
 		for ev in inner.exit_vtxos.iter_mut() {
 			let ExitState::Processing(s) = ev.state() else { continue };

@@ -2,6 +2,7 @@ use ark::vtxo::policy::signing::VtxoSigner;
 use log::{debug, error, info, trace, warn};
 
 use bitcoin_ext::{BlockDelta, P2TR_DUST, TxStatus};
+use crate::chain::BroadcastError;
 use crate::exit::models::{
 	ExitError, ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
 	ExitClaimedState, ExitState, ExitStartState, ExitTx, ExitTxStatus, ExitVtxoAlreadySpentState,
@@ -183,8 +184,26 @@ async fn progress_exit_tx(
 					debug!("Exit CPFP tx {} fell out of mempool, rebroadcasting", child_txid);
 					let package = ctx.tx_manager.get_package(exit.txid)?;
 					let guard = package.read().await;
-					ctx.tx_manager.broadcast_package(&*guard).await?;
-					ctx.get_exit_tx_status(exit).await
+					match ctx.tx_manager.broadcast_package(&*guard).await {
+						Ok(_) => ctx.get_exit_tx_status(exit).await,
+						// The stored CPFP can never confirm: one of its inputs is spent by a
+						// confirmed tx — for our own child that's its fee input, consumed by a
+						// sibling exit tx's CPFP that drew on the same wallet UTXO. Rebroadcasting
+						// can only keep failing, so abandon it and go back to AwaitingCpfpBroadcast
+						// to build a fresh CPFP from currently-spendable UTXOs. (A competing CPFP
+						// spending the shared anchor is instead detected and adopted by
+						// `update_package_from_network`, surfacing as the "replaced by" case above,
+						// so it never reaches here.)
+						Err(ExitError::ExitPackageBroadcastFailure {
+							error: BroadcastError::MissingOrSpentInputs, ..
+						}) => {
+							warn!("Exit CPFP tx {} for exit tx {} can't be rebroadcast (inputs \
+								already spent); requesting a fresh CPFP", child_txid, exit.txid,
+							);
+							Ok(ExitTxStatus::AwaitingCpfpBroadcast)
+						},
+						Err(e) => Err(e),
+					}
 				},
 				Some(_) => {
 					ctx.get_exit_tx_status(exit).await
