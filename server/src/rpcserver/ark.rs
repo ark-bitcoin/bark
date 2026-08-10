@@ -582,7 +582,13 @@ impl rpc::server::ArkService for Server {
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 
 		let (tx, rx) = oneshot::channel();
-		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests, unlock_preimage, pver };
+		let inp = RoundInput::RegisterPayment {
+			inputs,
+			vtxo_requests,
+			unlock_preimage,
+			pver,
+			client: crate::telemetry::current_client(),
+		};
 
 		self.rounds.round_input_tx.send((inp, tx))
 			.expect("input channel closed");

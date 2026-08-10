@@ -94,6 +94,10 @@ pub enum RoundInput {
 		unlock_preimage: UnlockPreimage,
 		/// the protocol version the client submitted this payment with
 		pver: u64,
+		/// Bucketed integrator name captured by the RPC middleware at
+		/// SubmitPayment time. Carried through the channel so per-integrator
+		/// refresh attribution survives the hop to the round-processing task.
+		client: &'static str,
 	},
 	VtxoSignatures {
 		pubkey: PublicKey,
@@ -151,10 +155,20 @@ pub struct InteractiveParticipation {
 	pub(crate) unlock_preimage: UnlockPreimage,
 	pub(crate) inputs: Vec<VtxoId>,
 	pub(crate) outputs: Vec<StoredRoundOutput>,
+	/// Bucketed integrator name from the SubmitPayment RPC that produced
+	/// this participation. Used to attribute `refresh_counter` /
+	/// `refresh_volume` per-integrator when the round finalizes.
+	pub(crate) client: &'static str,
 }
 
 pub struct DelegatedParticipation {
 	pub(crate) inputs: Vec<VtxoId>,
+	/// Placeholder for future per-integrator delegated-participation
+	/// attribution. Delegated participations are persisted to
+	/// `round_participation` and picked up asynchronously; without a
+	/// `client` column on that table we can't recover the originator here,
+	/// so this stays `"delegated"` until such a column is added.
+	pub(crate) client: &'static str,
 }
 
 /// Validate the input and output amounts of a round participation.
@@ -442,6 +456,7 @@ impl CollectingPayments {
 		inputs: Vec<Vtxo<Full>>,
 		vtxo_requests: Vec<SignedVtxoRequest>,
 		unlock_preimage: UnlockPreimage,
+		client: &'static str,
 	) {
 		let unlock_hash = sha256::Hash::hash(&unlock_preimage);
 		client_rslog!(RoundPaymentRegistered, self.round_step, unlock_hash,
@@ -471,6 +486,7 @@ impl CollectingPayments {
 				vtxo_request: r.vtxo,
 				unblinded_mailbox_id: None,
 			}).collect(),
+			client,
 		}).is_none(), "duplicate unlock hash");
 
 		// Check whether our round is full.
@@ -517,6 +533,7 @@ impl CollectingPayments {
 
 		assert!(self.delegated_participants.insert(unlock_hash, DelegatedParticipation {
 			inputs: input_ids,
+			client: "delegated",
 		}).is_none(), "duplicate delegated unlock hash");
 
 		// Check whether our round is full.
@@ -543,6 +560,7 @@ impl CollectingPayments {
 		vtxo_requests: Vec<SignedVtxoRequest>,
 		unlock_preimage: UnlockPreimage,
 		pver: u64,
+		client: &'static str,
 	) -> anyhow::Result<()> {
 		if vtxo_requests.is_empty() {
 			return badarg!("invalid request: no outputs");
@@ -605,7 +623,9 @@ impl CollectingPayments {
 		}
 
 		// Finally, we are done
-		self.register_interactive_participation(flux_guard, input_vtxos, vtxo_requests, unlock_preimage);
+		self.register_interactive_participation(
+			flux_guard, input_vtxos, vtxo_requests, unlock_preimage, client,
+		);
 
 		Ok(())
 	}
@@ -1149,14 +1169,14 @@ impl SigningVtxoTree {
 				.filter_map(|id| self.all_inputs.get(id))
 				.map(|v| v.amount())
 				.sum::<Amount>();
-			telemetry::add_refresh(vol.to_sat());
+			telemetry::add_refresh(vol.to_sat(), participation.client);
 		}
 		for participation in self.delegated_participants.values() {
 			let vol = participation.inputs.iter()
 				.filter_map(|id| self.all_inputs.get(id))
 				.map(|v| v.amount())
 				.sum::<Amount>();
-			telemetry::add_delegated_participation(vol.to_sat());
+			telemetry::add_delegated_participation(vol.to_sat(), participation.client);
 		}
 
 		// Outputs are split by VTXO policy. `real_outputs` was snapshotted
@@ -1514,11 +1534,11 @@ async fn receive_payments(
 
 				let res = match input {
 					RoundInput::RegisterPayment {
-						inputs, vtxo_requests, unlock_preimage, pver
+						inputs, vtxo_requests, unlock_preimage, pver, client
 					} => {
 						state
 							.process_self_signed_participation(
-								srv, inputs, vtxo_requests, unlock_preimage, pver,
+								srv, inputs, vtxo_requests, unlock_preimage, pver, client,
 							).await
 							.map_err(|e| {
 								debug!("error processing payment: {e:#}");
@@ -2024,7 +2044,7 @@ mod tests {
 		).unwrap();
 
 		let flux = VtxosInFlux::new();
-		state.register_interactive_participation(flux.empty_guard(), inputs, outputs.clone(), pre);
+		state.register_interactive_participation(flux.empty_guard(), inputs, outputs.clone(), pre, "test");
 		assert_eq!(state.all_inputs.len(), 1);
 		assert_eq!(state.all_outputs.len(), 1);
 		assert_eq!(state.inputs_per_cosigner.len(), 1);
@@ -2256,7 +2276,7 @@ mod tests {
 
 		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
-		state.register_interactive_participation(flux.empty_guard(), inputs1, outputs1, pre);
+		state.register_interactive_participation(flux.empty_guard(), inputs1, outputs1, pre, "test");
 		state.validate_payment_data(&input_ids2, &outputs2).unwrap_err();
 	}
 
@@ -2330,9 +2350,9 @@ mod tests {
 
 		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
-		state.register_interactive_participation(flux.empty_guard(), inputs1, outputs1.clone(), pre1);
+		state.register_interactive_participation(flux.empty_guard(), inputs1, outputs1.clone(), pre1, "test");
 		state.validate_payment_data(&input_ids2, &outputs2).unwrap();
-		state.register_interactive_participation(flux.empty_guard(), inputs2, outputs2.clone(), pre2);
+		state.register_interactive_participation(flux.empty_guard(), inputs2, outputs2.clone(), pre2, "test");
 
 		assert_eq!(state.all_inputs.len(), 2);
 		assert_eq!(state.all_outputs.len(), 4);
