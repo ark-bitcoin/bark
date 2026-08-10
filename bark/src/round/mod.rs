@@ -178,12 +178,13 @@ impl RoundState {
 	fn new_delegated(
 		participation: RoundParticipation,
 		unlock_hash: UnlockHash,
+		scheduled_height: Option<BlockHeight>,
 		movement_id: Option<MovementId>,
 	) -> Self {
 		Self {
 			participation,
 			movement_id,
-			flow: RoundFlowState::NonInteractivePending { unlock_hash },
+			flow: RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height },
 			new_vtxos: Vec::new(),
 			sent_forfeit_sigs: false,
 			done: false,
@@ -198,7 +199,7 @@ impl RoundState {
 	/// the unlock hash if already known
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
 		match self.flow {
-			RoundFlowState::NonInteractivePending { unlock_hash } => Some(unlock_hash),
+			RoundFlowState::NonInteractivePending { unlock_hash, .. } => Some(unlock_hash),
 			RoundFlowState::InteractivePending => None,
 			RoundFlowState::InteractiveOngoing { .. } => None,
 			RoundFlowState::Failed { .. } => None,
@@ -399,8 +400,10 @@ impl RoundState {
 				Ok(RoundStatus::Canceled)
 			},
 
-			RoundFlowState::NonInteractivePending { unlock_hash } => {
-				match progress_delegated(wallet, &self.participation, unlock_hash).await {
+			RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height } => {
+				match progress_delegated(
+					wallet, &self.participation, unlock_hash, scheduled_height,
+				).await {
 					Ok(HarkProgressResult::RoundPending) => Ok(RoundStatus::Pending),
 					// We don't lock inputs on delegated rounds, so if we don't find it,
 					// we just mark the refresh movement as failed
@@ -568,6 +571,10 @@ pub enum RoundFlowState {
 	/// We don't do flow and we just wait for the round to finish
 	NonInteractivePending {
 		unlock_hash: UnlockHash,
+		/// The block height we asked the server to schedule this participation
+		/// for, if any. We use it to verify the server honoured our schedule:
+		/// the new VTXOs must not expire before this height.
+		scheduled_height: Option<BlockHeight>,
 	},
 
 	/// Waiting for round to happen
@@ -918,18 +925,18 @@ fn check_round_matches_participation(
 	new_vtxos: &[Vtxo<Full>],
 	funding_tx: &Transaction,
 	ark_info: &ArkInfo,
+	scheduled_height: Option<BlockHeight>,
 ) -> anyhow::Result<()> {
 	ensure!(new_vtxos.len() == part.outputs.len(),
 		"unexpected number of VTXOs: got {}, expected {}", new_vtxos.len(), part.outputs.len(),
 	);
 
-	// A refresh must not shorten our expiry: the new VTXOs must outlive every
-	// input we're about to forfeit. Unlike a `tip + lifetime` bound, this is
-	// independent of the current tip, so it stays correct however long after
-	// the round was built we reach this check (delegated rounds are polled).
-	let min_expiry_height = part.inputs.iter()
-		.map(|v| v.expiry_height()).max().unwrap_or(1)
-		.saturating_add(1);
+	let min_expiry_height = match scheduled_height {
+		Some(h) => h.saturating_add(1),
+		None => part.inputs.iter()
+			.map(|v| v.expiry_height()).max().unwrap_or(1)
+			.saturating_add(1),
+	};
 
 	for (vtxo, req) in new_vtxos.iter().zip(&part.outputs) {
 		ensure!(vtxo.amount() == req.amount,
@@ -1017,6 +1024,7 @@ async fn progress_delegated(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
 	unlock_hash: UnlockHash,
+	scheduled_height: Option<BlockHeight>,
 ) -> Result<HarkProgressResult, HarkForfeitError> {
 	let (mut srv, ark_info) = wallet.require_server().await.map_err(HarkForfeitError::Err)?;
 
@@ -1079,7 +1087,9 @@ async fn progress_delegated(
 
 	// Check that the vtxos match our participation in the exact order, and that
 	// the server-chosen tree parameters are safe, before we forfeit our inputs.
-	check_round_matches_participation(participation, &new_vtxos, &funding_tx, &ark_info)
+	check_round_matches_participation(
+		participation, &new_vtxos, &funding_tx, &ark_info, scheduled_height,
+	)
 		.context("new VTXOs received from server don't match our participation")
 		.map_err(HarkForfeitError::Err)?;
 
@@ -1202,8 +1212,8 @@ async fn sign_vtxo_tree(
 
 	let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_VTXO_TREE_VOUT);
 
-	/// Validate the tree. We expect new VTXOs to be within a buffer from
-	/// expected vtxo lifetime.
+	// Validate the tree. We expect new VTXOs to be within a buffer from
+	// expected vtxo lifetime.
 	let tip = wallet.inner.chain.tip().await.context("chain source error")?;
 	let min_expiry_height = tip
 		.saturating_add(ark_info.vtxo_expiry_delta as BlockHeight)
@@ -1607,7 +1617,9 @@ impl Wallet {
 		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)
 			.context("invalid unlock hash from server")?;
 
-		let state = RoundState::new_delegated(participation, unlock_hash, movement_id);
+		let state = RoundState::new_delegated(
+			participation, unlock_hash, scheduled_height, movement_id,
+		);
 
 		info!("Delegated round participation submitted, it will automatically execute \
 			when you next sync your wallet after the round happened \
