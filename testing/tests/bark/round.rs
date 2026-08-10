@@ -8,11 +8,13 @@ use tokio_stream::StreamExt;
 
 use ark::{VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundEvent;
+use ark::tree::signed::HashlockVersion;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::persist::models::{StoredRoundState, Unlocked};
 use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::{VtxoLockHolder, VtxoState};
+use server::database::Db;
 use server_log::{AttemptingRound, NoRoundPayments, RestartMissingVtxoSigs, RoundFinished, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
@@ -291,6 +293,104 @@ async fn delegated_maintenance_refresh() {
 	let vtxos = bark.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "should still have one vtxo after refresh");
 	assert_eq!(vtxos[0].amount, sat(800_000));
+}
+
+#[tokio::test]
+async fn delegated_refresh_from_legacy_hashlock_round() {
+	//! Emulates the upgrade from the v0 to the v1 hashlock clauses.
+	//!
+	//! A delegated refresh is completed in a round conducted with the legacy
+	//! v0 clauses, then the server restarts with the current clauses (the
+	//! upgrade) and the client must still be able to finish the refresh.
+	//! The tree encoding doesn't record the clause version, so the server
+	//! has to detect the version of the stored tree to serve correctly
+	//! reconstructed VTXOs (rebuilding with the wrong version yields cosign
+	//! signatures that don't verify and wrong vtxo ids) and the client has
+	//! to accept the still-locked v0 leaves.
+	//!
+	//! NB 0.6.0 clients only accept v1 leaves when finishing delegated
+	//! rounds, so they can't complete this recovery.
+	require_bark_version!(> "0.6.0");
+
+	let ctx = TestContext::new("bark/delegated_refresh_from_legacy_hashlock_round").await;
+	let srv = ctx.captaind("server")
+		.cfg(|cfg| cfg.round_legacy_hashlock_clauses = true)
+		.funded(btc(1))
+		.create().await;
+	let mut bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	// Board funds and confirm
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	// Let vtxo almost expire so it needs refresh
+	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+
+	// Register the delegated refresh, then let the server run the round
+	// without us
+	bark.maintain_delegated().await;
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	log_round_finished.recv().wait(Duration::from_secs(30)).await.unwrap();
+
+	// Make sure the round was actually conducted with the legacy clauses,
+	// otherwise this test silently degrades into a regular refresh test
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let round = db.read(async |t| {
+		let id = t.get_last_round_id().await?.expect("no round in db");
+		Ok(t.get_round(id).await?.expect("round not in db"))
+	}).await.unwrap();
+	assert_eq!(round.signed_tree.detect_hashlock_version(), Ok(HashlockVersion::V0));
+
+	// The upgrade: restart the server building rounds with the current clauses
+	srv.stop().await.unwrap();
+	srv.config_mut().round_legacy_hashlock_clauses = false;
+	srv.start().await.unwrap();
+	// the server listens on a new port after the restart
+	bark.set_server_address(srv.ark_url()).await;
+
+	// The refresh movement is still pending, we never synced
+	let movements = bark.history().await;
+	let movement_id = movements.iter().find(|m| {
+		m.subsystem.name == "bark.round" &&
+		m.subsystem.kind == "refresh" &&
+		m.status == bark_json::movements::MovementStatus::Pending
+	}).expect("should have pending refresh movement").id;
+
+	// Sync until the delegated round progresses: the server serves the
+	// v0 round vtxos and we complete the forfeit dance
+	let mut success = false;
+	for i in 0..100 {
+		bark.sync().await;
+
+		let movements = bark.history().await;
+		if let Some(movement) = movements.iter().find(|m| m.id == movement_id) {
+			if movement.status == bark_json::movements::MovementStatus::Successful {
+				success = true;
+				break;
+			}
+		}
+
+		// Generate blocks to let the round funding tx confirm
+		if i % 5 == 0 {
+			ctx.generate_blocks(1).await;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+	assert!(success, "refresh movement should complete successfully");
+
+	// Verify that the vtxo was refreshed and the server registered the new
+	// vtxo under the same id we hold
+	let vtxos = bark.vtxos().await;
+	assert_eq!(vtxos.len(), 1, "should still have one vtxo after refresh");
+	assert_eq!(vtxos[0].amount, sat(800_000));
+	let vtxo_id = vtxos[0].id.to_string();
+	let server_knows = db.read(async |t| {
+		let row = t.query_one(
+			"SELECT COUNT(*) FROM vtxo WHERE vtxo_id = $1", &[&vtxo_id],
+		).await?;
+		Ok(row.get::<_, i64>(0))
+	}).await.unwrap();
+	assert_eq!(server_knows, 1, "server should know our refreshed vtxo {}", vtxo_id);
 }
 
 #[tokio::test]

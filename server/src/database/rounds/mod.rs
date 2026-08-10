@@ -380,7 +380,8 @@ impl<'t> Tx<'t> {
 		let round = self.get_round(round_id).await?
 			.with_context(|| format!("round {} not found", round_id))?;
 
-		let cached_tree = round.signed_tree.into_cached_tree();
+		let round_db_id = round.id;
+		let cached_tree = round.into_cached_tree()?;
 
 		let user_vtxo_ids = cached_tree.output_vtxos()
 			.map(|v| v.id().to_string())
@@ -404,7 +405,7 @@ impl<'t> Tx<'t> {
 		// Restore input vtxos: set them back to spendable.
 		// oor_spent_txid may have been set by set_forfeit_transactions after finish_round.
 		let update = tree::VtxoTreeUpdate::new()
-			.undo_round(round.id);
+			.undo_round(round_db_id);
 		tree::execute_vtxo_tree_update(&self, update).await?;
 
 		// Delete round_part_input and round_part_output before round_participation (FK).

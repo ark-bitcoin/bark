@@ -468,6 +468,16 @@ impl GenesisTransition {
 		)
 	}
 
+	pub fn new_hash_locked_cosigned_v0(
+		user_pubkey: PublicKey,
+		signature: Option<schnorr::Signature>,
+		unlock: MaybePreimage
+	) -> Self {
+		Self::HashLockedCosigned_v0(
+			HashLockedCosignedGenesis_v0 { user_pubkey, signature, unlock }
+		)
+	}
+
 
 	pub fn new_arkoor(
 		cosigners: Vec<PublicKey>,

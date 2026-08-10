@@ -862,10 +862,14 @@ async fn hark_vtxo_swap(
 
 fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo<Full>) -> anyhow::Result<()> {
 	match vtxo.validate(funding_tx) {
+		// NB delegated participations from rounds that predate the v1
+		// hashlock clauses have leaves with the v0 transition, so both
+		// versions are acceptable here
 		Err(VtxoValidationError::GenesisTransition {
 			genesis_idx, genesis_len, transition_kind, ..
 		}) if genesis_idx + 1 == genesis_len
-			&& transition_kind == TransitionKind::HashLockedCosigned.as_str() => Ok(()),
+			&& (transition_kind == TransitionKind::HashLockedCosigned.as_str()
+				|| transition_kind == TransitionKind::HashLockedCosigned_v0.as_str()) => Ok(()),
 		Ok(()) => Err(anyhow!("new un-unlocked VTXO should fail validation but doesn't: {}",
 			vtxo.serialize_hex(),
 		)),
@@ -1980,6 +1984,9 @@ mod test {
 
 	use bitcoin::secp256k1::Secp256k1;
 
+	use ark::VtxoPolicy;
+	use ark::tree::signed::{HashlockVersion, UnlockPreimage};
+
 	fn pubkey() -> bitcoin::secp256k1::PublicKey {
 		let secp = Secp256k1::new();
 		Keypair::new(&secp, &mut rand::thread_rng()).public_key()
@@ -1992,6 +1999,39 @@ mod test {
 		// entry per cosign keypair, inner Vec is the tree-depth set of
 		// pre-generated nonces.
 		vec![vec![musig::nonce_pair(&key).0, musig::nonce_pair(&key).0]]
+	}
+
+	#[test]
+	fn accepts_hash_locked_leaves_of_both_versions() {
+		let secp = Secp256k1::new();
+		let mut rng = rand::thread_rng();
+		let user_key = Keypair::new(&secp, &mut rng);
+		let user_cosign_key = Keypair::new(&secp, &mut rng);
+		let server_key = Keypair::new(&secp, &mut rng);
+		let server_cosign_key = Keypair::new(&secp, &mut rng);
+
+		let preimage: UnlockPreimage = rand::random();
+		let unlock_hash = UnlockHash::hash(&preimage);
+
+		let outputs = (0..2u64).map(|i| VtxoRequest {
+			amount: Amount::from_sat(10_000 + i),
+			policy: VtxoPolicy::new_pubkey(user_key.public_key()),
+		}).collect::<Vec<_>>();
+
+		// Delegated participations from rounds that predate the v1 hashlock
+		// clauses have leaves with the v0 policy and genesis transition, so
+		// the check must accept the still-locked leaves of both versions.
+		for version in [HashlockVersion::V0, HashlockVersion::V1] {
+			let (tree, funding_tx) = ark::test_util::build_signed_tree(
+				version, outputs.iter().cloned(),
+				&user_cosign_key, &server_key, &server_cosign_key, unlock_hash,
+			);
+			for vtxo in tree.into_cached_tree().output_vtxos() {
+				check_vtxo_fails_hash_lock(&funding_tx, &vtxo).unwrap_or_else(|e| panic!(
+					"locked {:?} leaf vtxo should be accepted: {:#}", version, e,
+				));
+			}
+		}
 	}
 
 	#[test]

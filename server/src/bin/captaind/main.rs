@@ -570,7 +570,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				// Check if any user-facing output vtxos have already been spent.
 				let any_spent = db.read(async |t| {
 					let round = t.get_round(round_id).await?.context("round not found")?;
-					let cached_tree = round.signed_tree.into_cached_tree();
+					let cached_tree = round.into_cached_tree()?;
 					let mut any_spent = false;
 					for vtxo in cached_tree.output_vtxos() {
 						let state = t.get_user_vtxo_by_id(vtxo.id()).await?;
