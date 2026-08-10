@@ -21,7 +21,8 @@ use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt, TxStatus};
 use bitcoin_ext::rpc;
 #[cfg(feature = "bitcoind-rpc")]
 use bitcoin_ext::rpc::{
-	BitcoinRpcClient, RPC_INVALID_ADDRESS_OR_KEY, RPC_VERIFY_ALREADY_IN_UTXO_SET,
+	BitcoinAsyncRpcExt, BitcoinRpcClient, RPC_INVALID_ADDRESS_OR_KEY,
+	RPC_VERIFY_ALREADY_IN_UTXO_SET,
 };
 #[cfg(feature = "bitcoind-rpc")]
 use bitcoind_async_client::Client as BitcoindClient;
@@ -57,7 +58,8 @@ const MIN_BITCOIND_VERSION: usize = 290000;
 /// [ChainSource::new] along with the expected [Network].
 ///
 /// Notes:
-/// - For [ChainSourceSpec::Bitcoind], authentication must be provided (cookie file or user/pass).
+/// - For [ChainSourceSpec::Bitcoind], authentication must be provided (cookie file or user/pass)
+///   and the node must run with `txindex=1`.
 #[derive(Clone, Debug)]
 pub enum ChainSourceSpec {
 	Bitcoind {
@@ -259,6 +261,7 @@ impl ChainSource {
 				};
 				let rpc = BitcoindClient::new(url, async_auth, None, None, None)
 					.context("failed to create async bitcoind rpc client")?;
+				rpc.require_txindex().await?;
 				ChainSourceClient::Bitcoind { rpc, sync }
 			},
 			#[cfg(not(feature = "bitcoind-rpc"))]
