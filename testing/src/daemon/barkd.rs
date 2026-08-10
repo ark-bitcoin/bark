@@ -107,6 +107,10 @@ impl Barkd {
 		self.inner.env.lock().insert(key.into(), value.into());
 	}
 
+	pub fn datadir(&self) -> PathBuf {
+		self.inner.datadir.clone()
+	}
+
 	pub fn base_url(&self) -> String {
 		format!("http://127.0.0.1:{}", self.inner.port())
 	}

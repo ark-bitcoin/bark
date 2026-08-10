@@ -4,6 +4,7 @@ mod core;
 mod exits;
 mod helpers;
 mod history;
+mod lifecycle;
 mod lightning;
 mod mnemonic;
 mod notifications;

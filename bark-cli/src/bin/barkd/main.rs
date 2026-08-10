@@ -18,6 +18,7 @@ use bark_rest::auth::AuthToken;
 use bark::fs_perms;
 
 use bark_cli::VERSION_DIRTY;
+use bark_cli::connection;
 use bark_cli::log::init_logging;
 use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, read_mnemonic, AUTH_TOKEN_FILE};
 use tokio_util::sync::CancellationToken;
@@ -138,6 +139,10 @@ impl Cli {
 	fn to_config(&self) -> anyhow::Result<Config> {
 		let mut cfg = Config::default();
 		if let Some(port) = &self.port {
+			if *port == 0 {
+				bail!("--port 0 is not supported; barkd listens on a fixed \
+					port (default {})", cfg.port);
+			}
 			cfg.port = *port;
 		}
 		if let Some(host) = &self.host {
@@ -334,6 +339,8 @@ async fn main() -> anyhow::Result<()>{
 		}
 	}
 
+	let config = cli.to_config()?;
+
 	let shutdown = CancellationToken::new();
 
 	info!("Starting barkd version {} with datadir {}", FULL_VERSION, datadir.display());
@@ -342,6 +349,8 @@ async fn main() -> anyhow::Result<()>{
 		warn!("You're running a custom build of barkd, which might cause unexpected issues. \
 			Consider building at one of the tagged versions or using the release builds.");
 	}
+
+	let _barkd_lock = connection::acquire_barkd_lock(&datadir)?;
 
 	let auth_token = if cli.no_auth {
 		if cli.allowed_origins.is_empty() {
@@ -403,11 +412,7 @@ async fn main() -> anyhow::Result<()>{
 			// NB: No need to stop the daemon here, it will be stopped when the wallet is removed from the server state
 
 			Box::pin(async move {
-				// Wipe datadir
-				let _ = tokio::fs::remove_dir_all(&datadir).await.ok();
-				tokio::fs::create_dir_all(&datadir).await?;
-				// Lock it back to the owner.
-				fs_perms::harden(&datadir, 0o700)?;
+				connection::wipe_datadir_except_daemon_files(&datadir)?;
 				Ok(())
 			})
 		}
@@ -431,7 +436,7 @@ async fn main() -> anyhow::Result<()>{
 		.on_wallet_delete(on_wallet_delete)
 		.on_get_mnemonic(on_get_mnemonic)
 		.build(shutdown.clone());
-	let server = RestServer::start(&cli.to_config()?, state, shutdown.clone()).await?;
+	let server = RestServer::start(&config, state, shutdown.clone()).await?;
 
 	run_shutdown_signal_listener(shutdown.clone()).await;
 
@@ -463,5 +468,22 @@ mod test {
 		let cli = Cli::try_parse_from(["barkd", "--expose-mnemonic"])
 			.expect("--expose-mnemonic should parse");
 		assert!(cli.expose_mnemonic, "--expose-mnemonic must enable exposure");
+	}
+
+	/// Nothing reports the actually bound address, so an OS-assigned port
+	/// would leave the daemon unreachable by convention.
+	#[test]
+	fn to_config_rejects_port_zero() {
+		let cli = Cli::try_parse_from(["barkd", "--port", "0"])
+			.expect("--port 0 should parse");
+		let err = cli.to_config().unwrap_err();
+		assert!(
+			err.to_string().contains("--port 0 is not supported"),
+			"unexpected error: {}", err,
+		);
+
+		let cli = Cli::try_parse_from(["barkd", "--port", "3001"])
+			.expect("--port 3001 should parse");
+		assert_eq!(cli.to_config().unwrap().port, 3001);
 	}
 }

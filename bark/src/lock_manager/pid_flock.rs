@@ -61,6 +61,14 @@ impl FlockPidLockManager {
 	/// holds the lock, or [`PidLockError::SetupFailed`] for any other
 	/// I/O failure.
 	pub fn new(datadir: impl Into<PathBuf>) -> Result<Self, PidLockError> {
+		Self::new_with_lock_file(datadir, LOCK_FILE)
+	}
+
+	/// Like [`new`](Self::new), but locking a caller-chosen file name
+	pub fn new_with_lock_file(
+		datadir: impl Into<PathBuf>,
+		lock_file: &str,
+	) -> Result<Self, PidLockError> {
 		let datadir = datadir.into();
 		let setup = |source: anyhow::Error| PidLockError::SetupFailed {
 			datadir: datadir.clone(),
@@ -71,7 +79,7 @@ impl FlockPidLockManager {
 			.with_context(|| format!("failed to create datadir {}", datadir.display()))
 			.map_err(setup)?;
 
-		let path = datadir.join(LOCK_FILE);
+		let path = datadir.join(lock_file);
 		let mut file = open_lock_file(&path).map_err(setup)?;
 
 		match file.try_lock() {
@@ -162,6 +170,16 @@ mod test {
 			"unexpected error: {}", err,
 		);
 		drop(_held);
+		let _ = fs::remove_dir_all(&dir);
+	}
+
+	#[tokio::test]
+	async fn distinct_lock_files_dont_conflict() {
+		let dir = tmp_dir();
+		let _default = FlockPidLockManager::new(&dir).unwrap();
+		let _custom = FlockPidLockManager::new_with_lock_file(&dir, "other.lock").unwrap();
+		let err = FlockPidLockManager::new_with_lock_file(&dir, "other.lock").unwrap_err();
+		assert!(matches!(err, PidLockError::AlreadyHeld { .. }));
 		let _ = fs::remove_dir_all(&dir);
 	}
 
