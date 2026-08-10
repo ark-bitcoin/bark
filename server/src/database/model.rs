@@ -115,6 +115,13 @@ pub struct VtxoState<G = Full, P: Policy = VtxoPolicy> {
 	/// this so unregistered vtxos can't be used as inputs.
 	pub spend_state: SpendState,
 
+	/// If this vtxo exited onchain, the height at which its onchain
+	/// transaction confirmed.
+	///
+	/// We never serve an exited vtxo and will not sign any forfeit,
+	/// arkoor or other transaction anymore.
+	pub confirmed_height: Option<BlockHeight>,
+
 	/// If this is a board vtxo, the time at which it was swept.
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
@@ -132,6 +139,7 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 					spent_in_round: self.spent_in_round,
 					offboarded_in: self.offboarded_in,
 					banned_until_height: self.banned_until_height,
+					confirmed_height: self.confirmed_height,
 					spend_state: self.spend_state,
 					created_at: self.created_at,
 					updated_at: self.updated_at,
@@ -146,6 +154,7 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 					spent_in_round: self.spent_in_round,
 					offboarded_in: self.offboarded_in,
 					banned_until_height: self.banned_until_height,
+					confirmed_height: self.confirmed_height,
 					spend_state: self.spend_state,
 					created_at: self.created_at,
 					updated_at: self.updated_at,
@@ -156,6 +165,11 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 }
 
 impl<G, P: Policy> VtxoState<G, P> {
+	/// Whether this vtxo exited: its onchain transaction is confirmed.
+	pub fn is_exited(&self) -> bool {
+		self.confirmed_height.is_some()
+	}
+
 	/// Whether this vtxo may be spent as a freely chosen input: a round, an
 	/// offboard or an arkoor. HTLC VTXOs are refused.
 	///
@@ -186,6 +200,9 @@ impl<G, P: Policy> VtxoState<G, P> {
 
 	/// The spend-lifecycle half of the checks above, shared by both.
 	fn check_state_spendable(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
+		if self.is_exited() {
+			return badarg!("vtxo {} has exited onchain", self.vtxo_id);
+		}
 		if self.spend_state != SpendState::Spendable {
 			return badarg!("vtxo {} is not spendable (state: {})", self.vtxo_id, self.spend_state);
 		}
@@ -199,8 +216,12 @@ impl<G, P: Policy> VtxoState<G, P> {
 	/// The proof only demonstrates that the user controls a genuine stake in
 	/// the Ark (one the server itself cosigned); it never spends the vtxo, so
 	/// requiring the signed transaction chain to be uploaded first is
-	/// unnecessary. Banned vtxos are still rejected.
+	/// unnecessary. Banned and exited vtxos are still rejected: an exited
+	/// vtxo no longer represents a stake in the Ark.
 	pub fn check_valid_anti_dos_proof(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
+		if self.is_exited() {
+			return badarg!("vtxo {} has exited onchain", self.vtxo_id);
+		}
 		if !matches!(self.spend_state, SpendState::Spendable | SpendState::Unregistered) {
 			return badarg!(
 				"vtxo {} is not a valid anti-dos proof (state: {})", self.vtxo_id, self.spend_state,
@@ -260,6 +281,10 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Full, P> {
 			banned_until_height: row.get::<_, Option<i32>>("banned_until_height")
 				.map(|h| u32::try_from(h))
 				.transpose()?,
+			confirmed_height: row.get::<_, Option<i32>>("confirmed_height")
+				.map(|h| BlockHeight::try_from(h))
+				.transpose()
+				.context("invalid confirmed_height in DB")?,
 			spend_state: SpendState::from_str(row.get::<_, &str>("spend_state"))?,
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
@@ -305,6 +330,10 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Bare, P> {
 				.get::<_, Option<i32>>("banned_until_height")
 				.map(|h| u32::try_from(h))
 				.transpose()?,
+			confirmed_height: row.get::<_, Option<i32>>("confirmed_height")
+				.map(|h| BlockHeight::try_from(h))
+				.transpose()
+				.context("invalid confirmed_height in DB")?,
 			spend_state: SpendState::from_str(row.get::<_, &str>("spend_state"))?,
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
@@ -427,6 +456,7 @@ mod test {
 			spent_in_round: None,
 			offboarded_in: None,
 			banned_until_height: None,
+			confirmed_height: None,
 			spend_state: SpendState::Spendable,
 			created_at: Local::now(),
 			updated_at: Local::now(),
@@ -477,6 +507,22 @@ mod test {
 		v.spend_state = SpendState::Spent;
 		v.oor_spent_txid = Some(Txid::all_zeros());
 		assert!(v.check_valid_anti_dos_proof(100).is_err());
+	}
+
+	#[test]
+	fn exited_is_not_spendable() {
+		let mut v = spendable();
+		v.confirmed_height = Some(90);
+		let err = v.check_spendable(100).unwrap_err();
+		assert!(format!("{err}").contains("exited"), "got: {err}");
+	}
+
+	#[test]
+	fn exited_is_not_valid_anti_dos_proof() {
+		let mut v = spendable();
+		v.confirmed_height = Some(90);
+		let err = v.check_valid_anti_dos_proof(100).unwrap_err();
+		assert!(format!("{err}").contains("exited"), "got: {err}");
 	}
 
 	#[test]
