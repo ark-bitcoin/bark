@@ -19,6 +19,8 @@ use futures::{FutureExt, Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 use tokio_util::sync::CancellationToken;
 
+use bitcoin_ext::BlockHeight;
+
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
@@ -76,6 +78,40 @@ const MAILBOX_PROCESSING_LOCK_KEY: &str = "mailbox.processing";
 /// waiters acquire the lock and dedup as usual.
 const MAILBOX_PROCESSING_LOCK_TIMEOUT: std::time::Duration =
 	std::time::Duration::from_secs(30);
+
+/// Block-height safety margin a received arkoor vtxo must still have before it
+/// expires for us to accept it as spendable. A coin at or past this margin
+/// can't be reliably exited if the server later misbehaves, so we refuse it on
+/// receipt rather than store money we might not be able to claim unilaterally.
+#[allow(dead_code)]
+const ARKOOR_RECEIVE_EXPIRY_MARGIN: BlockHeight = 288;
+
+/// Whether a structurally-valid arkoor vtxo is safe to store as a spendable
+/// received payment.
+///
+/// [`Wallet::validate_vtxo`] only proves the vtxo's genesis chain was cosigned
+/// by the server pubkey embedded in the vtxo. A received payment additionally
+/// has to be a final, self-custodial coin, so we require that:
+///
+/// - the policy is [`VtxoPolicyKind::Pubkey`]: an in-flight HTLC (or any other
+///   server contract) is not a payment, and the server refuses to let us spend
+///   it as an arkoor/round/offboard input;
+/// - the vtxo commits to *our* server's pubkey, not a foreign server's;
+/// - the vtxo isn't about to expire, so a unilateral exit is still possible.
+///
+/// Ownership (that the wallet holds a signable key) is checked by the caller,
+/// which has async database access.
+//TODO: this is a permissive placeholder matching the receive path's current
+// behaviour; it is tightened when the receive gate is wired up.
+#[allow(dead_code)]
+fn check_arkoor_receive_policy(
+	vtxo: &Vtxo<Full>,
+	server_pubkey: bitcoin::secp256k1::PublicKey,
+	tip: BlockHeight,
+) -> anyhow::Result<()> {
+	let _ = (vtxo, server_pubkey, tip);
+	Ok(())
+}
 
 impl Wallet {
 	/// Get the keypair used for the server mailbox
@@ -629,5 +665,47 @@ impl Wallet {
 
 	async fn store_mailbox_checkpoint(&self, checkpoint: u64) -> anyhow::Result<()> {
 		Ok(self.inner.db.store_mailbox_checkpoint(checkpoint).await?)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use ark::SECP;
+	use ark::test_util::VTXO_VECTORS;
+	use bitcoin::secp256k1::Keypair;
+
+	/// The arkoor receive path must only store final, self-custodial coins for
+	/// our own server. This pins the four ways a received vtxo can be unsafe.
+	#[test]
+	fn arkoor_receive_policy_gate() {
+		let vectors = &*VTXO_VECTORS;
+		let server_pubkey = vectors.server_key.public_key();
+
+		// A final Pubkey payment vtxo, committing to our server, with plenty of
+		// runway before expiry is acceptable.
+		let good = &vectors.board_vtxo;
+		let healthy_tip = good.expiry_height() - ARKOOR_RECEIVE_EXPIRY_MARGIN - 1;
+		check_arkoor_receive_policy(good, server_pubkey, healthy_tip)
+			.expect("a healthy Pubkey vtxo must be accepted");
+
+		// An HTLC-send vtxo is an in-flight contract, not a payment.
+		let htlc = &vectors.arkoor_htlc_out_vtxo;
+		let htlc_tip = htlc.expiry_height() - ARKOOR_RECEIVE_EXPIRY_MARGIN - 1;
+		check_arkoor_receive_policy(htlc, server_pubkey, htlc_tip)
+			.expect_err("an HTLC-send vtxo must be refused as a payment");
+
+		// A vtxo committing to some other server's key is not ours to trust.
+		let foreign_server = Keypair::from_seckey_slice(&SECP, &[0x11; 32])
+			.unwrap().public_key();
+		check_arkoor_receive_policy(good, foreign_server, healthy_tip)
+			.expect_err("a vtxo for a foreign server must be refused");
+
+		// A vtxo within the expiry margin can't be safely exited if the server
+		// misbehaves after we've credited it.
+		let near_expiry_tip = good.expiry_height() - 1;
+		check_arkoor_receive_policy(good, server_pubkey, near_expiry_tip)
+			.expect_err("a near-expiry vtxo must be refused");
 	}
 }
