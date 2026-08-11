@@ -19,6 +19,7 @@ path = "src/bin/captaind/main.rs"
 
 # OWN
 ark-lib = { path = "../lib" }
+bark-common = { path = "../bark-common" }
 bark-cln-rpc = { path = "../cln-rpc" }
 bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server", "intman"] }
