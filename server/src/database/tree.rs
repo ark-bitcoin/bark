@@ -301,7 +301,8 @@ impl VtxoTreeUpdate {
 	}
 
 	/// Insert bare vtxos with `spend_state = 'spendable'`.
-	/// Bare vtxos don't carry genesis data so the vtxo column is empty.
+	/// Bare vtxos don't carry genesis data, they are stored with an
+	/// empty genesis.
 	pub fn insert_spendable_bare_vtxos<V: std::borrow::Borrow<ServerVtxo<Bare>>>(
 		self,
 		vtxos: impl IntoIterator<Item = V>,

@@ -240,6 +240,9 @@ enum DataCommand {
 	/// Fix board expiry VTXOs with incorrect internal key
 	#[command()]
 	FixBoardExpiryPolicy,
+	/// Fix offboard connector and forfeit VTXOs stored with an empty vtxo blob
+	#[command()]
+	FixOffboardVtxos,
 }
 
 #[derive(clap::Subcommand)]
@@ -391,6 +394,10 @@ async fn inner_main() -> anyhow::Result<()> {
 					let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 					let count = server::database::data_migrations::fix_board_expiry_policy::run(&db, &bitcoind).await?;
 					println!("Fixed {} board expiry vtxos", count);
+				}
+				DataCommand::FixOffboardVtxos => {
+					let count = server::database::data_migrations::fix_offboard_vtxos::run(&db).await?;
+					println!("Fixed {} offboard vtxos", count);
 				}
 			}
 		}
