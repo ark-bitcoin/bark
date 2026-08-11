@@ -15,6 +15,7 @@ use anyhow::Context;
 use bark::ArkoorAddressError;
 use bark::movement::PaymentMethod;
 use bark::payment_request::ArkAddressType;
+use bark::secret::Secret;
 use bark_cli::VERSION_DIRTY;
 use bitcoin::{Amount};
 use clap::builder::BoolishValueParser;
@@ -338,7 +339,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	match cli.command {
 		Command::Create { .. } | Command::Dev(_) => unreachable!("handled earlier"),
 		Command::Config => {
-			output_json(&wallet.config())
+			let mut config = wallet.config().clone();
+			// The Secret wrapper only redacts Debug output; JSON
+			// serialization passes through, so swap the value here.
+			config.bitcoind_pass = config.bitcoind_pass
+				.map(|_| Secret::new("[redacted]".to_owned()));
+			output_json(&config)
 		},
 		Command::ArkInfo => {
 			match wallet.require_ark_info().await {

@@ -310,6 +310,7 @@ pub mod actions;
 pub mod chain;
 pub mod exit;
 pub use bark_common::fs_perms;
+pub use bark_common::secret;
 pub mod movement;
 pub mod onchain;
 pub mod payment_request;
@@ -1132,7 +1133,8 @@ impl Wallet {
 			} else {
 				bitcoin_ext::rpc::Auth::UserPass(
 					config.bitcoind_user.clone().context("need bitcoind auth config")?,
-					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
+					config.bitcoind_pass.as_ref().context("need bitcoind auth config")?
+						.leak_ref().clone(),
 				)
 			};
 			ChainSourceSpec::Bitcoind { url: url.clone(), auth }
