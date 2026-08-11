@@ -112,6 +112,9 @@ pub struct ArkInfo {
 	/// cosign further OOR transactions spending it. Clients should refresh
 	/// their VTXOs into a round before this limit is reached.
 	pub max_vtxo_exit_depth: u16,
+
+	/// Link to the server's terms of service, if any.
+	pub tos_link: Option<String>,
 }
 
 /// Request for the creation of an vtxo.

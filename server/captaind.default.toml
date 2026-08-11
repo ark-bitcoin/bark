@@ -58,6 +58,10 @@ transaction_rebroadcast_interval = "1m"
 # Clients are supposed to display this message to their users.
 #handshake_psa = "Welcome to the most Awesome Ark Server!"
 
+# Link to the terms of service of this server, announced to clients
+# via `ArkInfo.tos_link`
+#tos_link = "https://example.com/terms-of-service"
+
 # Endpoint for OpenTelemetry collector
 #otel_collector_endpoint = "http://127.0.0.1:4000"
 # Probability of enabling OpenTelemetry tracing

@@ -78,6 +78,8 @@ pub struct ArkInfo {
 	/// cosign further OOR transactions spending it. Clients should refresh
 	/// their VTXOs into a round before this limit is reached.
 	pub max_vtxo_exit_depth: u16,
+	/// Link to the server's terms of service, if any.
+	pub tos_link: Option<String>,
 	/// The maximum number of inputs for an offboard
 	pub max_offboard_inputs: usize,
 
@@ -117,6 +119,7 @@ impl<'de> serde::Deserialize<'de> for ArkInfo {
 			ln_receive_anti_dos_required: bool,
 			fees: FeeSchedule,
 			max_vtxo_exit_depth: u16,
+			tos_link: Option<String>,
 			max_offboard_inputs: usize,
 			#[serde(default)]
 			vtxo_expiry_delta: BlockDelta,
@@ -152,6 +155,7 @@ impl<'de> serde::Deserialize<'de> for ArkInfo {
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: v.fees,
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth,
+			tos_link: v.tos_link,
 			max_offboard_inputs: v.max_offboard_inputs,
 		})
 	}
@@ -190,6 +194,7 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			fees: v.fees.clone().into(),
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth,
 			max_offboard_inputs: v.max_offboard_inputs,
+			tos_link: v.tos_link.clone(),
 		}
 	}
 }
@@ -644,6 +649,7 @@ mod test {
 			ln_receive_anti_dos_required: false,
 			fees: ark::fees::FeeSchedule::default().into(),
 			max_vtxo_exit_depth: 10,
+			tos_link: None,
 			max_offboard_inputs: 4,
 		}
 	}
@@ -714,6 +720,7 @@ mod test {
 				fees: j.fees.into(),
 				max_vtxo_exit_depth: j.max_vtxo_exit_depth,
 				max_offboard_inputs: j.max_offboard_inputs,
+				tos_link: j.tos_link,
 			}
 		}
 	}

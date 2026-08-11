@@ -344,6 +344,10 @@ pub struct Config {
 	/// announcements to all cliens.
 	pub handshake_psa: Option<String>,
 
+	/// Link to the terms of service of this server,
+	/// announced to clients via `ArkInfo.tos_link`.
+	pub tos_link: Option<String>,
+
 	pub otel_collector_endpoint: Option<String>,
 	/// <= 0 -> Tracing always disabled,
 	/// 0.5 -> Tracing enabled 50% of the time, and

@@ -1,0 +1,2 @@
+- Add `ArkInfo::tos_link`, a link to the server's terms of service, if any
+  [#2396](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2396)

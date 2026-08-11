@@ -163,6 +163,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: Some(v.fees.into()),
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth as u32,
+			tos_link: v.tos_link,
 		}
 	}
 }
@@ -205,6 +206,7 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 			fees: v.fees.ok_or("missing fees")?.try_into()?,
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth.try_into()
 				.map_err(|_| "invalid max_vtxo_exit_depth")?,
+			tos_link: v.tos_link,
 		})
 	}
 }
@@ -810,6 +812,7 @@ mod test {
 			fees: None,
 			max_vtxo_exit_depth: 5,
 			max_offboard_inputs: 10,
+			tos_link: None,
 		}
 	}
 
