@@ -20,7 +20,7 @@ Use the skills in `contrib/agents/skills/` extensively:
 | `changelog.md` | Writing changelog entries |
 | `missing-changelogs.md` | Finding MRs without changelog entries |
 | `protocol-encoding.md` | Working with ProtocolEncoding (backward compat, no panics, DoS protection) |
-| `documentation.md` | Vocabulary and terminology guide |
+| `documentation.md` | Documentation conventions (vocabulary is in CONTRIBUTING/style_guide.md) |
 | `database-schema.md` | Finding the full database DDL (use schema.sql, not migrations) |
 | `release-tagging.md` | Tagging releases |
 | `prompts.md` | Managing prompts and research |
@@ -52,6 +52,12 @@ Correct but hard-to-understand code is worse than clear code with a bug (bugs ge
 - Look at surrounding code to match style
 
 See `CONTRIBUTING/STYLE.md` for details on imports, serialization, etc.
+
+## Writing Style and Vocabulary
+
+Follow `CONTRIBUTING/style_guide.md` for vocabulary and writing style.
+That guide applies to all text: documentation, comments, docstrings,
+changelogs, commit messages, and user-facing strings.
 
 ## Commit Hygiene
 
