@@ -92,7 +92,9 @@ message ArkInfo {
 	uint32 round_interval_secs = 3;
 	uint32 nb_round_nonces = 4;
 	uint32 vtxo_exit_delta = 5;
-	uint32 vtxo_expiry_delta = 6;
+	// Deprecated: renamed to vtxo_lifetime. This field is kept and populated
+	// with the same value for wire compatibility with older clients.
+	uint32 vtxo_expiry_delta = 6 [deprecated = true];
 	uint32 htlc_send_expiry_delta = 7;
 	uint32 htlc_expiry_delta = 8;
 	optional uint64 max_vtxo_amount = 9;
@@ -110,7 +112,12 @@ message ArkInfo {
 
 	uint32 max_offboard_inputs = 20;
 
-	// last index: 20
+	// The number of blocks a VTXO lives before it expires. Replaces the
+	// deprecated vtxo_expiry_delta field above; older servers only set that
+	// one, so clients should fall back to it when this field is 0.
+	uint32 vtxo_lifetime = 21;
+
+	// last index: 21
 }
 
 message OffboardFeeRateResponse {

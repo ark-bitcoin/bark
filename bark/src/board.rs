@@ -155,7 +155,7 @@ impl Wallet {
 		let properties = self.inner.db.read_properties().await?.context("Missing config")?;
 		let current_height = self.inner.chain.tip().await?;
 
-		let expiry_height = current_height + ark_info.vtxo_expiry_delta as BlockHeight;
+		let expiry_height = current_height + ark_info.vtxo_lifetime as BlockHeight;
 		let builder = BoardBuilder::new(
 			user_keypair.public_key(),
 			expiry_height,

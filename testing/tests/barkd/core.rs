@@ -62,7 +62,7 @@ async fn wallet_ark_info_barkd() {
 	assert_eq!(info.round_interval, expected.round_interval);
 	assert_eq!(info.nb_round_nonces, expected.nb_round_nonces);
 	assert_eq!(info.vtxo_exit_delta, expected.vtxo_exit_delta);
-	assert_eq!(info.vtxo_expiry_delta, expected.vtxo_expiry_delta);
+	assert_eq!(info.vtxo_lifetime, expected.vtxo_lifetime);
 }
 
 /// Verify that `GET /wallet/next-round` returns a future timestamp.

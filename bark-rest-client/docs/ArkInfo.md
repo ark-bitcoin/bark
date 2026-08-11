@@ -22,6 +22,7 @@ Name | Type | Description | Notes
 **server_pubkey** | **String** | The Ark server pubkey | 
 **vtxo_exit_delta** | **i32** |  | 
 **vtxo_expiry_delta** | **i32** |  | 
+**vtxo_lifetime** | Option<**i32**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

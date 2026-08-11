@@ -270,7 +270,7 @@ impl Server {
 		self.mailbox_pubkey
 	}
 
-	#[allow(deprecated)] // offboard_feerate kept for old clients
+	#[allow(deprecated)] // vtxo_expiry_delta and offboard_feerate kept for old clients
 	pub fn ark_info(&self) -> ark::ArkInfo {
 		ark::ArkInfo {
 			network: self.config.network,
@@ -279,6 +279,7 @@ impl Server {
 			round_interval: self.config.round_interval,
 			nb_round_nonces: self.config.nb_round_nonces,
 			vtxo_exit_delta: self.config.vtxo_exit_delta,
+			vtxo_lifetime: self.config.vtxo_lifetime,
 			vtxo_expiry_delta: self.config.vtxo_lifetime,
 			htlc_send_expiry_delta: self.config.htlc_send_expiry_delta,
 			htlc_expiry_delta: self.config.htlc_expiry_delta,
