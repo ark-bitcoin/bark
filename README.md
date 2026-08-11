@@ -45,6 +45,8 @@ No Rust, no problem!
 
 **barkd** is an Ark wallet that runs as a daemon and exposes a REST API over HTTP. It's well suited for power users and great for automation—think web shops, Telegram/Discord bots, and similar use cases. The [barkd-clients repository](https://gitlab.com/ark-bitcoin/barkd-clients) provides clients in TypeScript and C#.
 
+barkd serves plaintext HTTP and binds loopback by default. A bearer token holding full wallet access travels in every request, so exposing the port beyond loopback requires a reverse proxy that terminates TLS: barkd has no TLS of its own, and the token is readable by anyone on the path. `--no-auth` removes the token requirement entirely, and refuses to start on a non-loopback bind; `--dangerously-allow-remote-no-auth` is the flag that does both, disabling auth on a bind address anyone can reach.
+
 **uniffi-bindings** are the better choice if you're building a native desktop or mobile application. The bindings are available in the [bark-ffi repository](https://gitlab.com/ark-bitcoin/bark-ffi) and power the published Bark SDK packages.
 
 ## Why Ark?

@@ -1,7 +1,8 @@
 
-use ark_testing::TestContext;
+use ark_testing::{Barkd, TestContext};
+use ark_testing::ports::pick_port;
 use bark_rest_client::apis::configuration::Configuration;
-use bark_rest_client::apis::default_api;
+use bark_rest_client::apis::wallet_api;
 
 /// Verify that `barkd` responds to `GET /ping`.
 #[tokio::test]
@@ -83,21 +84,117 @@ async fn wallet_next_round_barkd() {
 	);
 }
 
-/// With `BARKD_NO_AUTH=true`, unauthenticated requests are accepted.
+/// With `--no-auth`, unauthenticated requests are accepted.
 #[tokio::test]
 async fn no_auth_flag_allows_unauthenticated_requests() {
 	let ctx = TestContext::new("barkd/no_auth_flag_allows_unauthenticated_requests").await;
 
 	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.barkd("barkd1", &srv)
-		.env("BARKD_NO_AUTH", "true")
+		.no_auth()
 		.create().await;
 
-	// An unauthenticated client (no Authorization header) should be able to ping.
 	let unauthed = Configuration {
 		base_path: barkd.base_url(),
 		..Configuration::default()
 	};
-	default_api::ping(&unauthed).await
-		.expect("unauthenticated ping should succeed when --no-auth is set");
+	wallet_api::wallet_exists(&unauthed).await
+		.expect("unauthenticated request should succeed when --no-auth is set");
+}
+
+/// `--dangerously-allow-remote-no-auth` implies `--no-auth`, so it disables
+/// authentication without `--no-auth` being passed as well.
+#[tokio::test]
+async fn dangerous_flag_alone_disables_auth() {
+	let ctx = TestContext::new("barkd/dangerous_flag_alone_disables_auth").await;
+
+	let srv = ctx.captaind("server").create().await;
+	let barkd = ctx.barkd("barkd1", &srv)
+		.arg("--dangerously-allow-remote-no-auth")
+		.create().await;
+
+	let unauthed = Configuration {
+		base_path: barkd.base_url(),
+		..Configuration::default()
+	};
+	wallet_api::wallet_exists(&unauthed).await
+		.expect("the dangerous flag alone should disable auth");
+}
+
+/// The flag that `no_auth_remote_bind_refuses_to_start` shows is required does
+/// let barkd start and serve on a bind address other hosts can reach.
+#[tokio::test]
+async fn dangerous_flag_allows_remote_bind() {
+	let ctx = TestContext::new("barkd/dangerous_flag_allows_remote_bind").await;
+
+	let srv = ctx.captaind("server").create().await;
+	// `create` panics if the daemon never answers, so reaching the request
+	// below already proves the guard let a wildcard bind through.
+	let barkd = ctx.barkd("barkd1", &srv)
+		.arg("--host").arg("0.0.0.0")
+		.arg("--dangerously-allow-remote-no-auth")
+		.create().await;
+
+	let unauthed = Configuration {
+		base_path: barkd.base_url(),
+		..Configuration::default()
+	};
+	wallet_api::wallet_exists(&unauthed).await
+		.expect("a wildcard bind with the dangerous flag should serve unauthenticated requests");
+
+	// The request above reaches barkd over loopback either way, so confirm the
+	// socket really is the wildcard one and `--host` wasn't quietly dropped.
+	let log = std::fs::read_to_string(ctx.datadir.join("barkd1").join("debug.log"))
+		.expect("failed to read barkd debug log");
+	assert!(
+		log.contains("Server starting on http://0.0.0.0:"),
+		"expected barkd to bind the wildcard address, log was: {}", log,
+	);
+}
+
+/// Auth can only be disabled by the `--no-auth` flag: `BARKD_NO_AUTH` in the
+/// environment must not weaken a daemon started without the flag.
+#[tokio::test]
+async fn no_auth_env_var_is_ignored() {
+	let ctx = TestContext::new("barkd/no_auth_env_var_is_ignored").await;
+
+	let srv = ctx.captaind("server").create().await;
+	let barkd = ctx.barkd("barkd1", &srv)
+		.env("BARKD_NO_AUTH", "true")
+		.create().await;
+
+	let unauthed = Configuration {
+		base_path: barkd.base_url(),
+		..Configuration::default()
+	};
+	let err = match wallet_api::wallet_exists(&unauthed).await {
+		Err(e) => e.to_string(),
+		Ok(_) => panic!("BARKD_NO_AUTH must not disable auth"),
+	};
+	assert!(err.contains("401"), "expected 401, got: {}", err);
+}
+
+/// `--no-auth` on a bind address reachable from other hosts refuses to start;
+/// exposing barkd that way takes `--dangerously-allow-remote-no-auth` instead.
+#[tokio::test]
+async fn no_auth_remote_bind_refuses_to_start() {
+	let ctx = TestContext::new("barkd/no_auth_remote_bind_refuses_to_start").await;
+	let datadir = ctx.datadir.join("barkd1");
+
+	let out = Barkd::base_cmd()
+		.args([
+			"--datadir", datadir.to_str().unwrap(),
+			"--host", "0.0.0.0",
+			"--port", &pick_port().to_string(),
+			"--no-auth",
+		])
+		.output().await
+		.expect("failed to run barkd");
+
+	assert!(!out.status.success(), "barkd should refuse to start");
+	let stderr = String::from_utf8_lossy(&out.stderr);
+	assert!(
+		stderr.contains("refusing to start"),
+		"expected refusal on stderr, got: {}", stderr,
+	);
 }

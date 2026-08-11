@@ -176,6 +176,7 @@ pub struct BarkdBuilder<'a> {
 	fund_amount: Option<Amount>,
 	board_amount: Option<Amount>,
 	env: std::collections::HashMap<String, String>,
+	args: Vec<String>,
 }
 
 impl<'a> BarkdBuilder<'a> {
@@ -194,6 +195,7 @@ impl<'a> BarkdBuilder<'a> {
 			fund_amount: None,
 			board_amount: None,
 			env: std::collections::HashMap::new(),
+			args: Vec::new(),
 		}
 	}
 
@@ -201,6 +203,17 @@ impl<'a> BarkdBuilder<'a> {
 	pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
 		self.env.insert(key.into(), value.into());
 		self
+	}
+
+	/// Add an extra command-line argument to the spawned barkd process.
+	pub fn arg(mut self, arg: impl Into<String>) -> Self {
+		self.args.push(arg.into());
+		self
+	}
+
+	/// Start barkd with `--no-auth`, disabling bearer-token authentication.
+	pub fn no_auth(self) -> Self {
+		self.arg("--no-auth")
 	}
 
 	pub fn cfg(mut self, f: impl FnOnce(&mut bark::Config) + 'static) -> Self {
@@ -261,6 +274,9 @@ impl<'a> BarkdBuilder<'a> {
 		);
 		for (k, v) in self.env {
 			daemon.set_env(k, v);
+		}
+		for arg in self.args {
+			daemon.add_arg(arg);
 		}
 		daemon.start().await.expect("failed to start barkd");
 
