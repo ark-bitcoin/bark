@@ -102,7 +102,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**sync**](docs/WalletApi.md#sync) | **POST** /api/v1/wallet/sync | Sync wallet
 *WalletApi* | [**sync_mailbox**](docs/WalletApi.md#sync_mailbox) | **POST** /api/v1/wallet/sync/mailbox | Sync mailbox only
 *WalletApi* | [**vtxos**](docs/WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | List VTXOs
-*WalletApi* | [**wallet_delete**](docs/WalletApi.md#wallet_delete) | **DELETE** /api/v1/wallet | 
+*WalletApi* | [**wallet_delete**](docs/WalletApi.md#wallet_delete) | **DELETE** /api/v1/wallet | Delete the wallet
 *WalletApi* | [**wallet_exists**](docs/WalletApi.md#wallet_exists) | **GET** /api/v1/wallet | 
 
 

@@ -186,6 +186,14 @@ pub struct ServerState {
 	/// When `None`, the mnemonic endpoint responds with 404.
 	on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
 
+	/// Serializes wallet creation and deletion.
+	///
+	/// A delete takes the wallet out of [Self::wallet] before it stops the
+	/// background tasks and wipes the files. Without this lock a concurrent
+	/// create would see the empty state and build a wallet whose files the
+	/// wipe then removes.
+	wallet_lifecycle: Arc<tokio::sync::Mutex<()>>,
+
 	/// A map of websocket tickets to their expiration time
 	///
 	/// Note: this map is only stored in memory and not persisted
@@ -259,6 +267,7 @@ impl ServerStateBuilder {
 			on_wallet_create: self.on_wallet_create,
 			on_wallet_delete: self.on_wallet_delete,
 			on_get_mnemonic: self.on_get_mnemonic,
+			wallet_lifecycle: Arc::new(tokio::sync::Mutex::new(())),
 			websocket_tickets: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
 		}
 	}

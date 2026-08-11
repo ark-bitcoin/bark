@@ -30,7 +30,7 @@ Method | HTTP request | Description
 [**sync**](WalletApi.md#sync) | **POST** /api/v1/wallet/sync | Sync wallet
 [**sync_mailbox**](WalletApi.md#sync_mailbox) | **POST** /api/v1/wallet/sync/mailbox | Sync mailbox only
 [**vtxos**](WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | List VTXOs
-[**wallet_delete**](WalletApi.md#wallet_delete) | **DELETE** /api/v1/wallet | 
+[**wallet_delete**](WalletApi.md#wallet_delete) | **DELETE** /api/v1/wallet | Delete the wallet
 [**wallet_exists**](WalletApi.md#wallet_exists) | **GET** /api/v1/wallet | 
 
 
@@ -780,7 +780,9 @@ Name | Type | Description  | Required | Notes
 ## wallet_delete
 
 > models::WalletDeleteResponse wallet_delete(wallet_delete_request)
+Delete the wallet
 
+Stops the wallet and removes every wallet file from the datadir; barkd's own files survive. Requires `dangerous: true` and, while a wallet is loaded, the wallet's fingerprint. With no wallet loaded, the call still removes any leftover wallet files. A retry completes an interrupted deletion.
 
 ### Parameters
 
