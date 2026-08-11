@@ -21,7 +21,7 @@ use bitcoind_async_client::traits::Reader;
 use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::EPHEMERAL_KEY_PATH;
 use crate::bitcoind as bcd;
-use crate::{fee_estimator, rpcserver, secret::Secret, telemetry, wallet, SECP};
+use crate::{fee_estimator, fs_perms, rpcserver, secret::Secret, telemetry, wallet, SECP};
 use crate::config::watchmand::Config;
 use crate::database::{self, BlockTable};
 use crate::sync::{ChainEventListener, SyncManager};
@@ -74,6 +74,7 @@ impl Daemon {
 
 		// create dir if not exit, but check that it's empty
 		fs::create_dir_all(&cfg.data_dir).context("can't create dir")?;
+		fs_perms::harden(&cfg.data_dir, 0o700)?;
 
 		let db = database::Db::create(&cfg.postgres).await?;
 
@@ -81,8 +82,9 @@ impl Daemon {
 		let seed = {
 			let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
 
-			fs::write(cfg.data_dir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes())
-				.context("failed to store mnemonic")?;
+			fs_perms::create_new_owner_only(
+				&cfg.data_dir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes(),
+			).context("failed to store mnemonic")?;
 
 			mnemonic.to_seed("")
 		};

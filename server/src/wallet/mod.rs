@@ -20,7 +20,7 @@ use bitcoin_ext::bdk::{TrustedBalance, WalletExt, KEYCHAIN};
 
 use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::bitcoind as bcd;
-use crate::{database, SECP};
+use crate::{database, fs_perms, SECP};
 
 
 /// The location of the mnemonic file in server's datadir.
@@ -306,7 +306,10 @@ impl ops::DerefMut for PersistedWallet {
 
 
 pub fn read_mnemonic_from_datadir(data_dir: &Path) -> anyhow::Result<Mnemonic> {
-	let mnemonic = std::fs::read_to_string(data_dir.join(MNEMONIC_FILE))
+	let path = data_dir.join(MNEMONIC_FILE);
+	fs_perms::warn_if_loose(data_dir, 0o700);
+	fs_perms::warn_if_loose(&path, 0o600);
+	let mnemonic = std::fs::read_to_string(&path)
 		.context("failed to read mnemonic")?;
 	Ok(Mnemonic::from_str(&mnemonic)?)
 }

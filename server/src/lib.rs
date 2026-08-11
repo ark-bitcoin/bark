@@ -37,7 +37,7 @@ use crate::database::BlockTable;
 use crate::database::tree::VtxoTreeUpdate;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
-pub use bark_common::secret;
+pub use bark_common::{fs_perms, secret};
 
 use std::collections::HashSet;
 use std::fs;
@@ -238,6 +238,7 @@ impl Server {
 
 		// create dir if not exit, but check that it's empty
 		fs::create_dir_all(&cfg.data_dir).context("can't create dir")?;
+		fs_perms::harden(&cfg.data_dir, 0o700)?;
 
 		let db = database::Db::create(&cfg.postgres).await?;
 
@@ -245,8 +246,9 @@ impl Server {
 		let seed = {
 			let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
 
-			fs::write(cfg.data_dir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes())
-				.context("failed to store mnemonic")?;
+			fs_perms::create_new_owner_only(
+				&cfg.data_dir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes(),
+			).context("failed to store mnemonic")?;
 
 			mnemonic.to_seed("")
 		};
