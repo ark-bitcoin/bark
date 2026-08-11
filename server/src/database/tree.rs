@@ -96,8 +96,9 @@ impl VtxoInserts {
 	fn push_bare_vtxo(&mut self, vtxo: &ServerVtxo<Bare>, spend_state: SpendState, oor_spent_txid: Option<Txid>) {
 		self.vtxo_ids.push(vtxo.id().to_string());
 		self.vtxo_txids.push(vtxo.point().txid.to_string());
-		// Bare vtxos don't carry genesis data, store empty bytes.
-		self.data.push(Vec::new());
+		// Bare vtxos encode as a full vtxo with an empty genesis, so readers
+		// of the vtxo column (e.g. the watchman frontier) can decode them.
+		self.data.push(vtxo.serialize());
 		self.expiry.push(vtxo.expiry_height() as i32);
 		self.exit_deltas.push(vtxo.exit_delta() as i32);
 		self.policy_types.push(vtxo.policy_type().to_string());

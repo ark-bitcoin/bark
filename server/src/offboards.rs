@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, ScriptBuf, SignedAmount, Transaction, Txid};
-use bitcoin::secp256k1::Keypair;
 use tracing::{error, warn};
 
 use ark::{musig, VtxoId};
@@ -39,7 +38,6 @@ pub struct PendingOffboard {
 	offboard_tx: Psbt,
 	input_vtxos_guard: OwnedVtxoFluxGuard,
 	wallet_input_guard: WalletUtxosGuard,
-	connector_key: Keypair,
 	forfeit_pub_nonces: Vec<musig::PublicNonce>,
 	forfeit_sec_nonces: Vec<musig::SecretNonce>,
 }
@@ -259,9 +257,12 @@ impl Server {
 
 		// Even if we need multiple connectors, we just need a single output now,
 		// the multi-connector fan-out tx can be constructed at-forfeit-claim-time.
-		let connector_key = Keypair::new(&*SECP, &mut bitcoin::secp256k1::rand::thread_rng());
+		//
+		// Connectors pay a plain keyspend of the server key, matching the
+		// ServerOwned connector vtxos we record for them, so the watchman can
+		// sweep the dust once the input vtxos have expired.
 		let connector_spk = ScriptBuf::new_p2tr(
-			&*SECP, connector_key.public_key().x_only_public_key().0, None,
+			&*SECP, self.server_pubkey.x_only_public_key().0, None,
 		);
 		let connector_amt = P2TR_DUST * input_vtxos.len() as u64;
 
@@ -307,16 +308,19 @@ impl Server {
 
 		let state = PendingOffboard {
 			input_vtxos_guard: input_vtxos_guard.into_owned(),
-			request, server_fee, connector_key, forfeit_pub_nonces, forfeit_sec_nonces, offboard_tx,
+			request, server_fee, forfeit_pub_nonces, forfeit_sec_nonces, offboard_tx,
 			wallet_input_guard,
 		};
-		// A txid collision with an old Failed/Finished slot is also
-		// impossible: every prepare uses a fresh random connector key, so
-		// two offboard txs can never be identical.
+		// A txid collision is only possible with a Failed tombstone: a client
+		// retrying an identical request after a failed finish can make bdk
+		// build the exact same tx again. The tombstone holds no secret
+		// nonces, so it is safe to replace. A Pending collision is impossible
+		// while the inputs are locked, and a Finished session has its inputs
+		// marked spent in the db, which fails prepare validation.
 		let old = self.pending_offboards.lock()
 			.insert(offboard_txid, OffboardSession::Pending(state));
-		assert!(old.is_none(),
-			"should be impossible to get same txid when inputs are locked",
+		assert!(matches!(old, None | Some(OffboardSession::Failed)),
+			"txid collision with a live offboard session",
 		);
 
 		Ok(ret)
@@ -432,7 +436,6 @@ impl Server {
 
 		let forfeit_txs = forfeit_ctx.finish(
 			self.server_key.leak_ref(),
-			&state.connector_key,
 			&state.forfeit_pub_nonces,
 			state.forfeit_sec_nonces,
 			user_pub_nonces,
