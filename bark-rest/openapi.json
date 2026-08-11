@@ -3346,6 +3346,13 @@
             "type": "string",
             "description": "The Ark server pubkey"
           },
+          "tos_link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Link to the server's terms of service, if any."
+          },
           "vtxo_exit_delta": {
             "$ref": "#/components/schemas/u16",
             "description": "Delta between exit confirmation and coins becoming spendable"
