@@ -589,6 +589,9 @@ impl ChainSource {
 	}
 
 	pub async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> Result<(), BroadcastError> {
+		let package_order = txs.iter()
+			.map(|t| t.borrow().compute_txid())
+			.collect::<Vec<_>>();
 		match self.inner() {
 			#[cfg(feature = "bitcoind-rpc")]
 			ChainSourceClient::Bitcoind { rpc, .. } => {
@@ -602,6 +605,7 @@ impl ChainSource {
 					return Err(classify_submit_package_errors(
 						&res.package_msg,
 						res.tx_results.values().map(|t| (t.txid, t.error.as_deref())),
+						&package_order,
 					));
 				}
 				Ok(())
@@ -615,6 +619,7 @@ impl ChainSource {
 					return Err(classify_submit_package_errors(
 						&res.package_msg,
 						res.tx_results.values().map(|t| (t.txid, t.error.as_deref())),
+						&package_order,
 					));
 				}
 
@@ -873,18 +878,111 @@ impl BroadcastError {
 fn classify_submit_package_errors<'a>(
 	package_msg: &str,
 	tx_results: impl Iterator<Item = (Txid, Option<&'a str>)>,
+	package_order: &[Txid],
 ) -> BroadcastError {
-	let errors: Vec<String> = tx_results
-		.map(|(txid, err)| format!("tx {}: {}", txid, err.unwrap_or("(no error)")))
-		.collect();
-	let combined = errors.join(", ");
-	if combined.contains("txn-already-known") {
-		BroadcastError::AlreadyKnown
-	} else if combined.contains("bad-txns-inputs-missingorspent") {
-		BroadcastError::MissingOrSpentInputs
-	} else if combined.contains("insufficient fee, rejecting replacement") {
-		BroadcastError::InsufficientReplacementFee
-	} else {
-		BroadcastError::Other(format!("msg: '{}', errors: [{}]", package_msg, combined))
+	// `submitpackage` returns tx_results keyed (and thus iterated) by wtxid, not in
+	// package order. Within a package, rejections only cascade downstream: when an
+	// ancestor is rejected, every descendant necessarily fails with
+	// bad-txns-inputs-missingorspent because the output it spends never came into
+	// existence.
+	let mut results: Vec<(Txid, Option<&'a str>)> = tx_results.collect();
+	results.sort_by_key(|(txid, _)| {
+		package_order.iter().position(|t| t == txid).unwrap_or(usize::MAX)
+	});
+
+	let mut saw_already_known = false;
+	let mut root_cause = None;
+	for (_, err) in &results {
+		if let Some(err) = err {
+			if err.contains("txn-already-known") {
+				// Effectively success for this tx; keep looking for a real failure.
+				saw_already_known = true;
+				continue;
+			}
+			root_cause = Some(*err);
+			break;
+		} else {
+			continue;
+		}
+	}
+
+	match root_cause {
+		Some(e) if e.contains("bad-txns-inputs-missingorspent") => {
+			BroadcastError::MissingOrSpentInputs
+		},
+		Some(e) if e.contains("insufficient fee, rejecting replacement") => {
+			BroadcastError::InsufficientReplacementFee
+		},
+		Some(_) => {
+			let combined = results.iter()
+				.map(|(txid, e)| format!("tx {}: {}", txid, e.unwrap_or("(no error)")))
+				.collect::<Vec<_>>()
+				.join(", ");
+			BroadcastError::Other(format!("msg: '{}', errors: [{}]", package_msg, combined))
+		},
+		None if saw_already_known => BroadcastError::AlreadyKnown,
+		None => BroadcastError::Other(format!("msg: '{}', no tx errors", package_msg)),
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	use std::str::FromStr;
+
+	#[test]
+	fn classify_package_errors_attributes_root_cause_in_package_order() {
+		let parent = Txid::from_str(
+			"1111111111111111111111111111111111111111111111111111111111111111").unwrap();
+		let child = Txid::from_str(
+			"2222222222222222222222222222222222222222222222222222222222222222").unwrap();
+		let order = [parent, child];
+
+		// Only the child fails: its own (non-package) input is spent. This is the
+		// genuine dead-CPFP case and must classify as MissingOrSpentInputs.
+		let res = classify_submit_package_errors("transaction failed", [
+			(parent, None),
+			(child, Some("bad-txns-inputs-missingorspent")),
+		].into_iter(), &order);
+		assert_eq!(res, BroadcastError::MissingOrSpentInputs);
+
+		// The parent fails for an unrelated reason; the child's missingorspent is only
+		// the cascade of the parent never existing. The parent's error is the root
+		// cause, so this must NOT classify as MissingOrSpentInputs. Results are fed in
+		// wtxid order (child first) to mimic submitpackage's map ordering.
+		let res = classify_submit_package_errors("transaction failed", [
+			(child, Some("bad-txns-inputs-missingorspent")),
+			(parent, Some("version")),
+		].into_iter(), &order);
+		assert!(matches!(res, BroadcastError::Other(_)), "got {:?}", res);
+
+		// The parent being already known is success for the parent, not the root
+		// cause: the child's failure must win over it.
+		let res = classify_submit_package_errors("transaction failed", [
+			(parent, Some("txn-already-known")),
+			(child, Some("bad-txns-inputs-missingorspent")),
+		].into_iter(), &order);
+		assert_eq!(res, BroadcastError::MissingOrSpentInputs);
+
+		// Everything already known: the package is effectively in the mempool.
+		let res = classify_submit_package_errors("transaction failed", [
+			(parent, Some("txn-already-known")),
+			(child, Some("txn-already-known")),
+		].into_iter(), &order);
+		assert_eq!(res, BroadcastError::AlreadyKnown);
+
+		// RBF rejection on the child with a clean parent.
+		let res = classify_submit_package_errors("transaction failed", [
+			(parent, None),
+			(child, Some("insufficient fee, rejecting replacement")),
+		].into_iter(), &order);
+		assert_eq!(res, BroadcastError::InsufficientReplacementFee);
+
+		// No per-tx errors at all: fall back to the package message.
+		let res = classify_submit_package_errors("package-mempool-limits", [
+			(parent, None),
+			(child, None),
+		].into_iter(), &order);
+		assert!(matches!(res, BroadcastError::Other(ref s) if s.contains("package-mempool-limits")));
 	}
 }
