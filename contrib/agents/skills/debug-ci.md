@@ -2,28 +2,35 @@
 
 ## Step 1: Download CI Artifacts
 
-The download script has two modes:
+The download script has two modes. Both accept either a bare id or the GitLab
+URL you were given:
 
 **Pipeline mode** — downloads logs and artifacts for all failed jobs in a
 pipeline:
 
 ```bash
-python3 ./contrib/agents/download-ci-artifacts.py --pipeline <pipeline-id>
+python3 ./contrib/agents/download-ci-artifacts.py --pipeline <id-or-url>
 ```
 
 **Job mode** — downloads logs and artifacts for a single job (regardless of
 its status):
 
 ```bash
-python3 ./contrib/agents/download-ci-artifacts.py --job <job-id>
+python3 ./contrib/agents/download-ci-artifacts.py --job <job-id-or-url>
 ```
 
-The script uses `glab` for authentication and API access.
+The script only needs `python3` and `wget`. It reads the public GitLab API
+anonymously — no `glab`, no login. For a private project set `GITLAB_TOKEN`
+in the environment first.
 
 Artifacts save to `./contrib/agents/ci-debugging/<pipeline_id>-<job_name>/`:
-- `raw.log` — full build log
-- `btc30/bark/<test_name>/` — per-test artifacts (server logs, bark logs,
-  configs, databases)
+- `raw.log` — full build log, with GitLab's per-line timestamps and terminal
+  colour codes stripped
+- `<test-dir>/<binary>/<test_name>/` — per-test artifacts (server logs, bark
+  logs, configs, databases). `<test-dir>` is the job's test directory
+  (`btc30`, `mempool`, `filestore`, `esplora`) and `<binary>` the test binary
+  (`bark`, `barkd`, `exit`, `movement`, ...), matching the nextest failure
+  line `ark-testing::<binary> <module>::<test_name>`.
 
 ## Step 2: Check Out the CI Commit
 
@@ -48,12 +55,25 @@ Check the end of each `raw.log` for the failure summary and test name.
 
 ## Step 4: Classify — Code Bug or Flake?
 
-Look at which CI steps failed:
+The same integration suite runs in several jobs, each on a different chain
+source or datastore (see `.gitlab/tests.yml`):
 
-- **Both `integration-mempool` and `integration-btc30.2` fail on the same
-  test** → likely a real code bug. Go to [Step 4a](#step-4a-code-bug).
-- **Only one backend fails, or only one test fails intermittently** → likely
-  a flake (race condition). Go to [Step 4b](#step-4b-flake).
+| Job | Chain source | Runs |
+|-----|--------------|------|
+| `bark-btc30` | bitcoin core | always — the baseline |
+| `bark-mempool` | mempool | always, but `allow_failure: true` |
+| `bark-esplora` | esplora | merge trains only |
+| `bark-filestore` | mempool, filestore | on `bark/src/persist` changes |
+
+Look at which of them failed:
+
+- **Several of these jobs fail on the same test** → likely a real code bug.
+  Go to [Step 4a](#step-4a-code-bug).
+- **Only one job fails, or only one test fails intermittently** → likely a
+  flake (race condition). Go to [Step 4b](#step-4b-flake).
+
+`core-server`, `bark-sdk` and `bark-int-action-reentrancy` run other suites,
+so a failure there points at that suite rather than at the chain source.
 
 ### Step 4a: Code Bug
 
@@ -72,13 +92,18 @@ identify the mismatch, and propose a fix.
 The failure is a race condition — probably pre-existing. You need to compare
 a bad CI run against a good local run to find where state diverges.
 
-**Get a good run:**
+**Get a good run**, using the chain source of the job that failed:
 
 ```bash
-KEEP_ALL_TEST_DATA=1 just int <test_name>
+KEEP_ALL_TEST_DATA=1 just int <test_name>          # bitcoin core (bark-btc30)
+KEEP_ALL_TEST_DATA=1 just int-mempool <test_name>  # mempool (bark-mempool)
+KEEP_ALL_TEST_DATA=1 just int-esplora <test_name>  # esplora (bark-esplora)
 ```
 
-Local artifacts end up in `test/btc30/bark/<test_name>/`.
+For `bark-filestore`, prefix the mempool run with `USE_FILESTORE=1`.
+
+Local artifacts end up in `test/<binary>/<test_name>/` — the same layout as
+in CI, minus the `<test-dir>` level that CI sets via `TEST_DIRECTORY`.
 
 **Compare CI vs local logs.** Focus on:
 - Timing differences (round start/end, block generation)
