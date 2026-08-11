@@ -1,10 +1,10 @@
-//! Filesystem permission helpers for protecting wallet secrets on disk.
+//! Filesystem permission helpers for protecting secrets on disk.
 //!
-//! The wallet datadir holds the seed, wallet state, config and server access
-//! token. These helpers lock those paths to the owning user and write secrets
-//! atomically so they're never momentarily readable by other users. They are
-//! unix-only; on other targets they degrade to plain writes / no-ops (Windows
-//! would need ACLs instead).
+//! A datadir holds secrets such as the seed, wallet state, config and
+//! credentials. These helpers lock those paths to the owning user and write
+//! secrets atomically so they're never momentarily readable by other users.
+//! They are unix-only; on other targets they degrade to plain writes / no-ops
+//! (Windows would need ACLs instead).
 
 use std::io::Write;
 use std::path::Path;
@@ -12,7 +12,7 @@ use std::path::Path;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use anyhow::Context;
-use log::warn;
+use tracing::warn;
 
 /// `chmod` `path` to `mode` so other (non-root) users can't reach it.
 ///
@@ -36,7 +36,7 @@ fn is_loose(mode: u32) -> bool {
 
 /// Warn (without modifying) if `path` is accessible by group or other users.
 ///
-/// New wallets are hardened at creation; for paths created before hardening
+/// New datadirs are hardened at creation; for paths created before hardening
 /// existed we only nudge, since silently re-chmod'ing on every open would
 /// override a deliberate setup (e.g. a shared service account). `recommended`
 /// is the mode shown in the message (0o700 dirs, 0o600 files).
