@@ -98,8 +98,8 @@ struct Cli {
 
 #[derive(clap::Args)]
 struct CreateOpts {
-	/// Force re-create the wallet even if the datadir is not empty.
-	/// Any files that would conflict will be wiped.
+	/// Force re-create the wallet even if it already exists.
+	/// Any funds in the old wallet will be lost
 	#[arg(long)]
 	force: bool,
 
@@ -696,6 +696,19 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	if let Command::Create(opts) = cli.command {
 		let req = create_opts_to_request(opts)?;
+		// barkd refuses to create over a loaded wallet, so --force means
+		// deleting that wallet first.
+		if req.force {
+			let existing = wallet_api::wallet_exists(&config).await.rest()
+				.context("failed to check for an existing wallet")?;
+			if let Some(fingerprint) = existing.fingerprint {
+				warn!("Deleting the existing wallet (fingerprint {}); \
+					any funds in it will be lost", fingerprint);
+				let delete = models::WalletDeleteRequest { dangerous: true, fingerprint };
+				wallet_api::wallet_delete(&config, delete).await.rest()
+					.context("failed to delete the existing wallet")?;
+			}
+		}
 		let resp = wallet_api::create_wallet(&config, req).await.rest()
 			.context("failed to create wallet")?;
 		info!("Wallet created (fingerprint {})", resp.fingerprint);
