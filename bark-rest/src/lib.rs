@@ -151,6 +151,12 @@ impl ServerWallet {
 		self.notification_mngr.stop();
 		self.wallet.stop_daemon();
 	}
+
+	/// Stop the wallet's background tasks and wait until they have finished.
+	pub async fn stop_wait(&self) -> anyhow::Result<()> {
+		self.notification_mngr.stop();
+		self.wallet.stop_daemon_wait().await
+	}
 }
 
 impl std::ops::Deref for ServerWallet {
