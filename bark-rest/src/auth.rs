@@ -9,6 +9,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use subtle::ConstantTimeEq;
 
 use crate::ServerState;
 use crate::error::{ErrorResponse, unauthorized};
@@ -22,10 +23,20 @@ pub fn authed_router(state: &ServerState, router: Router<ServerState>) -> Router
 /// A bearer token that is the 32-byte secret itself.
 ///
 /// The token grants full access when it matches any registered secret.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct AuthToken {
 	secret: [u8; 32],
 }
+
+/// Constant-time, so comparing a presented token against the configured one
+/// doesn't leak how many leading bytes matched.
+impl PartialEq for AuthToken {
+	fn eq(&self, other: &Self) -> bool {
+		self.secret.ct_eq(&other.secret).into()
+	}
+}
+
+impl Eq for AuthToken {}
 
 #[derive(Debug)]
 pub struct TokenDecodeError(String);

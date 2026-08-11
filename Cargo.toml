@@ -80,6 +80,7 @@ config = "0.15.6"
 humantime = "2.1.0"
 base64 = "0.22"
 semver = "1.0.26"
+subtle = "2.6.1"
 # async + gRPC stack
 parking_lot = "0.12.4"
 prost = "0.14.1"
