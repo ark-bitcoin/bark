@@ -364,6 +364,7 @@ impl Server {
 		if let Some(list) = bitcoin_address_blocklist.clone() {
 			rounds_wallet.set_address_blocklist(list);
 		}
+		telemetry::set_wallet_balance(WalletKind::Rounds, rounds_wallet.balance());
 		let rounds_wallet = InstrumentedLock::new("rounds_wallet", rounds_wallet);
 
 		let ephemeral_master_key = {
@@ -415,6 +416,7 @@ impl Server {
 			if let Some(list) = bitcoin_address_blocklist.clone() {
 				watchman_wallet.set_address_blocklist(list);
 			}
+			telemetry::set_wallet_balance(WalletKind::Watchman, watchman_wallet.balance());
 			let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
 			listeners.push(Box::new(watchman_wallet.clone()));
 
