@@ -434,7 +434,7 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	bark2.start_exit_all().await;
 	tokio::join!(
 		async {
-			// should exit the 250k change vtxo
+			// should exit the two 125k change pieces
 			complete_exit(&ctx, &bark1).await;
 			bark1.claim_all_exits(bark1.get_onchain_address().await).await;
 		},
