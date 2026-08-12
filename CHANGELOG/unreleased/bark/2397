@@ -1,0 +1,5 @@
+- Split lightning-send change into two pieces so repeated payments build a tree of VTXOs
+  Lightning-send change larger than the amount paid (plus fee) now follows the same
+  `change_vtxo_split_factor` config field that arkoor send does, and the piece amounts
+  are stored on the action checkpoint so retries rebuild the same package across upgrades.
+  [#2397](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2397)
