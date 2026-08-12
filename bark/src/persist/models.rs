@@ -13,6 +13,7 @@ use std::fmt;
 
 use bitcoin::{Amount, Transaction};
 use bitcoin::secp256k1::{Keypair, PublicKey};
+use bitcoin_ext::BlockHeight;
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
@@ -376,6 +377,9 @@ enum SerdeRoundFlowState<'a> {
 	/// We don't do flow and we just wait for the round to finish
 	NonInteractivePending {
 		unlock_hash: UnlockHash,
+		/// Absent in states stored before scheduled participations were tracked.
+		#[serde(default)]
+		scheduled_height: Option<BlockHeight>,
 	},
 
 	/// Waiting for round to happen
@@ -405,9 +409,10 @@ enum SerdeRoundFlowState<'a> {
 impl<'a> From<&'a RoundFlowState> for SerdeRoundFlowState<'a> {
 	fn from(state: &'a RoundFlowState) -> Self {
 		match state {
-			RoundFlowState::NonInteractivePending { unlock_hash } => {
+			RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height } => {
 				SerdeRoundFlowState::NonInteractivePending {
 					unlock_hash: *unlock_hash,
+					scheduled_height: *scheduled_height,
 				}
 			},
 			RoundFlowState::InteractivePending => SerdeRoundFlowState::InteractivePending,
@@ -437,8 +442,8 @@ impl<'a> From<&'a RoundFlowState> for SerdeRoundFlowState<'a> {
 impl<'a> From<SerdeRoundFlowState<'a>> for RoundFlowState {
 	fn from(state: SerdeRoundFlowState<'a>) -> Self {
 		match state {
-			SerdeRoundFlowState::NonInteractivePending { unlock_hash } => {
-				RoundFlowState::NonInteractivePending { unlock_hash }
+			SerdeRoundFlowState::NonInteractivePending { unlock_hash, scheduled_height } => {
+				RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height }
 			},
 			SerdeRoundFlowState::InteractivePending => RoundFlowState::InteractivePending,
 			SerdeRoundFlowState::InteractiveOngoing { round_seq, attempt_seq, state } => {
@@ -605,5 +610,44 @@ mod test {
 		rmp_serde::from_slice::<SerdeAttemptState>(
 			&Vec::<u8>::from_hex(serialised).unwrap(),
 		).unwrap();
+	}
+
+	/// `NonInteractivePending` gained a trailing `scheduled_height` field. Since
+	/// `rmp_serde` encodes struct variants positionally, legacy records are a
+	/// shorter array and must still deserialize (with `scheduled_height: None`).
+	#[test]
+	fn test_serialized_non_interactive_pending_scheduled_height() {
+		use bitcoin::hashes::Hash;
+		use super::{SerdeRoundFlowState, UnlockHash};
+
+		// Legacy shape: the variant payload held only `unlock_hash`.
+		#[derive(serde::Serialize)]
+		enum LegacyRoundFlowState {
+			NonInteractivePending { unlock_hash: UnlockHash },
+		}
+
+		let unlock_hash = UnlockHash::all_zeros();
+		let legacy = rmp_serde::to_vec(
+			&LegacyRoundFlowState::NonInteractivePending { unlock_hash },
+		).unwrap();
+		match rmp_serde::from_slice::<SerdeRoundFlowState>(&legacy).unwrap() {
+			SerdeRoundFlowState::NonInteractivePending { unlock_hash: uh, scheduled_height } => {
+				assert_eq!(uh, unlock_hash);
+				assert_eq!(scheduled_height, None);
+			},
+			_ => panic!("wrong variant"),
+		}
+
+		// Current shape round-trips a stored schedule height.
+		let current = rmp_serde::to_vec(&SerdeRoundFlowState::NonInteractivePending {
+			unlock_hash,
+			scheduled_height: Some(123_456),
+		}).unwrap();
+		match rmp_serde::from_slice::<SerdeRoundFlowState>(&current).unwrap() {
+			SerdeRoundFlowState::NonInteractivePending { scheduled_height, .. } => {
+				assert_eq!(scheduled_height, Some(123_456));
+			},
+			_ => panic!("wrong variant"),
+		}
 	}
 }

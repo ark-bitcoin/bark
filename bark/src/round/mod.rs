@@ -18,19 +18,19 @@ use bitcoin::consensus::encode::{deserialize, serialize_hex};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::key::Keypair;
-use bitcoin::secp256k1::schnorr;
+use bitcoin::secp256k1::{schnorr, PublicKey};
 use futures::future::join_all;
 use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
-use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
+use ark::{ArkInfo, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
 use ark::vtxo::Full;
 use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
-use bitcoin_ext::{BlockHeight, TxStatus};
+use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
 use server_rpc::{protos, ServerConnection, TryFromBytes, MAX_NB_FORFEIT_NONCE_IDS};
 
 use crate::movement::manager::OnDropStatus;
@@ -38,11 +38,15 @@ use crate::{Wallet, WalletVtxo, SECP, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
+use crate::subsystem::{RoundMovement, Subsystem};
 
 /// How long [`Wallet::lock_wait_round_state`] waits for a contended
 /// round lock before giving up. Long enough to outlast a normal round.
 const ROUND_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
-use crate::subsystem::{RoundMovement, Subsystem};
+
+/// Blocks by which we let a round's VTXO expiry fall short of the full
+/// advertised lifetime when doing interactive rounds.
+const VTXO_EXPIRY_HEIGHT_BUFFER: BlockHeight = 6;
 
 
 /// Struct to communicate your specific participation for an Ark round.
@@ -174,12 +178,13 @@ impl RoundState {
 	fn new_delegated(
 		participation: RoundParticipation,
 		unlock_hash: UnlockHash,
+		scheduled_height: Option<BlockHeight>,
 		movement_id: Option<MovementId>,
 	) -> Self {
 		Self {
 			participation,
 			movement_id,
-			flow: RoundFlowState::NonInteractivePending { unlock_hash },
+			flow: RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height },
 			new_vtxos: Vec::new(),
 			sent_forfeit_sigs: false,
 			done: false,
@@ -194,7 +199,7 @@ impl RoundState {
 	/// the unlock hash if already known
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
 		match self.flow {
-			RoundFlowState::NonInteractivePending { unlock_hash } => Some(unlock_hash),
+			RoundFlowState::NonInteractivePending { unlock_hash, .. } => Some(unlock_hash),
 			RoundFlowState::InteractivePending => None,
 			RoundFlowState::InteractiveOngoing { .. } => None,
 			RoundFlowState::Failed { .. } => None,
@@ -395,8 +400,10 @@ impl RoundState {
 				Ok(RoundStatus::Canceled)
 			},
 
-			RoundFlowState::NonInteractivePending { unlock_hash } => {
-				match progress_delegated(wallet, &self.participation, unlock_hash).await {
+			RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height } => {
+				match progress_delegated(
+					wallet, &self.participation, unlock_hash, scheduled_height,
+				).await {
 					Ok(HarkProgressResult::RoundPending) => Ok(RoundStatus::Pending),
 					// We don't lock inputs on delegated rounds, so if we don't find it,
 					// we just mark the refresh movement as failed
@@ -564,6 +571,10 @@ pub enum RoundFlowState {
 	/// We don't do flow and we just wait for the round to finish
 	NonInteractivePending {
 		unlock_hash: UnlockHash,
+		/// The block height we asked the server to schedule this participation
+		/// for, if any. We use it to verify the server honoured our schedule:
+		/// the new VTXOs must not expire before this height.
+		scheduled_height: Option<BlockHeight>,
 	},
 
 	/// Waiting for round to happen
@@ -877,14 +888,55 @@ fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo<Full>) -> an
 	}
 }
 
+/// Validate the tree-level security parameters the server chose for the VTXOs
+/// we're about to accept in a round.
+///
+/// Checks that server pubkey and exit delta match.
+/// Checks that expiry height is above minimum threshold.
+fn validate_vtxo_tree_params(
+	server_pubkey: PublicKey,
+	exit_delta: BlockDelta,
+	expiry_height: BlockHeight,
+	expected_server_pubkey: PublicKey,
+	expected_exit_delta: BlockDelta,
+	min_expiry_height: BlockHeight,
+) -> anyhow::Result<()> {
+	ensure!(server_pubkey == expected_server_pubkey,
+		"round VTXO tree uses an unexpected server pubkey: got {}, expected {}",
+		server_pubkey, expected_server_pubkey,
+	);
+
+	ensure!(exit_delta == expected_exit_delta,
+		"round VTXO tree uses an unexpected exit delta: got {}, expected {}",
+		exit_delta, expected_exit_delta,
+	);
+
+	ensure!(expiry_height >= min_expiry_height,
+		"round VTXO tree expiry height {} is below the required minimum {}; \
+		server may be trying to sweep before we can exit",
+		expiry_height, min_expiry_height,
+	);
+
+	Ok(())
+}
+
 fn check_round_matches_participation(
 	part: &RoundParticipation,
 	new_vtxos: &[Vtxo<Full>],
 	funding_tx: &Transaction,
+	ark_info: &ArkInfo,
+	scheduled_height: Option<BlockHeight>,
 ) -> anyhow::Result<()> {
 	ensure!(new_vtxos.len() == part.outputs.len(),
 		"unexpected number of VTXOs: got {}, expected {}", new_vtxos.len(), part.outputs.len(),
 	);
+
+	let min_expiry_height = match scheduled_height {
+		Some(h) => h.saturating_add(1),
+		None => part.inputs.iter()
+			.map(|v| v.expiry_height()).max().unwrap_or(1)
+			.saturating_add(1),
+	};
 
 	for (vtxo, req) in new_vtxos.iter().zip(&part.outputs) {
 		ensure!(vtxo.amount() == req.amount,
@@ -893,6 +945,13 @@ fn check_round_matches_participation(
 		ensure!(*vtxo.policy() == req.policy,
 			"unexpected VTXO policy: got {:?}, expected {:?}", vtxo.policy(), req.policy,
 		);
+
+		// The server chose these tree-level parameters; make sure they match
+		// what we expect before we forfeit our inputs in exchange.
+		validate_vtxo_tree_params(
+			vtxo.server_pubkey(), vtxo.exit_delta(), vtxo.expiry_height(),
+			ark_info.server_pubkey, ark_info.vtxo_exit_delta, min_expiry_height,
+		)?;
 
 		// We accept the VTXO if only the hArk transition (last) failure happens
 		check_vtxo_fails_hash_lock(funding_tx, vtxo)?;
@@ -965,8 +1024,9 @@ async fn progress_delegated(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
 	unlock_hash: UnlockHash,
+	scheduled_height: Option<BlockHeight>,
 ) -> Result<HarkProgressResult, HarkForfeitError> {
-	let (mut srv, _) = wallet.require_server().await.map_err(HarkForfeitError::Err)?;
+	let (mut srv, ark_info) = wallet.require_server().await.map_err(HarkForfeitError::Err)?;
 
 	let resp = match srv.client.round_participation_status(protos::RoundParticipationStatusRequest {
 		unlock_hash: unlock_hash.to_byte_array().to_vec(),
@@ -1025,8 +1085,11 @@ async fn progress_delegated(
 		.context("invalid output VTXOs from server")
 		.map_err(HarkForfeitError::Err)?;
 
-	// Check that the vtxos match our participation in the exact order
-	check_round_matches_participation(participation, &new_vtxos, &funding_tx)
+	// Check that the vtxos match our participation in the exact order, and that
+	// the server-chosen tree parameters are safe, before we forfeit our inputs.
+	check_round_matches_participation(
+		participation, &new_vtxos, &funding_tx, &ark_info, scheduled_height,
+	)
 		.context("new VTXOs received from server don't match our participation")
 		.map_err(HarkForfeitError::Err)?;
 
@@ -1145,9 +1208,20 @@ async fn sign_vtxo_tree(
 	vtxo_tree: &VtxoTreeSpec,
 	cosign_agg_nonces: &[musig::AggregatedNonce],
 ) -> anyhow::Result<()> {
-	let (mut srv, _) = wallet.require_server().await.context("server not available")?;
+	let (mut srv, ark_info) = wallet.require_server().await.context("server not available")?;
 
 	let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_VTXO_TREE_VOUT);
+
+	// Validate the tree. We expect new VTXOs to be within a buffer from
+	// expected vtxo lifetime.
+	let tip = wallet.inner.chain.tip().await.context("chain source error")?;
+	let min_expiry_height = tip
+		.saturating_add(ark_info.vtxo_expiry_delta as BlockHeight)
+		.saturating_sub(VTXO_EXPIRY_HEIGHT_BUFFER);
+	validate_vtxo_tree_params(
+		vtxo_tree.server_pubkey, vtxo_tree.exit_delta, vtxo_tree.expiry_height,
+		ark_info.server_pubkey, ark_info.vtxo_exit_delta, min_expiry_height,
+	)?;
 
 	// Check that the proposal contains our inputs.
 	let mut my_vtxos = participation.outputs.iter().collect::<Vec<_>>();
@@ -1543,7 +1617,9 @@ impl Wallet {
 		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)
 			.context("invalid unlock hash from server")?;
 
-		let state = RoundState::new_delegated(participation, unlock_hash, movement_id);
+		let state = RoundState::new_delegated(
+			participation, unlock_hash, scheduled_height, movement_id,
+		);
 
 		info!("Delegated round participation submitted, it will automatically execute \
 			when you next sync your wallet after the round happened \
@@ -1986,6 +2062,7 @@ mod test {
 
 	use ark::VtxoPolicy;
 	use ark::tree::signed::{HashlockVersion, UnlockPreimage};
+	use ark::vtxo::policy::MAX_BLOCK_DELTA;
 
 	fn pubkey() -> bitcoin::secp256k1::PublicKey {
 		let secp = Secp256k1::new();
@@ -2032,6 +2109,40 @@ mod test {
 				));
 			}
 		}
+	}
+
+	#[test]
+	fn vtxo_tree_params_accepts_honest_and_rejects_hostile() {
+		let secp = Secp256k1::new();
+		let mut rng = rand::thread_rng();
+		let server = Keypair::new(&secp, &mut rng).public_key();
+		let other = Keypair::new(&secp, &mut rng).public_key();
+
+		let exit_delta: BlockDelta = 144;
+		let min_expiry: BlockHeight = 100_000;
+
+		// Expiry at or above the minimum, with matching pubkey and delta, passes.
+		validate_vtxo_tree_params(server, exit_delta, min_expiry, server, exit_delta, min_expiry)
+			.expect("expiry exactly at the minimum should validate");
+		validate_vtxo_tree_params(
+			server, exit_delta, min_expiry + 5_000, server, exit_delta, min_expiry,
+		).expect("expiry above the minimum should validate");
+
+		// A wrong server pubkey is rejected.
+		assert!(validate_vtxo_tree_params(
+			other, exit_delta, min_expiry, server, exit_delta, min_expiry,
+		).is_err(), "wrong server pubkey must be rejected");
+
+		// An inflated exit delta (hostage) is rejected.
+		assert!(validate_vtxo_tree_params(
+			server, MAX_BLOCK_DELTA, min_expiry, server, exit_delta, min_expiry,
+		).is_err(), "inflated exit delta must be rejected");
+
+		// An expiry below the minimum (e.g. the short-expiry sweep attack) is
+		// rejected, right down to a single block short.
+		assert!(validate_vtxo_tree_params(
+			server, exit_delta, min_expiry - 1, server, exit_delta, min_expiry,
+		).is_err(), "expiry one block below the minimum must be rejected");
 	}
 
 	#[test]
