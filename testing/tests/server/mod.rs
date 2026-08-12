@@ -483,6 +483,40 @@ async fn wallet_skips_vtxos_at_exit_depth_limit() {
 }
 
 #[tokio::test]
+async fn send_onchain_skips_vtxos_at_exit_depth_limit() {
+	require_bark_version!(> "0.6.0");
+
+	let ctx = TestContext::new("server/send_onchain_skips_vtxos_at_exit_depth_limit").await;
+
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.max_vtxo_exit_depth = 10;
+	}).create().await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+
+	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	// Full-balance self-sends build a single chain: depth 11 after 5 sends.
+	for _ in 0..5 {
+		bark1.send_oor(&bark1.address().await, sat(800_000)).await;
+	}
+
+	// The wallet's only VTXO now meets the server's depth limit. Send-onchain
+	// runs an arkoor split whose inputs the server would reject, so input
+	// selection skips them and the send fails as insufficient funds instead
+	// of a doomed cosign request.
+	let addr = bark2.get_onchain_address().await;
+	let err = bark1.try_send_onchain(&addr, sat(500_000)).await
+		.unwrap_err().to_alt_string();
+	assert!(
+		err.contains("Insufficient money"),
+		"expected insufficient money, got: {err}",
+	);
+}
+
+#[tokio::test]
 async fn change_split_avoids_exit_depth_limit() {
 	let ctx = TestContext::new("server/change_split_avoids_exit_depth_limit").await;
 
