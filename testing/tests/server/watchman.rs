@@ -461,8 +461,6 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 /// sweeps the connector dust too.
 #[tokio::test]
 async fn watchman_sweeps_offboard_connectors() {
-	require_bark_version!(> "0.5.0");
-
 	let ctx = TestContext::new("server/watchman_sweeps_offboard_connectors").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -552,8 +550,6 @@ async fn watchman_sweeps_offboard_connectors() {
 /// expires.
 #[tokio::test]
 async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
-	require_bark_version!(> "0.5.0");
-
 	let ctx = TestContext::new("server/watchman_sweeps_offboard_forfeit_after_confiscation").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -629,8 +625,6 @@ async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 
 #[tokio::test]
 async fn watchman_sweeps_exit_after_forfeit() {
-	require_bark_version!(> "0.5.0");
-
 	let ctx = TestContext::new("server/watchman_sweeps_exit_after_forfeit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
