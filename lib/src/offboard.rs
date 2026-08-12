@@ -394,7 +394,9 @@ fn construct_forfeit_vtxo<G>(
 	ServerVtxo {
 		point: OutPoint::new(forfeit_tx.compute_txid(), 0),
 		policy: ServerVtxoPolicy::ServerOwned,
-		amount: input.amount,
+		// the forfeit tx output accumulates the connector dust on
+		// top of the input amount
+		amount: forfeit_tx.output[0].value,
 		anchor_point: input.anchor_point,
 		server_pubkey: input.server_pubkey,
 		expiry_height: input.expiry_height,
@@ -742,6 +744,12 @@ mod test {
 				.expect(&format!("forfeit tx {} vtxo input invalid against real connector prevout", i));
 			crate::test_util::verify_tx(&real_prevouts, 1, forfeit_tx)
 				.expect(&format!("forfeit tx {} connector input invalid against real connector prevout", i));
+
+			// The recorded forfeit vtxo must describe the actual forfeit tx
+			// output, or the watchman can never sweep it.
+			assert_eq!(result.forfeit_vtxos[i].txout(), forfeit_tx.output[0],
+				"forfeit vtxo {} doesn't match its forfeit tx output", i,
+			);
 		}
 	}
 }

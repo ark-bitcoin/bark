@@ -545,6 +545,88 @@ async fn watchman_sweeps_offboard_connectors() {
 	);
 }
 
+/// After an offboard whose input gets maliciously exited, the watchman
+/// confiscates the exit output with the presigned forfeit tx. The forfeit
+/// output — the input amount plus the connector dust it accumulates — is a
+/// plain server keyspend that the watchman must sweep once the input vtxo
+/// expires.
+#[tokio::test]
+async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/watchman_sweeps_offboard_forfeit_after_confiscation").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.watchman = OptionalService::Disabled;
+		cfg.vtxo_lifetime = 144;
+		cfg.vtxopool.vtxo_targets = vec![];
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
+	}).create(&srv).await;
+	wm.add_slog_handler(failures.clone());
+
+	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
+
+	// fund the watchman so it can pay CPFP fees for the forfeit broadcast
+	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(1_000_000)).await;
+
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	bark.board_and_confirm_and_register(&ctx, sat(400_000)).await;
+	bark.sync().await;
+	let exit_point = bark.vtxo_ids().await[0].to_point();
+
+	// snapshot the wallet before offboarding; the attacker keeps the stale vtxo
+	let evil = bark.full_clone("evil").await;
+
+	let payout = ctx.bitcoind().get_new_address();
+	bark.offboard_all(&payout).await;
+	ctx.generate_blocks(1).await;
+
+	// the attacker exits the now-forfeited vtxo
+	evil.start_exit_all().await;
+	progress_exit_until_awaiting_delta(&ctx, &evil).await;
+
+	// drive the watchman until it confiscates the exit output
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	wm.wait_for_sync_height(tip).await;
+	let client = ctx.bitcoind().sync_client();
+	for _ in 0..25 {
+		wm.trigger_sweep().await;
+		tokio::time::sleep(Duration::from_secs(2)).await;
+		let tip = ctx.generate_blocks(1).await;
+		wm.wait_for_sync_height(tip).await;
+		if client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_none() {
+			break;
+		}
+	}
+	assert!(
+		client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_none(),
+		"the watchman should have confiscated the exit output",
+	);
+
+	// Wait for the input vtxo to expire, then the watchman should sweep the
+	// confiscated forfeit output. The exit output, the connector and the board
+	// output are all spent by now, so the forfeit output is the only sweep:
+	// the input amount plus the connector dust.
+	let tip = ctx.generate_blocks(200).await;
+	wm.wait_for_sync_height(tip).await;
+	wm.trigger_sweep().await;
+	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
+	failures.assert_empty();
+	println!("Offboard forfeit sweep: {:#?}", msg);
+	assert_eq!(400_330, msg.total_input_value.to_sat());
+
+	// the forfeit output must actually be gone from the utxo set
+	let forfeit_point = msg.vtxo_ids[0].to_point();
+	ctx.generate_blocks(1).await;
+	assert!(
+		client.get_tx_out(&forfeit_point.txid, forfeit_point.vout, Some(true)).unwrap().is_none(),
+		"forfeit output {} should be spent by the sweep", forfeit_point,
+	);
+}
+
 #[tokio::test]
 async fn watchman_sweeps_exit_after_forfeit() {
 	require_bark_version!(> "0.5.0");
