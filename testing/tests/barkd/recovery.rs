@@ -407,6 +407,8 @@ async fn recovered_wallet_is_empty_when_fully_spent() {
 	let ctx = TestContext::new("barkd/recovered_wallet_is_empty_when_fully_spent").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
+	srv.wait_for_vtxopool(&ctx).await;
+
 	let barkd = ctx.barkd("bark", &srv).boarded(sat(500_000)).expose_mnemonic().create().await;
 	let recipient = ctx.barkd("recipient", &srv).create().await;
 	let addr = recipient.onchain_address().await;
