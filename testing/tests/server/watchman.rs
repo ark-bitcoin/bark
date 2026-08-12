@@ -502,6 +502,7 @@ async fn watchman_sweeps_offboard_connectors() {
 	// the board outputs get swept, but the connector must be left alone.
 	let tip = ctx.generate_blocks(max_expiry + 72 - tip).await;
 	wm.wait_for_sync_height(tip).await;
+	let rounds_balance = srv.wallet_status().await.rounds.total_balance;
 
 	wm.trigger_sweep().await;
 	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
@@ -514,11 +515,21 @@ async fn watchman_sweeps_offboard_connectors() {
 	assert_eq!(800_000, msg.total_input_value.to_sat());
 
 	let client = ctx.bitcoind().sync_client();
-	ctx.generate_blocks(1).await;
+	let tip = ctx.generate_blocks(1).await;
+	srv.wait_for_sync_height(tip).await;
 	assert!(
 		client.get_tx_out(&connector_point.txid, connector_point.vout, Some(true)).unwrap().is_some(),
 		"connector output {} must still be unspent", connector_point,
 	);
+
+	// the swept board outputs must land in the rounds wallet
+	let rounds_balance = {
+		let new_balance = srv.wallet_status().await.rounds.total_balance;
+		assert_eq!(new_balance, rounds_balance + msg.total_output_value,
+			"board output sweep must pay out to the rounds wallet",
+		);
+		new_balance
+	};
 
 	// After the other half of the connector expiry delta, the connector
 	// dust gets swept as well.
@@ -536,10 +547,17 @@ async fn watchman_sweeps_offboard_connectors() {
 	assert_eq!(1_320, msg.total_input_value.to_sat());
 
 	// the connector output must actually be gone from the utxo set
-	ctx.generate_blocks(1).await;
+	let tip = ctx.generate_blocks(1).await;
+	srv.wait_for_sync_height(tip).await;
 	assert!(
 		client.get_tx_out(&connector_point.txid, connector_point.vout, Some(true)).unwrap().is_none(),
 		"connector output {} should be spent by the sweep", connector_point,
+	);
+
+	// the connector dust must land in the rounds wallet as well
+	assert_eq!(srv.wallet_status().await.rounds.total_balance,
+		rounds_balance + msg.total_output_value,
+		"connector sweep must pay out to the rounds wallet",
 	);
 }
 
@@ -608,6 +626,8 @@ async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 	// the input amount plus the connector dust.
 	let tip = ctx.generate_blocks(200).await;
 	wm.wait_for_sync_height(tip).await;
+	let rounds_balance = srv.wallet_status().await.rounds.total_balance;
+
 	wm.trigger_sweep().await;
 	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
 	failures.assert_empty();
@@ -616,10 +636,17 @@ async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 
 	// the forfeit output must actually be gone from the utxo set
 	let forfeit_point = msg.vtxo_ids[0].to_point();
-	ctx.generate_blocks(1).await;
+	let tip = ctx.generate_blocks(1).await;
+	srv.wait_for_sync_height(tip).await;
 	assert!(
 		client.get_tx_out(&forfeit_point.txid, forfeit_point.vout, Some(true)).unwrap().is_none(),
 		"forfeit output {} should be spent by the sweep", forfeit_point,
+	);
+
+	// the confiscated funds must land in the rounds wallet
+	assert_eq!(srv.wallet_status().await.rounds.total_balance,
+		rounds_balance + msg.total_output_value,
+		"forfeit sweep must pay out to the rounds wallet",
 	);
 }
 
