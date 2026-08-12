@@ -1,7 +1,11 @@
 
 mod embedded {
-	use refinery::embed_migrations;
-	embed_migrations!("src/database/migrations");
+	// refinery's embed_migrations! macro embeds migrations in filesystem
+	// readdir order, which is not deterministic across machines. build.rs
+	// generates the equivalent module from a sorted file list instead.
+	pub mod migrations {
+		include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
+	}
 }
 
 mod ban;
