@@ -1,6 +1,7 @@
 
 debug/
 target/
+/build/
 .direnv/
 rustdocs/
 /test/
