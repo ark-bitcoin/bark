@@ -14,7 +14,7 @@ test-unit-codecov:
     NEXTEST_TEST_THREADS: "1"
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just test-unit-codecov"
+    - nix develop .#ci --command bash -c "just test-unit-codecov"
 
 build-codecov:
   interruptible: true
@@ -26,7 +26,7 @@ build-codecov:
     NEXTEST_TEST_THREADS: "1"
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just build-codecov"
+    - nix develop .#ci --command bash -c "just build-codecov"
 
 test-integration-btc30-codecov:
   interruptible: true
@@ -59,7 +59,7 @@ code-coverage:
   needs:
     - test-integration-btc30-codecov
   script:
-    - nix develop .#default --command bash -c "just codecov-report"
+    - nix develop .#ci --command bash -c "just codecov-report"
     - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
     - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
     - echo "Coverage -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"

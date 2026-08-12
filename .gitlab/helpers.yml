@@ -17,7 +17,7 @@ prechecks:
     - rm -rf "/host/data/test/${CI_COMMIT_SHA}/" || true
     - rm -rf "/host/data/codecov/${CI_COMMIT_SHA}/" || true
     - echo "Running prechecks..."
-    - nix develop .#default --command bash -c "just prechecks"
+    - nix develop .#ci --command bash -c "just prechecks"
 
 check-versions:
   interruptible: true
