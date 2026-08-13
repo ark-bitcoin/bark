@@ -26,7 +26,9 @@ use ark::{musig, ProtocolEncoding, Vtxo, VtxoId};
 use ark::arkoor::package::ArkoorPackageCosignRequest;
 use ark::mailbox::MailboxIdentifier;
 use ark::forfeit::HashLockedForfeitBundle;
-use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmountExt, PaymentHash, Preimage};
+use ark::lightning::{
+	offer_request_amount, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage,
+};
 use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
 use ark::vtxo::Full;
 use ark::vtxo::policy::check_block_height;
@@ -368,15 +370,10 @@ impl rpc::server::ArkService for Server {
 			},
 		};
 
-		let amount = match req.amount_sat {
-			Some(a) => { Amount::from_sat(a) },
-			None if offer.amount().is_some() => offer.amount().unwrap()
-				.to_bitcoin_amount()
-				.badarg("unsupported offer currency")?,
-			None => {
-				macros::badarg!("amount_sat is required for bolt12 offers with no amount specified");
-			},
-		};
+		// NB the client derives the amount it authorizes the same way, and checks the
+		// invoice we return against it, so both sides must agree on this.
+		let amount = offer_request_amount(&offer, req.amount_sat.map(Amount::from_sat))
+			.badarg("cannot determine the amount to request for this offer")?;
 
 		let invoice = self.fetch_bolt12_invoice(offer, amount).await.to_status()?;
 

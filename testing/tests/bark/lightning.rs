@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicI8, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use ark::VtxoId;
-use ark::lightning::{Invoice, PaymentHash};
+use ark::lightning::{Invoice, Offer, OfferAmountExt, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
 use ark_testing::context::LightningPaymentSetup;
 use bark::actions::lightning::receive::LightningReceiveState;
@@ -1281,6 +1281,71 @@ async fn bark_pay_twice_ln_offer() {
 	assert_eq!(balance.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
 	let vtxos = bark_1.vtxos().await;
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+}
+
+/// The server fetches the BOLT12 invoice for us, so it decides which amount the
+/// issuer signs. It must not be able to make us pay more than we authorized by
+/// returning a genuinely issuer-signed invoice for a larger amount.
+#[tokio::test]
+async fn bark_reject_inflated_ln_offer_invoice() {
+	require_bark_version!(> "0.6.0");
+
+	#[derive(Clone)]
+	struct InflateOfferAmount;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for InflateOfferAmount {
+		async fn fetch_bolt12_invoice(
+			&self,
+			upstream: &mut ArkClient,
+			mut req: protos::FetchBolt12InvoiceRequest,
+		) -> Result<protos::FetchBolt12InvoiceResponse, tonic::Status> {
+			let authorized_sat = req.amount_sat.unwrap_or_else(|| {
+				let offer = Offer::try_from(req.offer.clone()).expect("valid offer");
+				offer.amount().expect("offer has an amount")
+					.to_bitcoin_amount().expect("bitcoin offer amount").to_sat()
+			});
+			req.amount_sat = Some(2 * authorized_sat);
+			Ok(upstream.fetch_bolt12_invoice(req).await?.into_inner())
+		}
+	}
+
+	let ctx = TestContext::new("lightningd/bark_reject_inflated_ln_offer_invoice").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("server").lightningd(&lightning.external).create().await;
+	let proxy = srv.start_proxy_no_mailbox(InflateOfferAmount).await;
+
+	// The wallet keeps enough funds to cover the inflated invoice, so it can only
+	// refuse the payment because of the amount check.
+	let board_amount = btc(2);
+	let bark_1 = ctx.bark("bark-1", &proxy.address).funded(btc(3)).create().await;
+
+	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	lightning.sync().await;
+
+	let pay_amount = sat(100_000);
+
+	// Amountless offer: we authorize the amount ourselves.
+	let offer = lightning.external.offer(None, Some("A test payment")).await;
+	let err = bark_1.try_pay_lightning(offer, Some(pay_amount), true).await.unwrap_err();
+	assert!(err.to_string().contains("invoice amount doesn't match the requested amount"),
+		"expected an amount mismatch error, got: {err}");
+
+	// Offer with an amount: the offer is what we authorize.
+	let offer = lightning.external.offer(Some(pay_amount), Some("A test payment")).await;
+	let err = bark_1.try_pay_lightning(offer, None, true).await.unwrap_err();
+	assert!(err.to_string().contains("invoice amount doesn't match the requested amount"),
+		"expected an amount mismatch error, got: {err}");
+
+	let balance = bark_1.offchain_balance().await;
+	assert_eq!(balance.spendable, board_amount, "no funds should have moved");
+	assert_eq!(balance.pending_lightning_send, btc(0));
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })),
+		"should not be any locked vtxo");
 }
 
 
