@@ -14,7 +14,7 @@ use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
 use log::{info, trace};
 
-use ark_testing::{Captaind, Lightningd, TestContext, btc, lightning_test, require_bark_version, sat};
+use ark_testing::{Captaind, Lightningd, TestContext, btc, is_bark_version, lightning_test, require_bark_version, sat};
 use server::vtxopool::VtxoTarget;
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
@@ -75,6 +75,42 @@ async fn bark_pay_ln_succeeds() {
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
 	let vtxos = bark_1.vtxos().await;
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+}
+
+#[tokio::test]
+async fn bark_pay_ln_change_split() {
+	require_bark_version!(> "0.6.0");
+
+	let ctx = TestContext::new("lightningd/bark_pay_ln_change_split").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
+
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(3)).create().await;
+	bark_1.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	lightning.sync().await;
+
+	// Change larger than the payment is split in two so that spending
+	// builds a tree of change VTXOs instead of a chain.
+	let invoice = lightning.external.invoice(Some(btc(0.5)), "split", "large change").await;
+	bark_1.pay_lightning_wait(invoice, None).await;
+
+	let mut vtxos = bark_1.vtxos().await;
+	vtxos.sort_by_key(|v| v.amount);
+	let [piece1, piece2] = vtxos.try_into().expect("should have two change vtxos");
+	assert_eq!(piece1.amount, btc(0.75));
+	assert_eq!(piece2.amount, btc(0.75));
+
+	// Change too small to split is kept whole. Covering the payment takes
+	// both pieces, so the change piece descends from the second input.
+	let invoice = lightning.external.invoice(Some(btc(1)), "whole", "small change").await;
+	bark_1.pay_lightning_wait(invoice, None).await;
+
+	let [change] = bark_1.vtxos().await.try_into().expect("should have one change vtxo");
+	assert_eq!(change.amount, btc(0.5));
 }
 
 #[tokio::test]
@@ -288,12 +324,14 @@ async fn bark_pay_ln_fails_then_succeeds() {
 
 	let vtxos = bark.vtxos().await;
 	assert!(!vtxos.iter().any(|v| v.id == board_vtxo), "board vtxo not spent");
-	assert_eq!(vtxos.len(), 2,
-		"user should get 2 VTXOs, change and revocation one, got: {:?}", vtxos,
+	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 };
+	assert_eq!(vtxos.len(), nb_change + 1,
+		"user should get change and a revocation VTXO, got: {:?}", vtxos,
 	);
-	assert!(
-		vtxos.iter().any(|v| v.amount == (board_amount - invoice_amount)),
-		"user should get a change VTXO of 1btc, got: {:?}", vtxos,
+	let change_piece = (board_amount - invoice_amount) / nb_change as u64;
+	assert_eq!(
+		vtxos.iter().filter(|v| v.amount == change_piece).count(), nb_change,
+		"user should get change VTXOs of {}, got: {:?}", change_piece, vtxos,
 	);
 
 	assert!(
@@ -825,10 +863,12 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 	bark_2.pay_lightning_wait(invoice_info.invoice, None).await;
 
 	let vtxos = bark_2.vtxos().await;
-	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
-	assert!(vtxos.iter().any(|v| {
-		v.policy_type == VtxoPolicyKind::Pubkey && v.amount == (board_amount - pay_amount)
-	}), "user should get a change VTXO of 1btc");
+	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 };
+	assert_eq!(vtxos.len(), nb_change + 1, "user should get change and a revocation VTXO");
+	let change_piece = (board_amount - pay_amount) / nb_change as u64;
+	assert_eq!(vtxos.iter().filter(|v| {
+		v.policy_type == VtxoPolicyKind::Pubkey && v.amount == change_piece
+	}).count(), nb_change, "user should get change VTXOs of {}", change_piece);
 	assert!(vtxos.iter().any(|v| {
 		v.policy_type == VtxoPolicyKind::Pubkey && v.amount == pay_amount
 	}), "user should get a revocation arkoor of payment_amount + forwarding fee");
@@ -895,10 +935,12 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 	bark_2.maintain().await;
 
 	let vtxos = bark_2.vtxos().await;
-	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
-	assert!(vtxos.iter().any(|v| {
-		v.policy_type == VtxoPolicyKind::Pubkey && v.amount == (board_amount - pay_amount)
-	}), "user should get a change VTXO of 1btc");
+	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 };
+	assert_eq!(vtxos.len(), nb_change + 1, "user should get change and a revocation VTXO");
+	let change_piece = (board_amount - pay_amount) / nb_change as u64;
+	assert_eq!(vtxos.iter().filter(|v| {
+		v.policy_type == VtxoPolicyKind::Pubkey && v.amount == change_piece
+	}).count(), nb_change, "user should get change VTXOs of {}", change_piece);
 	assert!(vtxos.iter().any(|v| {
 		v.policy_type == VtxoPolicyKind::Pubkey && v.amount == pay_amount
 	}), "user should get a revocation arkoor of payment_amount + forwarding fee");

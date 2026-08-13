@@ -239,11 +239,11 @@ async fn recovered_wallet_finds_lightning_receive() {
 	recovered.send(&recipient.ark_address().await, Amount::from_sat(500_000)).await;
 }
 
-/// Wallet recovery of a Lightning-send change output.
+/// Wallet recovery of Lightning-send change outputs.
 ///
 /// Pay a Lightning invoice (a successful send): the wallet's VTXO is spent and
-/// a change VTXO comes back. After recovering from the seed, the change must be
-/// rediscovered.
+/// change comes back, split in two pieces. After recovering from the seed, both
+/// pieces must be rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_send_change() {
 	require_bark_version!(> "0.5.0");
@@ -262,18 +262,19 @@ async fn recovered_wallet_finds_lightning_send_change() {
 	let board_id = board[0].vtxo.id;
 
 	// Pay a 300k invoice: the send succeeds, spending the board VTXO and
-	// leaving a change VTXO.
+	// leaving two change VTXOs.
 	let invoice = lightning.external.invoice(Some(sat(300_000)), "send", "send").await;
 	lightning.sync().await;
 	barkd.pay_lightning(&invoice).await;
 
 	// The REST send returns before the payment resolves, so drive it via sync
-	// until the change VTXO has replaced the board VTXO. Require it spendable so
-	// we don't capture the transient in-flight HTLC (locked, and spent once the
-	// payment settles) that briefly is the only unspent VTXO.
+	// until the change VTXOs have replaced the board VTXO. Require them
+	// spendable so we don't capture the transient in-flight HTLC (locked, and
+	// spent once the payment settles).
 	let before = wait_for_vtxos(&barkd, |vtxos| {
-		vtxos.len() == 1 && vtxos[0].vtxo.id != board_id
-			&& vtxos[0].state == VtxoStateInfo::Spendable
+		vtxos.len() == 2 && vtxos.iter().all(|v| {
+			v.vtxo.id != board_id && v.state == VtxoStateInfo::Spendable
+		})
 	}).await;
 
 	// Recover from the same seed.
@@ -300,8 +301,8 @@ async fn recovered_wallet_finds_lightning_send_change() {
 /// Wallet recovery of Lightning-send change and revocation outputs.
 ///
 /// With no channel, a Lightning send can't be routed: the payment fails and the
-/// wallet recovers its funds as a revocation VTXO alongside the change VTXO.
-/// After recovering from the seed, both must be rediscovered.
+/// wallet recovers its funds as a revocation VTXO alongside the change pieces.
+/// After recovering from the seed, all must be rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_send_revocation() {
 	require_bark_version!(> "0.5.0");
@@ -318,15 +319,15 @@ async fn recovered_wallet_finds_lightning_send_revocation() {
 	let barkd = ctx.barkd("barkd", &srv).boarded(sat(1_000_000)).expose_mnemonic().create().await;
 
 	// Pay a 300k invoice with no route: the send fails and the wallet ends up
-	// with two VTXOs — the change and the revoked payment amount.
+	// with three VTXOs — two change pieces and the revoked payment amount.
 	let invoice = lightning.external.invoice(Some(sat(300_000)), "send", "send").await;
 	lightning.sync().await;
 	barkd.pay_lightning(&invoice).await;
 
-	// Wait for both VTXOs to settle spendable: this skips the transient
+	// Wait for all VTXOs to settle spendable: this skips the transient
 	// {change, locked-htlc} state and captures the settled {change, revocation}
 	// set, since the HTLC is spent into the revocation VTXO under a new id.
-	let before = wait_for_spendable_vtxos(&barkd, 2).await;
+	let before = wait_for_spendable_vtxos(&barkd, 3).await;
 
 	// Recover from the same seed.
 	let mnemonic = barkd.mnemonic().await;

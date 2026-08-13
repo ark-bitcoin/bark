@@ -430,7 +430,7 @@ async fn exit_bolt11_change() {
 	assert_eq!(bark_1.spendable_balance().await, btc(3));
 
 	// We try to perform an exit for ln payment change
-	let vtxo = &bark_1.vtxos().await[0];
+	let change_amount = bark_1.vtxos().await.iter().map(|v| v.amount).sum::<Amount>();
 
 	srv.stop().await.unwrap();
 	bark_1.start_exit_all().await;
@@ -440,7 +440,7 @@ async fn exit_bolt11_change() {
 	ctx.generate_blocks(1).await;
 
 	assert_eq!(bark_1.spendable_balance().await, Amount::ZERO);
-	assert!(bark_1.onchain_balance().await >= vtxo.amount + Amount::ONE_SAT);
+	assert!(bark_1.onchain_balance().await >= change_amount + Amount::ONE_SAT);
 }
 
 #[tokio::test]

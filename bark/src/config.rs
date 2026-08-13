@@ -195,9 +195,9 @@ pub struct Config {
 	/// Default value: 60
 	pub daemon_sync_interval_secs: u64,
 
-	/// The number of pieces to split arkoor change into, between 1 (no
-	/// splitting) and 3 (the server's default arkoor fanout limit of 4,
-	/// minus the payment output).
+	/// The number of pieces to split arkoor and lightning-send change into,
+	/// between 1 (no splitting) and 3 (the server's default arkoor fanout
+	/// limit of 4, minus the payment output).
 	///
 	/// Default value: 2
 	pub change_vtxo_split_factor: u8,

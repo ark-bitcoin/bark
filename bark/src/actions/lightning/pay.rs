@@ -30,6 +30,7 @@ use server_rpc::protos::{self, lightning_payment_status};
 
 use crate::Wallet;
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId, park_with_backoff};
+use crate::arkoor::{resolve_change_pieces, split_change_amount};
 use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementId, MovementStatus, PaymentMethod};
 use crate::persist::models::PaidInvoice;
@@ -64,6 +65,11 @@ pub struct LightningSend {
 	pub input_vtxo_ids: Vec<VtxoId>,
 	pub payment_amount: Amount,
 	pub fee: Amount,
+
+	/// Change piece amounts fixed at start. `None` when persisted by a
+	/// pre-split bark, meaning one whole change output.
+	#[serde(default, with = "crate::utils::serde::opt_amount_vec_sat")]
+	pub change_pieces: Option<Vec<Amount>>,
 
 	/// Used as both the HTLC output's locked pubkey and as the change
 	/// pubkey (reused to avoid a second key derivation).
@@ -326,6 +332,10 @@ pub(crate) async fn start_lightning_send(
 		|a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
 	).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 
+	let input_total = inputs.iter().map(|v| v.amount()).sum::<Amount>();
+	let change = input_total.checked_sub(payment_amount + fee)
+		.context("selected inputs don't cover payment and fee")?;
+
 	let action_id = ln_pay_action_id(invoice.payment_hash());
 	wallet.lock_vtxos(
 		&inputs,
@@ -354,6 +364,9 @@ pub(crate) async fn start_lightning_send(
 		input_vtxo_ids: inputs.iter().map(|v| v.id()).collect(),
 		payment_amount,
 		fee,
+		change_pieces: Some(split_change_amount(
+			change, payment_amount + fee, wallet.config().change_vtxo_split_factor,
+		)),
 		htlc_key: change_keypair.public_key(),
 		htlc_expiry,
 		movement_id: Some(movement_id),
@@ -393,16 +406,16 @@ pub(crate) async fn request_lightning_send_htlcs(
 	);
 	let total_amount = send.total_amount();
 	let input_amount = full_inputs.iter().map(|v| v.amount()).sum::<Amount>();
-	let pay_dest = ArkoorDestination { total_amount, policy };
-	let outputs = if input_amount == total_amount {
-		vec![pay_dest]
-	} else {
-		let change_dest = ArkoorDestination {
-			total_amount: input_amount - total_amount,
+	let change_amount = input_amount.checked_sub(total_amount)
+		.context("input vtxos don't cover payment and fee")?;
+
+	let mut outputs = vec![ArkoorDestination { total_amount, policy }];
+	for piece in resolve_change_pieces(send.change_pieces.clone(), change_amount)? {
+		outputs.push(ArkoorDestination {
+			total_amount: piece,
 			policy: VtxoPolicy::new_pubkey(send.htlc_key),
-		};
-		vec![pay_dest, change_dest]
-	};
+		});
+	}
 
 	let builder = ArkoorPackageBuilder::new_with_checkpoints(
 		full_inputs.clone(),
@@ -433,12 +446,13 @@ pub(crate) async fn request_lightning_send_htlcs(
 		wallet.validate_vtxo(vtxo).await.map_err(AdvanceError::Vtxo)?;
 		effective_balance += vtxo.amount();
 	}
+	// Change pieces can descend from different inputs, so validate each
+	// against its own chain anchor.
 	for change in &change_vtxos {
-		let last_input = full_inputs.last().context("no inputs provided")?;
-		let tx = wallet.inner.chain.get_tx(&last_input.chain_anchor().txid).await?;
+		let anchor_txid = change.chain_anchor().txid;
+		let tx = wallet.inner.chain.get_tx(&anchor_txid).await?;
 		let tx = tx.with_context(|| format!(
-			"input vtxo chain anchor not found for lightning change vtxo: {}",
-			last_input.chain_anchor().txid,
+			"chain anchor not found for lightning change vtxo: {}", anchor_txid,
 		))?;
 		change.validate(&tx).context("invalid lightning change vtxo")?;
 	}

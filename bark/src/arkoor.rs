@@ -78,7 +78,7 @@ pub(crate) fn split_change_amount(change: Amount, pay: Amount, split_factor: u8)
 /// Resolve the change outputs of an arkoor package from the pieces stored
 /// on the action. `None` means the action was persisted by a pre-split
 /// bark, which built a single whole change output.
-fn resolve_change_pieces(
+pub(crate) fn resolve_change_pieces(
 	stored: Option<Vec<Amount>>,
 	change: Amount,
 ) -> anyhow::Result<Vec<Amount>> {

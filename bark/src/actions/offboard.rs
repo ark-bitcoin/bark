@@ -52,7 +52,6 @@ use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::subsystem::{OffboardMovement, Subsystem};
 use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
-use crate::vtxo::selection::InputSelection;
 
 /// How long to sleep between confirmation polls while a tx is in
 /// mempool or has too few confirmations.
@@ -482,7 +481,7 @@ pub(crate) async fn start_offboard(
 			if amount < dust {
 				bail!("the minimum you can send to {} is {}", destination, dust);
 			}
-			let (vtxos, fee) = InputSelection::new()
+			let (vtxos, fee) = wallet.spend_input_selection().await?
 				.max_inputs(srv.ark_info().await.max_offboard_inputs)
 				.fee_scheme(wallet.chain().tip().await?, |a, v| {
 					ark.fees.offboard.calculate(&destination_spk, a, offboard_feerate, v)
