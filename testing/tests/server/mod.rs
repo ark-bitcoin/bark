@@ -1730,7 +1730,7 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	let err = bark.try_send_oor(&bark2.address().await, sat(100_000), false).await
 		.expect_err("Server should refuse oor").to_alt_string();
 	assert!(err.contains(
-		&format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id)
+		&format!("bad user input: vtxo {} has exited onchain", vtxo_a.id)
 	), "err: {err}");
 }
 

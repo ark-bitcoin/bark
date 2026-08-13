@@ -1359,7 +1359,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 
 	let err = bark.try_pay_lightning(&invoice, None, false).await.unwrap_err().to_alt_string();
 	assert!(err.contains(&format!(
-		"bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id,
+		"bad user input: vtxo {} has exited onchain", vtxo_a.id,
 	)), "err: {err}");
 }
 

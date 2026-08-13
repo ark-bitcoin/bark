@@ -833,7 +833,7 @@ async fn offboard_exit_attack(test_name: &str, n_vtxos: usize) -> bitcoin::Amoun
 /// - bark >= 0.2.6 (incl. DIRTY working-tree builds): the leaf is NOT force-exited; it stays
 ///   `Spendable`, off-chain, and refreshable.
 /// - bark < 0.2.6: the pre-fix behaviour — the leaf is force-exited and the server rejects refresh
-///   via `check_vtxos_not_exited`.
+///   because the vtxo row records the exit's confirmation height.
 ///
 /// The `safe` wallet (which spends its receive to itself, adding a checkpoint) is a control that is
 /// never force-exited in either case.

@@ -307,7 +307,6 @@ impl VtxoPool {
 		let _vtxo_guard = srv.vtxos_in_flux.try_lock(&input_ids).map_err(|e| {
 			anyhow::anyhow!("some VTXO is already locked by another process: {}", e.id)
 		})?;
-		srv.check_vtxos_not_exited(&input_ids).await?;
 
 		let keys = {
 			let mut ret = Vec::with_capacity(input_vtxos.len());
