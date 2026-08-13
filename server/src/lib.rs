@@ -69,6 +69,7 @@ use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPre
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::bdk::WalletExt;
+use bitcoin_ext::rpc::BitcoinAsyncRpcExt;
 use bitcoind_async_client::Client as BitcoindClient;
 use bitcoind_async_client::traits::Reader;
 use server_rpc::pver::PROTOCOL_VERSION_PPM_FEE_TOTAL;
@@ -345,7 +346,7 @@ impl Server {
 		let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 		bcd::require_network(&bitcoind, cfg.network).await?;
 		bcd::require_version(&bitcoind).await?;
-		bcd::require_txindex(&bitcoind).await?;
+		bitcoind.require_txindex().await?;
 
 		let bitcoin_address_blocklist = if let Some(ref path) = cfg.bitcoin_address_blocklist {
 			Some(BitcoinAddressBlocklist::new(cfg.network, bitcoind.clone(), path).await

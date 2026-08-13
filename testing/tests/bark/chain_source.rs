@@ -8,7 +8,7 @@ use bitcoin::hashes::sha256::HashEngine;
 use bark::chain::{ChainSource, ChainSourceSpec};
 use bitcoin_ext::{BlockHeight, TxStatus};
 
-use ark_testing::{sat, Bitcoind, TestContext};
+use ark_testing::{sat, Bitcoind, BitcoindConfig, TestContext};
 use ark_testing::util::{get_bark_chain_source_from_env, TestContextChainSource};
 
 async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSource) {
@@ -26,6 +26,18 @@ async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSource)
 	};
 	(ctx, ChainSource::new(chain_source, Network::Regtest, None, None).await
 		.expect("failed to create chain source client"))
+}
+
+#[tokio::test]
+async fn chain_source_requires_txindex() {
+	let mut ctx = TestContext::new_minimal("chain_source/requires_txindex").await;
+	ctx.init_central_bitcoind().await;
+	let cfg = BitcoindConfig { txindex: false, ..ctx.bitcoind_default_cfg("no_txindex") };
+	let bitcoind = ctx.new_bitcoind_with_cfg("no_txindex", cfg).await;
+
+	let err = ChainSource::new(bitcoind.chain_source(), Network::Regtest, None, None).await
+		.err().expect("bitcoind without txindex should be rejected at startup");
+	assert!(format!("{:#}", err).contains("txindex"), "unexpected error: {:#}", err);
 }
 
 #[tokio::test]

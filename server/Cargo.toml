@@ -23,7 +23,7 @@ bark-common = { path = "../bark-common" }
 bark-cln-rpc = { path = "../cln-rpc" }
 bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server", "intman"] }
-bark-bitcoin-ext = { path = "../bitcoin-ext" }
+bark-bitcoin-ext = { path = "../bitcoin-ext", features = ["rpc-async"] }
 
 # EXPORTED
 bitcoin.workspace = true

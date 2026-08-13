@@ -6,7 +6,13 @@ pub use bdk_bitcoind_rpc::bitcoincore_rpc::{self, json, jsonrpc, Auth, Client, E
 use std::borrow::Borrow;
 use std::collections::HashMap;
 
+#[cfg(feature = "rpc-async")]
+use async_trait::async_trait;
 use bdk_bitcoind_rpc::bitcoincore_rpc::Result as RpcResult;
+#[cfg(feature = "rpc-async")]
+use bitcoind_async_client::Client as AsyncClient;
+#[cfg(feature = "rpc-async")]
+use bitcoind_async_client::error::ClientError as AsyncClientError;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::hex::FromHex;
 use bitcoin::{Address, Amount, FeeRate, Transaction, Txid, Weight};
@@ -458,6 +464,36 @@ pub fn create_client(
 		return Ok(Client::from_jsonrpc(jsonrpc::Client::with_transport(transport)));
 	}
 	Client::new(url, auth)
+}
+
+/// Error from [BitcoinAsyncRpcExt::require_txindex].
+#[cfg(feature = "rpc-async")]
+#[derive(Debug, thiserror::Error)]
+pub enum TxindexError {
+	#[error("failed to getindexinfo from bitcoind")]
+	Rpc(#[from] AsyncClientError),
+	#[error("txindex is not enabled. Run bitcoind with txindex = 1")]
+	NotEnabled,
+}
+
+/// Extension trait for the async bitcoind rpc client.
+#[cfg(feature = "rpc-async")]
+#[async_trait]
+pub trait BitcoinAsyncRpcExt {
+	/// Checks that the connected bitcoind runs with `txindex=1`.
+	async fn require_txindex(&self) -> Result<(), TxindexError>;
+}
+
+#[cfg(feature = "rpc-async")]
+#[async_trait]
+impl BitcoinAsyncRpcExt for AsyncClient {
+	async fn require_txindex(&self) -> Result<(), TxindexError> {
+		let info: json::GetIndexInfoResult = self.call_raw("getindexinfo", &[]).await?;
+		if info.txindex.is_none() {
+			return Err(TxindexError::NotEnabled);
+		}
+		Ok(())
+	}
 }
 
 #[cfg(test)]

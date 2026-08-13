@@ -244,15 +244,6 @@ pub async fn test_mempool_accept(
 
 // --- Startup checks ------------------------------------------------------
 
-pub async fn require_txindex(client: &Client) -> anyhow::Result<()> {
-	let info: rpc::json::GetIndexInfoResult = client.call_raw("getindexinfo", &[]).await
-		.context("failed to getindexinfo from bitcoind")?;
-	if info.txindex.is_none() {
-		bail!("txindex is not enabled. Run bitcoind with txindex = 1")
-	}
-	Ok(())
-}
-
 pub async fn require_network(client: &Client, expected: Network) -> anyhow::Result<()> {
 	let network = client.network().await
 		.context("failed to query network from bitcoind")?;

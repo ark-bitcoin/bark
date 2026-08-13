@@ -108,6 +108,7 @@ pub struct Config {
 	///
 	/// Either this or the `esplora_address` field has to be provided.
 	/// Either `bitcoind_cookiefile` or `bitcoind_user` and `bitcoind_pass` has to be provided.
+	/// The node must run with `txindex=1`; the wallet refuses to start otherwise.
 	pub bitcoind_address: Option<String>,
 
 	/// The path to the bitcoind rpc cookie file.

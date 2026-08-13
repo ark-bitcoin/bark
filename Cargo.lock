@@ -328,6 +328,7 @@ dependencies = [
  "bdk_bitcoind_rpc",
  "bdk_wallet",
  "bitcoin",
+ "bitcoind-async-client",
  "getrandom 0.2.17",
  "jsonrpc 0.20.1",
  "lazy_static",
