@@ -25,7 +25,7 @@ check-commits:
     - git log --oneline -1
     - |
       if [ -z "$CI_COMMIT_TAG" ]; then
-        nix develop .#default --command bash -c "just check-commits"
+        nix develop .#ci --command bash -c "just check-commits"
       else
         echo "Skipping check-commits for tag event"
       fi
@@ -43,7 +43,23 @@ build:
     - prechecks
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just build-ci"
+    # Run stats query INSIDE the same shell that ran the build, so it hits
+    # the same sccache binary/server that cargo actually invoked. If this
+    # shows non-zero requests, the outer `sccache --show-stats` in
+    # `after_script` is querying a different (freshly-started) sccache
+    # instance — a display artifact, not a real "sccache did nothing".
+    - nix develop .#ci --command bash -c "just build-ci && echo '=== sccache stats (inside .#ci) ===' && sccache --show-stats"
+    # target/ is a symlink out of $CI_PROJECT_DIR when the base image
+    # seeded it; GitLab's artifact uploader won't follow it. Materialize
+    # just the declared artifacts under a real target/ inside the project.
+    - |
+      if [ -L target ]; then
+        src="$(readlink target)/ci"
+        rm target
+        mkdir -p target/ci
+        cp -aL "$src/captaind" "$src/watchmand" "$src/bark" "$src/barkd" target/ci/
+        cp -aL "$src/examples" target/ci/
+      fi
   artifacts:
     paths:
       - target/ci/examples/
@@ -51,7 +67,6 @@ build:
       - target/ci/watchmand
       - target/ci/bark
       - target/ci/barkd
-      - target/ci/pid-lock-holder
     expire_in: 1 day
 
 build-test-archives:
@@ -62,8 +77,19 @@ build-test-archives:
     - prechecks
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just build-unit-tests-ci"
-    - nix develop .#default --command bash -c "just build-integration-tests-ci"
+    # Stats query inside the same shell that ran the build, same reason as
+    # in the `build` job — the outer sccache in `after_script` sees zero
+    # because it's a different sccache instance.
+    - nix develop .#ci --command bash -c "just build-unit-tests-ci && just build-integration-tests-ci && echo '=== sccache stats (inside .#ci) ===' && sccache --show-stats"
+    # Same breakout as `build`: materialize the archives inside
+    # $CI_PROJECT_DIR because GitLab won't follow the target symlink.
+    - |
+      if [ -L target ]; then
+        src="$(readlink target)/ci"
+        rm target
+        mkdir -p target/ci
+        cp -aL "$src/unit-tests.tar.zst" "$src/integration-tests.tar.zst" target/ci/
+      fi
   artifacts:
     paths:
       - target/ci/unit-tests.tar.zst
@@ -80,7 +106,7 @@ compare-static-files:
     ASSUME_BUILT: "1"
     EXAMPLES_DIR: target/ci/examples
   script:
-    - nix develop .#default --command bash -c "just generate-static-files"
+    - nix develop .#ci --command bash -c "just generate-static-files"
     - bash contrib/check-clean-diff.sh bark/schema.sql
     - bash contrib/check-clean-diff.sh server/schema.sql
     - bash contrib/check-clean-diff.sh bark-rest/openapi.json
@@ -94,7 +120,7 @@ test-unit:
     - build-test-archives
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just test-unit-prebuilt"
+    - nix develop .#ci --command bash -c "just test-unit-prebuilt"
 
 test-doctests:
   interruptible: true
@@ -104,7 +130,7 @@ test-doctests:
     - prechecks
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just test-doc"
+    - nix develop .#ci --command bash -c "just test-doc"
 
 use-bark-as-dependency:
   interruptible: true
@@ -113,7 +139,7 @@ use-bark-as-dependency:
   needs:
     - prechecks
   script:
-    - nix develop .#default --command bash -c "just check-use-bark-as-dependency"
+    - nix develop .#ci --command bash -c "just check-use-bark-as-dependency"
 
 bark-as-libs:
   interruptible: true
@@ -122,7 +148,7 @@ bark-as-libs:
   needs:
     - prechecks
   script:
-    - nix develop .#default --command bash -c "just check-bark-as-libs"
+    - nix develop .#ci --command bash -c "just check-bark-as-libs"
 
 bark-wasm:
   interruptible: true
@@ -131,7 +157,7 @@ bark-wasm:
   needs:
     - test-unit
   script:
-    - nix develop .#default --command bash -c "just build-bark-wasm"
+    - nix develop .#ci --command bash -c "just build-bark-wasm"
 
 bark-wasm-indexed-db-tests:
   interruptible: true
@@ -141,7 +167,7 @@ bark-wasm-indexed-db-tests:
   needs:
     - test-unit
   script:
-    - nix develop .#default --command bash -c "just test-bark-wasm-indexed-db"
+    - nix develop .#ci --command bash -c "just test-bark-wasm-indexed-db"
 
 lib-msrv:
   interruptible: true
@@ -160,7 +186,7 @@ check-fuzz:
   needs:
     - prechecks
   script:
-    - nix develop .#default --command bash -c "just check-fuzz"
+    - nix develop .#ci --command bash -c "just check-fuzz"
 
 check-release:
   interruptible: true
@@ -169,7 +195,7 @@ check-release:
   needs:
     - prechecks
   script:
-    - nix develop .#default --command bash -c "just check-release"
+    - nix develop .#ci --command bash -c "just check-release"
 
 check-lib-arithmetic:
   interruptible: true
@@ -178,7 +204,7 @@ check-lib-arithmetic:
   needs:
     - prechecks
   script:
-    - nix develop .#default --command bash -c "just check-lib-arithmetic"
+    - nix develop .#ci --command bash -c "just check-lib-arithmetic"
 
 bark-esplora:
   interruptible: true

@@ -45,7 +45,7 @@ generate-rustdocs:
     - datastore
   extends: .master-release-rules
   script:
-    - nix develop .#default --command bash -c "just rustdocs"
+    - nix develop .#ci --command bash -c "just rustdocs"
     - sudo cp -r rustdocs/doc/ /host/data/rustdocs/doc/
     - bash contrib/generate-index.sh /host/data/rustdocs/doc
     - echo "rustdocs -> https://rustdocs.2nd.dev/master/"

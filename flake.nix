@@ -102,6 +102,10 @@
 						inherit system pkgs lib fenix buildShell slog-tools rustTargetWasm;
 					};
 
+					ciShell = import ./nix/ci-shell.nix {
+						inherit pkgs devShell;
+					};
+
 					libMsrvShell =
 						let
 							rustVersion = "1.74.0";
@@ -119,6 +123,13 @@
 
 					# Exposes a minimal shell to build our project.
 					build = buildShell.shell;
+
+					# Extends `default` with CI-only env (currently just
+					# RUSTC_WRAPPER=sccache) so cargo actually picks up the
+					# wrapper when invoked from CI jobs. Kept separate so local
+					# devs entering `nix develop .#default` aren't implicitly
+					# opted into sccache.
+					ci = ciShell.shell;
 
 					# In this shell we expose the Rust version required to build for the
 					# ark-lib MSRV.

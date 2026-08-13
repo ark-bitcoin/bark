@@ -132,6 +132,21 @@ RUN cargo install --locked sccache --features memcached
 ENV SCCACHE_MEMCACHED=tcp://127.0.0.1:11211
 ENV SCCACHE_DIRECT=true
 ENV RUSTC_WRAPPER=sccache
+# Normalize source paths in rustc metadata so this pre-built target/
+# (at /home/nixuser/bark) is fingerprint-compatible with what CI produces
+# from $CI_PROJECT_DIR (typically /builds/ark-bitcoin/bark). Uses
+# CARGO_BUILD_RUSTFLAGS rather than RUSTFLAGS so wasm builds still pick
+# up target.wasm32-unknown-unknown.rustflags from .cargo/config.toml
+# (env RUSTFLAGS would override that and drop the getrandom cfg).
+# Local devs never set these vars, so their builds are unaffected. Keep
+# in sync with .gitlab-ci.yml.
+ENV CARGO_BUILD_RUSTFLAGS="--remap-path-prefix=/builds/ark-bitcoin/bark=/build --remap-path-prefix=/home/nixuser/bark=/build"
+ENV CARGO_INCREMENTAL=0
+ENV NIX_CONFIG="accept-flake-config = true"
+RUN echo "extra-trusted-users = nixuser" | sudo tee -a /etc/nix/nix.conf && \
+	echo "extra-substituters = https://bark.cachix.org" | sudo tee -a /etc/nix/nix.conf && \
+	echo "extra-trusted-public-keys = bark.cachix.org-1:Iaihe4ABbOQz1CHBoYUZS/sHVAcISasJZ+lL3I4gRB0=" | sudo tee -a /etc/nix/nix.conf
+
 RUN echo "Installing just"
 RUN cargo install --locked just
 RUN mkdir -p /home/nixuser/.cargo && \
@@ -152,21 +167,17 @@ RUN echo "pre-build bark" && \
 	just release-server && \
 	just release-bark
 
-RUN echo "extra-trusted-users = nixuser" | sudo tee -a /etc/nix/nix.conf && \
-	echo "extra-substituters = https://bark.cachix.org" | sudo tee -a /etc/nix/nix.conf && \
-	echo "extra-trusted-public-keys = bark.cachix.org-1:Iaihe4ABbOQz1CHBoYUZS/sHVAcISasJZ+lL3I4gRB0=" | sudo tee -a /etc/nix/nix.conf
-ENV NIX_CONFIG="accept-flake-config = true"
-
 RUN echo "build nix devShells and pin as GC roots" && \
 	. /etc/profile.d/nix.sh && \
 	cd ~/bark && \
 	nix flake archive && \
 	mkdir -p /home/nixuser/.nix-gc-roots && \
 	nix build .#devShells.x86_64-linux.default --out-link /home/nixuser/.nix-gc-roots/dev-default && \
+	nix build .#devShells.x86_64-linux.ci --out-link /home/nixuser/.nix-gc-roots/dev-ci && \
 	nix build .#devShells.x86_64-linux.msrv-lib --out-link /home/nixuser/.nix-gc-roots/dev-msrv-lib
 
 RUN echo "build bark" && \
 	. /etc/profile.d/nix.sh && \
 	cd ~/bark && \
 	nix develop .#msrv-lib --command bash -c "just build-msrv-lib" && \
-	nix develop .#default  --command bash -c "just ci-warmup"
+	nix develop .#ci       --command bash -c "just ci-warmup"

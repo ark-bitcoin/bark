@@ -15,6 +15,14 @@ variables:
   RUSTC_WRAPPER: sccache
   SCCACHE_MEMCACHED: tcp://memcached:11211
   SCCACHE_DIRECT: true
+  CARGO_INCREMENTAL: 0
+  # Normalize source paths in rustc metadata so the pre-built target/
+  # from the base image (compiled under /home/nixuser/bark) is
+  # fingerprint-compatible with what CI compiles under $CI_PROJECT_DIR.
+  # Uses CARGO_BUILD_RUSTFLAGS rather than RUSTFLAGS so wasm builds still
+  # pick up target.wasm32-unknown-unknown.rustflags from .cargo/config.toml.
+  # Keep in sync with the ENV in .gitlab/images/tests/Dockerfile.
+  CARGO_BUILD_RUSTFLAGS: "--remap-path-prefix=/builds/ark-bitcoin/bark=/build --remap-path-prefix=/home/nixuser/bark=/build"
   SWAGGER_UI_DOWNLOAD_URL: file:///home/nixuser/assets/swagger-ui/v5.30.2.zip
 
 workflow:
@@ -48,10 +56,15 @@ default:
   tags:
     - privileged
   image:
-    name: registry.2nd.dev/build:33
+    name: registry.2nd.dev/build:34
     pull_policy: if-not-present
   before_script:
     - sudo chown -R nixuser:nixbld "$CI_PROJECT_DIR" || true
     - git config --global --add safe.directory $CI_PROJECT_DIR
     - git config user.name "GitLab CI"
     - git config user.email "ci@second.tech"
+    - |
+      if [ -d /home/nixuser/bark/target ] && [ ! -e target ]; then
+        echo "Linking bark target directory"
+        ln -sfn /home/nixuser/bark/target target
+      fi

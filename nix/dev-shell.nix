@@ -111,7 +111,7 @@ let
 			owner = "ElementsProject";
 			repo = "lightning";
 			rev = "v${lightningVersion}";
-			hash = "sha256-NS9+9szZuYSYefRmitQK1e07pHu9GvWf1cM2pApXyPg=";
+			hash = "sha256-bra45wREkyt4byY7/oemRQsmqSiVX/8vVuwYcYjcQHQ=";
 		};
 		buildAndTestSubdir = "plugins/grpc-plugin";
 		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf ];
