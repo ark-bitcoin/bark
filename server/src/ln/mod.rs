@@ -378,7 +378,13 @@ impl Server {
 		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<lightning_payment_status::PaymentStatus> {
-		Ok(match self.cln.get_payment_status(payment_hash, wait).await? {
+		let status = if wait {
+			self.cln.wait_payment_status(payment_hash).await?
+		} else {
+			self.cln.get_payment_status(payment_hash).await?
+		};
+
+		Ok(match status {
 			PaymentStatus::Success(preimage) => {
 				lightning_payment_status::PaymentStatus::Success(protos::PaymentSuccessStatus {
 					preimage: preimage.to_vec(),
@@ -458,7 +464,7 @@ impl Server {
 				},
 				_ if tip > input_policy.htlc_expiry => {
 					// Check one last time to see if it completed
-					let res = self.cln.get_payment_status(payment_hash, false).await;
+					let res = self.cln.get_payment_status(payment_hash).await;
 					if let Ok(PaymentStatus::Success(preimage)) = res {
 						return badarg!("This lightning payment has completed. preimage: {}",
 							preimage.as_hex());

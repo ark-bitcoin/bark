@@ -395,19 +395,58 @@ impl LightningManager {
 		Ok(())
 	}
 
-	/// Gets the payment status for a given payment hash
+	/// Gets the current payment status for a given payment hash.
 	pub async fn get_payment_status(
 		&self,
 		payment_hash: PaymentHash,
-		wait: bool,
 	) -> anyhow::Result<PaymentStatus> {
-		trace!("Getting payment status for payment hash: {}. wait: {}",
-			payment_hash, wait);
+		trace!("Getting payment status for payment hash: {}", payment_hash);
 
+		let attempt = self.db.read(async |t|
+			t.get_latest_payment_attempt_by_payment_hash(payment_hash).await
+		).await?.not_found([payment_hash], "payment attempt not found")?;
+
+		trace!("Payment attempt status for payment {}: {}",
+			payment_hash, attempt.status,
+		);
+
+		if attempt.status == LightningPaymentStatus::Succeeded {
+			let preimage = self.settler.is_settled(payment_hash).await?
+				.context("missing preimage on payment success")?;
+			debug!(payment_hash = %payment_hash, preimage = %preimage, "CheckLightningPayment responding with success");
+			return Ok(PaymentStatus::Success(preimage));
+		}
+
+		if attempt.status == LightningPaymentStatus::Failed {
+			debug!(payment_hash = %payment_hash, "CheckLightningPayment responding with failed");
+			return Ok(PaymentStatus::Failed);
+		}
+
+		trace!(payment_hash = %payment_hash, "payment still pending");
+		Ok(PaymentStatus::Pending)
+	}
+
+	/// Waits until the payment for the given payment hash reaches a final state.
+	///
+	/// Never returns [`PaymentStatus::Pending`].
+	pub async fn wait_payment_status(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<PaymentStatus> {
+		trace!("Waiting for payment status for payment hash: {}", payment_hash);
+
+		// Subscribe before the first check, otherwise we can miss an update
+		// that lands between the check and the subscription.
 		let mut update_rx = self.payment_update_rx.resubscribe();
 		let mut poll_interval = tokio::time::interval(self.invoice_poll_interval);
 
 		loop {
+			match self.get_payment_status(payment_hash).await? {
+				PaymentStatus::Success(preimage) => return Ok(PaymentStatus::Success(preimage)),
+				PaymentStatus::Failed => return Ok(PaymentStatus::Failed),
+				PaymentStatus::Pending => {},
+			}
+
 			tokio::select! {
 				_ = poll_interval.tick() => trace!("check bolt11 timeout reached, polling"),
 				// Trigger received on channel
@@ -423,33 +462,6 @@ impl LightningManager {
 					},
 				},
 			}
-
-			let attempt = self.db.read(async |t|
-				t.get_latest_payment_attempt_by_payment_hash(payment_hash).await
-			).await?.not_found([payment_hash], "payment attempt not found")?;
-
-			// Check payment status
-			trace!("Payment attempt status for payment {}: {}",
-				payment_hash, attempt.status,
-			);
-
-			if attempt.status == LightningPaymentStatus::Succeeded {
-				let preimage = self.settler.is_settled(payment_hash).await?
-					.context("missing preimage on payment success")?;
-				debug!(payment_hash = %payment_hash, preimage = %preimage, "CheckLightningPayment responding with success");
-				return Ok(PaymentStatus::Success(preimage));
-			}
-
-			if attempt.status == LightningPaymentStatus::Failed {
-				debug!(payment_hash = %payment_hash, "CheckLightningPayment responding with failed");
-				return Ok(PaymentStatus::Failed);
-			}
-
-			if !wait {
-				trace!(payment_hash = %payment_hash, "CheckLightningPayment responding with pending");
-				return Ok(PaymentStatus::Pending);
-			}
-			// Continue loop, wait for next trigger or timeout
 		}
 	}
 
