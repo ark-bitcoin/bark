@@ -6,6 +6,8 @@ package bark_server;
 import "core.proto";
 
 // Public ark service for arkd.
+//
+// Terms of service may apply, check your server's `ArkInfo.tos_link`.
 service ArkService {
 	rpc Handshake(HandshakeRequest) returns (HandshakeResponse) {}
 	rpc GetArkInfo(core.Empty) returns (ArkInfo) {}
@@ -117,7 +119,10 @@ message ArkInfo {
 	// one, so clients should fall back to it when this field is 0.
 	uint32 vtxo_lifetime = 21;
 
-	// last index: 21
+	// Link to the server's terms of service, if any.
+	optional string tos_link = 22;
+
+	// last index: 22
 }
 
 message OffboardFeeRateResponse {

@@ -290,6 +290,8 @@
 //! 	Ok(())
 //! }
 //! ```
+//!
+//! Terms of service may apply, check your server's `ArkInfo.tos_link`.
 
 #[cfg(all(any(target_os = "android", target_os = "ios"), feature = "tls-native-roots"))]
 compile_error!("feature `tls-native-roots` can't be used on Android or iOS, use `tls-webpki-roots` instead");

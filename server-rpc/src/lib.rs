@@ -50,6 +50,7 @@ pub use crate::error::StatusExt;
 pub mod pver;
 
 pub mod client;
+/// Terms of service may apply, check your server's `ArkInfo.tos_link`.
 pub mod protos {
 	pub mod core {
 		tonic::include_proto!("core");

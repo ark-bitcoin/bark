@@ -20,6 +20,7 @@ Name | Type | Description | Notes
 **required_board_confirmations** | **i32** | The number of confirmations required to register a board vtxo | 
 **round_interval** | **String** | The interval between each round | 
 **server_pubkey** | **String** | The Ark server pubkey | 
+**tos_link** | Option<**String**> | Link to the server's terms of service, if any. | [optional]
 **vtxo_exit_delta** | **i32** |  | 
 **vtxo_expiry_delta** | **i32** |  | 
 **vtxo_lifetime** | Option<**i32**> |  | [optional]

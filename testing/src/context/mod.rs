@@ -356,6 +356,7 @@ impl TestContext {
 			txindex_check_interval: Duration::from_millis(500),
 			sync_manager_block_poll_interval: Duration::from_millis(100),
 			handshake_psa: None,
+			tos_link: None,
 			otel_collector_endpoint: None,
 			otel_tracing_sampler: Some(1f64),
 			otel_deployment_name: db_name,
