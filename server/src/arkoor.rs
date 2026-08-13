@@ -124,9 +124,6 @@ impl Server {
 			badarg_err!("some VTXO is already locked by another process: {}", e.id)
 		})?;
 
-		// Check if the vtxo is not exited
-		self.check_vtxos_not_exited(builder.input_ids()).await?;
-
 		// Output user vtxos go in as `unregistered`. They become spendable
 		// once the sender uploads the signed transaction chain via
 		// register_vtxo_transactions; until then `check_spendable` rejects
