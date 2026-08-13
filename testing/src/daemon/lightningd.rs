@@ -624,36 +624,36 @@ impl Lightningd {
 	}
 
 	pub async fn try_pay_bolt11(&self, bolt11: impl AsRef<str>) -> anyhow::Result<()> {
-		// CLN v26.06 routes `pay` through xpay+injectpaymentonion, which no
-		// longer pads the outgoing CLTV. If lightningd's tip lags bitcoind's,
-		// the outgoing HTLC's cltv_expiry is computed from the stale tip and
-		// gets rejected by the receiver as `final_incorrect_cltv_expiry`.
-		// Wait for block sync so cltv is based on the current tip.
+		// CLN v26.06's xpay+injectpaymentonion flow no longer pads the
+		// outgoing CLTV. If lightningd's tip lags bitcoind's, the outgoing
+		// HTLC's cltv_expiry is computed from the stale tip and gets
+		// rejected by the receiver as `final_incorrect_cltv_expiry`. Wait
+		// for block sync so cltv is based on the current tip.
 		self.wait_for_block_sync().await;
 
 		let mut client = self.grpc_client().await;
-		let response = client.pay(cln_rpc::PayRequest {
-			bolt11: bolt11.as_ref().to_string(),
+		let response = client.xpay(cln_rpc::XpayRequest {
+			invstring: bolt11.as_ref().to_string(),
 			amount_msat: None,
-			label: None,
-			maxfeepercent: None,
 			maxfee: None,
+			layers: vec![],
 			retry_for: None,
-			maxdelay: None,
-			exemptfee: None,
-			riskfactor: None,
-			exclude: vec![],
-			description: None,
-			localinvreqid: None,
 			partial_msat: None,
+			maxdelay: None,
+			payer_note: None,
+			label: None,
+			localinvreqid: None,
+			dev_use_shadow: None,
 		}).await?.into_inner();
 
-		if response.status == cln_rpc::pay_response::PayStatus::Complete as i32 {
-			Ok(())
-		} else {
+		// xpay signals success by returning a non-empty payment_preimage;
+		// any other outcome (including partial success) surfaces as an RPC
+		// error above.
+		if response.payment_preimage.is_empty() {
 			error!("{:?}", response);
 			bail!("Payment failed");
 		}
+		Ok(())
 	}
 
 	pub async fn pay_bolt11(&self, bolt11: impl AsRef<str>) {
