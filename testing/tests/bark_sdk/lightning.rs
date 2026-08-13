@@ -3,7 +3,7 @@ use std::time::Duration;
 use futures::StreamExt;
 
 use ark::lightning::{PaymentHash, Preimage};
-use ark_testing::{TestContext, btc, util::FutureExt};
+use ark_testing::{TestContext, btc, util::{FutureExt, poll_interval}};
 
 use bark::actions::lightning::pay::LightningSendState;
 use bark::actions::lightning::receive::LightningReceiveState;
@@ -11,6 +11,29 @@ use bark::movement::MovementStatus;
 use bark::subsystem::Subsystem;
 use cln_rpc::plugins::hold;
 use server_rpc::protos::mailbox_server::mailbox_message::Message as MailboxMsg;
+
+/// Wait until the hold plugin holds the payment's HTLCs. The invoice turns
+/// ACCEPTED only once every HTLC is irrevocably committed and handed to the
+/// plugin; a settle before that fails with "no HTLCs to settle".
+async fn wait_for_hold_invoice_accepted(
+	hold_client: &mut hold::hold_client::HoldClient<tonic::transport::Channel>,
+	payment_hash: PaymentHash,
+) {
+	async {
+		loop {
+			let invoices = hold_client.list(hold::ListRequest {
+				constraint: Some(hold::list_request::Constraint::PaymentHash(
+					payment_hash.as_ref().to_vec(),
+				)),
+			}).await.expect("list hold invoices").into_inner().invoices;
+			let invoice = invoices.first().expect("hold invoice should exist");
+			if invoice.state() == hold::InvoiceState::Accepted {
+				break;
+			}
+			tokio::time::sleep(poll_interval()).await;
+		}
+	}.wait_millis(30_000).await
+}
 
 #[tokio::test]
 async fn pay_hold_succeeds() {
@@ -50,6 +73,7 @@ async fn pay_hold_succeeds() {
 	wallet.pay_lightning_invoice(invoice, None, false).await
 		.expect("pay_lightning_invoice failed");
 
+	wait_for_hold_invoice_accepted(&mut hold_client, payment_hash).await;
 
 	// The payment is pending because the receiver hasn't claimed it yet
 	// We report this correctly
@@ -144,6 +168,7 @@ async fn pay_hold_with_near_expiry_inputs_succeeds() {
 	wallet.pay_lightning_invoice(invoice, None, false).await
 		.expect("pay_lightning_invoice failed");
 
+	wait_for_hold_invoice_accepted(&mut hold_client, payment_hash).await;
 
 	// The payment is pending because the receiver hasn't claimed it yet
 	// We report this correctly
