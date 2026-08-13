@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 use tracing::{debug, error, info};
 use ark::integration::{TokenStatus, TokenType};
-use uuid::Uuid;
 
 use ark::VtxoId;
 use server::{bitcoind as bcd, filters, Config, Server, CAPTAIND_CLI_API_KEY};
@@ -458,9 +457,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				} => {
 					let db_filters = filters::Filters::init(filters.ip, filters.dns);
 					let token = uuid::Uuid::new_v4().to_string();
-					let api_key_uuid = integration_api_key.unwrap_or_else(|| {
-						Uuid::parse_str(CAPTAIND_CLI_API_KEY).expect("default api key valid")
-					});
+					let api_key_uuid = integration_api_key.unwrap_or(CAPTAIND_CLI_API_KEY);
 					let integration_token = db.write(async |t| {
 						let int = t.get_integration_by_name(integration_name.as_str()).await?
 							.context("Invalid integration name")?;
@@ -485,9 +482,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				IntegrationCommand::UpdateTokenStatus {
 					integration_name, integration_api_key, token, status,
 				} => {
-					let api_key_uuid = integration_api_key.unwrap_or_else(|| {
-						Uuid::parse_str(CAPTAIND_CLI_API_KEY).expect("default api key valid")
-					});
+					let api_key_uuid = integration_api_key.unwrap_or(CAPTAIND_CLI_API_KEY);
 					let integration_token = db.write(async |t| {
 						let int = t.get_integration_by_name(integration_name.as_str()).await?
 							.context("invalid integration name")?;
@@ -511,9 +506,7 @@ async fn inner_main() -> anyhow::Result<()> {
 					integration_name, integration_api_key, token, filters,
 				} => {
 					let filters = filters::Filters::init(filters.ip, filters.dns);
-					let api_key_uuid = integration_api_key.unwrap_or_else(|| {
-						Uuid::parse_str(CAPTAIND_CLI_API_KEY).expect("default api key valid")
-					});
+					let api_key_uuid = integration_api_key.unwrap_or(CAPTAIND_CLI_API_KEY);
 					let token = db.write(async |t| {
 						let int = t.get_integration_by_name(integration_name.as_str()).await?
 							.context("invalid integration name")?;
