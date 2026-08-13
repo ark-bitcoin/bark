@@ -421,6 +421,111 @@ async fn refuse_generic_spends_of_htlc_send_vtxo_while_payment_in_flight() {
 		"unexpected server response: {status:?}");
 }
 
+/// Drive the server's pay-HTLC cosign for a `ServerHtlcSend` output whose
+/// refund/exit key (`user_pubkey`) is `owner` — which need not be the caller.
+///
+/// The legit client keys the HTLC to a fresh key of its own; here we let the
+/// caller point it at an arbitrary third party. Nothing on the cosign path
+/// binds the HTLC's owner key to the inputs, so the server signs it. Returns
+/// the resulting signed HTLC vtxos.
+async fn cosign_htlc_send_to_pubkey(
+	ctx: &TestContext,
+	srv: &Captaind,
+	client: &Wallet,
+	input_ids: &[ark::VtxoId],
+	owner: bitcoin::secp256k1::PublicKey,
+	payment_hash: ark::lightning::PaymentHash,
+) -> Vec<Vtxo<Full>> {
+	let mut inputs = Vec::with_capacity(input_ids.len());
+	let mut keypairs = Vec::with_capacity(input_ids.len());
+	for id in input_ids {
+		let vtxo = client.get_full_vtxo(*id).await.unwrap();
+		keypairs.push(client.get_vtxo_key(&vtxo).await.unwrap());
+		inputs.push(vtxo);
+	}
+
+	let tip = ctx.bitcoind().get_block_count().await as BlockHeight;
+	let htlc_expiry = tip + srv.config().htlc_send_expiry_delta as BlockHeight + 2;
+	let policy = ark::VtxoPolicy::new_server_htlc_send(owner, payment_hash, htlc_expiry);
+
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		inputs.clone(), policy,
+	).unwrap().generate_user_nonces(&keypairs).unwrap();
+
+	let mut srv_rpc = srv.get_public_rpc().await;
+	let response = srv_rpc.request_lightning_pay_htlc_cosign(protos::LightningPayHtlcCosignRequest {
+		parts: protos::ArkoorPackageCosignRequest::from(builder.cosign_request()).parts,
+	}).await.expect("server cosigns the HTLC; nothing binds its owner key to the inputs")
+		.into_inner();
+
+	let cosign_responses =
+		ark::arkoor::package::ArkoorPackageCosignResponse::try_from(response).unwrap();
+	builder.user_cosign(&keypairs, cosign_responses).unwrap().build_signed_vtxos()
+}
+
+/// A malicious sender must not be able to hand a victim a `ServerHtlcSend` vtxo
+/// dressed up as an arkoor payment.
+///
+/// The attacker funds an HTLC out of their own vtxos but keys its refund/exit
+/// path (`user_pubkey`) to the victim and sets its payment hash to the
+/// attacker's own invoice. The server cosigns it (the cosign path doesn't bind
+/// the HTLC owner key). The attacker then posts it to the victim's arkoor
+/// mailbox: if it lands, the victim's wallet credits a "payment" that the
+/// attacker can immediately claw back over Lightning, and that the victim can
+/// never spend (the server refuses HTLC vtxos as spend inputs).
+///
+/// The server must refuse to store an HTLC-send vtxo in an arkoor mailbox;
+/// only final (`Pubkey`) payment vtxos are legitimate arkoor deliveries.
+#[tokio::test]
+async fn refuse_htlc_send_vtxo_posted_to_arkoor_mailbox() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/refuse_htlc_send_vtxo_posted_to_arkoor_mailbox").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
+
+	// The victim only ever hands out an Ark address.
+	let victim = ctx.bark("victim", &srv).create().await;
+	let victim_addr = ark::Address::from_str(&victim.address().await).unwrap();
+	let victim_pubkey = victim_addr.policy().user_pubkey();
+	let blinded_id = victim_addr.delivery().iter().find_map(|d| match d {
+		ark::address::VtxoDelivery::ServerMailbox { blinded_id } => Some(blinded_id.clone()),
+		_ => None,
+	}).expect("victim address carries a server mailbox delivery");
+
+	// The attacker funds a real HTLC out of their own boarded vtxos.
+	let attacker = ctx.bark("attacker", &srv).funded(btc(3)).create().await;
+	let input_ids = attacker.board_and_confirm_and_register(&ctx, btc(2)).await;
+	let attacker_client = attacker.client().await;
+
+	let payment_hash = ark::lightning::PaymentHash::from(
+		sha256::Hash::hash(b"attacker invoice").to_byte_array(),
+	);
+	let htlc_vtxos = cosign_htlc_send_to_pubkey(
+		&ctx, &srv, &attacker_client, &input_ids, victim_pubkey, payment_hash,
+	).await;
+	assert!(!htlc_vtxos.is_empty());
+	assert!(htlc_vtxos.iter().all(|v| v.policy().policy_type() == VtxoPolicyKind::ServerHtlcSend),
+		"forged vtxos should carry the ServerHtlcSend policy");
+	assert!(htlc_vtxos.iter().all(|v| v.user_pubkey() == victim_pubkey),
+		"forged vtxos should be keyed to the victim");
+
+	// The attacker posts the forged "payment" to the victim's mailbox.
+	let serialized = htlc_vtxos.iter().map(|v| v.serialize().to_vec()).collect::<Vec<_>>();
+	let mut mailbox = srv.get_mailbox_public_rpc().await;
+	let res = mailbox.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
+		blinded_id: blinded_id.as_ref().to_vec(),
+		vtxos: serialized,
+	}).await;
+
+	let status = res.expect_err(
+		"server must refuse to deliver an HTLC-send vtxo as an arkoor payment",
+	);
+	assert_eq!(status.code(), tonic::Code::InvalidArgument,
+		"unexpected server response: {status:?}");
+}
+
 /// HTLC VTXOs should not be used outside of the lightning payment/receive flow.
 /// This test asserts the server does not accept any HTLC VTXO as an input even
 /// outside of an ongoing lightning payment.

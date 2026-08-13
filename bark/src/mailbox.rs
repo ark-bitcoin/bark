@@ -19,10 +19,13 @@ use futures::{FutureExt, Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 use tokio_util::sync::CancellationToken;
 
+use bitcoin_ext::BlockHeight;
+
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::vtxo::Full;
+use ark::vtxo::policy::signing::VtxoSigner;
 use server_rpc::{protos, MAX_NB_MAILBOX_RECOVERY_IDS};
 use server_rpc::protos::mailbox_server::MailboxMessage;
 
@@ -76,6 +79,42 @@ const MAILBOX_PROCESSING_LOCK_KEY: &str = "mailbox.processing";
 /// waiters acquire the lock and dedup as usual.
 const MAILBOX_PROCESSING_LOCK_TIMEOUT: std::time::Duration =
 	std::time::Duration::from_secs(30);
+
+/// Whether a structurally-valid arkoor vtxo is safe to store as a spendable
+/// received payment.
+///
+/// [`Wallet::validate_vtxo`] only proves the vtxo's genesis chain was cosigned
+/// by the server pubkey embedded in the vtxo. A received payment additionally
+/// has to be a final, self-custodial coin, so we require that:
+///
+/// - the policy is [`VtxoPolicyKind::Pubkey`]: an in-flight HTLC (or any other
+///   server contract) is not a payment, and the server refuses to let us spend
+///   it as an arkoor/round/offboard input;
+/// - the vtxo commits to *our* server's pubkey, not a foreign server's;
+/// - the vtxo isn't about to expire, so a unilateral exit is still possible.
+///
+/// Ownership (that the wallet holds a signable key) is checked by the caller,
+/// which has async database access.
+fn check_arkoor_receive_policy(
+	vtxo: &Vtxo<Full>,
+	server_pubkey: bitcoin::secp256k1::PublicKey,
+	tip: BlockHeight,
+	expiry_margin: BlockHeight,
+) -> anyhow::Result<()> {
+	let kind = vtxo.policy().policy_type();
+	if kind != ark::vtxo::policy::VtxoPolicyKind::Pubkey {
+		bail!("not a final payment VTXO (policy: {})", kind);
+	}
+	if vtxo.server_pubkey() != server_pubkey {
+		bail!("VTXO commits to a foreign server pubkey {}", vtxo.server_pubkey());
+	}
+	let safe_until = tip.saturating_add(expiry_margin);
+	if vtxo.expiry_height() <= safe_until {
+		bail!("VTXO expires too soon to accept safely (expiry {} <= tip {} + margin {})",
+			vtxo.expiry_height(), tip, expiry_margin);
+	}
+	Ok(())
+}
 
 impl Wallet {
 	/// Get the keypair used for the server mailbox
@@ -310,17 +349,22 @@ impl Wallet {
 
 	/// Turn raw byte arrays into VTXOs, then validate them.
 	///
-	/// This function doesn't return a result on purpose,
-	/// because we want to make sure we don't early return on
-	/// the first error. This ensure we process all VTXOs, even
-	/// if some are invalid, and print everything we received.
+	/// This function only returns an error when it cannot process any VTXOs,
+	/// for example when the server is down or the chain tip is unknown.
+	/// No errors are returned for issues on individual VTXOs.
 	async fn process_raw_vtxos(
 		&self,
 		raw_vtxos: Vec<Vec<u8>>,
-	) -> Vec<Vtxo<Full>> {
+	) -> anyhow::Result<Vec<Vtxo<Full>>> {
+		let ark_info  = self.require_server().await
+			.context("refuse_htlc_send_vtxo_posted_to_arkoor_mailbox")?.1;
+		let tip = self.inner.chain.tip().await
+			.context("cannot vet received arkoor VTXOs, no chain tip")?;
+
 		let mut invalid_vtxos = Vec::with_capacity(raw_vtxos.len());
 		let mut valid_vtxos = Vec::with_capacity(raw_vtxos.len());
 
+		let expiry_margin = ark_info.vtxo_exit_delta as BlockHeight;
 		for bytes in &raw_vtxos {
 			let vtxo = match Vtxo::<Full>::deserialize(&bytes) {
 				Ok(vtxo) => vtxo,
@@ -337,15 +381,28 @@ impl Wallet {
 				continue;
 			}
 
+			if let Err(e) = check_arkoor_receive_policy(&vtxo, ark_info.server_pubkey, tip, expiry_margin) {
+				error!("Refusing received arkoor VTXO {}: {}", vtxo.id(), e);
+				invalid_vtxos.push(bytes);
+				continue;
+			}
+			if self.find_signable_clause(&vtxo).await.is_none() {
+				error!("Refusing received arkoor VTXO {}: not owned by this wallet", vtxo.id());
+				invalid_vtxos.push(bytes);
+				continue;
+			}
+
 			valid_vtxos.push(vtxo);
 		}
 
 		// We log all invalid VTXOs to keep track
 		if !invalid_vtxos.is_empty() {
-			error!("Received {} invalid arkoor VTXOs out of {} from server", invalid_vtxos.len(), raw_vtxos.len());
+			error!("Received {} invalid arkoor VTXOs out of {} from server",
+				invalid_vtxos.len(), raw_vtxos.len(),
+			);
 		}
 
-		valid_vtxos
+		Ok(valid_vtxos)
 	}
 
 	/// Process a single mailbox message and report whether the caller should
@@ -426,7 +483,7 @@ impl Wallet {
 		&self,
 		raw_vtxos: Vec<Vec<u8>>,
 	) -> anyhow::Result<()> {
-		let vtxos = self.process_raw_vtxos(raw_vtxos).await;
+		let vtxos = self.process_raw_vtxos(raw_vtxos).await?;
 
 		// Serialize the receive dedup across all consumers of this wallet's
 		// mailbox so two of them can't both record a movement for the same
@@ -629,5 +686,48 @@ impl Wallet {
 
 	async fn store_mailbox_checkpoint(&self, checkpoint: u64) -> anyhow::Result<()> {
 		Ok(self.inner.db.store_mailbox_checkpoint(checkpoint).await?)
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use ark::SECP;
+	use ark::test_util::VTXO_VECTORS;
+	use bitcoin::secp256k1::Keypair;
+
+	/// The arkoor receive path must only store final, self-custodial coins for
+	/// our own server. This pins the four ways a received vtxo can be unsafe.
+	#[test]
+	fn arkoor_receive_policy_gate() {
+		let vectors = &*VTXO_VECTORS;
+		let server_pubkey = vectors.server_key.public_key();
+		let margin: BlockHeight = 144;
+
+		// A final Pubkey payment vtxo, committing to our server, with plenty of
+		// runway before expiry is acceptable.
+		let good = &vectors.board_vtxo;
+		let healthy_tip = good.expiry_height() - margin - 1;
+		check_arkoor_receive_policy(good, server_pubkey, healthy_tip, margin)
+			.expect("a healthy Pubkey vtxo must be accepted");
+
+		// An HTLC-send vtxo is an in-flight contract, not a payment.
+		let htlc = &vectors.arkoor_htlc_out_vtxo;
+		let htlc_tip = htlc.expiry_height() - margin - 1;
+		check_arkoor_receive_policy(htlc, server_pubkey, htlc_tip, margin)
+			.expect_err("an HTLC-send vtxo must be refused as a payment");
+
+		// A vtxo committing to some other server's key is not ours to trust.
+		let foreign_server = Keypair::from_seckey_slice(&SECP, &[0x11; 32])
+			.unwrap().public_key();
+		check_arkoor_receive_policy(good, foreign_server, healthy_tip, margin)
+			.expect_err("a vtxo for a foreign server must be refused");
+
+		// A vtxo within the expiry margin can't be safely exited if the server
+		// misbehaves after we've credited it.
+		let near_expiry_tip = good.expiry_height() - 1;
+		check_arkoor_receive_policy(good, server_pubkey, near_expiry_tip, margin)
+			.expect_err("a near-expiry vtxo must be refused");
 	}
 }
