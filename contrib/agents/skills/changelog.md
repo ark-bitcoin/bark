@@ -1,51 +1,47 @@
 # CHANGELOG Skill
 
-When asked to create a CHANGELOG entry, follow these instructions strictly.
+- Follow these instructions when you write a CHANGELOG entry.
+- Follow `CONTRIBUTING/style_guide.md` for vocabulary and writing style.
 
-## First: Ask for the PR Number
+## Before You Write
 
-Before writing any changelog entry, you MUST ask the user for the PR/MR number.
+- Ask the user for the PR/MR number before you write a changelog entry.
 
 ## File Location
 
-Place changelog files in `CHANGELOG/unreleased/<crate>/<MR-number>`:
-- `CHANGELOG/unreleased/bark/1485`
-- `CHANGELOG/unreleased/server/1440`
-- `CHANGELOG/unreleased/ark-lib/1472`
+- Put changelog files in `CHANGELOG/unreleased/<crate>/<MR-number>`.
+- Examples:
+  - `CHANGELOG/unreleased/bark/1485`
+  - `CHANGELOG/unreleased/server/1440`
+  - `CHANGELOG/unreleased/ark-lib/1472`
+- If a change affects more than one crate, make one file for each crate.
 
-For changes spanning multiple crates, create a separate file in each affected crate's directory.
+## Content
 
-## Content Structure
-
-### 1. Lead with the Value
-
-Start with a clear explanation of what the feature is and why it's awesome.
-The first line should be a short description, followed by context that explains
-the benefit to users.
-
-### 2. Highlight BREAKING Changes
-
-If there are any BREAKING API changes, these MUST be highlighted in sub-bullets.
-Use clear language like "**BREAKING:**" to call attention to these changes.
+- Start with a short description of the feature.
+- Explain why the change helps users.
+- If the change breaks the API, mark it with `**BREAKING:**`.
 
 Example:
+
 ```
 - Add environment variable support to Config
-  Users can now configure bark using environment variables, making deployment
-  in containerized environments much simpler.
+  Users can now configure bark with environment variables. This makes
+  deployment in containerized environments much simpler.
   [#1234](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1234)
   - **BREAKING:** `Config::new()` now returns `Result<Config, ConfigError>`
   - **BREAKING:** Renamed `Config::load` to `Config::from_file`
 ```
 
-## Format Rules
+## Format
 
-- Use `-` for bullet points (not `*`)
-- First line: short description of the change (start with capital letter)
-- Subsequent lines: indented with two spaces
-- Link to the MR on the last line of the main entry (before sub-bullets)
-- Use backticks for code references: `function_name`, `StructName`
-- Keep descriptions concise but informative
+- Use `-` for bullet points. Do not use `*`.
+- Start the first line with a capital letter.
+- Indent the lines after the first line with two spaces.
+- Put the MR link on the last line of the main entry.
+- Put sub-bullets after the MR link.
+- Use backticks for code: `function_name`, `StructName`.
+- Keep text short and informative.
 
 ## Template
 
