@@ -14,7 +14,6 @@ pub mod filters;
 pub mod mailbox_manager;
 pub mod fee_estimator;
 pub mod rpcserver;
-pub mod secret;
 pub mod vtxopool;
 pub mod wallet;
 pub mod watchman;
@@ -38,6 +37,7 @@ use crate::database::BlockTable;
 use crate::database::tree::VtxoTreeUpdate;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
+pub use bark_common::secret;
 
 use std::collections::HashSet;
 use std::fs;

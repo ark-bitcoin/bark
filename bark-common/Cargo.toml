@@ -1,0 +1,19 @@
+[package]
+name = "bark-common"
+version = "0.6.0"
+license = "MIT"
+authors = [ "Team Second <hello@second.tech>" ]
+repository = "https://gitlab.com/ark-bitcoin/bark"
+description = "Utilities shared between the bark wallet and server crates"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+# The "log" feature re-emits events as `log` records when no tracing
+# subscriber is set, so both log-based (bark) and tracing-based (server)
+# binaries capture them.
+tracing = { workspace = true, features = [ "log" ] }
+
+[dev-dependencies]
+tempfile = "3"

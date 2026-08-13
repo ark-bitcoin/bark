@@ -16,7 +16,7 @@
 /// # fn connect(user: &str, pass: &str) {
 /// #    // This is a sturb
 /// # }
-/// use server::secret::Secret;
+/// use bark_common::secret::Secret;
 ///
 /// let user = String::from("my-user");
 /// let pass = Secret::new(String::from("my-password"));
@@ -27,7 +27,7 @@
 /// # Debug formatted strings are safe
 ///
 /// ```
-/// use server::secret::Secret;
+/// use bark_common::secret::Secret;
 /// use tracing::debug;
 ///
 /// #[derive(Debug)]
