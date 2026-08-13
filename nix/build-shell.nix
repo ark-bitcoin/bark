@@ -3,6 +3,17 @@ let
 	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 	postgresql = pkgs.postgresql_17;
 
+	# Pin the generator version: a different version churns all the generated
+	# bark-rest-client files and template changes have broken the generator
+	# flags in the justfile before (7.17 -> 7.22 renamed the reqwest rustls
+	# feature). On a nixpkgs bump, regenerate the client, fix up the justfile
+	# flags if needed, and bump this pin together with that commit.
+	openapiGeneratorCli =
+		assert lib.assertMsg (pkgs.openapi-generator-cli.version == "7.22.0")
+			("openapi-generator-cli is ${pkgs.openapi-generator-cli.version}, "
+				+ "expected 7.22.0; regenerate bark-rest-client and bump this pin");
+		pkgs.openapi-generator-cli;
+
 	env = {
 		LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 		CC = "${pkgs.stdenv.cc}/bin/cc";
@@ -45,7 +56,7 @@ in {
 			pkgs.protobuf
 
 			# For generating clients
-			pkgs.openapi-generator-cli
+			openapiGeneratorCli
 
 			# for bark
 			pkgs.sqlite

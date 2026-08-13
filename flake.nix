@@ -7,7 +7,7 @@
 	};
 
 	inputs = {
-		nixpkgs.url = "nixpkgs/nixos-25.11";
+		nixpkgs.url = "nixpkgs/nixos-26.05";
 		# nixpkgs-master.url = "github:NixOS/nixpkgs/master";
 		flake-utils.url = "github:numtide/flake-utils";
 		fenix = {
