@@ -130,11 +130,8 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.created_at, lpa.updated_at, (
-					EXISTS(SELECT 1 FROM lightning_htlc_subscription lhs
-						WHERE lhs.payment_hash = lpa.payment_hash
-					)
-				) as is_self_payment
+				lpa.status, lpa.error, lpa.created_at, lpa.updated_at,
+				lpa.lightning_htlc_subscription_id
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.status != $1 AND lpa.status != $2 AND lpa.lightning_node_id = $3
 			ORDER BY lpa.created_at DESC;
@@ -156,11 +153,8 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.created_at, lpa.updated_at, (
-					EXISTS(SELECT 1 FROM lightning_htlc_subscription lhs
-						WHERE lhs.payment_hash = lpa.payment_hash
-					)
-				) as is_self_payment
+				lpa.status, lpa.error, lpa.created_at, lpa.updated_at,
+				lpa.lightning_htlc_subscription_id
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1 AND
 				lpa.status != $2 AND lpa.status != $3
@@ -188,11 +182,45 @@ impl<'t> Tx<'t> {
 		}
 	}
 
+	/// Get the open payment attempt initiated against the given htlc
+	/// subscription (an intra-Ark self-payment), if any.
+	pub async fn get_open_lightning_payment_attempt_by_subscription_id(
+		&self,
+		lightning_htlc_subscription_id: i64,
+	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
+		let stmt = self.prepare("
+			SELECT lpa.id,
+				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
+				lpa.status, lpa.error, lpa.created_at, lpa.updated_at,
+				lpa.lightning_htlc_subscription_id
+			FROM lightning_payment_attempt lpa
+			WHERE lpa.lightning_htlc_subscription_id = $1 AND
+				lpa.status != $2 AND lpa.status != $3
+			ORDER BY lpa.created_at DESC;
+		").await?;
+
+		let status_failed = LightningPaymentStatus::Failed;
+		let status_succeeded = LightningPaymentStatus::Succeeded;
+		let row = self.query_opt(
+			&stmt,
+			&[&lightning_htlc_subscription_id, &status_failed, &status_succeeded],
+		).await?;
+
+		match row {
+			Some(row) => Ok(Some(row.try_into()?)),
+			None => Ok(None),
+		}
+	}
+
 	/// Stores data after lightning payment start.
 	///
 	/// Creates a new payment attempt for the given invoice and links the
 	/// HTLC-send vtxos that were committed to it. Errors if there is
 	/// already an open attempt for the same payment hash.
+	///
+	/// `lightning_htlc_subscription_id` records the subscription the payment
+	/// was initiated against, making it an intra-Ark self-payment. This is
+	/// decided at initiation time and stored; it is never re-derived.
 	pub async fn store_lightning_payment_start(
 		&self,
 		node_id: LightningNodeId,
@@ -200,6 +228,7 @@ impl<'t> Tx<'t> {
 		amount: Amount,
 		sender_mailbox_id: Option<&MailboxIdentifier>,
 		htlc_vtxo_ids: &[VtxoId],
+		lightning_htlc_subscription_id: Option<i64>,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 
@@ -229,8 +258,9 @@ impl<'t> Tx<'t> {
 				sender_mailbox_id,
 				status,
 				created_at,
-				updated_at
-			) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+				updated_at,
+				lightning_htlc_subscription_id
+			) VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
 			RETURNING id, updated_at;
 		").await?;
 
@@ -238,7 +268,10 @@ impl<'t> Tx<'t> {
 		let mailbox_str = sender_mailbox_id.map(|id| id.to_string());
 		let row = self.query_one(
 			&stmt,
-			&[&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64), &mailbox_str, &requested_status],
+			&[
+				&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64),
+				&mailbox_str, &requested_status, &lightning_htlc_subscription_id,
+			],
 		).await?;
 
 		let payment_attempt_id: i64 = row.get("id");
@@ -348,11 +381,8 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.created_at, lpa.updated_at, (
-					EXISTS(SELECT 1 FROM lightning_htlc_subscription lhs
-						WHERE lhs.payment_hash = lpa.payment_hash
-					)
-				) as is_self_payment
+				lpa.status, lpa.error, lpa.created_at, lpa.updated_at,
+				lpa.lightning_htlc_subscription_id
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1
 			ORDER BY lpa.created_at DESC

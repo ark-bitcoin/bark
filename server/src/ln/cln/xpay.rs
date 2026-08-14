@@ -398,7 +398,7 @@ impl ClnXpayProcess {
 		let open_attempts = self.db.read(async |t| t.get_open_lightning_payment_attempts(self.node_id).await).await?;
 
 		for attempt in open_attempts {
-			if attempt.is_self_payment {
+			if attempt.is_self_payment() {
 				trace!("Lightning payment attempt ({}): Skipping since it is a self payment.",
 					attempt.id,
 				);

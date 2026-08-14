@@ -81,10 +81,24 @@ pub struct LightningPaymentAttempt {
 	pub amount_msat: u64,
 	pub final_amount_msat: Option<u64>,
 	pub status: LightningPaymentStatus,
-	pub is_self_payment: bool,
+	/// The htlc subscription this attempt was initiated against, if any.
+	///
+	/// Set once, at initiation, when the payment is an intra-Ark
+	/// self-payment. Never derive this from the current presence of a
+	/// subscription with the same payment hash: a receive registered after
+	/// the attempt was initiated must not retroactively turn it into a
+	/// self-payment.
+	pub lightning_htlc_subscription_id: Option<i64>,
 	pub error: Option<String>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
+}
+
+impl LightningPaymentAttempt {
+	/// Whether this attempt is an intra-Ark self-payment.
+	pub fn is_self_payment(&self) -> bool {
+		self.lightning_htlc_subscription_id.is_some()
+	}
 }
 
 impl TryFrom<Row> for LightningPaymentAttempt {
@@ -98,7 +112,7 @@ impl TryFrom<Row> for LightningPaymentAttempt {
 				.context("error decoding payment hash from db")?,
 			amount_msat: row.get::<_, i64>("amount_msat") as u64,
 			final_amount_msat: row.get::<_, Option<i64>>("final_amount_msat").map(|i| i as u64),
-			is_self_payment: row.get::<_, bool>("is_self_payment"),
+			lightning_htlc_subscription_id: row.get("lightning_htlc_subscription_id"),
 			status: row.get("status"),
 			error: row.get("error"),
 			created_at: row.get("created_at"),

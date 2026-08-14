@@ -466,9 +466,12 @@ impl ClnHoldProcess {
 			None,
 		).await).await?;
 
-		let payment_hash = PaymentHash::from(&htlc_subscription.invoice);
+		// Fail the intra-Ark self-payment initiated against this
+		// subscription, if any. An unrelated outgoing payment that merely
+		// shares the payment hash is not a self-payment and must be left
+		// alone.
 		let payment_attempt = self.db.read(async |t|
-			t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await
+			t.get_open_lightning_payment_attempt_by_subscription_id(htlc_subscription.id).await
 		).await?;
 		if let Some(payment_attempt) = payment_attempt {
 			debug!("HTLC subscription canceled with ongoing payment attempt, \

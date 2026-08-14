@@ -1521,7 +1521,7 @@ async fn lightning_payment_attempt_lifecycle() {
 	).await).await.unwrap().is_none());
 
 	// Start a payment
-	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(2), None, &[]).await).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(2), None, &[], None).await).await.unwrap();
 
 	// One open attempt
 	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
@@ -1567,7 +1567,7 @@ async fn lightning_payment_attempt_with_error() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11);
 
-	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(1), None, &[]).await).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(1), None, &[], None).await).await.unwrap();
 
 	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
 	assert_eq!(attempts.len(), 1);
@@ -1601,7 +1601,7 @@ async fn lightning_payment_attempt_result_update() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
-	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(1000), None, &[]).await).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(1000), None, &[], None).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
 		(&bolt11).into()
@@ -1647,7 +1647,7 @@ async fn mark_htlc_send_vtxos_ln_spent_for_settled_attempt() {
 
 	// Open attempt linked to the HTLC-send vtxo.
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(2), None, &[vtxo.id()],
+		node_id, &invoice, sat(2), None, &[vtxo.id()], None,
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(

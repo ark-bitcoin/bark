@@ -1827,7 +1827,7 @@ async fn wait_for_hold_invoice_accepted(
 	}.wait_millis(30_000).await
 }
 
-/// Repro for the double-pay / theft where a malicious user revokes the
+/// Regression test for the double-pay where a malicious user revoked the
 /// outgoing HTLC while still collecting the destination Lightning payment.
 ///
 /// 1. Eve creates a hold invoice on her own node with payment hash H.
@@ -1837,21 +1837,25 @@ async fn wait_for_hold_invoice_accepted(
 ///    invoice-2.
 /// 4. Eve pays invoice-2 from her node, so the server's subscription is
 ///    Accepted.
-/// 5. Eve never prepares/claims invoice-2. After receive_htlc_forward_timeout
-///    the server cancels the subscription. Because it shares H with the
-///    outgoing attempt, the attempt is marked Failed.
-/// 6. bark sees Failed and revokes htlc_a, refunding Eve.
-/// 7. Eve settles invoice-1 with the preimage. xpay succeeds, but the server
-///    ignores the success because the DB status is already final Failed.
+/// 5. Eve never claims invoice-2. After receive_htlc_forward_timeout the
+///    server cancels the subscription. The outgoing attempt must be left
+///    alone: it is not a self-payment of this subscription, it only shares
+///    the payment hash.
+/// 6. bark syncs; the attempt is still in flight, so no revocation.
+/// 7. Eve settles invoice-1 with the preimage. xpay succeeds and the server
+///    records it.
 ///
-/// Result: Eve gets the refund of htlc_a AND the Lightning payment for
-/// invoice-1.
+/// The bug was that `is_self_payment` was derived from the presence of a
+/// subscription with the same payment hash, so step 3 retroactively turned
+/// the genuine xpay into a "self-payment": step 5 then failed the attempt,
+/// bark revoked htlc_a for a refund, and Eve still settled invoice-1 —
+/// collecting both the refund and the Lightning payment.
 #[tokio::test]
-async fn repro_double_pay_via_canceled_subscription_and_inflight_xpay() {
+async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new(
-		"server/repro_double_pay_via_canceled_subscription_and_inflight_xpay",
+		"server/prevent_double_pay_via_canceled_subscription_and_inflight_xpay",
 	).await;
 	let cfg_htlc_forward_timeout = Duration::from_secs(5);
 
@@ -1927,38 +1931,40 @@ async fn repro_double_pay_via_canceled_subscription_and_inflight_xpay() {
 	wait_for_accepted_subscription(&db, payment_hash).await;
 
 	// 5. Eve never claims invoice-2. After receive_htlc_forward_timeout the
-	//    server cancels the subscription; because it shares H with the
-	//    outgoing attempt, the attempt is marked Failed.
+	//    server cancels the subscription. The outgoing attempt is a genuine
+	//    xpay, not a self-payment of this subscription, so it must stay open.
 	//
-	//    NB: the CancelLightningReceive RPC does NOT trigger this — it
-	//    bypasses cancel_htlc_subscription and leaves the attempt open.
+	//    NB: the CancelLightningReceive RPC bypasses cancel_htlc_subscription
+	//    entirely; only the timeout path used to hit the bug.
 	tokio::time::sleep(cfg_htlc_forward_timeout + srv.config().invoice_check_interval).await;
 	assert_eq!(
 		lightning_subscription_status(&db, payment_hash).await.as_deref(),
 		Some("canceled"),
 		"subscription should be canceled",
 	);
-	wait_for_attempt_status(&db, payment_hash, "failed").await;
+	assert_ne!(
+		lightning_attempt_status(&db, payment_hash).await.as_deref(),
+		Some("failed"),
+		"canceling the receive must not fail the unrelated outgoing payment",
+	);
 
-	// 6. bark syncs and revokes htlc_a.
+	// 6. bark syncs; the payment is still in flight, so no revocation.
 	bark.sync().await;
+	assert_eq!(
+		bark.spendable_balance().await,
+		balance_after_pay,
+		"bark must not be refunded while the payment is in flight",
+	);
 
-	// 7. Eve settles invoice-1. xpay will succeed, but the server should ignore
-	//    the late success because the attempt is already Failed.
+	// 7. Eve settles invoice-1. xpay succeeds and the server records it.
 	eve_hold.settle(hold::SettleRequest {
 		payment_preimage: preimage.as_ref().to_vec(),
 	}).await.unwrap();
 
-	// Wait for xpay reconciliation to see the success.
-	tokio::time::sleep(srv.config().invoice_check_interval * 2).await;
-	assert_eq!(
-		lightning_attempt_status(&db, payment_hash).await.as_deref(),
-		Some("failed"),
-		"server must not upgrade a final Failed attempt after xpay succeeds",
-	);
+	wait_for_attempt_status(&db, payment_hash, "succeeded").await;
 	assert!(
-		!is_preimage_recorded(&db, payment_hash).await,
-		"server should not have recorded the preimage after ignoring xpay success",
+		is_preimage_recorded(&db, payment_hash).await,
+		"server should record the preimage once xpay succeeds",
 	);
 
 	// Eve received the Lightning payment for invoice-1.
@@ -1977,12 +1983,14 @@ async fn repro_double_pay_via_canceled_subscription_and_inflight_xpay() {
 	let pay_2_err = pay_invoice_2.await.unwrap().unwrap_err().to_alt_string();
 	assert!(pay_2_err.contains("incorrect_or_unknown_payment_details"), "invoice-2 pay err: {pay_2_err}");
 
-	// bark's balance must have recovered the htlc_a funds.
+	// bark paid the invoice and was never refunded: it is out exactly the
+	// payment amount.
+	bark.sync().await;
 	let balance_final = bark.spendable_balance().await;
 	info!("bark balance after pay: {balance_after_pay}, final: {balance_final}");
 	assert!(
-		balance_final >= balance_after_pay + amount,
-		"bark should have received the htlc_a refund",
+		balance_final < balance_after_pay + amount,
+		"bark must not recover the htlc_a funds for a payment that settled",
 	);
 
 	assert_vtxopool_consistency(&srv).await;

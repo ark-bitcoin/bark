@@ -296,10 +296,12 @@ CREATE FUNCTION public.lightning_payment_attempt_update_trigger() RETURNS trigge
 BEGIN
 	INSERT INTO lightning_payment_attempt_history (
 		id, lightning_node_id, payment_hash, amount_msat, final_amount_msat,
-		sender_mailbox_id, status, error, created_at, updated_at
+		sender_mailbox_id, lightning_htlc_subscription_id, status, error,
+		created_at, updated_at
 	) VALUES (
 		OLD.id, OLD.lightning_node_id, OLD.payment_hash, OLD.amount_msat, OLD.final_amount_msat,
-		OLD.sender_mailbox_id, OLD.status, OLD.error, OLD.created_at, OLD.updated_at
+		OLD.sender_mailbox_id, OLD.lightning_htlc_subscription_id, OLD.status, OLD.error,
+		OLD.created_at, OLD.updated_at
 	);
 
 	IF NEW.updated_at = OLD.updated_at THEN
@@ -944,7 +946,8 @@ CREATE TABLE public.lightning_payment_attempt (
     updated_at timestamp with time zone NOT NULL,
     payment_hash text NOT NULL,
     final_amount_msat bigint,
-    sender_mailbox_id text
+    sender_mailbox_id text,
+    lightning_htlc_subscription_id bigint
 );
 
 
@@ -963,7 +966,8 @@ CREATE TABLE public.lightning_payment_attempt_history (
     history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL,
     payment_hash text,
     final_amount_msat bigint,
-    sender_mailbox_id text
+    sender_mailbox_id text,
+    lightning_htlc_subscription_id bigint
 );
 
 
@@ -2233,6 +2237,14 @@ ALTER TABLE ONLY public.lightning_payment_attempt_htlc_vtxo
 
 ALTER TABLE ONLY public.lightning_payment_attempt_htlc_vtxo
     ADD CONSTRAINT lightning_payment_attempt_htlc_vtxo_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
+
+
+--
+-- Name: lightning_payment_attempt lightning_payment_attempt_lightning_htlc_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_payment_attempt
+    ADD CONSTRAINT lightning_payment_attempt_lightning_htlc_subscription_id_fkey FOREIGN KEY (lightning_htlc_subscription_id) REFERENCES public.lightning_htlc_subscription(id);
 
 
 --

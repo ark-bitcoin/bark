@@ -903,8 +903,8 @@ impl Server {
 			// grant by settling the hold invoice while the inbound HTLC lives.
 			LightningHtlcSubscriptionStatus::HtlcsReady => {
 				let is_self_payment = self.db.read(async |t|
-					t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await
-				).await?.map(|attempt| attempt.is_self_payment).unwrap_or(false);
+					t.get_open_lightning_payment_attempt_by_subscription_id(sub.id).await
+				).await?.is_some();
 				if !is_self_payment {
 					let lowest_incoming_htlc_expiry = sub.lowest_incoming_htlc_expiry
 						.context("no incoming HTLCs found for this payment")?;
