@@ -8,6 +8,7 @@ use bitcoin::{FeeRate, Network};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
 use crate::chain::ChainSourceSpec;
+use crate::secret::Secret;
 
 
 /// Networks bark can be used on
@@ -124,7 +125,9 @@ pub struct Config {
 	/// The bitcoind RPC password.
 	///
 	/// Only used with `bitcoind_address`.
-	pub bitcoind_pass: Option<String>,
+	///
+	/// The [Secret] wrapper keeps the password out of debug logs.
+	pub bitcoind_pass: Option<Secret<String>>,
 
 	/// The number of blocks before expiration to refresh vtxos.
 	///
@@ -284,7 +287,8 @@ impl Config {
 			} else {
 				bitcoin_ext::rpc::Auth::UserPass(
 					self.bitcoind_user.clone().context("need bitcoind auth config")?,
-					self.bitcoind_pass.clone().context("need bitcoind auth config")?,
+					self.bitcoind_pass.as_ref().context("need bitcoind auth config")?
+						.leak_ref().clone(),
 				)
 			};
 			Ok(ChainSourceSpec::Bitcoind {
@@ -296,4 +300,3 @@ impl Config {
 		}
 	}
 }
-

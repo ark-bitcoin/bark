@@ -310,7 +310,7 @@ async fn offboard_rebroadcasts_evicted_tx_within_grace_period() {
 			// fixed rpcauth credentials don't.
 			c.bitcoind_cookiefile = None;
 			c.bitcoind_user = Some(constants::bitcoind::BITCOINRPC_TEST_USER.into());
-			c.bitcoind_pass = Some(constants::bitcoind::BITCOINRPC_TEST_PASSWORD.into());
+			c.bitcoind_pass = Some(String::from(constants::bitcoind::BITCOINRPC_TEST_PASSWORD).into());
 			c.offboard_required_confirmations = 1;
 			c.daemon_manual_sync = true;
 		})
@@ -368,7 +368,7 @@ async fn offboard_reports_lost_tx_after_grace_period() {
 			// fixed rpcauth credentials don't.
 			c.bitcoind_cookiefile = None;
 			c.bitcoind_user = Some(constants::bitcoind::BITCOINRPC_TEST_USER.into());
-			c.bitcoind_pass = Some(constants::bitcoind::BITCOINRPC_TEST_PASSWORD.into());
+			c.bitcoind_pass = Some(String::from(constants::bitcoind::BITCOINRPC_TEST_PASSWORD).into());
 			c.offboard_required_confirmations = 1;
 			// Any tx missing from chain and mempool is immediately lost.
 			c.offboard_lost_tx_grace_period_secs = 0;
