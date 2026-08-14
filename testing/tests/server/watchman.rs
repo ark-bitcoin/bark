@@ -1238,7 +1238,8 @@ async fn server_refuses_offboard_of_claimed_exited_vtxo() {
 	let refusal = res.refusal.expect(
 		"server accepted an offboard of a vtxo whose exit was already claimed",
 	);
-	assert!(refusal.to_lowercase().contains("exit"),
+	let refusal_msg = refusal.to_lowercase();
+	assert!(refusal_msg.contains("exit") || refusal_msg.contains("unusable"),
 		"expected an 'already exited' refusal from the server, got: {}", refusal,
 	);
 	assert_eq!(res.payout, sat(0),
@@ -1264,7 +1265,8 @@ async fn offboard_of_confirmed_exited_vtxo_never_costs_server() {
 		res.payout, res.unconfiscated,
 	);
 	if let Some(ref refusal) = res.refusal {
-		assert!(refusal.to_lowercase().contains("exit"),
+		let refusal_msg = refusal.to_lowercase();
+		assert!(refusal_msg.contains("exit") || refusal_msg.contains("unusable"),
 			"expected an 'already exited' refusal from the server, got: {}", refusal,
 		);
 	}

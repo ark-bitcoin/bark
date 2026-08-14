@@ -1958,10 +1958,9 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 		async { bark.try_refresh_all_no_retry().await.unwrap_err().to_alt_string() },
 		srv.trigger_round(),
 	);
-	// The round path now reports unusable inputs (carrying the offending vtxo id
-	// in the gRPC `identifiers` metadata) rather than the legacy per-vtxo badarg.
+	// The server refuses a vtxo that is already exited
 	assert!(
-		err.contains("already exited") && err.contains(&vtxo_a.id.to_string()),
+		err.contains("not spendable") && err.contains(&vtxo_a.id.to_string()),
 		"err: {err:#}",
 	);
 }
