@@ -39,17 +39,16 @@ build-nightly:
     - assign-version
   script:
     - cat VERSION
-    - just build
-    - just release-bark-linux
-    - cp ./target/x86_64-unknown-linux-gnu/release/bark       bark-linux-x86_64
-    - cp ./target/x86_64-unknown-linux-gnu/release/barkd      barkd-linux-x86_64
-    - cp ./target/aarch64-unknown-linux-gnu/release/bark      bark-linux-aarch64
-    - cp ./target/aarch64-unknown-linux-gnu/release/barkd     barkd-linux-aarch64
-    - cp ./target/armv7-unknown-linux-gnueabihf/release/bark  bark-linux-armv7
-    - cp ./target/armv7-unknown-linux-gnueabihf/release/barkd barkd-linux-armv7
-    - just release-server
-    - cp ./target/x86_64-unknown-linux-gnu/release/captaind   captaind-linux-x86_64
-    - cp ./target/x86_64-unknown-linux-gnu/release/watchmand  watchmand-linux-x86_64
+    - just nix-build-bark-linux
+    - cp ./build/bark-x86_64-unknown-linux-gnu         bark-linux-x86_64
+    - cp ./build/barkd-x86_64-unknown-linux-gnu        barkd-linux-x86_64
+    - cp ./build/bark-aarch64-unknown-linux-musl       bark-linux-aarch64
+    - cp ./build/barkd-aarch64-unknown-linux-musl      barkd-linux-aarch64
+    - cp ./build/bark-armv7-unknown-linux-musleabihf   bark-linux-armv7
+    - cp ./build/barkd-armv7-unknown-linux-musleabihf  barkd-linux-armv7
+    - just _nix-build-collect bark-server x86_64-unknown-linux-gnu
+    - cp ./build/captaind-x86_64-unknown-linux-gnu     captaind-linux-x86_64
+    - cp ./build/watchmand-x86_64-unknown-linux-gnu    watchmand-linux-x86_64
   artifacts:
     paths:
       - bark-*

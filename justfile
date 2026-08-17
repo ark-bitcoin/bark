@@ -263,31 +263,6 @@ test-bark-wasm-indexed-db:
 codecov-report:
 	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"
 
-release-server:
-	RUSTFLAGS="-C debuginfo=2" cargo build --release --locked \
-		--manifest-path server/Cargo.toml --target x86_64-unknown-linux-gnu
-
-release-bark-linux:
-	cargo build --release --target x86_64-unknown-linux-gnu                        \
-		--locked --manifest-path bark-cli/Cargo.toml
-	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-unknown-linux-gnu     \
-		--locked --manifest-path bark-cli/Cargo.toml \
-		--no-default-features --features tls-webpki-roots
-	RUSTC_WRAPPER= cargo zigbuild --release --target armv7-unknown-linux-gnueabihf \
-		--locked --manifest-path bark-cli/Cargo.toml \
-		--no-default-features --features tls-webpki-roots
-
-release-bark: release-bark-linux
-	cargo build --release --target x86_64-pc-windows-gnu                  \
-		--locked --manifest-path bark-cli/Cargo.toml
-	RUSTC_WRAPPER= cargo zigbuild --release --target x86_64-apple-darwin  \
-		--locked --manifest-path bark-cli/Cargo.toml \
-		--no-default-features --features tls-webpki-roots
-	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-apple-darwin \
-		--locked --manifest-path bark-cli/Cargo.toml \
-		--no-default-features --features tls-webpki-roots
-
-
 RUSTDOCSDIR := justfile_directory() / "rustdocs"
 # This is opinionated, but doesn't matter. Any page has full search.
 DEFAULT_DOCS_PATH := "bark/struct.Wallet.html"
@@ -474,9 +449,6 @@ release-new-version NEW_VERSION: (bump-workspace-versions NEW_VERSION) generate-
 	echo "  5. After the MR is merged, tag the merge commit on master and push:"
 	echo "       git tag bark-{{NEW_VERSION}} <merge-commit>"
 	echo "       git push origin bark-{{NEW_VERSION}}"
-
-install-zigbuild:
-	cargo install cargo-zigbuild@0.21.8 --locked
 
 # `build-msrv-lib` is invoked separately from the Dockerfile because it needs
 # the .#msrv-lib nix shell rather than .#default.

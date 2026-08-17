@@ -24,17 +24,18 @@ build-server:
   extends: .server-release-rules
   needs:
     - parse-versions-server
-  variables:
-    SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
   script:
     - cat VERSION
-    - just release-server
-    - cp ./target/x86_64-unknown-linux-gnu/release/captaind  captaind-linux-x86_64
-    - cp ./target/x86_64-unknown-linux-gnu/release/watchmand watchmand-linux-x86_64
+    - just nix-build-server-all
+    - cp ./build/captaind-x86_64-unknown-linux-gnu    captaind-linux-x86_64
+    - cp ./build/watchmand-x86_64-unknown-linux-gnu   watchmand-linux-x86_64
+    - cp ./build/captaind-x86_64-unknown-linux-musl   captaind-linux-x86_64-musl
+    - cp ./build/watchmand-x86_64-unknown-linux-musl  watchmand-linux-x86_64-musl
   artifacts:
     paths:
-      - captaind-linux-x86_64
-      - watchmand-linux-x86_64
+      - captaind-linux-x86_64*
+      - watchmand-linux-x86_64*
+      - build/SHA256SUMS
     expire_in: 1 day
 
 build-and-push-captaind-to-registry:
@@ -92,10 +93,14 @@ release-server:
     - build-server
   script:
     - cat VERSION
-    - cp captaind-linux-x86_64  "captaind-$(cat VERSION)-linux-x86_64"
-    - cp watchmand-linux-x86_64 "watchmand-$(cat VERSION)-linux-x86_64"
+    - cp captaind-linux-x86_64       "captaind-$(cat VERSION)-linux-x86_64"
+    - cp watchmand-linux-x86_64      "watchmand-$(cat VERSION)-linux-x86_64"
+    - cp captaind-linux-x86_64-musl  "captaind-$(cat VERSION)-linux-x86_64-musl"
+    - cp watchmand-linux-x86_64-musl "watchmand-$(cat VERSION)-linux-x86_64-musl"
     - sha256sum "captaind-$(cat VERSION)-linux-x86_64" > SHA256SUMS
     - sha256sum "watchmand-$(cat VERSION)-linux-x86_64" >> SHA256SUMS
+    - sha256sum "captaind-$(cat VERSION)-linux-x86_64-musl" >> SHA256SUMS
+    - sha256sum "watchmand-$(cat VERSION)-linux-x86_64-musl" >> SHA256SUMS
   artifacts:
     paths:
       - captaind-*
@@ -112,4 +117,4 @@ publish-server-gitlab:
     - release-server
   script:
     - cat VERSION
-    - bash ./contrib/ci-gitlab-release.sh "./captaind-$(cat VERSION)-linux-x86_64 ./watchmand-$(cat VERSION)-linux-x86_64 ./SHA256SUMS"
+    - bash ./contrib/ci-gitlab-release.sh "./captaind-$(cat VERSION)-linux-x86_64 ./watchmand-$(cat VERSION)-linux-x86_64 ./captaind-$(cat VERSION)-linux-x86_64-musl ./watchmand-$(cat VERSION)-linux-x86_64-musl ./SHA256SUMS"

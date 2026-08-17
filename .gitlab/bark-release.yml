@@ -24,27 +24,28 @@ build-bark:
   extends: .bark-release-rules
   needs:
     - parse-versions-bark
-  variables:
-    SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
   script:
     - cat VERSION
-    - just release-bark
-    - cp ./target/x86_64-unknown-linux-gnu/release/bark       bark-linux-x86_64
-    - cp ./target/x86_64-unknown-linux-gnu/release/barkd      barkd-linux-x86_64
-    - cp ./target/aarch64-unknown-linux-gnu/release/bark      bark-linux-aarch64
-    - cp ./target/aarch64-unknown-linux-gnu/release/barkd     barkd-linux-aarch64
-    - cp ./target/armv7-unknown-linux-gnueabihf/release/bark  bark-linux-armv7
-    - cp ./target/armv7-unknown-linux-gnueabihf/release/barkd barkd-linux-armv7
-    - cp ./target/x86_64-pc-windows-gnu/release/bark.exe      bark-windows-x86_64.exe
-    - cp ./target/x86_64-pc-windows-gnu/release/barkd.exe     barkd-windows-x86_64.exe
-    - cp ./target/x86_64-apple-darwin/release/bark            bark-apple-x86_64
-    - cp ./target/x86_64-apple-darwin/release/barkd           barkd-apple-x86_64
-    - cp ./target/aarch64-apple-darwin/release/bark           bark-apple-aarch64
-    - cp ./target/aarch64-apple-darwin/release/barkd          barkd-apple-aarch64
+    - just nix-build-bark-all
+    - cp ./build/bark-x86_64-unknown-linux-gnu         bark-linux-x86_64
+    - cp ./build/barkd-x86_64-unknown-linux-gnu        barkd-linux-x86_64
+    - cp ./build/bark-x86_64-unknown-linux-musl        bark-linux-x86_64-musl
+    - cp ./build/barkd-x86_64-unknown-linux-musl       barkd-linux-x86_64-musl
+    - cp ./build/bark-aarch64-unknown-linux-musl       bark-linux-aarch64
+    - cp ./build/barkd-aarch64-unknown-linux-musl      barkd-linux-aarch64
+    - cp ./build/bark-armv7-unknown-linux-musleabihf   bark-linux-armv7
+    - cp ./build/barkd-armv7-unknown-linux-musleabihf  barkd-linux-armv7
+    - cp ./build/bark-x86_64-pc-windows-gnu.exe        bark-windows-x86_64.exe
+    - cp ./build/barkd-x86_64-pc-windows-gnu.exe       barkd-windows-x86_64.exe
+    - cp ./build/bark-x86_64-apple-darwin              bark-apple-x86_64
+    - cp ./build/barkd-x86_64-apple-darwin             barkd-apple-x86_64
+    - cp ./build/bark-aarch64-apple-darwin             bark-apple-aarch64
+    - cp ./build/barkd-aarch64-apple-darwin            barkd-apple-aarch64
   artifacts:
     paths:
       - bark-*
       - barkd-*
+      - build/SHA256SUMS
     expire_in: 1 day
 
 build-and-push-bark-to-registry:
@@ -148,6 +149,8 @@ release-bark:
     - cat VERSION
     - cp bark-linux-x86_64        "bark-$(cat VERSION)-linux-x86_64"
     - cp barkd-linux-x86_64       "barkd-$(cat VERSION)-linux-x86_64"
+    - cp bark-linux-x86_64-musl   "bark-$(cat VERSION)-linux-x86_64-musl"
+    - cp barkd-linux-x86_64-musl  "barkd-$(cat VERSION)-linux-x86_64-musl"
     - cp bark-linux-aarch64       "bark-$(cat VERSION)-linux-arm64"
     - cp barkd-linux-aarch64      "barkd-$(cat VERSION)-linux-arm64"
     - cp bark-linux-armv7         "bark-$(cat VERSION)-linux-armv7"
@@ -160,6 +163,8 @@ release-bark:
     - cp barkd-apple-aarch64      "barkd-$(cat VERSION)-apple-aarch64"
     - sha256sum "bark-$(cat VERSION)-linux-x86_64"        > SHA256SUMS
     - sha256sum "barkd-$(cat VERSION)-linux-x86_64"       >> SHA256SUMS
+    - sha256sum "bark-$(cat VERSION)-linux-x86_64-musl"   >> SHA256SUMS
+    - sha256sum "barkd-$(cat VERSION)-linux-x86_64-musl"  >> SHA256SUMS
     - sha256sum "bark-$(cat VERSION)-linux-arm64"         >> SHA256SUMS
     - sha256sum "barkd-$(cat VERSION)-linux-arm64"        >> SHA256SUMS
     - sha256sum "bark-$(cat VERSION)-linux-armv7"         >> SHA256SUMS

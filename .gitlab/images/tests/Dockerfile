@@ -51,10 +51,7 @@ ENV RUST_BACKTRACE=full \
 	DEBIAN_FRONTEND=noninteractive \
 	PATH=/home/nixuser/.cargo/bin:/home/nixuser/.nix-profile/bin:/home/nixuser/.nix-profile/sbin:/home/nixuser/.nix-profile/lib:/nix/var/nix/profiles/default/bin:$PATH \
 	NIX_PATH=/nix/var/nix/profiles/per-user/nixuser/channels \
-	NIX_PROFILES="/nix/var/nix/profiles/default /nixuser/.nix-profile" \
-	MACOS_SDK_VERSION=15.4 \
-	MACOS_DARWIN_VERSION=24.4 \
-	ZIG_VERSION=0.13.0
+	NIX_PROFILES="/nix/var/nix/profiles/default /nixuser/.nix-profile"
 RUN echo '* soft nproc 65535' >> /etc/security/limits.conf && \
 	echo '* hard nproc 65535' >> /etc/security/limits.conf
 
@@ -108,24 +105,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 
 RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
 	rustup toolchain install ${RUSTUP_TOOLCHAIN_VERSION} && \
-	rustup target add x86_64-pc-windows-gnu && \
-	rustup target add x86_64-unknown-linux-gnu && \
-	rustup target add aarch64-unknown-linux-gnu && \
-	rustup target add armv7-unknown-linux-gnueabihf && \
-	rustup target add x86_64-apple-darwin && \
-	rustup target add aarch64-apple-darwin
-
-RUN cd /tmp/ && \
-	git clone https://github.com/tpoechtrager/osxcross.git && \
-	cd /tmp/osxcross/tarballs/ && \
-	wget https://github.com/joseluisq/macosx-sdks/releases/download/${MACOS_SDK_VERSION}/MacOSX${MACOS_SDK_VERSION}.sdk.tar.xz && \
-	wget https://github.com/joseluisq/macosx-sdks/releases/download/${MACOS_SDK_VERSION}/sha256sum.txt && \
-	cd /tmp/osxcross/ && \
-	sudo mkdir -p /usr/local/osxcross && \
-	sudo chown -R nixuser:nixbld /usr/local/osxcross && \
-	TARGET_DIR=/usr/local/osxcross SDK_VERSION=${MACOS_SDK_VERSION} UNATTENDED=1 ./build.sh && \
-	export PATH=$PATH:/usr/local/osxcross/bin && \
-	ls -alh /usr/local/osxcross/bin
+	rustup target add x86_64-unknown-linux-gnu
 
 RUN echo "Installing sccache"
 RUN cargo install --locked sccache --features memcached
@@ -149,23 +129,9 @@ RUN echo "extra-trusted-users = nixuser" | sudo tee -a /etc/nix/nix.conf && \
 
 RUN echo "Installing just"
 RUN cargo install --locked just
-RUN mkdir -p /home/nixuser/.cargo && \
-	echo "[target.x86_64-pc-windows-gnu]\nlinker = \"x86_64-w64-mingw32-gcc\"\n[target.i686-pc-windows-gnu]\nlinker = \"i686-w64-mingw32-gcc\"\n[target.x86_64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n[target.aarch64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n" > /home/nixuser/.cargo/config.toml
-RUN cat /home/nixuser/.cargo/config.toml
 
 RUN echo "clone bark" && \
 	git clone -b master https://gitlab.com/ark-bitcoin/bark.git
-
-RUN echo "pre-build bark" && \
-	cd /tmp && \
-	wget https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz && \
-	tar -xJf zig-linux-x86_64-${ZIG_VERSION}.tar.xz && \
-	sudo ln -s /tmp/zig-linux-x86_64-${ZIG_VERSION}/zig /usr/bin/ && \
-	cd ~/bark && \
-	just install-zigbuild && \
-	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
-	just release-server && \
-	just release-bark
 
 RUN echo "build nix devShells and pin as GC roots" && \
 	. /etc/profile.d/nix.sh && \
@@ -175,6 +141,26 @@ RUN echo "build nix devShells and pin as GC roots" && \
 	nix build .#devShells.x86_64-linux.default --out-link /home/nixuser/.nix-gc-roots/dev-default && \
 	nix build .#devShells.x86_64-linux.ci --out-link /home/nixuser/.nix-gc-roots/dev-ci && \
 	nix build .#devShells.x86_64-linux.msrv-lib --out-link /home/nixuser/.nix-gc-roots/dev-msrv-lib
+
+# Pre-build the nix release packages and pin them as GC roots. Release jobs
+# rebuild only what changed since (the dependency derivations stay valid as
+# long as the Cargo.tomls/lock don't change), so this keeps tag pipelines fast.
+RUN echo "pre-build nix release packages and pin as GC roots" && \
+	. /etc/profile.d/nix.sh && \
+	cd ~/bark && \
+	for pkg in \
+		bark-x86_64-unknown-linux-gnu \
+		bark-x86_64-unknown-linux-musl \
+		bark-aarch64-unknown-linux-musl \
+		bark-armv7-unknown-linux-musleabihf \
+		bark-x86_64-apple-darwin \
+		bark-aarch64-apple-darwin \
+		bark-x86_64-pc-windows-gnu \
+		bark-server-x86_64-unknown-linux-gnu \
+		bark-server-x86_64-unknown-linux-musl; \
+	do \
+		nix build ".#$pkg" --out-link "/home/nixuser/.nix-gc-roots/$pkg"; \
+	done
 
 RUN echo "build bark" && \
 	. /etc/profile.d/nix.sh && \
