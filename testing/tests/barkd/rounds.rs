@@ -97,7 +97,11 @@ async fn maintenance_refresh_auto_barkd() {
 
 	let ctx = TestContext::new("barkd/maintenance_refresh_auto_barkd").await;
 
-	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+	// Short vtxo lifetime so the test doesn't have to mine 432 blocks
+	// to age vtxos into the maintenance refresh window.
+	let srv = ctx.captaind("server").funded(btc(1))
+		.cfg(|cfg| cfg.vtxo_lifetime = 32)
+		.create().await;
 	let barkd = ctx.barkd("barkd1", &srv).funded(sat(100_000)).create().await;
 
 	wait_for_onchain_balance(&barkd, sat(100_000)).await;
@@ -167,7 +171,11 @@ async fn maintenance_refresh_skips_rejected_vtxo_barkd() {
 	require_bark_version!(> "0.5.0");
 
 	let ctx = TestContext::new("barkd/maintenance_refresh_skips_rejected_vtxo_barkd").await;
-	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+	// Short vtxo lifetime so the test doesn't have to mine 432 blocks
+	// to age vtxos into the maintenance refresh window.
+	let srv = ctx.captaind("server").funded(btc(1))
+		.cfg(|cfg| cfg.vtxo_lifetime = 32)
+		.create().await;
 
 	let (barkd, _proxy, bad_id, good_id) = setup_barkd_with_rejected_vtxo(&ctx, &srv).await;
 
