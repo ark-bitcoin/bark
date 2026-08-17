@@ -3,7 +3,7 @@
 //! Boarding moves on-chain BTC into the Ark/VTXO world. Server cosign and
 //! vtxo construction need the user keypair and the on-chain wallet, neither of
 //! which is reachable from [`WalletAction::advance`], so those happen
-//! synchronously in [`crate::Wallet::board_tx`]. This action takes over at the
+//! synchronously in [`crate::Wallet::board_psbt`]. This action takes over at the
 //! first point funds become committed (broadcast) and owns the durable part of
 //! the lifecycle: broadcast -> confirm -> register, plus the near-expiry exit
 //! salvage path. Identity (the funding tx, `id`, `vtxo_id`, `amount`,
@@ -60,7 +60,7 @@ pub struct Board {
 	pub vtxo_id: VtxoId,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
-	/// Created up front in `board_tx` so re-driving never duplicates a movement.
+	/// Created up front in `board_psbt` so re-driving never duplicates a movement.
 	pub movement_id: MovementId,
 
 	// Mutable state:
@@ -107,8 +107,9 @@ impl Board {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Progress {
 	/// Vtxo cosigned and built but not yet persisted. Store it (locked under the
-	/// action id) and broadcast the funding tx. Carries the signed vtxo because it
-	/// isn't in the vtxo table until this step stores it.
+	/// action id) and broadcast the funding tx if it is ours to broadcast.
+	/// Carries the signed vtxo because it isn't in the vtxo table until this step
+	/// stores it.
 	Broadcasting {
 		#[serde(with = "ark::encode::serde")]
 		signed_vtxo: Vtxo<Full>,
@@ -176,9 +177,9 @@ impl WalletAction for Board {
 }
 
 /// `Broadcasting -> Confirming`. Store the cosigned vtxo locked under the action
-/// and broadcast the funding tx. Both steps are idempotent: `store_locked_vtxos`
-/// no-ops if the vtxo exists, and we skip the broadcast if the tx is already known
-/// to the chain.
+/// and broadcast the funding tx if we hold its signatures. Both steps are
+/// idempotent: `store_locked_vtxos` no-ops if the vtxo exists, and we skip the
+/// broadcast if the tx is already known to the chain.
 async fn run_broadcast(
 	wallet: &Wallet,
 	board: &Board,
@@ -202,11 +203,20 @@ async fn run_broadcast(
 		wallet.inner.chain.tx_status(board.funding_txid()?).await,
 		Ok(TxStatus::Mempool) | Ok(TxStatus::Confirmed(_)),
 	);
-	if !already_known {
-		let tx = board.to_broadcast()?
-			.context("board funding tx is not finalised")?;
-		wallet.inner.chain.broadcast_tx(&tx).await?;
-		info!("Board {} funding tx broadcasted", board.id);
+	match board.to_broadcast()? {
+		// Broadcasting is up to whoever holds the missing signatures, so watch for
+		// the transaction rather than pushing it.
+		None => {
+			if already_known {
+				info!("Board {} funding tx is not ours to broadcast, awaiting it", board.id)
+			}
+		},
+		Some(tx) => {
+			if !already_known {
+				wallet.inner.chain.broadcast_tx(&tx).await?;
+				info!("Board {} funding tx broadcasted", board.id);
+			}
+		},
 	}
 	Ok(())
 }
@@ -402,7 +412,14 @@ async fn funding_conflict(wallet: &Wallet, board: &Board) -> anyhow::Result<Fund
 		}
 	}
 
-	let tx = board.to_broadcast()?.context("board funding tx is not finalised")?;
+	let Some(tx) = board.to_broadcast()? else {
+		// Without the signatures there is nothing to probe with: a transaction we
+		// cannot complete would be rejected on its own merits and tell us nothing
+		// about its inputs. The outcome is genuinely still open — the party that
+		// holds the signatures may yet broadcast — so park rather than declare the
+		// board dead.
+		return Ok(FundingConflict::Undecided("awaiting external funding broadcast".into()));
+	};
 	match wallet.inner.chain.broadcast_package(std::slice::from_ref(&tx)).await {
 		Ok(()) | Err(BroadcastError::AlreadyKnown) => Ok(FundingConflict::None),
 		Err(BroadcastError::MissingOrSpentInputs) => Ok(FundingConflict::Fatal),
@@ -512,13 +529,13 @@ mod test {
 		assert_eq!(board.to_broadcast().unwrap(), Some(tx));
 	}
 
-	/// Boards written with `funding_psbt` carry it as BIP-174 hex and nothing else.
+	/// Boards are written with `funding_psbt` only, as BIP-174 hex.
 	#[test]
 	fn checkpoint_writes_only_funding_psbt() {
 		let psbt = psbt();
 		let json = serde_json::to_value(board(None, Some(psbt.clone()))).unwrap();
 		assert_eq!(json["funding_psbt"], psbt.serialize_hex());
-		assert!(json.get("funding_tx").is_none(), "one key per board: {json}");
+		assert!(json.get("funding_tx").is_none(), "funding_tx is never written: {json}");
 
 		let board: Board = serde_json::from_value(json).unwrap();
 		assert_eq!(board.funding_psbt, Some(psbt));

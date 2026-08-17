@@ -248,8 +248,8 @@ async fn bark_recover_unregistered_board() {
 }
 
 #[tokio::test]
-async fn board_tx_rejects_wrong_funding_address() {
-	let ctx = TestContext::new("bark/board_tx_rejects_wrong_funding_address").await;
+async fn board_psbt_rejects_wrong_funding_address() {
+	let ctx = TestContext::new("bark/board_psbt_rejects_wrong_funding_address").await;
 	let srv = ctx.captaind("server").create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
 
@@ -276,7 +276,7 @@ async fn board_tx_rejects_wrong_funding_address() {
 		}],
 	}).unwrap();
 
-	let err = wallet.board_tx(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
+	let err = wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
 	assert!(
 		err.contains("does not pay to the expected board funding address"),
 		"unexpected error: {err}",
@@ -284,8 +284,8 @@ async fn board_tx_rejects_wrong_funding_address() {
 }
 
 #[tokio::test]
-async fn board_tx_rejects_wrong_expiry_height() {
-	let ctx = TestContext::new("bark/board_tx_rejects_wrong_expiry_height").await;
+async fn board_psbt_rejects_wrong_expiry_height() {
+	let ctx = TestContext::new("bark/board_psbt_rejects_wrong_expiry_height").await;
 	let srv = ctx.captaind("server").create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
 
@@ -302,7 +302,7 @@ async fn board_tx_rejects_wrong_expiry_height() {
 	let signed_psbt = onchain.finish_psbt(psbt).await.unwrap();
 
 	let err = wallet
-		.board_tx(signed_psbt, keypair, expiry_height + 1)
+		.board_psbt(signed_psbt, keypair, expiry_height + 1)
 		.await
 		.unwrap_err()
 		.to_alt_string();
@@ -313,8 +313,8 @@ async fn board_tx_rejects_wrong_expiry_height() {
 }
 
 #[tokio::test]
-async fn board_tx_rejects_dust_amount() {
-	let ctx = TestContext::new("bark/board_tx_rejects_dust_amount").await;
+async fn board_psbt_rejects_dust_amount() {
+	let ctx = TestContext::new("bark/board_psbt_rejects_dust_amount").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.min_board_amount = Amount::ZERO;
 	}).create().await;
@@ -341,20 +341,26 @@ async fn board_tx_rejects_dust_amount() {
 		}],
 	}).unwrap();
 
-	let err = wallet.board_tx(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
+	let err = wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
 	assert!(
 		err.contains("board amount must be at least"),
 		"unexpected error: {err}",
 	);
 }
 
-/// Tests the full boarding flow using [Wallet::board_tx] directl.
+/// Tests the full boarding flow using [Wallet::board_psbt] directl.
 /// Uses an [OnchainWallet] to build and sign the funding PSBT.
 /// This will be workflow will be replicated by external wallets
+///
+/// Version-gated because the checkpoint it writes carries `funding_psbt`, which a
+/// bark predating that field cannot deserialise — and the compat suite drives this
+/// wallet with the older binary afterwards.
 #[tokio::test]
-async fn board_tx_full_flow() {
+async fn board_psbt_full_flow() {
+	require_bark_version!(> "0.6.1");
+
 	const BOARD_AMOUNT: u64 = 90_000;
-	let ctx = TestContext::new("bark/board_tx_full_flow").await;
+	let ctx = TestContext::new("bark/board_psbt_full_flow").await;
 	let srv = ctx.captaind("server").create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
 
@@ -372,10 +378,180 @@ async fn board_tx_full_flow() {
 	let board_psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
 	let signed_psbt = onchain.finish_psbt(board_psbt).await.unwrap();
 
-	let board = wallet.board_tx(signed_psbt, keypair, expiry_height).await.unwrap();
+	let board = wallet.board_psbt(signed_psbt, keypair, expiry_height).await.unwrap();
 	assert_eq!(board.vtxos.len(), 1, "board should produce one vtxo");
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(bark1.spendable_balance().await, sat(BOARD_AMOUNT));
+}
+
+// Boarding from a funding transaction bark did not build and may not finalise.
+//
+// The boarding party publishes a board funding address and is handed a PSBT built
+// by someone else, so the board output sits at an arbitrary index among outputs it
+// did not choose and the missing signatures may belong to whoever broadcasts. A
+// BIP-77 payjoin receiver is the motivating case; nothing below is specific to it.
+//
+// bark's own on-chain wallet supplies the inputs throughout, standing in for the
+// other party's signer. That models holding an unfinalised proposal, but not a
+// transaction carrying a foreign wallet's inputs: bark cannot contribute or sign an
+// input of a proposal it is handed.
+
+/// Move the output paying `script` to the end of the output list, as a
+/// transaction built by another party may.
+fn move_board_output_last(psbt: &mut Psbt, script: &ScriptBuf) {
+	let idx = psbt
+		.unsigned_tx
+		.output
+		.iter()
+		.position(|o| &o.script_pubkey == script)
+		.expect("psbt must pay to the board address");
+	let out = psbt.unsigned_tx.output.remove(idx);
+	psbt.unsigned_tx.output.push(out);
+	let meta = psbt.outputs.remove(idx);
+	psbt.outputs.push(meta);
+}
+
+fn in_mempool(ctx: &TestContext, txid: Txid) -> bool {
+	ctx.bitcoind()
+		.sync_client()
+		.call::<Vec<String>>("getrawmempool", &[])
+		.expect("getrawmempool")
+		.iter()
+		.any(|t| t == &txid.to_string())
+}
+
+/// The board output is found by script-pubkey, so it need not sit at vout 0.
+#[tokio::test]
+async fn board_psbt_output_at_any_index() {
+	require_bark_version!(> "0.6.1");
+
+	const BOARD_AMOUNT: u64 = 90_000;
+	let ctx = TestContext::new("bark/board_psbt_output_at_any_index").await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(300_000)).create().await;
+
+	let wallet = bark1.client().await;
+	let mut onchain = bark1.onchain_wallet().await;
+	onchain.sync(wallet.chain()).await.unwrap();
+
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let board_script = board_addr.script_pubkey();
+
+	// Two outputs, board last, so another output sits in front of the board.
+	let other = ctx.bitcoind().get_new_address();
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+	let mut psbt = onchain
+		.prepare_tx(&[(other, sat(20_000)), (board_addr, sat(BOARD_AMOUNT))], fee_rate)
+		.await
+		.unwrap();
+	move_board_output_last(&mut psbt, &board_script);
+
+	let board_vout = psbt
+		.unsigned_tx
+		.output
+		.iter()
+		.position(|o| o.script_pubkey == board_script)
+		.unwrap();
+	assert_ne!(board_vout, 0, "test is meaningless if the board output is at vout 0");
+
+	let pending = wallet
+		.board_psbt(psbt, keypair, expiry_height)
+		.await
+		.expect("board should cosign regardless of output index");
+
+	let [vtxo] = bark1.vtxos().await.try_into().expect("should have one board vtxo");
+	assert_eq!(pending.vtxos[0], vtxo.id);
+	assert!(matches!(vtxo.state, VtxoStateInfo::Locked { .. }));
+}
+
+/// bark never puts a funding transaction it cannot complete on-chain, neither when
+/// the board is created nor on any later drive: the `Confirming` double-spend probe
+/// re-broadcasts, and has to be skipped without the signatures.
+#[tokio::test]
+async fn board_psbt_unfinalized_is_not_broadcast() {
+	require_bark_version!(> "0.6.1");
+
+	const BOARD_AMOUNT: u64 = 90_000;
+	let ctx = TestContext::new("bark/board_psbt_unfinalized_is_not_broadcast").await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(200_000)).create().await;
+
+	let wallet = bark1.client().await;
+	let mut onchain = bark1.onchain_wallet().await;
+	onchain.sync(wallet.chain()).await.unwrap();
+
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+	// Deliberately not finished: this is the proposal as it is handed over.
+	let psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
+	let txid = psbt.unsigned_tx.compute_txid();
+
+	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
+	assert!(!in_mempool(&ctx, txid), "cosigning must not broadcast");
+
+	// The vtxo exists and is locked, so the board is durable even though nothing
+	// is on-chain yet.
+	let [vtxo] = bark1.vtxos().await.try_into().expect("should have one board vtxo");
+	assert!(matches!(vtxo.state, VtxoStateInfo::Locked { .. }));
+
+	// Drive the board repeatedly while the other party stays silent.
+	for _ in 0..3 {
+		ctx.generate_blocks(1).await;
+		let _ = wallet.sync_pending_boards().await;
+	}
+	assert!(!in_mempool(&ctx, txid), "no drive may broadcast it either");
+}
+
+/// Once the other party broadcasts, the `Confirming` machinery takes over.
+///
+/// Two inputs, which is both the amount-obscuring shape and the case where the
+/// conflict probe has more than one outpoint to check.
+#[tokio::test]
+async fn board_psbt_confirms_when_other_party_broadcasts() {
+	require_bark_version!(> "0.6.1");
+
+	const BOARD_AMOUNT: u64 = 120_000;
+	let ctx = TestContext::new("bark/board_psbt_confirms_when_other_party_broadcasts").await;
+	let srv = ctx.captaind("server").create().await;
+	// Two funded utxos so the transaction genuinely needs two inputs.
+	let bark1 = ctx.bark("bark1", &srv).create().await;
+	ctx.fund_bark(&bark1, sat(70_000)).await;
+	ctx.fund_bark(&bark1, sat(70_000)).await;
+
+	let wallet = bark1.client().await;
+	let mut onchain = bark1.onchain_wallet().await;
+	onchain.sync(wallet.chain()).await.unwrap();
+
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+	let psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
+	assert!(
+		psbt.unsigned_tx.input.len() >= 2,
+		"expected the board to need both utxos, got {} input(s)",
+		psbt.unsigned_tx.input.len(),
+	);
+
+	// The other party's finalised copy. Under segwit it has the same txid as the
+	// unfinalised one bark cosigned against.
+	let tx = onchain.finish_psbt(psbt.clone()).await.unwrap().extract_tx().unwrap();
+	assert_eq!(tx.compute_txid(), psbt.unsigned_tx.compute_txid());
+
+	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
+
+	// The other party broadcasts, not us.
+	ctx.bitcoind().sync_client().send_raw_transaction(&tx).unwrap();
+	ctx.bitcoind().await_transaction(tx.compute_txid()).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	assert_eq!(sat(BOARD_AMOUNT), bark1.spendable_balance().await);
+	assert_eq!(
+		bark1.pending_board_balance().await,
+		Amount::ZERO,
+		"board should have registered once confirmed",
+	);
 }

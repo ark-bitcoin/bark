@@ -1,0 +1,7 @@
+- `Wallet::board_psbt` boards from a funding transaction someone else broadcasts
+  Boarding used to require bark to sign and broadcast the funding transaction
+  itself, which ruled out payjoin: there the sender builds and broadcasts it. bark
+  now cosigns the board and then either broadcasts the transaction, if the PSBT is
+  complete, or waits for it to appear if it is not. The board output may sit at any
+  output index. Replaces `Wallet::board_tx`, now deprecated.
+  [#2419](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2419)
