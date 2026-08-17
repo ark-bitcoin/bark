@@ -54,6 +54,12 @@ in {
 			pkgs.just
 			# the justfile locates the cargo target dir with jq
 			pkgs.jq
+
+			# CI sets RUSTC_WRAPPER=sccache; shadow the host sccache with the
+			# nix one. The host binary picks up this shell's nix openssl via
+			# LD_LIBRARY_PATH, whose runtime closure (glibc) conflicts with the
+			# host libc it was linked against.
+			pkgs.sccache
 		] ++ lib.optionals (!isDarwin) [ # honggfuzz deps (Linux only)
 			pkgs.binutils-unwrapped
 			pkgs.libunwind
