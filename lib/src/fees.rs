@@ -120,13 +120,6 @@ impl BoardFees {
 		Some(fee.max(self.min_fee))
 	}
 
-	/// [BoardFees::calculate] for clients on protocol versions that round the ppm fee down.
-	#[deprecated(note = "only for protocol versions <= 3")]
-	pub fn calculate_legacy(&self, amount: Amount) -> Option<Amount> {
-		let numerator = amount.to_sat().checked_mul(self.ppm.0)?;
-		let fee = Amount::from_sat(numerator / 1_000_000).checked_add(self.base_fee)?;
-		Some(fee.max(self.min_fee))
-	}
 }
 
 /// Fees for offboarding from the ark.
@@ -166,23 +159,6 @@ impl OffboardFees {
 		self.base_fee.checked_add(weight_fee)?.checked_add(ppm_fee)
 	}
 
-	/// [OffboardFees::calculate] for clients on protocol versions that calculate ppm fees
-	/// per VTXO.
-	#[deprecated(note = "only for protocol versions <= 3")]
-	#[allow(deprecated)]
-	pub fn calculate_legacy(
-		&self,
-		destination: &ScriptBuf,
-		amount: Amount,
-		fee_rate: FeeRate,
-		vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
-	) -> Option<Amount> {
-		let weight_fee = self.fixed_additional_vb.checked_add(destination.as_script().len() as u64)
-			.and_then(Weight::from_vb)
-			.and_then(|w| fee_rate.checked_mul_by_weight(w))?;
-		let ppm_fee = calc_ppm_expiry_fee_legacy(Some(amount), &self.ppm_expiry_table, vtxos)?;
-		self.base_fee.checked_add(weight_fee)?.checked_add(ppm_fee)
-	}
 }
 
 /// Fees for refresh operations.
@@ -217,17 +193,6 @@ impl RefreshFees {
 		calc_ppm_expiry_fee(None, &self.ppm_expiry_table, vtxos)
 	}
 
-	/// [RefreshFees::calculate] for clients on protocol versions that calculate ppm fees
-	/// per VTXO.
-	#[deprecated(note = "only for protocol versions <= 3")]
-	#[allow(deprecated)]
-	pub fn calculate_legacy(
-		&self,
-		vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
-	) -> Option<Amount> {
-		let fee = calc_ppm_expiry_fee_legacy(None, &self.ppm_expiry_table, vtxos)?;
-		self.base_fee.checked_add(fee)
-	}
 }
 
 /// Fees for lightning receive operations.
@@ -248,13 +213,6 @@ impl LightningReceiveFees {
 		self.base_fee.checked_add((amount * self.ppm).to_amount_ceil()?)
 	}
 
-	/// [LightningReceiveFees::calculate] for clients on protocol versions that round the ppm
-	/// fee down.
-	#[deprecated(note = "only for protocol versions <= 3")]
-	pub fn calculate_legacy(&self, amount: Amount) -> Option<Amount> {
-		let numerator = amount.to_sat().checked_mul(self.ppm.0)?;
-		self.base_fee.checked_add(Amount::from_sat(numerator / 1_000_000))
-	}
 }
 
 /// Fees for lightning send operations.
@@ -284,18 +242,6 @@ impl LightningSendFees {
 		Some(self.base_fee.checked_add(ppm)?.max(self.min_fee))
 	}
 
-	/// [LightningSendFees::calculate] for clients on protocol versions that calculate ppm fees
-	/// per VTXO.
-	#[deprecated(note = "only for protocol versions <= 3")]
-	#[allow(deprecated)]
-	pub fn calculate_legacy(
-		&self,
-		amount: Amount,
-		vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
-	) -> Option<Amount> {
-		let ppm = calc_ppm_expiry_fee_legacy(Some(amount), &self.ppm_expiry_table, vtxos)?;
-		Some(self.base_fee.checked_add(ppm)?.max(self.min_fee))
-	}
 }
 
 /// A very basic struct to hold information for use in calculating the fees of transactions.
@@ -600,42 +546,6 @@ pub fn calc_ppm_expiry_fee(
 	total_fee.to_amount_ceil()
 }
 
-/// [calc_ppm_expiry_fee] as calculated by clients on protocol versions that apply the fee rate
-/// to each VTXO separately rather than to the total.
-#[deprecated(note = "only for protocol versions <= 3")]
-pub fn calc_ppm_expiry_fee_legacy(
-	fee_chargeable_amount: Option<Amount>,
-	ppm_expiry_table: &Vec<PpmExpiryFeeEntry>,
-	vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
-) -> Option<Amount> {
-	let mut total_fee = Amount::ZERO;
-	let mut remaining = fee_chargeable_amount;
-	for v in vtxos {
-		// If we were given a total amount, we should only account for that amount, else we should
-		// assume every VTXO will be fully spent.
-		let fee_chargeable_amount = if let Some(ref mut remaining) = remaining {
-			let amount = v.amount.min(*remaining);
-			*remaining -= amount;
-			amount
-		} else {
-			v.amount
-		};
-
-		// We assume the table is sorted by expiry_blocks_threshold in ascending order
-		let entry = ppm_expiry_table
-			.iter()
-			.rev()
-			.find(|entry| v.expiry_blocks >= entry.expiry_blocks_threshold);
-
-		// If we can't find an entry that is suitable, we assume no fee is necessary
-		if let Some(entry) = entry {
-			let numerator = fee_chargeable_amount.to_sat().checked_mul(entry.ppm.0)?;
-			total_fee = total_fee.checked_add(Amount::from_sat(numerator / 1_000_000))?;
-		}
-	}
-	Some(total_fee)
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -661,15 +571,11 @@ mod tests {
 		// base (100) + (10,000 * 1,000) / 1,000,000 = 100 + 10 = MAX(110, 330) = 330
 		assert_eq!(fee, Amount::from_sat(330));
 
-		// Fractional fees round up, the legacy calculation rounds down.
+		// Fractional fees round up.
 		fees.min_fee = Amount::ZERO;
 		let amount = Amount::from_sat(10_500);
 		// base (100) + ceil(10.5) = 111
 		assert_eq!(fees.calculate(amount), Some(Amount::from_sat(111)));
-		#[allow(deprecated)]
-		let fee = fees.calculate_legacy(amount);
-		// base (100) + floor(10.5) = 110
-		assert_eq!(fee, Some(Amount::from_sat(110)));
 	}
 
 	#[test]
@@ -859,14 +765,10 @@ mod tests {
 		// base (100) + (10,000 * 2,000) / 1,000,000 = 100 + 20 = 120
 		assert_eq!(fee, Amount::from_sat(120));
 
-		// Fractional fees round up, the legacy calculation rounds down.
+		// Fractional fees round up.
 		let amount = Amount::from_sat(10_400);
 		// base (100) + ceil(20.8) = 121
 		assert_eq!(fees.calculate(amount), Some(Amount::from_sat(121)));
-		#[allow(deprecated)]
-		let fee = fees.calculate_legacy(amount);
-		// base (100) + floor(20.8) = 120
-		assert_eq!(fee, Some(Amount::from_sat(120)));
 	}
 
 	#[test]
@@ -940,11 +842,8 @@ mod tests {
 			PpmExpiryFeeEntry { expiry_blocks_threshold: 2_016, ppm: PpmFeeRate(4_000) },
 		];
 
-		// Small amounts truncate to zero per VTXO but not on the total.
+		// Small amounts that would truncate to zero per VTXO still pay on the total.
 		let vtxos = vec![VtxoFeeInfo { amount: Amount::from_sat(330), expiry_blocks: 1_500 }; 100];
-		let fee = calc_ppm_expiry_fee_legacy(None, &table, vtxos.clone());
-		// floor(330 * 2,000 / 1,000,000) = 0 per VTXO
-		assert_eq!(fee, Some(Amount::ZERO));
 		let fee = calc_ppm_expiry_fee(None, &table, vtxos);
 		// 100 * 330 = 33,000; 33,000 * 2,000 / 1,000,000 = 66
 		assert_eq!(fee, Some(Amount::from_sat(66)));
@@ -955,9 +854,6 @@ mod tests {
 			VtxoFeeInfo { amount: Amount::from_sat(900), expiry_blocks: 1_200 },
 			VtxoFeeInfo { amount: Amount::from_sat(1_300), expiry_blocks: 2_500 },
 		];
-		let fee = calc_ppm_expiry_fee_legacy(None, &table, vtxos.clone());
-		// floor(1.8) + floor(1.8) + floor(5.2) = 1 + 1 + 5 = 7
-		assert_eq!(fee, Some(Amount::from_sat(7)));
 		let fee = calc_ppm_expiry_fee(None, &table, vtxos);
 		// ceil((1,800 * 2,000 + 1,300 * 4,000) / 1,000,000) = ceil(8.8) = 9
 		assert_eq!(fee, Some(Amount::from_sat(9)));
@@ -969,17 +865,12 @@ mod tests {
 			VtxoFeeInfo { amount: Amount::from_sat(900), expiry_blocks: 2_500 },
 		];
 		let cap = Some(Amount::from_sat(1_500));
-		let fee = calc_ppm_expiry_fee_legacy(cap, &table, vtxos.clone());
-		// Chargeable 900 + 600 + 0: floor(1.8) + floor(1.2) = 2
-		assert_eq!(fee, Some(Amount::from_sat(2)));
 		let fee = calc_ppm_expiry_fee(cap, &table, vtxos);
 		// Chargeable 900 + 600 + 0: ceil(1,500 * 2,000 / 1,000,000) = 3
 		assert_eq!(fee, Some(Amount::from_sat(3)));
 
-		// VTXOs below every threshold are free in both variants.
+		// VTXOs below every threshold are free.
 		let vtxos = vec![VtxoFeeInfo { amount: Amount::from_sat(100_000), expiry_blocks: 500 }; 10];
-		let fee = calc_ppm_expiry_fee_legacy(None, &table, vtxos.clone());
-		assert_eq!(fee, Some(Amount::ZERO));
 		let fee = calc_ppm_expiry_fee(None, &table, vtxos);
 		assert_eq!(fee, Some(Amount::ZERO));
 	}

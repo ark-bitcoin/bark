@@ -199,7 +199,7 @@ impl rpc::server::ArkService for Server {
 		};
 
 		let resp = self.cosign_board(
-			amount, user_pubkey, expiry_height, utxo, funding_tx.as_ref(), pub_nonce, pver,
+			amount, user_pubkey, expiry_height, utxo, funding_tx.as_ref(), pub_nonce,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp.into()))
@@ -322,7 +322,7 @@ impl rpc::server::ArkService for Server {
 			.transpose()
 			.map_err(|_| tonic::Status::invalid_argument("invalid mailbox_id"))?;
 
-		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids, mailbox_id, pver)
+		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids, mailbox_id)
 			.await
 			.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
@@ -411,7 +411,6 @@ impl rpc::server::ArkService for Server {
 			req.min_cltv_delta as BlockDelta,
 			mailbox_id,
 			req.description,
-			pver,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))
@@ -449,7 +448,7 @@ impl rpc::server::ArkService for Server {
 		let htlc_recv_expiry = req.htlc_recv_expiry as BlockHeight;
 
 		let (sub, htlcs) = self.prepare_lightning_claim(
-			payment_hash, user_pubkey, htlc_recv_expiry, req.lightning_receive_anti_dos, pver,
+			payment_hash, user_pubkey, htlc_recv_expiry, req.lightning_receive_anti_dos,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::PrepareLightningReceiveClaimResponse {
@@ -583,7 +582,6 @@ impl rpc::server::ArkService for Server {
 			inputs,
 			vtxo_requests,
 			unlock_preimage,
-			pver,
 			client: crate::telemetry::current_client(),
 		};
 
@@ -665,7 +663,7 @@ impl rpc::server::ArkService for Server {
 		}
 
 		let unlock_hash = self.register_delegated_round_participation(
-			inputs, outputs, req.scheduled_height, pver,
+			inputs, outputs, req.scheduled_height,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::RoundParticipationResponse {
@@ -827,7 +825,7 @@ impl rpc::server::ArkService for Server {
 			.map(|v| OffboardRequestAttestation::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
 		let resp = self.prepare_offboard(
-			request, input_vtxos, attestation, pver,
+			request, input_vtxos, attestation,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::PrepareOffboardResponse {

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bark::BarkNetwork;
 
-use ark_testing::{Bark, TestContext, require_bark_version};
+use ark_testing::{Bark, TestContext};
 use ark_testing::util::ToAltString;
 
 #[tokio::test]
@@ -32,8 +32,6 @@ async fn bark_create_is_atomic() {
 
 #[tokio::test]
 async fn bark_address_works_offline() {
-	require_bark_version!(> "0.1.3");
-
 	let ctx = TestContext::new("bark/bark_address_works_offline").await;
 	let srv = ctx.captaind("server").create().await;
 	let bark = ctx.bark("bark", &srv).create().await;

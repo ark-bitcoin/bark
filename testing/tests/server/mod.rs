@@ -719,8 +719,6 @@ async fn full_round() {
 
 #[tokio::test]
 async fn double_spend_arkoor() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("server/double_spend_arkoor").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -1250,8 +1248,6 @@ async fn request_board_cosign_with_funding_tx(
 /// seen, so the client can pick any outpoint it likes.
 #[tokio::test]
 async fn reject_board_cosign_utxo_not_in_funding_tx() {
-	require_bark_version!(> "0.4.0");
-
 	let ctx = TestContext::new("server/reject_board_cosign_utxo_not_in_funding_tx").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1288,8 +1284,6 @@ async fn reject_board_cosign_utxo_not_in_funding_tx() {
 /// A funding tx must spend inputs our bitcoind knows, otherwise it is made up.
 #[tokio::test]
 async fn reject_board_cosign_unknown_funding_input() {
-	require_bark_version!(> "0.4.0");
-
 	let ctx = TestContext::new("server/reject_board_cosign_unknown_funding_input").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1313,8 +1307,6 @@ async fn reject_board_cosign_unknown_funding_input() {
 /// that is still in the mempool must keep working.
 #[tokio::test]
 async fn accept_board_cosign_with_unconfirmed_funding_input() {
-	require_bark_version!(> "0.4.0");
-
 	let ctx = TestContext::new("server/accept_board_cosign_with_unconfirmed_funding_input").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1344,8 +1336,6 @@ async fn accept_board_cosign_with_unconfirmed_funding_input() {
 /// doesn't exist on chain, which the server can never claim.
 #[tokio::test]
 async fn reject_board_cosign_funding_tx_spending_vtxo() {
-	require_bark_version!(> "0.4.0");
-
 	let ctx = TestContext::new("server/reject_board_cosign_funding_tx_spending_vtxo").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1686,8 +1676,6 @@ async fn should_refuse_ln_pay_with_invalid_attestation() {
 
 #[tokio::test]
 async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("server/should_refuse_oor_input_vtxo_that_is_being_exited").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1748,8 +1736,6 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 
 #[tokio::test]
 async fn mailbox_post_and_process_with_auth() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("server/mailbox_post_and_process_with_auth").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -2239,8 +2225,6 @@ async fn undo_round() {
 /// spent and rejects the register_board_vtxo call.
 #[tokio::test]
 async fn board_exit_tx_prevents_registration() {
-	require_bark_version!(> "0.1.2");
-
 	let ctx = TestContext::new("server/board_exit_tx_prevents_registration").await;
 	let srv = ctx.captaind("server").funded(btc(1)).create().await;
 	let bark = ctx.bark("bark1", &srv).funded(sat(200_000)).create().await;

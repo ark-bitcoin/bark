@@ -3,14 +3,12 @@
 
 use server_rpc::client::ACCESS_TOKEN_HEADER;
 
-use ark_testing::{require_bark_version, TestContext};
+use ark_testing::TestContext;
 use ark_testing::daemon::captaind;
 
 
 #[tokio::test]
 async fn access_token_is_sent() {
-	require_bark_version!(> "0.1.2");
-
 	let ctx = TestContext::new("bark/access_token_is_sent").await;
 	let srv = ctx.captaind("server").create().await;
 

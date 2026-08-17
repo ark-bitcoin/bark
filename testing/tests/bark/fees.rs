@@ -24,8 +24,6 @@ fn assert_eq_unordered<T: Ord + Clone + std::fmt::Debug>(a: &[T], b: &[T]) {
 
 #[tokio::test]
 async fn exit_fee_anchor_only_covers_cost() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("exit/exit_fee_anchor_only_covers_cost").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
@@ -73,8 +71,6 @@ async fn exit_fee_anchor_only_covers_cost() {
 
 #[tokio::test]
 async fn exit_fee_anchor_no_dust_change_error() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("exit/exit_fee_anchor_no_dust_change_error").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
@@ -124,8 +120,6 @@ async fn exit_fee_anchor_no_dust_change_error() {
 
 #[tokio::test]
 async fn board_fee_base_and_ppm() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("fees/board_fee_base_and_ppm").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
@@ -168,8 +162,6 @@ async fn board_fee_base_and_ppm() {
 
 #[tokio::test]
 async fn board_fee_min_fee_applies() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("fees/board_fee_min_fee_applies").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
@@ -209,8 +201,6 @@ async fn board_fee_min_fee_applies() {
 
 #[tokio::test]
 async fn board_fee_rejects_when_fee_exceeds_amount() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("fees/board_fee_rejects_when_fee_exceeds_amount").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
@@ -429,46 +419,23 @@ async fn refresh_should_refresh_vtxos() {
 	assert_eq!(movements.len(), 4); // 3 boards + 1 refresh
 	let refresh_mvt = movements.last().unwrap();
 
-	// Up to and including bark 0.3.0, a manual refresh also bundled in VTXOs that merely met
-	// the "should-refresh" criteria (here, VTXO B). Since 0.3.0 this is no longer desired as
-	// it was surprising for callers who hand-picked their inputs: only the explicitly
-	// requested VTXO C is refreshed, and A/B are left untouched.
-	if is_bark_version!(<= "0.3.0") {
-		assert_eq!(
-			vtxos.len(), 2, "Should have 2 VTXOs: 1 refresh output, 1 should-refresh consolidation",
-		);
+	// A manual refresh only refreshes the VTXOs it was given: A and B merely meet the
+	// "should-refresh" criteria, which is not enough to bundle them in.
+	assert_eq!(vtxos.len(), 3, "A and B must stay untouched, C is replaced by its refresh output");
+	assert_eq!(vtxos.iter().filter(|v| v.amount == sat(100_000)).count(), 1, "VTXO A untouched");
+	assert_eq!(vtxos.iter().filter(|v| v.amount == sat(200_000)).count(), 1, "VTXO B untouched");
 
-		let expected_fee = sat(6_500);
-		assert_eq!(
-			vtxos.iter().filter(|v| v.amount == sat(296_500)).count(), 1,
-			"One VTXO which was explicitly refreshed, includes base fee",
-		);
-		assert_eq!(
-			vtxos.iter().filter(|v| v.amount == sat(297_000)).count(), 1,
-			"One VTXO which is a consolidation of 100K and 200K VTXOs, excludes base fee",
-		);
+	let expected_fee = sat(3_500);
+	assert_eq!(
+		vtxos.iter().filter(|v| v.amount == sat(296_500)).count(), 1,
+		"One VTXO which was explicitly refreshed, includes base fee",
+	);
 
-		// Balance = 296,500 + 297,000 = 593,500
-		assert_eq!(bark.spendable_balance().await, sat(600_000) - expected_fee);
-		assert_eq!(refresh_mvt.offchain_fee, expected_fee);
-		assert_eq!(refresh_mvt.effective_balance, -expected_fee.to_signed().unwrap());
-	} else {
-		assert_eq!(vtxos.len(), 3, "A and B must stay untouched, C is replaced by its refresh output");
-		assert_eq!(vtxos.iter().filter(|v| v.amount == sat(100_000)).count(), 1, "VTXO A untouched");
-		assert_eq!(vtxos.iter().filter(|v| v.amount == sat(200_000)).count(), 1, "VTXO B untouched");
-
-		let expected_fee = sat(3_500);
-		assert_eq!(
-			vtxos.iter().filter(|v| v.amount == sat(296_500)).count(), 1,
-			"One VTXO which was explicitly refreshed, includes base fee",
-		);
-
-		// Balance = 100,000 + 200,000 + 296,500 = 596,500
-		assert_eq!(bark.spendable_balance().await, sat(600_000) - expected_fee);
-		assert_eq!(refresh_mvt.offchain_fee, expected_fee);
-		assert_eq!(refresh_mvt.effective_balance, -expected_fee.to_signed().unwrap());
-		assert_eq!(refresh_mvt.input_vtxos, vec![vtxo.id], "only C should be an input to the refresh");
-	}
+	// Balance = 100,000 + 200,000 + 296,500 = 596,500
+	assert_eq!(bark.spendable_balance().await, sat(600_000) - expected_fee);
+	assert_eq!(refresh_mvt.offchain_fee, expected_fee);
+	assert_eq!(refresh_mvt.effective_balance, -expected_fee.to_signed().unwrap());
+	assert_eq!(refresh_mvt.input_vtxos, vec![vtxo.id], "only C should be an input to the refresh");
 }
 
 #[tokio::test]
@@ -587,8 +554,6 @@ async fn refresh_fee_rejects_dust_output() {
 
 #[tokio::test]
 async fn offboard_fee_base_deducted() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("fees/offboard_fee_base_deducted").await;
 	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -643,8 +608,6 @@ async fn offboard_fee_base_deducted() {
 
 #[tokio::test]
 async fn offboard_fee_with_ppm_expiry() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("fees/offboard_fee_with_ppm_expiry").await;
 	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -696,8 +659,6 @@ async fn offboard_fee_with_ppm_expiry() {
 
 #[tokio::test]
 async fn offboard_all_rejects_dust_output() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("fees/offboard_all_rejects_dust_output").await;
 	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -732,8 +693,6 @@ async fn offboard_all_rejects_dust_output() {
 
 #[tokio::test]
 async fn send_onchain_fee_deducted() {
-	require_bark_version!(> "0.1.4");
-
 	let ctx = TestContext::new("fees/send_onchain_fee_deducted").await;
 	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
 		cfg.fees.offboard = OffboardFees {

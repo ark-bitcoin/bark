@@ -72,7 +72,7 @@ use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::rpc::BitcoinAsyncRpcExt;
 use bitcoind_async_client::Client as BitcoindClient;
 use bitcoind_async_client::traits::Reader;
-use server_rpc::pver::PROTOCOL_VERSION_PPM_FEE_TOTAL;
+
 use crate::bitcoind as bcd;
 use crate::sync::{ChainEventListener, SyncManager};
 use crate::error::ContextExt;
@@ -712,7 +712,6 @@ impl Server {
 		utxo: OutPoint,
 		funding_tx: Option<&Transaction>,
 		user_pub_nonce: PublicNonce,
-		pver: u64,
 	) -> anyhow::Result<ark::board::BoardCosignResponse> {
 		let min_amount = self.config.min_board_amount.max(P2TR_DUST);
 
@@ -727,12 +726,8 @@ impl Server {
 		}
 
 		// Validate board fees
-		let fee = if pver >= PROTOCOL_VERSION_PPM_FEE_TOTAL {
-			self.config.fees.board.calculate(amount)
-		} else {
-			#[allow(deprecated)]
-			self.config.fees.board.calculate_legacy(amount)
-		}.context("fee overflowed")?;
+		let fee = self.config.fees.board.calculate(amount)
+			.context("fee overflowed")?;
 		validate_and_subtract_fee(amount, fee)
 			.badarg("Board amount cannot support required fee")?;
 

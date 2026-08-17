@@ -251,8 +251,6 @@ async fn exit_and_send_vtxo() {
 
 #[tokio::test]
 async fn exit_after_board() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("exit/exit_after_board").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -276,8 +274,6 @@ async fn exit_after_board() {
 
 #[tokio::test]
 async fn exit_oor() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("exit/exit_oor").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -485,8 +481,6 @@ async fn exit_revoked_lightning_payment() {
 
 #[tokio::test]
 async fn bark_should_exit_a_pending_board() {
-	require_bark_version!(> "0.2.5");
-
 	let ctx = TestContext::new("exit/bark_should_exit_a_pending_board").await;
 
 	#[derive(Clone)]
@@ -921,8 +915,6 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 #[tokio::test]
 async fn bark_claim_specific_exit_in_low_fee_market() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("exit/bark_claim_specific_exit_in_low_fee_market").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).cfg(|cfg| {
@@ -957,8 +949,6 @@ async fn bark_claim_specific_exit_in_low_fee_market() {
 
 #[tokio::test]
 async fn bark_claim_all_exits_in_low_fee_market() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("exit/bark_claim_all_exits_in_low_fee_market").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).cfg(|cfg| {
@@ -992,8 +982,6 @@ async fn bark_claim_all_exits_in_low_fee_market() {
 
 #[tokio::test]
 async fn exit_spend_anchor_single_utxo_required() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("exit/exit_spend_anchor_single_utxo_required").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1020,8 +1008,6 @@ async fn exit_spend_anchor_single_utxo_required() {
 
 #[tokio::test]
 async fn exit_spend_anchor_multiple_utxos_required() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("exit/exit_spend_anchor_multiple_utxos_required").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1052,8 +1038,6 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 
 #[tokio::test]
 async fn exit_oor_ping_pong_then_rbf_tx() {
-	require_bark_version!(> "0.2.0");
-
 	let ctx = TestContext::new("exit/exit_oor_ping_pong_then_rbf_tx").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -1342,8 +1326,6 @@ async fn vtxo_remains_spendable_while_exit_pending() {
 /// the exit movement flips to `Successful`.
 #[tokio::test]
 async fn exited_vtxo_is_not_spendable() {
-	require_bark_version!(> "0.2.5");
-
 	let ctx = TestContext::new("exit/exited_vtxo_is_not_spendable").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
