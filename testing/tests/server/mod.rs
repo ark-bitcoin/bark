@@ -36,7 +36,7 @@ use ark::attestations::VtxoStatusAttestation;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::rounds::{Challenge, RoundAttemptAttestation, RoundSeq};
 use ark::tree::signed::builder::SignedTreeBuilder;
-use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
+use ark::tree::signed::{LeafVtxoCosignContext, LeafVtxoCosignRequest, UnlockPreimage};
 use ark::vtxo::Full;
 use bark::Wallet;
 use bark_json::primitives::WalletVtxoInfo;
@@ -1617,11 +1617,40 @@ async fn test_cosign_vtxo_tree() {
 
 	let mut vtxos = tree.into_cached_tree().output_vtxos().collect::<Vec<_>>();
 	for vtxo in vtxos.iter_mut() {
-		let (ctx, req) = LeafVtxoCosignContext::new(vtxo, &funding_tx, &vtxo_key);
-		let resp = srv.cosign_hashlocked_leaf(&req, vtxo, &funding_tx);
+		let (ctx, req) = LeafVtxoCosignContext::new(vtxo, &funding_tx, &vtxo_key).unwrap();
+		let resp = srv.cosign_hashlocked_leaf(&req, vtxo, &funding_tx).unwrap();
 		assert!(ctx.finalize(vtxo, resp));
 	}
 
+}
+
+#[tokio::test]
+async fn leaf_cosign_refuses_non_hark_vtxo() {
+	let ctx = TestContext::new("server/leaf_cosign_refuses_non_hark_vtxo").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	ctx.refresh_all(&srv, &[&bark]).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+
+	// an arkoor send leaves a change VTXO whose chain anchor is the round
+	// funding tx, but whose last genesis transition is not hash-locked
+	bark.send_oor(bark2.address().await, sat(100_000)).await;
+	let vtxo_id = bark.vtxo_ids().await[0];
+
+	let key = Keypair::new(&SECP, &mut thread_rng());
+	let (_sec_nonce, pub_nonce) = musig::nonce_pair(&key);
+	let req = LeafVtxoCosignRequest { vtxo_id, pub_nonce };
+
+	let mut rpc = srv.get_public_rpc().await;
+	let err = rpc.request_leaf_vtxo_cosign(protos::LeafVtxoCosignRequest::from(req)).await
+		.expect_err("leaf cosign of a non-hArk VTXO should be refused");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "unexpected error: {err:?}");
+	assert!(err.message().contains("not a hArk leaf"), "unexpected message: {}", err.message());
 }
 
 #[tokio::test]

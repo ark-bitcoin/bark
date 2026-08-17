@@ -568,8 +568,9 @@ impl Process {
 		// we rely here on the order of the vtxos being identical to the order of the requests
 		let mut vtxos = tree.output_vtxos().collect::<Vec<_>>();
 		for (vtxo, leaf_key) in vtxos.iter_mut().zip(leaf_keys.iter()) {
-			let (ctx, req) = LeafVtxoCosignContext::new(vtxo, &funding_psbt.unsigned_tx, &leaf_key);
-			let resp = self.srv.cosign_hashlocked_leaf(&req, vtxo, &funding_psbt.unsigned_tx);
+			let (ctx, req) = LeafVtxoCosignContext::new(vtxo, &funding_psbt.unsigned_tx, &leaf_key)
+				.context("pool vtxo is not a hArk leaf")?;
+			let resp = self.srv.cosign_hashlocked_leaf(&req, vtxo, &funding_psbt.unsigned_tx)?;
 			ensure!(ctx.finalize(vtxo, resp), "failed to finalize leaf vtxo");
 			ensure!(vtxo.provide_unlock_preimage(unlock_preimage), "invalid unlock preimage");
 		}

@@ -877,8 +877,10 @@ impl Vtxo<Full, VtxoPolicy> {
 		use crate::tree::signed::{LeafVtxoCosignContext, LeafVtxoCosignResponse};
 
 		// first sign and provide the signature
-		let (ctx, req) = LeafVtxoCosignContext::new(self, chain_anchor, user_key);
-		let cosign = LeafVtxoCosignResponse::new_cosign(&req, self, chain_anchor, server_key);
+		let (ctx, req) = LeafVtxoCosignContext::new(self, chain_anchor, user_key)
+			.expect("not a hArk leaf VTXO");
+		let cosign = LeafVtxoCosignResponse::new_cosign(&req, self, chain_anchor, server_key)
+			.expect("not a hArk leaf VTXO");
 		assert!(ctx.finalize(self, cosign));
 		// then provide preimage
 		assert!(self.provide_unlock_preimage(unlock_preimage));
