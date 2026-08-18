@@ -58,7 +58,7 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::{info, trace, warn};
 
 use ark::{Vtxo, VtxoId, VtxoRequest};
-use ark::vtxo::{Full, VtxoRef};
+use ark::vtxo::Full;
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
 use ark::lightning::PaymentHash;
@@ -67,7 +67,7 @@ use ark::musig::{self, PublicNonce};
 use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPreimage};
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
-use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, BlockRef, P2TR_DUST};
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::rpc::BitcoinAsyncRpcExt;
 use bitcoind_async_client::Client as BitcoindClient;
@@ -993,52 +993,6 @@ impl Server {
 			.mark_vtxos_registered(registered_ids);
 		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
 		Ok(())
-	}
-
-	pub async fn check_vtxos_not_exited<V: VtxoRef>(
-		&self,
-		vtxos: impl IntoIterator<Item=V>
-	) -> anyhow::Result<()> {
-		for vtxo in vtxos {
-			let vtxo_id = vtxo.vtxo_id();
-			let txid = vtxo_id.to_point().txid;
-			let status = bcd::tx_status(&self.bitcoind, txid).await?;
-
-			match status {
-				TxStatus::Confirmed(_) => {
-					// TODO: should we mark vtxo as spent here?
-					return badarg!("cannot spend vtxo that is already exited: {}", vtxo_id);
-				},
-				TxStatus::Mempool => {
-					return badarg!("cannot spend vtxo that is being exited: {}", vtxo_id);
-				},
-				TxStatus::NotFound => {},
-			}
-		}
-
-		Ok(())
-	}
-
-	/// Returns the subset of `vtxos` whose own funding output is already on
-	/// chain (confirmed or in the mempool) — i.e. that have been exited and so
-	/// can no longer be spent off-chain.
-	///
-	/// Unlike [Server::check_vtxos_not_exited] this reports *all* exited inputs
-	/// instead of failing on the first one.
-	pub async fn find_exited_vtxos<V: VtxoRef>(
-		&self,
-		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<Vec<VtxoId>> {
-		let mut exited = Vec::new();
-		for vtxo in vtxos {
-			let vtxo_id = vtxo.vtxo_id();
-			let txid = vtxo_id.to_point().txid;
-			match bcd::tx_status(&self.bitcoind, txid).await? {
-				TxStatus::Confirmed(_) | TxStatus::Mempool => exited.push(vtxo_id),
-				TxStatus::NotFound => {},
-			}
-		}
-		Ok(exited)
 	}
 
 	/// Unblind a [BlindedMailboxIdentifier]

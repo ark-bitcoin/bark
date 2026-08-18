@@ -833,7 +833,7 @@ async fn offboard_exit_attack(test_name: &str, n_vtxos: usize) -> bitcoin::Amoun
 /// - bark >= 0.2.6 (incl. DIRTY working-tree builds): the leaf is NOT force-exited; it stays
 ///   `Spendable`, off-chain, and refreshable.
 /// - bark < 0.2.6: the pre-fix behaviour — the leaf is force-exited and the server rejects refresh
-///   via `check_vtxos_not_exited`.
+///   because the vtxo row records the exit's confirmation height.
 ///
 /// The `safe` wallet (which spends its receive to itself, adding a checkpoint) is a control that is
 /// never force-exited in either case.
@@ -1238,7 +1238,8 @@ async fn server_refuses_offboard_of_claimed_exited_vtxo() {
 	let refusal = res.refusal.expect(
 		"server accepted an offboard of a vtxo whose exit was already claimed",
 	);
-	assert!(refusal.to_lowercase().contains("exit"),
+	let refusal_msg = refusal.to_lowercase();
+	assert!(refusal_msg.contains("exit") || refusal_msg.contains("unusable"),
 		"expected an 'already exited' refusal from the server, got: {}", refusal,
 	);
 	assert_eq!(res.payout, sat(0),
@@ -1264,7 +1265,8 @@ async fn offboard_of_confirmed_exited_vtxo_never_costs_server() {
 		res.payout, res.unconfiscated,
 	);
 	if let Some(ref refusal) = res.refusal {
-		assert!(refusal.to_lowercase().contains("exit"),
+		let refusal_msg = refusal.to_lowercase();
+		assert!(refusal_msg.contains("exit") || refusal_msg.contains("unusable"),
 			"expected an 'already exited' refusal from the server, got: {}", refusal,
 		);
 	}

@@ -602,16 +602,6 @@ impl CollectingPayments {
 			return Err(e).context("amounts check failed");
 		}
 
-		let exited = srv.find_exited_vtxos(&input_vtxos).await
-			.context("error checking whether inputs were exited")?;
-		if !exited.is_empty() {
-			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
-				error: format!("input vtxo(s) already exited: {:?}", exited),
-			);
-			return badarg!("input vtxo(s) already exited")
-				.unusable_inputs(exited);
-		}
-
 		// Finally, we are done
 		self.register_interactive_participation(
 			flux_guard, input_vtxos, vtxo_requests, unlock_preimage, client,
@@ -699,22 +689,6 @@ impl CollectingPayments {
 			Ok(i) => i,
 			Err(e) => return Err(ProcessHarkParticipationError::BadParticipation(e)),
 		};
-
-		let exited = match srv.find_exited_vtxos(&input_vtxos).await {
-			Ok(e) => e,
-			Err(e) => return Err(ProcessHarkParticipationError::BadParticipation(e)),
-		};
-		if !exited.is_empty() {
-			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
-				error: format!("input vtxo(s) already exited: {:?}", exited),
-			);
-			return Err(ProcessHarkParticipationError::BadParticipation(
-				ContextExt::<(), _>::unusable_inputs(
-					badarg!("input vtxo(s) already exited"),
-					exited,
-				).unwrap_err()
-			));
-		}
 
 		// Finally, we are done
 		self.register_delegated_participation(
@@ -1912,13 +1886,6 @@ impl Server {
 			if let Err(e) = vtxo.check_spendable(chain_tip) {
 				debug!("delegated round input {} is not spendable: {:#}", vtxo.vtxo_id, e);
 				unusable.push(vtxo.vtxo_id);
-			}
-		}
-		for id in self.find_exited_vtxos(&input_ids).await
-			.context("error checking whether inputs were exited")?
-		{
-			if !unusable.contains(&id) {
-				unusable.push(id);
 			}
 		}
 		if !unusable.is_empty() {

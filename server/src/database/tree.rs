@@ -600,6 +600,11 @@ async fn apply_vtxo_updates(
 // -- Individual update functions --
 
 /// Idempotent: succeeds if already spent with the same oor_spent_txid.
+///
+/// A vtxo with a `confirmed_height` has exited onchain and is gone, so the
+/// UPDATE refuses a fresh spend of it. Replaying the exact same spend stays
+/// idempotent even when the exit confirmed afterwards, so a retry of an arkoor
+/// we already signed still succeeds.
 async fn do_oor_spend_updates(
 	tx: &tokio_postgres::Transaction<'_>,
 	spends: &[OorSpendUpdate],
@@ -611,25 +616,30 @@ async fn do_oor_spend_updates(
 		UPDATE vtxo SET spend_state = 'spent', oor_spent_txid = u.txid, updated_at = NOW()
 		FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
 		WHERE vtxo.vtxo_id = u.vtxo_id
-		AND (vtxo.spend_state = 'spendable'
-			OR vtxo.spend_state = 'pool'
-			OR vtxo.spend_state = 'htlc-recv-unclaimed'
+		AND ((vtxo.confirmed_height IS NULL
+				AND (vtxo.spend_state = 'spendable'
+					OR vtxo.spend_state = 'pool'
+					OR vtxo.spend_state = 'htlc-recv-unclaimed'))
 			OR (vtxo.spend_state = 'spent' AND vtxo.oor_spent_txid = u.txid))
 	", &[&ids, &txids]).await.context("failed to mark VTXOs as oor-spent")?;
 	if rows != spends.len() as u64 {
 		// Find the first vtxo that wasn't spendable and doesn't match our txid
 		let bad = tx.query_one("
-			SELECT u.vtxo_id, v.spend_state::text, v.oor_spent_txid
+			SELECT u.vtxo_id, v.spend_state::text, v.oor_spent_txid, v.confirmed_height
 			FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
 			WHERE v.vtxo_id IS NULL
-				OR (v.spend_state != 'spendable'
-					AND v.spend_state != 'pool'
-					AND v.spend_state != 'htlc-recv-unclaimed'
+				OR (NOT (v.confirmed_height IS NULL
+						AND (v.spend_state = 'spendable'
+							OR v.spend_state = 'pool'
+							OR v.spend_state = 'htlc-recv-unclaimed'))
 					AND NOT (v.spend_state = 'spent' AND v.oor_spent_txid = u.txid))
 			LIMIT 1
 		", &[&ids, &txids]).await.context("failed to find bad vtxo")?;
 		let vtxo_id: &str = bad.get("vtxo_id");
+		if bad.get::<_, Option<i32>>("confirmed_height").is_some() {
+			return badarg!("vtxo {} has exited onchain", vtxo_id);
+		}
 		return badarg!("vtxo doesn't exist or is unspendable: {}", vtxo_id);
 	}
 	Ok(())
@@ -638,7 +648,9 @@ async fn do_oor_spend_updates(
 /// Idempotent: succeeds if already spent in the same round.
 ///
 /// `policy_type` is part of the condition so an HTLC vtxo can never be
-/// forfeited into a round, whatever the caller checked.
+/// forfeited into a round, whatever the caller checked. The
+/// `confirmed_height IS NULL` guard refuses exited vtxos, see
+/// [do_oor_spend_updates].
 async fn do_round_spend_updates(
 	tx: &tokio_postgres::Transaction<'_>,
 	spends: &[RoundSpendUpdate],
@@ -651,21 +663,24 @@ async fn do_round_spend_updates(
 		FROM UNNEST($1::text[], $2::int8[]) AS u(vtxo_id, round_id)
 		WHERE vtxo.vtxo_id = u.vtxo_id
 		AND vtxo.policy_type = 'pubkey'
-		AND (vtxo.spend_state = 'spendable'
+		AND ((vtxo.confirmed_height IS NULL AND vtxo.spend_state = 'spendable')
 			OR (vtxo.spend_state = 'spent' AND vtxo.spent_in_round = u.round_id))
 	", &[&ids, &round_ids]).await.context("failed to mark VTXOs as round-spent")?;
 	if rows != spends.len() as u64 {
 		let bad = tx.query_one("
-			SELECT u.vtxo_id, v.spend_state::text, v.spent_in_round
+			SELECT u.vtxo_id, v.spend_state::text, v.spent_in_round, v.confirmed_height
 			FROM UNNEST($1::text[], $2::int8[]) AS u(vtxo_id, round_id)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
 			WHERE v.vtxo_id IS NULL
 				OR v.policy_type != 'pubkey'
-				OR (v.spend_state != 'spendable'
+				OR (NOT (v.confirmed_height IS NULL AND v.spend_state = 'spendable')
 					AND NOT (v.spend_state = 'spent' AND v.spent_in_round = u.round_id))
 			LIMIT 1
 		", &[&ids, &round_ids]).await.context("failed to find bad vtxo")?;
 		let vtxo_id: &str = bad.get("vtxo_id");
+		if bad.get::<_, Option<i32>>("confirmed_height").is_some() {
+			return badarg!("vtxo {} has exited onchain", vtxo_id);
+		}
 		return badarg!("vtxo doesn't exist or is unspendable: {}", vtxo_id);
 	}
 	Ok(())
@@ -677,7 +692,8 @@ async fn do_round_spend_updates(
 /// Idempotent: succeeds if already offboarded with the same txids.
 ///
 /// `policy_type` is part of the condition so an HTLC vtxo can never be
-/// offboarded, whatever the caller checked.
+/// offboarded, whatever the caller checked. The `confirmed_height IS NULL`
+/// guard refuses exited vtxos, see [do_oor_spend_updates].
 async fn do_offboard_spend_updates(
 	tx: &tokio_postgres::Transaction<'_>,
 	spends: &[OffboardSpendUpdate],
@@ -696,7 +712,7 @@ async fn do_offboard_spend_updates(
 			AS u(vtxo_id, offboard_txid, forfeit_txid)
 		WHERE vtxo.vtxo_id = u.vtxo_id
 		AND vtxo.policy_type = 'pubkey'
-		AND (vtxo.spend_state = 'spendable'
+		AND ((vtxo.confirmed_height IS NULL AND vtxo.spend_state = 'spendable')
 			OR (vtxo.spend_state = 'spent'
 				AND vtxo.offboarded_in = u.offboard_txid
 				AND vtxo.oor_spent_txid = u.forfeit_txid))
@@ -704,13 +720,13 @@ async fn do_offboard_spend_updates(
 		.await.context("failed to mark VTXOs as offboard-spent")?;
 	if rows != spends.len() as u64 {
 		let bad = tx.query_one("
-			SELECT u.vtxo_id
+			SELECT u.vtxo_id, v.confirmed_height
 			FROM UNNEST($1::text[], $2::text[], $3::text[])
 				AS u(vtxo_id, offboard_txid, forfeit_txid)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
 			WHERE v.vtxo_id IS NULL
 				OR v.policy_type != 'pubkey'
-				OR (v.spend_state != 'spendable'
+				OR (NOT (v.confirmed_height IS NULL AND v.spend_state = 'spendable')
 					AND NOT (v.spend_state = 'spent'
 						AND v.offboarded_in = u.offboard_txid
 						AND v.oor_spent_txid = u.forfeit_txid))
@@ -718,6 +734,9 @@ async fn do_offboard_spend_updates(
 		", &[&ids, &offboard_txids, &forfeit_txids])
 			.await.context("failed to find bad vtxo")?;
 		let vtxo_id: &str = bad.get("vtxo_id");
+		if bad.get::<_, Option<i32>>("confirmed_height").is_some() {
+			return badarg!("vtxo {} has exited onchain", vtxo_id);
+		}
 		return badarg!("vtxo doesn't exist or is unspendable: {}", vtxo_id);
 	}
 	Ok(())

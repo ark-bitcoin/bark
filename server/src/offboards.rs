@@ -182,15 +182,12 @@ impl Server {
 			return badarg!("wrong number of attestations");
 		}
 
+		// `check_spendable` also refuses inputs that exited onchain.
 		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxos).await).await?;
 		let tip = self.chain_tip().height;
 		for v in &vtxos {
 			v.check_spendable(tip)?;
 		}
-
-		// A unilateral exit doesn't touch our db, so an exited vtxo still looks
-		// spendable above. Check the chain that no input has been exited.
-		self.check_vtxos_not_exited(input_vtxos.iter().copied()).await?;
 
 		// Check delivery address against blocklist
 		if let Some(ref list) = self.bitcoin_address_blocklist {
