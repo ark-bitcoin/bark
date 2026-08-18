@@ -254,6 +254,10 @@ test-wasm TEST="": ensure-build-bins docker-pull
 	CHAIN_SOURCE=esplora cargo run -p wasm-testing --bin wasm-test-suite --features=bin -- "{{TEST}}"
 alias wasm := test-wasm
 
+test-wasm-unit:
+	wasm-pack test --headless --firefox bark-runtime --lib
+alias wasm-unit := test-wasm-unit
+
 test-bark-wasm-indexed-db:
 	wasm-pack test --headless --firefox bark --no-default-features --features 'indexed-db wasm-web' --lib
 

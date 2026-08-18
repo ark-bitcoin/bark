@@ -5,6 +5,7 @@ members = [
   "lib",
   "bark",
   "bark-common",
+  "bark-runtime",
   "bark-cli",
   "bark-json",
   "bark-rest",

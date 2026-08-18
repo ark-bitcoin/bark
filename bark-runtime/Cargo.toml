@@ -1,0 +1,21 @@
+[package]
+name = "bark-runtime"
+version = "0.6.0"
+license = "MIT"
+authors = [ "Team Second <hello@second.tech>" ]
+repository = "https://gitlab.com/ark-bitcoin/bark"
+description = "Async runtime abstractions shared by the native and WASM builds of bark"
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true, features = [ "sync", "time", "rt", "macros" ] }
+tokio-util = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures.workspace = true
+gloo-timers = { version = "0.3", features = ["futures"] }
+wasm-bindgen-futures = "0.4"
+web-time = "1.1.0"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
