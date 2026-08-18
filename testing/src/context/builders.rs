@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,6 +38,7 @@ pub struct CaptaindBuilder<'a> {
 	no_vtxo_pool: bool,
 	watchmand: bool,
 	mod_watchmand_cfg: Option<Box<dyn FnOnce(&mut server::config::watchmand::Config)>>,
+	exec: Option<PathBuf>,
 }
 
 impl<'a> CaptaindBuilder<'a> {
@@ -51,7 +53,15 @@ impl<'a> CaptaindBuilder<'a> {
 			no_vtxo_pool: false,
 			watchmand: false,
 			mod_watchmand_cfg: None,
+			exec: None,
 		}
+	}
+
+	/// Run this server on a specific captaind binary instead of
+	/// CAPTAIND_EXEC, e.g. an old release from [Captaind::old_exec].
+	pub fn exec(mut self, exec: PathBuf) -> Self {
+		self.exec = Some(exec);
+		self
 	}
 
 	/// Stop the vtxo pool from issuing. Offboards are funded from the rounds
@@ -121,6 +131,9 @@ impl<'a> CaptaindBuilder<'a> {
 		}
 
 		let ret = Captaind::new(&self.name, bitcoind.clone(), cfg);
+		if let Some(exec) = self.exec {
+			ret.set_exec(Some(exec));
+		}
 		ret.start().await.unwrap();
 
 		if self.watchmand {

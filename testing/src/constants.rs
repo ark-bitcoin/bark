@@ -19,6 +19,10 @@ pub mod env {
 	pub const BARK_EXEC: &str = "BARK_EXEC";
 	pub const BARKD_EXEC: &str = "BARKD_EXEC";
 	pub const CAPTAIND_EXEC: &str = "CAPTAIND_EXEC";
+	/// Path to a previous captaind release binary. Used by the
+	/// server-migrations tests to start a server on the old version
+	/// and upgrade it to the current binary mid-test.
+	pub const OLD_CAPTAIND_EXEC: &str = "OLD_CAPTAIND_EXEC";
 	pub const WATCHMAND_EXEC: &str = "WATCHMAND_EXEC";
 	pub const LIGHTNINGD_DOCKER_IMAGE: &str = "LIGHTNINGD_DOCKER_IMAGE";
 	pub const LIGHTNINGD_EXEC: &str = "LIGHTNINGD_EXEC";
