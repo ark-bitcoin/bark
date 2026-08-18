@@ -11,7 +11,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{Wallet, WalletInner};
 use crate::utils::ReconnectBackoff;
-use crate::utils::time::sleep;
 
 
 
@@ -139,7 +138,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = sleep(self.sync_interval).fuse() => {},
+				_ = bark_runtime::sleep(self.sync_interval).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting mailbox messages process...");
 					break;
@@ -255,7 +254,7 @@ impl DaemonProcess {
 	async fn run_server_connection_check_process(&self) {
 		loop {
 			futures::select! {
-				_ = sleep(self.sync_interval).fuse() => {},
+				_ = bark_runtime::sleep(self.sync_interval).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting server connection check process...");
 					break;
@@ -278,7 +277,8 @@ impl DaemonProcess {
 	}
 
 	async fn run_sync_processes(&self) {
-		// NB: tokio::time::interval needs Instant::now(), which panic on wasm
+		// NB: a ticking interval needs Instant::now(), which panics on wasm,
+		// so the loop sleeps between iterations instead.
 		loop {
 			// using if let to scope the wallet variable
 			if let Some(wallet) = self.wallet() {
@@ -309,7 +309,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = sleep(self.sync_interval).fuse() => {},
+				_ = bark_runtime::sleep(self.sync_interval).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting down sync processes...");
 					break;
@@ -342,7 +342,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = sleep(self.sync_interval).fuse() => {},
+				_ = bark_runtime::sleep(self.sync_interval).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting down exit progress process...");
 					break;
@@ -450,7 +450,7 @@ where
 			Ok(()) => break,
 			Err(e) => {
 				warn!("Daemon task '{}' terminated unexpectedly, restarting: {e}", name);
-				tokio::time::sleep(Duration::from_secs(1)).await;
+				bark_runtime::sleep(Duration::from_secs(1)).await;
 			},
 		}
 	}

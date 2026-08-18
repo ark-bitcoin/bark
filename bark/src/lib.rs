@@ -342,7 +342,6 @@ pub use self::daemon::DaemonHandle;
 pub use self::fees::FeeEstimate;
 pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::vtxo::WalletVtxo;
-pub use self::utils::time;
 
 use std::borrow::Cow;
 use std::collections::HashSet;

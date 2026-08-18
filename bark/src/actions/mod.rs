@@ -24,7 +24,6 @@ use crate::actions::lightning::pay::LightningSend;
 use crate::actions::lightning::receive::LightningReceive;
 use crate::actions::offboard::Offboard;
 use crate::lock_manager::LockGuard;
-use crate::utils::time::sleep;
 use crate::vtxo::{VtxoState, VtxoStateKind, VtxoValidationError};
 
 pub(crate) const BASE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
@@ -482,7 +481,7 @@ impl Wallet {
 						DriveMode::UntilDone => {
 							if let Some(delay) = wake_after {
 								debug!("action {} parked; sleeping {:?} before re-drive", id, delay);
-								sleep(delay).await;
+								bark_runtime::sleep(delay).await;
 								action = state;
 							} else {
 								return match error {

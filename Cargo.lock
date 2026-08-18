@@ -589,6 +589,7 @@ dependencies = [
  "async-trait",
  "bark-bitcoin-ext",
  "bark-common",
+ "bark-runtime",
  "bark-server-rpc",
  "bdk_bitcoind_rpc",
  "bdk_core",
@@ -630,7 +631,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
- "web-time",
 ]
 
 [[package]]

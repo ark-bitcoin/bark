@@ -27,7 +27,6 @@ use crate::onchain::{
 };
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
-use crate::utils::time::timestamp_secs;
 
 const STOP_GAP: usize = 50;
 const PARALLEL_REQS: usize = 4;
@@ -187,7 +186,7 @@ impl OnchainWalletTrait for OnchainWallet {
 	}
 
 	async fn register_tx(&mut self, tx: &Transaction) -> anyhow::Result<()> {
-		self.inner.apply_unconfirmed_txs([(tx.clone(), timestamp_secs())]);
+		self.inner.apply_unconfirmed_txs([(tx.clone(), bark_runtime::timestamp_secs())]);
 		self.persist().await
 	}
 
@@ -226,7 +225,7 @@ impl OnchainWalletTrait for OnchainWallet {
 		let finalized = self.inner.sign(&mut psbt, opts).context("signing error")?;
 		ensure!(finalized, "failed to succesfully sign the tx");
 		let tx = psbt.clone().extract_tx()?;
-		self.inner.apply_unconfirmed_txs([(tx, timestamp_secs())]);
+		self.inner.apply_unconfirmed_txs([(tx, bark_runtime::timestamp_secs())]);
 		self.persist().await?;
 		Ok(psbt)
 	}
@@ -255,7 +254,7 @@ impl OnchainWalletTrait for OnchainWallet {
 	}
 
 	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
-		self.inner.apply_unconfirmed_txs([(tx.clone(), timestamp_secs())]);
+		self.inner.apply_unconfirmed_txs([(tx.clone(), bark_runtime::timestamp_secs())]);
 		trace!("Unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
 		self.persist().await
 			.map_err(|e| CpfpError::StoreError(e.to_string()))
@@ -284,7 +283,7 @@ impl OnchainWallet {
 					.checked_sub(DEEPLY_CONFIRMED)
 					.unwrap_or(0);
 
-				let request = self.inner.start_sync_with_revealed_spks_at(timestamp_secs())
+				let request = self.inner.start_sync_with_revealed_spks_at(bark_runtime::timestamp_secs())
 					.outpoints(self.list_unspent().iter().map(|o| o.outpoint))
 					.txids(self.inner.transactions().filter_map(|tx| {
 						let fresh = match tx.chain_position {
@@ -309,7 +308,7 @@ impl OnchainWallet {
 
 		debug!("Current balance: {}", self.inner.balance());
 		trace!("Current unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
-		self.rebroadcast_txs(chain, timestamp_secs()).await?;
+		self.rebroadcast_txs(chain, bark_runtime::timestamp_secs()).await?;
 
 		Ok(())
 	}
@@ -457,7 +456,7 @@ impl OnchainWallet {
 		emitter_handle.await.context("wallet sync blocking task panicked")??;
 
 		if let Ok(mempool) = mempool_rx.await {
-			let now = timestamp_secs();
+			let now = bark_runtime::timestamp_secs();
 			let recently_seen: HashSet<Txid> = self.inner.transactions()
 				.filter_map(|tx| match tx.chain_position {
 					ChainPosition::Unconfirmed { last_seen: Some(seen), .. }
@@ -529,7 +528,7 @@ impl OnchainWallet {
 			// Esplora can't do a full scan from a given block height, so we can ignore start_height
 			ChainSourceClient::Esplora(client) => {
 				debug!("Starting full scan with esplora...");
-				let request = self.inner.start_full_scan_at(timestamp_secs());
+				let request = self.inner.start_full_scan_at(bark_runtime::timestamp_secs());
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
 				self.inner.apply_update(update)?;
 				self.persist().await?;
@@ -538,7 +537,7 @@ impl OnchainWallet {
 		}
 
 		debug!("Current balance: {}", self.inner.balance());
-		self.rebroadcast_txs(chain, timestamp_secs()).await
+		self.rebroadcast_txs(chain, bark_runtime::timestamp_secs()).await
 	}
 
 

@@ -6,6 +6,7 @@ use std::str::FromStr as _;
 use std::time::Duration;
 
 use anyhow::Context;
+use bark_runtime::Instant;
 use bdk_core::{BlockId, CheckPoint};
 use bdk_esplora::esplora_client;
 use bitcoin::constants::genesis_block;
@@ -14,8 +15,6 @@ use bitcoin::{
 };
 use log::{debug, info, warn};
 use tokio::sync::RwLock;
-
-use crate::utils::time::Instant;
 
 use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt, TxStatus};
 use bitcoin_ext::rpc;
