@@ -312,16 +312,27 @@ impl VtxoPool {
 			ret
 		};
 
-		let change_key = srv.generate_ephemeral_cosign_key(self.config.vtxo_key_lifetime()).await?;
-		let change_policy = VtxoPolicy::new_pubkey(change_key.public_key());
 		let input_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-		let change_dest = ArkoorDestination {
-			policy: change_policy,
-			total_amount: input_sum - dest.total_amount,
+		let change_amount = input_sum - dest.total_amount;
+		// Omit the change output when the inputs exactly cover the destination.
+		// A zero-value change output would produce a valueless VTXO, which
+		// arkoor construction rejects.
+		let outputs = if change_amount == Amount::ZERO {
+			vec![dest.clone()]
+		} else {
+			let change_key = srv.generate_ephemeral_cosign_key(self.config.vtxo_key_lifetime()).await?;
+			let change_policy = VtxoPolicy::new_pubkey(change_key.public_key());
+			vec![
+				dest.clone(),
+				ArkoorDestination {
+					policy: change_policy,
+					total_amount: change_amount,
+				},
+			]
 		};
 		let builder = ArkoorPackageBuilder::new_without_checkpoints(
 			input_vtxos.into_iter().map(|v| v.into_inner()),
-			vec![dest.clone(), change_dest],
+			outputs,
 		).context("arkoor builder error")?;
 		let builder = builder.cosign_both(&keys, srv.server_key.leak_ref())
 			.context("error cosigning arkoor")?;
