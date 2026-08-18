@@ -192,6 +192,21 @@
 					bark-server = serverPackages.${hostRustTarget};
 				};
 
+				# for `nix run` support
+				apps = let
+					mkApp = drv: bin: {
+						type = "app";
+						program = "${drv}/bin/${bin}";
+						meta.description = "Runs the ${bin} binary built for the current system";
+					};
+				in lib.optionalAttrs (builtins.hasAttr hostRustTarget barkPackages) {
+					bark  = mkApp barkPackages.${hostRustTarget} "bark";
+					barkd = mkApp barkPackages.${hostRustTarget} "barkd";
+				} // lib.optionalAttrs (builtins.hasAttr hostRustTarget serverPackages) {
+					captaind  = mkApp serverPackages.${hostRustTarget} "captaind";
+					watchmand = mkApp serverPackages.${hostRustTarget} "watchmand";
+				};
+
 				# NB each of our shell files exposes a `env` and a `shell` which respectively
 				# contain only the env variables and the actual shell.
 				# This enables one shell inheriting the env vars from another shell.
