@@ -10,6 +10,7 @@ use bitcoin::FeeRate;
 use tracing::info;
 use utoipa::OpenApi;
 
+use bark::exit::ExitError;
 use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
@@ -31,6 +32,7 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 		exit_claim_vtxos,
 		exit_claim_all,
 		exit_cancel,
+		emergency_exit_fee,
 	),
 	components(schemas(
 		bark_json::web::ExitStatusRequest,
@@ -43,6 +45,8 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 		bark_json::web::ExitClaimVtxosRequest,
 		bark_json::web::ExitClaimResponse,
 		bark_json::web::ExitCancelResponse,
+		bark_json::web::EmergencyExitFeeEstimateQuery,
+		bark_json::web::EmergencyExitFeeEstimateResponse,
 	)),
 	tags((name = "exits", description = "Move bitcoin back on-chain without server cooperation."))
 )]
@@ -64,6 +68,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/claim/vtxos", post(exit_claim_vtxos))
 		.route("/claim/all", post(exit_claim_all))
 		.route("/cancel/{vtxo_id}", post(exit_cancel))
+		.route("/fee", get(emergency_exit_fee))
 }
 
 async fn inner_vtxo_exit_status(
@@ -568,4 +573,83 @@ pub async fn get_finished_exits(
 	).await.context("Failed to list finished exits")?;
 
 	Ok(axum::Json(statuses.into_iter().map(Into::into).collect()))
+}
+
+#[utoipa::path(
+	get,
+	path = "/fee",
+	summary = "Estimate emergency exit fee",
+	params(
+		("vtxo_ids" = Option<String>, Query, description = "Comma-separated VTXO ids to exit; omit to exit the entire wallet"),
+		("fee_rate_sat_per_vb" = Option<u64>, Query, description = "Fee rate in sat/vB applied to both legs; omit to price the broadcast leg at the current fast rate and the claim leg at the regular rate"),
+		("destination" = Option<String>, Query, description = "Claim destination address; omit to use a placeholder for weighing"),
+	),
+	responses(
+		(status = 200, description = "Returns the emergency exit fee breakdown", body = bark_json::web::EmergencyExitFeeEstimateResponse),
+		(status = 400, description = "A VTXO is unknown, dust, already exited, or already spent, or a parameter is invalid", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs \
+		without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every \
+		not-yet-confirmed transaction in each VTXO's exit tree, paid now from confirmed on-chain \
+		funds—from the claim cost of the single batched transaction that later drains the matured \
+		outputs. The estimate reflects current chain state, so exit transactions already confirmed \
+		cost nothing. `fundable` is false when the wallet's confirmed on-chain balance can't cover \
+		the full broadcast walk, which would stall the exit midway.",
+	tag = "exits"
+)]
+#[debug_handler]
+pub async fn emergency_exit_fee(
+	State(state): State<ServerState>,
+	Query(query): Query<bark_json::web::EmergencyExitFeeEstimateQuery>,
+) -> HandlerResult<Json<bark_json::web::EmergencyExitFeeEstimateResponse>> {
+	let wallet = state.require_wallet()?;
+
+	// The query param is a comma-separated string (axum's Query extractor can't deserialize
+	// repeated keys into a Vec). Trim each entry and ignore empties so a trailing comma or a stray
+	// `a,,b` doesn't surface as an opaque parse error.
+	let vtxo_ids = match query.vtxo_ids {
+		Some(ref s) => s.split(',')
+			.map(str::trim)
+			.filter(|id| !id.is_empty())
+			.map(ark::VtxoId::from_str)
+			.collect::<Result<Vec<_>, _>>()
+			.badarg("Invalid VTXO ID")?,
+		None => wallet.spendable_vtxos().await
+			.context("Failed to list spendable VTXOs")?
+			.into_iter().map(|v| v.vtxo.id()).collect(),
+	};
+
+	let fee_rate = match query.fee_rate_sat_per_vb {
+		Some(v) => Some(FeeRate::from_sat_per_vb(v).badarg("Fee rate too large")?),
+		None => None,
+	};
+
+	let destination = match query.destination {
+		Some(ref s) => {
+			let network = wallet.network().await?;
+			let address = bitcoin::Address::from_str(s)
+				.badarg("Invalid destination address")?
+				.require_network(network)
+				.badarg("Address is not valid for configured network")?;
+			Some(address)
+		},
+		None => None,
+	};
+
+	// Sync the on-chain wallet so the `fundable` check sees current confirmed funds.
+	wallet.sync_onchain().await.context("error syncing on-chain wallet")?;
+	let result = wallet
+		.estimate_emergency_exit_fee(&vtxo_ids, fee_rate, destination)
+		.await;
+
+	let estimate = match &result {
+		Err(ExitError::DustLimit { vtxo, .. }) => badarg!("Provided VTXO {} is dust", vtxo),
+		Err(ExitError::UnknownVtxo { vtxo }) => badarg!("Provided VTXO {} is unknown", vtxo),
+		Err(ExitError::VtxoAlreadyExited { vtxo }) => badarg!("Provided VTXO {} has already exited", vtxo),
+		Err(ExitError::VtxoAlreadySpent { vtxo }) => badarg!("Provided VTXO {} has already been spent", vtxo),
+		_ => result.context("Failed to estimate emergency exit fee")?,
+	};
+
+	Ok(axum::Json(estimate.into()))
 }

@@ -35,6 +35,7 @@ Class | Method | HTTP request | Description
 *BoardsApi* | [**board_amount**](docs/BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | Board a specific amount
 *BoardsApi* | [**get_pending_boards**](docs/BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/pending | List pending boards
 *DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | Ping
+*ExitsApi* | [**emergency_exit_fee**](docs/ExitsApi.md#emergency_exit_fee) | **GET** /api/v1/exits/fee | Estimate emergency exit fee
 *ExitsApi* | [**exit_cancel**](docs/ExitsApi.md#exit_cancel) | **POST** /api/v1/exits/cancel/{vtxo_id} | Cancel an exit
 *ExitsApi* | [**exit_claim_all**](docs/ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | Claim all exited VTXOs
 *ExitsApi* | [**exit_claim_vtxos**](docs/ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | Claim specific exited VTXOs
@@ -134,6 +135,8 @@ Class | Method | HTTP request | Description
  - [CreateWalletRequest](docs/CreateWalletRequest.md)
  - [CreateWalletResponse](docs/CreateWalletResponse.md)
  - [DelegatedRefreshRequest](docs/DelegatedRefreshRequest.md)
+ - [EmergencyExitFeeEstimateQuery](docs/EmergencyExitFeeEstimateQuery.md)
+ - [EmergencyExitFeeEstimateResponse](docs/EmergencyExitFeeEstimateResponse.md)
  - [EncodedVtxoResponse](docs/EncodedVtxoResponse.md)
  - [ExitAwaitingDeltaState](docs/ExitAwaitingDeltaState.md)
  - [ExitCancelResponse](docs/ExitCancelResponse.md)
@@ -169,6 +172,9 @@ Class | Method | HTTP request | Description
  - [ExitErrorOneOf28](docs/ExitErrorOneOf28.md)
  - [ExitErrorOneOf29](docs/ExitErrorOneOf29.md)
  - [ExitErrorOneOf3](docs/ExitErrorOneOf3.md)
+ - [ExitErrorOneOf30](docs/ExitErrorOneOf30.md)
+ - [ExitErrorOneOf31](docs/ExitErrorOneOf31.md)
+ - [ExitErrorOneOf32](docs/ExitErrorOneOf32.md)
  - [ExitErrorOneOf4](docs/ExitErrorOneOf4.md)
  - [ExitErrorOneOf5](docs/ExitErrorOneOf5.md)
  - [ExitErrorOneOf6](docs/ExitErrorOneOf6.md)

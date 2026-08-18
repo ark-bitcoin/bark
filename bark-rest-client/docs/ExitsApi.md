@@ -4,6 +4,7 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
+[**emergency_exit_fee**](ExitsApi.md#emergency_exit_fee) | **GET** /api/v1/exits/fee | Estimate emergency exit fee
 [**exit_cancel**](ExitsApi.md#exit_cancel) | **POST** /api/v1/exits/cancel/{vtxo_id} | Cancel an exit
 [**exit_claim_all**](ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | Claim all exited VTXOs
 [**exit_claim_vtxos**](ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | Claim specific exited VTXOs
@@ -17,6 +18,38 @@ Method | HTTP request | Description
 [**get_finished_exits**](ExitsApi.md#get_finished_exits) | **GET** /api/v1/exits/status/finished | List finished exits
 [**get_live_exit_status**](ExitsApi.md#get_live_exit_status) | **GET** /api/v1/exits/status/live | List live exit statuses
 
+
+
+## emergency_exit_fee
+
+> models::EmergencyExitFeeEstimateResponse emergency_exit_fee(vtxo_ids, fee_rate_sat_per_vb, destination)
+Estimate emergency exit fee
+
+Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid now from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. `fundable` is false when the wallet's confirmed on-chain balance can't cover the full broadcast walk, which would stall the exit midway.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**vtxo_ids** | Option<**String**> | Comma-separated VTXO ids to exit; omit to exit the entire wallet |  |
+**fee_rate_sat_per_vb** | Option<**i64**> | Fee rate in sat/vB applied to both legs; omit to price the broadcast leg at the current fast rate and the claim leg at the regular rate |  |
+**destination** | Option<**String**> | Claim destination address; omit to use a placeholder for weighing |  |
+
+### Return type
+
+[**models::EmergencyExitFeeEstimateResponse**](EmergencyExitFeeEstimateResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
 ## exit_cancel

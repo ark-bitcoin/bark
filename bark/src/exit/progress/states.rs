@@ -55,7 +55,7 @@ impl ExitStateProgress for ExitStartState {
 		info!("Checking if VTXO can be exited: {}", id);
 
 		if ctx.vtxo.amount() < P2TR_DUST {
-			return Err(ExitError::DustLimit { vtxo: ctx.vtxo.amount(), dust: P2TR_DUST }.into());
+			return Err(ExitError::DustLimit { vtxo: id, amount: ctx.vtxo.amount(), dust: P2TR_DUST }.into());
 		}
 
 		info!("Validated VTXO {}, exit process can now begin", id);

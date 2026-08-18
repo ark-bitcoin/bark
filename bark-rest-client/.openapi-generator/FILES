@@ -33,6 +33,8 @@ docs/CreateWalletRequest.md
 docs/CreateWalletResponse.md
 docs/DefaultApi.md
 docs/DelegatedRefreshRequest.md
+docs/EmergencyExitFeeEstimateQuery.md
+docs/EmergencyExitFeeEstimateResponse.md
 docs/EncodedVtxoResponse.md
 docs/ExitAwaitingDeltaState.md
 docs/ExitCancelResponse.md
@@ -68,6 +70,9 @@ docs/ExitErrorOneOf27.md
 docs/ExitErrorOneOf28.md
 docs/ExitErrorOneOf29.md
 docs/ExitErrorOneOf3.md
+docs/ExitErrorOneOf30.md
+docs/ExitErrorOneOf31.md
+docs/ExitErrorOneOf32.md
 docs/ExitErrorOneOf4.md
 docs/ExitErrorOneOf5.md
 docs/ExitErrorOneOf6.md
@@ -235,6 +240,8 @@ src/models/connected_response.rs
 src/models/create_wallet_request.rs
 src/models/create_wallet_response.rs
 src/models/delegated_refresh_request.rs
+src/models/emergency_exit_fee_estimate_query.rs
+src/models/emergency_exit_fee_estimate_response.rs
 src/models/encoded_vtxo_response.rs
 src/models/exit_awaiting_delta_state.rs
 src/models/exit_cancel_response.rs
@@ -270,6 +277,9 @@ src/models/exit_error_one_of_27.rs
 src/models/exit_error_one_of_28.rs
 src/models/exit_error_one_of_29.rs
 src/models/exit_error_one_of_3.rs
+src/models/exit_error_one_of_30.rs
+src/models/exit_error_one_of_31.rs
+src/models/exit_error_one_of_32.rs
 src/models/exit_error_one_of_4.rs
 src/models/exit_error_one_of_5.rs
 src/models/exit_error_one_of_6.rs

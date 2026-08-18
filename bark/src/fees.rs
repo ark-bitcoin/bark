@@ -255,4 +255,20 @@ impl Wallet {
 
 		Ok(FeeEstimate::new(total_cost, fee, amount, vtxo_ids))
 	}
+
+	/// Estimate the onchain fees to unilaterally (emergency) exit the given VTXOs.
+	///
+	/// This is a thin wrapper over [crate::exit::Exit::estimate_emergency_exit_fee]; see it for the
+	/// meaning of the returned breakdown and the parameters. The `onchain` wallet is needed to price
+	/// the CPFP fee bumps against real confirmed funds.
+	pub async fn estimate_emergency_exit_fee(
+		&self,
+		vtxos: &[VtxoId],
+		fee_rate: Option<bitcoin::FeeRate>,
+		destination: Option<bitcoin::Address>,
+	) -> anyhow::Result<crate::exit::ExitFeeEstimate, crate::exit::ExitError> {
+		self.exit_mgr()
+			.estimate_emergency_exit_fee(vtxos, self, fee_rate, destination)
+			.await
+	}
 }

@@ -315,6 +315,79 @@
         }
       }
     },
+    "/api/v1/exits/fee": {
+      "get": {
+        "tags": [
+          "exits"
+        ],
+        "summary": "Estimate emergency exit fee",
+        "description": "Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid now from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. `fundable` is false when the wallet's confirmed on-chain balance can't cover the full broadcast walk, which would stall the exit midway.",
+        "operationId": "emergency_exit_fee",
+        "parameters": [
+          {
+            "name": "vtxo_ids",
+            "in": "query",
+            "description": "Comma-separated VTXO ids to exit; omit to exit the entire wallet",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fee_rate_sat_per_vb",
+            "in": "query",
+            "description": "Fee rate in sat/vB applied to both legs; omit to price the broadcast leg at the current fast rate and the claim leg at the regular rate",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "destination",
+            "in": "query",
+            "description": "Claim destination address; omit to use a placeholder for weighing",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the emergency exit fee breakdown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmergencyExitFeeEstimateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A VTXO is unknown, dust, already exited, or already spent, or a parameter is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/exits/progress": {
       "post": {
         "tags": [
@@ -3917,6 +3990,82 @@
           }
         }
       },
+      "EmergencyExitFeeEstimateQuery": {
+        "type": "object",
+        "description": "Query parameters for emergency (unilateral) exit fee estimates.",
+        "properties": {
+          "destination": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The destination address for the claim. Only affects the claim-fee weight; when omitted a\nplaceholder of the configured network is used."
+          },
+          "fee_rate_sat_per_vb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The fee rate to price the estimate at, in sat/vB. Applied to both the broadcast and claim\nlegs. When omitted, the broadcast leg uses the current `fast` rate and the claim leg the\n`regular` rate.",
+            "minimum": 0
+          },
+          "vtxo_ids": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Comma-separated VTXO ids to estimate the exit for. When omitted, every spendable VTXO in\nthe wallet is used (i.e. exit the entire wallet)."
+          }
+        }
+      },
+      "EmergencyExitFeeEstimateResponse": {
+        "type": "object",
+        "description": "A fee breakdown for unilaterally (emergency) exiting a set of VTXOs.",
+        "required": [
+          "exit_broadcast_fee_sat",
+          "claim_fee_sat",
+          "total_fee_sat",
+          "fee_rate_sat_per_vb",
+          "txs_to_broadcast",
+          "fundable"
+        ],
+        "properties": {
+          "claim_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The fee for the single batched transaction that drains the matured exit outputs (in\nsatoshis). Paid later out of the recovered value.",
+            "minimum": 0
+          },
+          "exit_broadcast_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The CPFP fees to broadcast every not-yet-confirmed exit transaction (in satoshis). Paid now\nfrom confirmed on-chain funds.",
+            "minimum": 0
+          },
+          "fee_rate_sat_per_vb": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The fee rate the exit-broadcast leg was priced at (sat/vB). Unless an explicit fee rate was\nsupplied, the claim leg is priced separately at the chain's `regular` rate.",
+            "minimum": 0
+          },
+          "fundable": {
+            "type": "boolean",
+            "description": "Whether the wallet's current on-chain balance covers the full serial exit-broadcast walk."
+          },
+          "total_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The sum of the broadcast and claim fees (in satoshis).",
+            "minimum": 0
+          },
+          "txs_to_broadcast": {
+            "type": "integer",
+            "description": "The number of exit transactions that still need to be broadcast and CPFP-bumped.",
+            "minimum": 0
+          }
+        }
+      },
       "EncodedVtxo": {
         "type": "string",
         "description": "Hex-encoded serialized VTXO.\n\nSerializes as a plain hex string. Can be passed to\n`POST /wallet/import-vtxo` to re-import this VTXO."
@@ -4324,10 +4473,16 @@
             "type": "object",
             "required": [
               "vtxo",
+              "amount",
               "dust",
               "type"
             ],
             "properties": {
+              "amount": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
               "dust": {
                 "type": "integer",
                 "format": "int64",
@@ -4340,9 +4495,7 @@
                 ]
               },
               "vtxo": {
-                "type": "integer",
-                "format": "int64",
-                "minimum": 0
+                "type": "string"
               }
             }
           },
@@ -4685,6 +4838,60 @@
                 "type": "string",
                 "enum": [
                   "vtxo-not-claimable"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "vtxo",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unknown-vtxo"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "vtxo",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vtxo-already-exited"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "vtxo",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vtxo-already-spent"
                 ]
               },
               "vtxo": {

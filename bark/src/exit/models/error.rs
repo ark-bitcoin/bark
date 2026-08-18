@@ -56,9 +56,10 @@ pub enum ExitError {
 	#[error("Database Store Failure: Unable to store child tx: {error}")]
 	DatabaseChildStoreFailure { error: String },
 
-	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but the balance is only {vtxo}")]
+	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but vtxo {vtxo} is only {amount}")]
 	DustLimit {
-		vtxo: Amount,
+		vtxo: VtxoId,
+		amount: Amount,
 		dust: Amount
 	},
 
@@ -128,6 +129,15 @@ pub enum ExitError {
 
 	#[error("VTXO Not Spendable Error: Attempted to claim a VTXO which is not in a spendable state: {vtxo}")]
 	VtxoNotClaimable { vtxo: VtxoId },
+
+	#[error("Unknown VTXO: {vtxo} is not known to this wallet")]
+	UnknownVtxo { vtxo: VtxoId },
+
+	#[error("VTXO Already Exited: {vtxo} has already completed its unilateral exit")]
+	VtxoAlreadyExited { vtxo: VtxoId },
+
+	#[error("VTXO Already Spent: {vtxo} has already been spent and can no longer be exited")]
+	VtxoAlreadySpent { vtxo: VtxoId },
 
 	#[error("VTXO ScriptPubKey Invalid: {error}")]
 	VtxoScriptPubKeyInvalid { error: String },

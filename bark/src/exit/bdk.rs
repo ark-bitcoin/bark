@@ -7,6 +7,12 @@ use crate::Wallet;
 use crate::exit::{Exit, ExitProgressStatus};
 use crate::onchain::{CpfpError, MakeCpfpFees};
 
+/// Exit transactions should only be RBF'ed if the new requested fee rate
+/// is strictly greater than the current package rate.
+pub (crate) fn should_rbf(new_fee_rate: FeeRate, old_fee_rate: FeeRate) -> bool {
+	new_fee_rate > old_fee_rate
+}
+
 impl Exit {
 	/// Advance ongoing exits by one step, handling CPFP fee-bumping via the wallet's
 	/// internal onchain wallet.
@@ -34,14 +40,18 @@ impl Exit {
 
 		self.progress_exits(wallet).await?;
 
-		let fee_rate = fee_rate_override.unwrap_or(wallet.chain().fee_rates().await.fast);
+		let fee_rate = match fee_rate_override {
+			Some(fr) => fr,
+			None => wallet.exit_mgr().default_exit_fee_rate().await,
+		};
+
 		for req in self.exits_needing_cpfp().await {
 			let fees = match req.rbf_requirement {
 				None => MakeCpfpFees::Effective(fee_rate),
 				Some(rbf) => {
 					// Only RBF if we can improve the fee rate; equal or lower rates are rejected
 					// by Bitcoin Core's RBF policy ("new feerate must be strictly greater").
-					if fee_rate <= rbf.min_fee_rate {
+					if !should_rbf(fee_rate, rbf.min_fee_rate) {
 						warn!(
 							"Skipping exit CPFP RBF: requested fee rate {} is not above current package rate {}",
 							fee_rate, rbf.min_fee_rate,

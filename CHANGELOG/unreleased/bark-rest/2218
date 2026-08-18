@@ -1,0 +1,9 @@
+- Add `GET /v1/exits/estimate-fee` to preview emergency-exit costs
+  Estimates the on-chain cost of unilaterally exiting a set of VTXOs (or the
+  whole wallet), returning the broadcast and claim fees and whether the wallet's
+  confirmed on-chain funds can cover the exit.
+  [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)
+- Identify the offending VTXO in dust-limit exit errors
+  [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)
+  - **BREAKING:** in the `DustLimit` exit error, `vtxo` is now the VTXO id
+    (string); the sub-dust value moved to the new `amount` field

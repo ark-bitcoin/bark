@@ -69,10 +69,12 @@ pub enum ExitError {
 	#[error("Database Store Failure: Unable to store child tx: {error}")]
 	DatabaseChildStoreFailure { error: String },
 
-	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but the balance is only {vtxo}")]
+	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but vtxo {vtxo} is only {amount}")]
 	DustLimit {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		vtxo: VtxoId,
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		vtxo: Amount,
+		amount: Amount,
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		dust: Amount
 	},
@@ -155,6 +157,15 @@ pub enum ExitError {
 	#[error("VTXO Not Spendable Error: Attempted to claim a VTXO which is not in a spendable state: {vtxo}")]
 	VtxoNotClaimable { #[cfg_attr(feature = "utoipa", schema(value_type = String))] vtxo: VtxoId },
 
+	#[error("Unknown VTXO: {vtxo} is not known to this wallet")]
+	UnknownVtxo { #[cfg_attr(feature = "utoipa", schema(value_type = String))] vtxo: VtxoId },
+
+	#[error("VTXO Already Exited: {vtxo} has already completed its unilateral exit")]
+	VtxoAlreadyExited { #[cfg_attr(feature = "utoipa", schema(value_type = String))] vtxo: VtxoId },
+
+	#[error("VTXO Already Spent: {vtxo} has already been spent and can no longer be exited")]
+	VtxoAlreadySpent { #[cfg_attr(feature = "utoipa", schema(value_type = String))] vtxo: VtxoId },
+
 	#[error("VTXO ScriptPubKey Invalid: {error}")]
 	VtxoScriptPubKeyInvalid { error: String },
 }
@@ -192,8 +203,8 @@ impl From<bark::exit::ExitError> for ExitError {
 			bark::exit::ExitError::DatabaseChildStoreFailure { error } => {
 				ExitError::DatabaseChildStoreFailure { error }
 			},
-			bark::exit::ExitError::DustLimit { vtxo, dust } => {
-				ExitError::DustLimit { vtxo, dust }
+			bark::exit::ExitError::DustLimit { vtxo, amount, dust } => {
+				ExitError::DustLimit { vtxo, amount, dust }
 			},
 			bark::exit::ExitError::ExitPackageBroadcastFailure { txid, error } => {
 				ExitError::ExitPackageBroadcastFailure { txid, error: error.to_string() }
@@ -248,6 +259,15 @@ impl From<bark::exit::ExitError> for ExitError {
 			},
 			bark::exit::ExitError::VtxoNotClaimable { vtxo } => {
 				ExitError::VtxoNotClaimable { vtxo }
+			},
+			bark::exit::ExitError::UnknownVtxo { vtxo } => {
+				ExitError::UnknownVtxo { vtxo }
+			},
+			bark::exit::ExitError::VtxoAlreadyExited { vtxo } => {
+				ExitError::VtxoAlreadyExited { vtxo }
+			},
+			bark::exit::ExitError::VtxoAlreadySpent { vtxo } => {
+				ExitError::VtxoAlreadySpent { vtxo }
 			},
 			bark::exit::ExitError::VtxoScriptPubKeyInvalid { error } => {
 				ExitError::VtxoScriptPubKeyInvalid { error }
