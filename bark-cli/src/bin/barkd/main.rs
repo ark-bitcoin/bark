@@ -443,7 +443,7 @@ async fn main() -> anyhow::Result<()>{
 			// NB: No need to stop the daemon here, it will be stopped when the wallet is removed from the server state
 
 			Box::pin(async move {
-				connection::wipe_datadir_except_daemon_files(&datadir)?;
+				connection::wipe_datadir_except_barkd_files(&datadir)?;
 				Ok(())
 			})
 		}

@@ -15,13 +15,13 @@ use crate::wallet::AUTH_TOKEN_FILE;
 /// File in the datadir exclusively locked for the lifetime of a barkd process.
 pub const BARKD_LOCK_FILE: &str = "barkd.lock";
 
-/// Remove everything in the datadir except the running daemon's own files,
+/// Remove everything in the datadir except the running barkd's own files,
 /// so the held lock and auth token survive a wallet wipe.
-pub fn wipe_datadir_except_daemon_files(datadir: &Path) -> anyhow::Result<()> {
-	let daemon_files = [BARKD_LOCK_FILE, AUTH_TOKEN_FILE];
+pub fn wipe_datadir_except_barkd_files(datadir: &Path) -> anyhow::Result<()> {
+	let barkd_files = [BARKD_LOCK_FILE, AUTH_TOKEN_FILE];
 	for entry in fs::read_dir(datadir).context("failed to list datadir")? {
 		let entry = entry?;
-		if daemon_files.iter().any(|k| entry.file_name() == *k) {
+		if barkd_files.iter().any(|k| entry.file_name() == *k) {
 			continue;
 		}
 		let path = entry.path();
@@ -68,7 +68,7 @@ mod test {
 	}
 
 	#[test]
-	fn wipe_keeps_daemon_files() {
+	fn wipe_keeps_barkd_files() {
 		let dir = tmp_dir();
 		let _lock = acquire_barkd_lock(&dir).unwrap();
 		fs::write(dir.join(AUTH_TOKEN_FILE), "tok").unwrap();
@@ -76,7 +76,7 @@ mod test {
 		fs::create_dir(dir.join("sub")).unwrap();
 		fs::write(dir.join("sub").join("f"), "y").unwrap();
 
-		wipe_datadir_except_daemon_files(&dir).unwrap();
+		wipe_datadir_except_barkd_files(&dir).unwrap();
 
 		assert!(dir.join(BARKD_LOCK_FILE).exists());
 		assert!(dir.join(AUTH_TOKEN_FILE).exists());

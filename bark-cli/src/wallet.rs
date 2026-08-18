@@ -366,7 +366,7 @@ pub async fn create_wallet(
 		} else {
 			// A barkd serving this datadir must keep its lock and auth
 			// token; drop the datadir itself only when nothing is left.
-			if let Err(e) = connection::wipe_datadir_except_daemon_files(datadir) {
+			if let Err(e) = connection::wipe_datadir_except_barkd_files(datadir) {
 				warn!("Error cleaning datadir after failure: {:#}", e);
 			}
 			let _ = fs::remove_dir(datadir);
