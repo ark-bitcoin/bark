@@ -218,6 +218,10 @@ test-integration-bark-int-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
 		-E 'binary(bark) + binary(barkd) + binary(=bark-sdk)'
 
+test-integration-server-migrations-prebuilt: docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
+		-E 'binary(=server-migrations)'
+
 test-integration-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
 	set -euo pipefail
