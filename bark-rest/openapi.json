@@ -1614,6 +1614,110 @@
         }
       }
     },
+    "/api/v1/message/sign": {
+      "post": {
+        "tags": [
+          "message"
+        ],
+        "summary": "Sign a message",
+        "description": "Signs an arbitrary message with a BIP-340 Schnorr signature over a prefixed hash (`SHA256(\"bark/message\" || message)`) of the UTF-8 message bytes. The message is signed with the key of the given Ark address, which must be one of the wallet's own addresses; addresses that do not belong to the wallet are rejected. The resulting signature can be checked with the `/message/verify` endpoint.",
+        "operationId": "sign_message",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the signature over the message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedMessage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ark address or address not owned by this wallet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/message/verify": {
+      "post": {
+        "tags": [
+          "message"
+        ],
+        "summary": "Verify a signed message",
+        "description": "Verifies a BIP-340 Schnorr signature over a prefixed hash (`SHA256(\"bark/message\" || message)`) of the UTF-8 message bytes, as created by the `/message/sign` endpoint. The signature is checked against a public key (`pubkey`) or against the user public key of an Ark address (`address`); exactly one of the two must be set. Verification is stateless and works for signatures made by any wallet, not just this one.",
+        "operationId": "verify_message",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns whether the signature is valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageVerification"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid signature, pubkey or address encoding, or not exactly one of pubkey and address set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/notifications/wait": {
       "get": {
         "tags": [
@@ -5620,6 +5724,19 @@
           }
         }
       },
+      "MessageVerification": {
+        "type": "object",
+        "description": "The result of verifying a signed message",
+        "required": [
+          "valid"
+        ],
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "description": "Whether the signature is valid for the given message and key"
+          }
+        }
+      },
       "MnemonicResponse": {
         "type": "object",
         "required": [
@@ -6476,6 +6593,37 @@
           }
         }
       },
+      "SignMessageRequest": {
+        "type": "object",
+        "description": "Request to sign an arbitrary message with one of the wallet's keys",
+        "required": [
+          "message",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The Ark address to sign the message with"
+          },
+          "message": {
+            "type": "string",
+            "description": "The message to sign"
+          }
+        }
+      },
+      "SignedMessage": {
+        "type": "object",
+        "description": "A signature over a message",
+        "required": [
+          "signature"
+        ],
+        "properties": {
+          "signature": {
+            "type": "string",
+            "description": "The BIP-340 Schnorr signature over the message digest\n`SHA256(\"bark/message\" || message)`"
+          }
+        }
+      },
       "TipResponse": {
         "type": "object",
         "required": [
@@ -6531,6 +6679,38 @@
           "outpoint": {
             "type": "string",
             "description": "Contains the reference to the specific transaction output via transaction ID and index."
+          }
+        }
+      },
+      "VerifyMessageRequest": {
+        "type": "object",
+        "description": "Request to verify a signed message\n\nExactly one of `pubkey` and `address` must be set.",
+        "required": [
+          "message",
+          "signature"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Ark address whose user public key to verify the signature against"
+          },
+          "message": {
+            "type": "string",
+            "description": "The message that was signed"
+          },
+          "pubkey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The public key to verify the signature against"
+          },
+          "signature": {
+            "type": "string",
+            "description": "The BIP-340 Schnorr signature over the message digest\n`SHA256(\"bark/message\" || message)`, in hex"
           }
         }
       },
@@ -6937,6 +7117,10 @@
     {
       "name": "lightning",
       "description": "Create Lightning invoices and track receives."
+    },
+    {
+      "name": "message",
+      "description": "Sign arbitrary messages with the wallet's keys and verify signed messages."
     },
     {
       "name": "onchain",

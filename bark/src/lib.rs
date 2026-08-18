@@ -1001,6 +1001,25 @@ impl Wallet {
 		Ok(addr)
 	}
 
+	/// Sign an arbitrary message with the key of the given [ark::Address].
+	///
+	/// Returns `Ok(None)` if the address is not one of this wallet's own
+	/// addresses or its key has not been derived yet.
+	///
+	/// The resulting signature can be verified with
+	/// [ark::message::verify_for_address] against the address.
+	pub async fn sign_message(
+		&self,
+		message: &[u8],
+		address: &ark::Address,
+	) -> anyhow::Result<Option<secp256k1::schnorr::Signature>> {
+		let pubkey = address.policy().user_pubkey();
+		let Some((_, keypair)) = self.pubkey_keypair(&pubkey).await? else {
+			return Ok(None);
+		};
+		Ok(Some(ark::message::sign(&keypair, message)))
+	}
+
 	/// Create a new wallet
 	///
 	/// This function simply initiates a new wallet; use [Wallet::open] to open

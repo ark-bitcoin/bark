@@ -11,4 +11,5 @@ mod notifications;
 mod onchain;
 mod recovery;
 mod rounds;
+mod signmessage;
 mod vtxo;

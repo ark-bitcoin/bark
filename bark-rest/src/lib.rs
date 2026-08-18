@@ -70,6 +70,7 @@ All endpoints return JSON. Amounts are denominated in satoshis.";
 		(path = "/api/v1/fees", api = api::v1::fees::FeesApiDoc),
 		(path = "/api/v1/history", api = api::v1::history::HistoryApiDoc),
 		(path = "/api/v1/lightning", api = api::v1::lightning::LightningApiDoc),
+		(path = "/api/v1/message", api = api::v1::message::MessageApiDoc),
 		(path = "/api/v1/onchain", api = api::v1::onchain::OnchainApiDoc),
 		(path = "/api/v1/wallet", api = api::v1::wallet::WalletApiDoc),
 		(path = "/api/v1/bitcoin", api = api::v1::bitcoin::BitcoinApiDoc),

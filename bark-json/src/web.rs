@@ -366,6 +366,33 @@ pub struct SendResponse {
 	pub payment_hash: Option<PaymentHash>,
 }
 
+/// Request to sign an arbitrary message with one of the wallet's keys
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct SignMessageRequest {
+	/// The message to sign
+	pub message: String,
+	/// The Ark address to sign the message with
+	pub address: String,
+}
+
+/// Request to verify a signed message
+///
+/// Exactly one of `pubkey` and `address` must be set.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct VerifyMessageRequest {
+	/// The message that was signed
+	pub message: String,
+	/// The BIP-340 Schnorr signature over the message digest
+	/// `SHA256("bark/message" || message)`, in hex
+	pub signature: String,
+	/// The public key to verify the signature against
+	pub pubkey: Option<String>,
+	/// The Ark address whose user public key to verify the signature against
+	pub address: Option<String>,
+}
+
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct SendOnchainRequest {

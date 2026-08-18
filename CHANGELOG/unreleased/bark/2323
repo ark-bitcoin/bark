@@ -1,0 +1,5 @@
+- Add message signing to the wallet
+  `Wallet::sign_message` signs an arbitrary message with the
+  key of the provided adress, if it belongs to the wallet. Signatures
+  can be verified statelessly with the new `ark::message` module.
+  [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)

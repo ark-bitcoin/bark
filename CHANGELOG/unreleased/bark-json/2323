@@ -1,0 +1,5 @@
+- Add `cli::SignedMessage` and `cli::MessageVerification` types
+  Output types for the new message signing and verification commands,
+  along with the `web::SignMessageRequest` and `web::VerifyMessageRequest`
+  request types for the corresponding REST endpoints.
+  [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)
