@@ -29,6 +29,9 @@ use ark_testing::context::LightningPaymentSetup;
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ToAltString};
 use ark_testing::exit::complete_exit;
+use bitcoin_ext::AmountExt;
+
+use cln_rpc::plugins::hold;
 
 
 /// Asserts that every unspent entry in `vtxo_pool` (`spent_at IS NULL`)
@@ -1731,4 +1734,264 @@ async fn refuse_send_with_unlock_hash_as_payment_hash() {
 		.await.expect_err("send with an unlock hash as payment hash must be refused");
 	let msg = format!("{:#}", err);
 	assert!(msg.contains("unlock hash"), "unexpected error: {msg}");
+}
+
+/// The `status` of the `lightning_htlc_subscription` row for `payment_hash`.
+async fn lightning_subscription_status(
+	db: &Db,
+	payment_hash: ark::lightning::PaymentHash,
+) -> Option<String> {
+	db.read(async |t| {
+		Ok(t.query_opt(
+			"SELECT status::text FROM lightning_htlc_subscription WHERE payment_hash = $1",
+			&[&payment_hash.to_string()],
+		).await?.map(|r| r.get(0)))
+	}).await.unwrap()
+}
+
+/// The `status` of the `lightning_payment_attempt` row for `payment_hash`.
+async fn lightning_attempt_status(
+	db: &Db,
+	payment_hash: ark::lightning::PaymentHash,
+) -> Option<String> {
+	db.read(async |t| {
+		Ok(t.query_opt(
+			"SELECT status::text FROM lightning_payment_attempt WHERE payment_hash = $1",
+			&[&payment_hash.to_string()],
+		).await?.map(|r| r.get(0)))
+	}).await.unwrap()
+}
+
+/// Whether a settlement (preimage) for `payment_hash` was recorded.
+async fn is_preimage_recorded(
+	db: &Db,
+	payment_hash: ark::lightning::PaymentHash,
+) -> bool {
+	db.read(async |t| {
+		Ok(t.query_opt(
+			"SELECT 1 FROM htlc_settlement WHERE payment_hash = $1",
+			&[&payment_hash.to_string()],
+		).await?.is_some())
+	}).await.unwrap()
+}
+
+/// Waits until the server's htlc subscription for `payment_hash` is accepted.
+async fn wait_for_accepted_subscription(
+	db: &Db,
+	payment_hash: ark::lightning::PaymentHash,
+) {
+	for _ in 0..50 {
+		if lightning_subscription_status(db, payment_hash).await.as_deref() == Some("accepted") {
+			return;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+	panic!("subscription never reached Accepted");
+}
+
+/// Waits until the payment attempt for `payment_hash` reaches `status`.
+async fn wait_for_attempt_status(
+	db: &Db,
+	payment_hash: ark::lightning::PaymentHash,
+	status: &str,
+) {
+	for _ in 0..50 {
+		if lightning_attempt_status(db, payment_hash).await.as_deref() == Some(status) {
+			return;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+	panic!("payment attempt never reached {status}");
+}
+
+/// Wait until Eve's hold plugin holds the payment's HTLCs. The invoice turns
+/// ACCEPTED only once every HTLC is irrevocably committed and handed to the
+/// plugin; a settle before that fails with "no HTLCs to settle".
+async fn wait_for_hold_invoice_accepted(
+	hold_client: &mut hold::hold_client::HoldClient<tonic::transport::Channel>,
+	payment_hash: ark::lightning::PaymentHash,
+) {
+	async {
+		loop {
+			let invoices = hold_client.list(hold::ListRequest {
+				constraint: Some(hold::list_request::Constraint::PaymentHash(
+					payment_hash.as_ref().to_vec(),
+				)),
+			}).await.expect("list hold invoices").into_inner().invoices;
+			let invoice = invoices.first().expect("hold invoice should exist");
+			if invoice.state() == hold::InvoiceState::Accepted {
+				break;
+			}
+			tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+		}
+	}.wait_millis(30_000).await
+}
+
+/// Regression test for the double-pay where a malicious user revoked the
+/// outgoing HTLC while still collecting the destination Lightning payment.
+///
+/// 1. Eve creates a hold invoice on her own node with payment hash H.
+/// 2. Eve uses bark to pay that invoice (no-wait), creating htlc_a and
+///    launching an in-flight xpay payment.
+/// 3. Eve registers a receive on the server with the same H, producing
+///    invoice-2.
+/// 4. Eve pays invoice-2 from her node, so the server's subscription is
+///    Accepted.
+/// 5. Eve never claims invoice-2. After receive_htlc_forward_timeout the
+///    server cancels the subscription. The outgoing attempt must be left
+///    alone: it is not a self-payment of this subscription, it only shares
+///    the payment hash.
+/// 6. bark syncs; the attempt is still in flight, so no revocation.
+/// 7. Eve settles invoice-1 with the preimage. xpay succeeds and the server
+///    records it.
+///
+/// The bug was that `is_self_payment` was derived from the presence of a
+/// subscription with the same payment hash, so step 3 retroactively turned
+/// the genuine xpay into a "self-payment": step 5 then failed the attempt,
+/// bark revoked htlc_a for a refund, and Eve still settled invoice-1 —
+/// collecting both the refund and the Lightning payment.
+#[tokio::test]
+async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new(
+		"server/prevent_double_pay_via_canceled_subscription_and_inflight_xpay",
+	).await;
+	let cfg_htlc_forward_timeout = Duration::from_secs(5);
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let ark_ln = lightning.internal;
+	let eve_ln = Arc::new(lightning.external);
+
+	let srv = ctx.captaind("server").lightningd(&ark_ln).cfg(move |cfg| {
+		// Short timeout so the unclaimed receive subscription is canceled quickly.
+		cfg.receive_htlc_forward_timeout = cfg_htlc_forward_timeout;
+	}).create().await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	let bark = Arc::new(ctx.bark("bark-attacker", &srv).funded(btc(3)).create().await);
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	// Attacker-controlled preimage / payment hash.
+	let preimage = ark::lightning::Preimage::random();
+	let payment_hash = preimage.compute_payment_hash();
+	let amount = btc(1);
+
+	// xpay computes the outgoing CLTV from the node's own tip; if it lags
+	// bitcoind's (blocks were generated during setup), the HTLC is rejected
+	// as final_incorrect_cltv_expiry.
+	ark_ln.wait_for_block_sync().await;
+	eve_ln.wait_for_block_sync().await;
+
+	// 1. Hold invoice on Eve's node.
+	let mut eve_hold = eve_ln.hold_client().await;
+	let invoice_1 = eve_hold.invoice(hold::InvoiceRequest {
+		payment_hash: payment_hash.to_byte_array().to_vec(),
+		amount_msat: amount.to_msat(),
+		description: Some(hold::invoice_request::Description::Memo(
+			"repro invoice-1".to_string(),
+		)),
+		min_final_cltv_expiry: Some(18),
+		expiry: Some(3600),
+		routing_hints: vec![],
+	}).await.unwrap().into_inner().bolt11;
+
+	// 2. bark pays invoice-1 without waiting; xpay is now in flight and the
+	//    HTLC is held on Eve's node.
+	bark.try_pay_lightning(&invoice_1, None, false).await.unwrap();
+	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
+
+	// While the HTLC is locked up, Eve's spendable balance is reduced by it.
+	let balance_after_pay = bark.spendable_balance().await;
+	assert!(
+		balance_after_pay <= btc(2) - amount,
+		"the HTLC should be deducted from the spendable balance: {balance_after_pay}",
+	);
+
+	// 3. Register a server receive with the same payment hash H.
+	let invoice_2 = srv.get_public_rpc().await
+		.start_lightning_receive(protos::StartLightningReceiveRequest {
+			payment_hash: payment_hash.to_byte_array().to_vec(),
+			amount_sat: amount.to_sat(),
+			min_cltv_delta: 6,
+			mailbox_id: None,
+			description: None,
+		}).await.unwrap().into_inner().bolt11;
+
+	// 4. Pay invoice-2 from Eve's node. The HTLC is held by the server's
+	//    internal hold invoice; the subscription becomes Accepted.
+	let pay_invoice_2 = {
+		let eve_ln = eve_ln.clone();
+		let invoice_2 = invoice_2.clone();
+		tokio::spawn(async move { eve_ln.try_pay_bolt11(invoice_2).await })
+	};
+
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	wait_for_accepted_subscription(&db, payment_hash).await;
+
+	// 5. Eve never claims invoice-2. After receive_htlc_forward_timeout the
+	//    server cancels the subscription. The outgoing attempt is a genuine
+	//    xpay, not a self-payment of this subscription, so it must stay open.
+	//
+	//    NB: the CancelLightningReceive RPC bypasses cancel_htlc_subscription
+	//    entirely; only the timeout path used to hit the bug.
+	tokio::time::sleep(cfg_htlc_forward_timeout + srv.config().invoice_check_interval).await;
+	assert_eq!(
+		lightning_subscription_status(&db, payment_hash).await.as_deref(),
+		Some("canceled"),
+		"subscription should be canceled",
+	);
+	assert_ne!(
+		lightning_attempt_status(&db, payment_hash).await.as_deref(),
+		Some("failed"),
+		"canceling the receive must not fail the unrelated outgoing payment",
+	);
+
+	// 6. bark syncs; the payment is still in flight, so no revocation.
+	bark.sync().await;
+	assert_eq!(
+		bark.spendable_balance().await,
+		balance_after_pay,
+		"bark must not be refunded while the payment is in flight",
+	);
+
+	// 7. Eve settles invoice-1. xpay succeeds and the server records it.
+	eve_hold.settle(hold::SettleRequest {
+		payment_preimage: preimage.as_ref().to_vec(),
+	}).await.unwrap();
+
+	wait_for_attempt_status(&db, payment_hash, "succeeded").await;
+	assert!(
+		is_preimage_recorded(&db, payment_hash).await,
+		"server should record the preimage once xpay succeeds",
+	);
+
+	// Eve received the Lightning payment for invoice-1.
+	let invoices = eve_hold.list(hold::ListRequest {
+		constraint: Some(hold::list_request::Constraint::PaymentHash(
+			payment_hash.as_ref().to_vec(),
+		)),
+	}).await.unwrap().into_inner().invoices;
+	assert_eq!(
+		invoices.first().map(|i| i.state()),
+		Some(hold::InvoiceState::Paid),
+		"Eve should have received the Lightning payment for invoice-1",
+	);
+
+	// Eve's node failed to pay invoice-2 (the subscription was canceled).
+	let pay_2_err = pay_invoice_2.await.unwrap().unwrap_err().to_alt_string();
+	assert!(pay_2_err.contains("incorrect_or_unknown_payment_details"), "invoice-2 pay err: {pay_2_err}");
+
+	// bark paid the invoice and was never refunded: it is out exactly the
+	// payment amount.
+	bark.sync().await;
+	let balance_final = bark.spendable_balance().await;
+	info!("bark balance after pay: {balance_after_pay}, final: {balance_final}");
+	assert!(
+		balance_final < balance_after_pay + amount,
+		"bark must not recover the htlc_a funds for a payment that settled",
+	);
+
+	assert_vtxopool_consistency(&srv).await;
 }

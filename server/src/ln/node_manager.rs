@@ -284,13 +284,22 @@ impl LightningManager {
 			Current block height is {}", node.id, payment_hash, amount, tip,
 		);
 
+		// If a subscription already exists for this payment hash, the payment
+		// is an intra-Ark self-payment; the attempt is linked to it at
+		// initiation. A subscription registered only after this point does
+		// NOT make the attempt a self-payment.
+		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?;
+		let lightning_htlc_subscription_id = sub.as_ref().map(|s| s.id);
+
 		self.db.write(async |t|
-			t.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids).await
+			t.store_lightning_payment_start(
+				node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids,
+				lightning_htlc_subscription_id,
+			).await
 		).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
 		// payment so we can directly mark it as accepted, then skip cln payment.
-		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?;
 		if let Some(sub) = sub {
 			trace!("Updating subscription status for intra-Ark lightning payment with payment hash {payment_hash}");
 
@@ -528,10 +537,11 @@ impl LightningManager {
 	) -> anyhow::Result<()> {
 		let payment_hash = preimage.compute_payment_hash();
 
-		// If an open payment attempt exists for the payment hash, it is an
+		// If an open self-payment attempt exists for the payment hash, it is an
 		// intra-Ark lightning payment so we can mark it as succeeded,
 		// then skip hold invoice settlement.
-		let attempt = self.db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?;
+		let attempt = self.db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
+			.filter(|attempt| attempt.is_self_payment());
 		if let Some(attempt) = attempt {
 			// NB: the xpay reconciliation loop may also post the mailbox notification
 			// for the same payment hash. The DB insert is idempotent (ON CONFLICT DO NOTHING).
