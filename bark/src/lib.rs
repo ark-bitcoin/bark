@@ -178,6 +178,77 @@
 //! }
 //! ```
 //!
+//! ## Sending coins
+//!
+//! Bark can pay to an [ark::Address], a BOLT11 invoice, a BOLT12 offer,
+//! a lightning address, an LNURL-pay link, an onchain [bitcoin::Address]
+//! or a BIP 321 payment URI, all from the same off-chain balance.
+//!
+//! Use [Wallet::parse_payment_request] to parse whatever payment string
+//! your user pasted. The resulting [PaymentRequest] lists each way the
+//! destination can be paid as an [AvailablePaymentMethod].
+//!
+//! Some payment methods need an amount from your user, e.g. a bare address
+//! or an amountless invoice. Use [movement::PaymentMethod::requires_amount]
+//! to decide whether to prompt for one. You can also show the cost of a
+//! payment upfront with [Wallet::estimate_payment_fee].
+//!
+//! ```no_run
+//! # use std::sync::Arc;
+//! # use std::str::FromStr;
+//! # use std::path::PathBuf;
+//! #
+//! # use bitcoin::Network;
+//! # use tokio::fs;
+//! #
+//! # use bark::{Config, Wallet, OpenWalletArgs, WalletSeed};
+//! # use bark::lock_manager::memory::MemoryLockManager;
+//! # use bark::persist::sqlite::SqliteClient;
+//! #
+//! # const MNEMONIC_FILE : &str = "mnemonic";
+//! #
+//! # async fn get_wallet() -> Wallet {
+//! #   let datadir = PathBuf::from("./bark");
+//! #
+//! #   let mnemonic_str = fs::read_to_string(datadir.join(MNEMONIC_FILE)).await.unwrap();
+//! #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
+//! #   let seed = WalletSeed::new_from_mnemonic(Network::Signet, &mnemonic);
+//! #
+//! #   let config = Config::network_default(bitcoin::Network::Signet);
+//! #   Wallet::open(Network::Signet, seed, config, OpenWalletArgs {
+//! #   	datadir: Some(datadir),
+//! #   	..Default::default()
+//! #   }).await.unwrap()
+//! # }
+//! #
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//! 	let mut wallet = get_wallet().await;
+//!
+//! 	// Sending spends your vtxos, so make sure the wallet is synced.
+//! 	wallet.sync().await;
+//!
+//! 	// Anything your user can paste: an Ark address, a BOLT11 invoice,
+//! 	// a BOLT12 offer, a lightning address, a bitcoin address or a
+//! 	// BIP 321 payment URI.
+//! 	let destination = "tark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mq47jn9z";
+//!
+//! 	// Parse the destination into its available payment options.
+//! 	let request = wallet.parse_payment_request(destination).await?;
+//!
+//! 	// Or estimate fees and pick an option in your interface.
+//! 	let option = request.default_option().expect("at least one option");
+//!
+//! 	// Use the request amount, or ask your user for one.
+//! 	let amount = request.amount.or(Some(bitcoin::Amount::from_sat(10_000)));
+//!
+//! 	// Use the pay output in your app.
+//! 	let pay_output = wallet.send_payment(&option.method, amount, None::<&str>, true).await?;
+//!
+//! 	Ok(())
+//! }
+//! ```
+//!
 //! ## Inspecting the wallet
 //!
 //! An Ark wallet contains [ark::Vtxo]s. These are just like normal utxos
