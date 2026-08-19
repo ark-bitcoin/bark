@@ -190,6 +190,7 @@ ln_receive_anti_dos_required = false
 
 # Maximum amount for which the server will issue lightning receive
 # invoices.
+# Unset means no limit. Zero disables lightning receives.
 #max_ln_receive_amount = "100000 sat"
 
 # Maximum amount for a lightning send

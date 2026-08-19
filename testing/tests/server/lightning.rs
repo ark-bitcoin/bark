@@ -1646,10 +1646,20 @@ async fn should_refuse_over_max_ln_receive_amount_invoice_request() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let err = bark.try_bolt11_invoice(sat(100_001)).await.unwrap_err().to_alt_string();
-	assert!(err.contains("Requested amount exceeds lightning receive limit of 0.00100000 BTC"), "err: {err}");
+	assert!(err.contains("lightning receive amount exceeds limit of 0.00100000 BTC"), "err: {err}");
 
 	// At the limit is still allowed.
 	bark.try_bolt11_invoice(sat(100_000)).await.unwrap();
+
+	// zero disables lightning receives entirely
+	srv.stop().await.unwrap();
+	srv.config_mut().max_ln_receive_amount = Some(Amount::ZERO);
+	srv.start().await.unwrap();
+	// A restart reserves new ports, so bark has to be re-pointed at the server.
+	bark.set_ark_url(&srv).await;
+
+	let err = bark.try_bolt11_invoice(sat(1_000)).await.unwrap_err().to_alt_string();
+	assert!(err.contains("lightning receive is temporarily disabled"), "err: {err}");
 
 	assert_vtxopool_consistency(&srv).await;
 }

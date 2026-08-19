@@ -321,6 +321,12 @@ pub struct Config {
 	/// Unset means no limit. Zero disables lightning sends.
 	#[serde(default, with = "utils::serde::string::opt")]
 	pub max_ln_send_amount: Option<Amount>,
+	/// Maximum amount for which the server will issue lightning receive
+	/// invoices.
+	///
+	/// Unset means no limit. Zero disables lightning receives.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_ln_receive_amount: Option<Amount>,
 	/// Maximum total output amount for a single round participation.
 	///
 	/// Unset means no limit. Zero disables round participation.
@@ -471,13 +477,6 @@ pub struct Config {
 	/// provide a VTXO ownership proof, or a lightning receive token
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
-
-	/// Maximum amount for which the server will issue lightning receive
-	/// invoices.
-	///
-	/// Unset means no limit.
-	#[serde(default, with = "utils::serde::string::opt")]
-	pub max_ln_receive_amount: Option<Amount>,
 
 	/// The fraction of the fee we charge that we allow CLN to claim at most
 	///

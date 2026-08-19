@@ -518,6 +518,8 @@ impl Server {
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
+		check_max_amount("lightning receive", amount, self.config.max_ln_receive_amount)?;
+
 		// Held for the whole call, so no other call decides on this payment
 		// while the existing subscriptions are read and the invoice is made.
 		let _guard = self.payment_guards.lock(payment_hash).await;
@@ -559,12 +561,6 @@ impl Server {
 		if let Some(max) = self.config.max_vtxo_amount {
 			if amount > max {
 				return badarg!("Requested amount exceeds limit of {}", max);
-			}
-		}
-
-		if let Some(max) = self.config.max_ln_receive_amount {
-			if amount > max {
-				return badarg!("Requested amount exceeds lightning receive limit of {}", max);
 			}
 		}
 
