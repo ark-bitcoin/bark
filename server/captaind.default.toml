@@ -20,6 +20,10 @@ vtxo_lifetime = 4320
 # Minimum amount required for board transactions
 min_board_amount = "20000 sat"
 
+# Maximum amount for a board
+# Unset means no limit. Zero disables boards.
+#max_board_amount = "1000000 sat"
+
 # The time between execution of each exit clause of the VTXO, in blocks
 vtxo_exit_delta = 144
 

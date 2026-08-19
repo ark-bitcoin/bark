@@ -422,7 +422,7 @@ async fn max_vtxo_amount() {
 	// exceeds limit, should fail
 	let err = bark1.try_board(Amount::from_sat(600_000)).await.unwrap_err().to_alt_string();
 	assert!(err.contains(
-		&format!("bad user input: board amount exceeds limit of {}", cfg_max_amount)
+		&format!("bad user input: board amount exceeds maximum vtxo amount of {}", cfg_max_amount)
 	), "err: {err}");
 
 	bark1.board(Amount::from_sat(500_000)).await;
@@ -447,6 +447,37 @@ async fn max_vtxo_amount() {
 	bark1.maintain().await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(balance, Amount::from_sat(999_100));
+}
+
+#[tokio::test]
+async fn max_board_amount() {
+	let ctx = TestContext::new("server/max_board_amount").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.max_board_amount = Some(sat(500_000));
+	}).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_500_000)).create().await;
+
+	// at the limit is allowed
+	bark1.board_and_confirm_and_register(&ctx, sat(500_000)).await;
+
+	// exceeds limit, should fail
+	//
+	// NB a wallet can't board again after a refused board: the cosign is
+	// requested before the funding tx is broadcast, so the refusal leaves that
+	// tx in bark's wallet unbroadcast, and a later board would spend its change
+	// and be refused for an input tx the server doesn't know. So this comes
+	// after the board above, and the disabled case below uses a fresh wallet.
+	let err = bark1.try_board(sat(600_000)).await.unwrap_err().to_alt_string();
+	assert!(err.contains("board amount exceeds limit of 0.00500000 BTC"), "err: {err}");
+
+	// zero disables boards entirely
+	srv.stop().await.unwrap();
+	srv.config_mut().max_board_amount = Some(Amount::ZERO);
+	srv.start().await.unwrap();
+
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(500_000)).create().await;
+	let err = bark2.try_board(sat(100_000)).await.unwrap_err().to_alt_string();
+	assert!(err.contains("board is temporarily disabled"), "err: {err}");
 }
 
 #[tokio::test]

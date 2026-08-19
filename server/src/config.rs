@@ -306,6 +306,11 @@ pub struct Config {
 	/// Minimum amount required for board transactions.
 	#[serde(with = "utils::serde::string")]
 	pub min_board_amount: Amount,
+	/// Maximum amount for a board.
+	///
+	/// Unset means no limit. Zero disables boards.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_board_amount: Option<Amount>,
 	/// Maximum exit depth (genesis chain length) allowed for a VTXO.
 	/// Once a VTXO's exit depth reaches this value the server will refuse to
 	/// cosign further OOR transactions spending it. Clients should refresh
