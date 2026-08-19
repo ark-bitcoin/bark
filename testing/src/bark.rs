@@ -838,6 +838,14 @@ impl Bark {
 		self.run(["refresh", "--all", "--delegated", "--no-sync"]).await;
 	}
 
+	/// Like [Bark::refresh_all_delegated_no_sync], but returns the command output
+	/// instead of panicking, so tests can assert that the server refused to
+	/// register the participation.
+	pub async fn try_refresh_all_delegated_no_sync(&self) -> anyhow::Result<String> {
+		self.try_run(["refresh", "--all", "--delegated", "--no-sync"]).await
+			.context("running refresh --all --delegated --no-sync command failed")
+	}
+
 	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<json::cli::OffboardResult> {
 		Ok(self.try_run_json(
 			["offboard", "--all", "--address", &address.to_string()],

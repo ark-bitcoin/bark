@@ -481,6 +481,50 @@ async fn max_board_amount() {
 }
 
 #[tokio::test]
+async fn max_round_amount() {
+	let ctx = TestContext::new("server/max_round_amount").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.max_round_amount = Some(sat(100_000));
+	}).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+
+	bark1.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// the refresh's total output amount exceeds the limit
+	let spendable = bark1.spendable_balance().await;
+	let (res, _) = tokio::join!(
+		bark1.try_refresh_all_no_retry(),
+		srv.trigger_round(),
+	);
+	let err = res.unwrap_err().to_alt_string();
+	assert!(err.contains("round participation amount exceeds limit of 0.00100000 BTC"), "err: {err}");
+
+	// A refused round must leave its registered vtxos spendable.
+	bark1.assert_unchanged_after_refusal(spendable).await;
+
+	// a delegated participation is rejected at registration, no round needed
+	let err = bark1.try_refresh_all_delegated_no_sync().await.unwrap_err().to_alt_string();
+	assert!(err.contains("round participation amount exceeds limit of 0.00100000 BTC"), "err: {err}");
+	bark1.assert_unchanged_after_refusal(spendable).await;
+
+	// zero disables round participation entirely
+	srv.stop().await.unwrap();
+	srv.config_mut().max_round_amount = Some(Amount::ZERO);
+	srv.start().await.unwrap();
+	// A restart reserves new ports, so bark has to be re-pointed at the server.
+	bark1.set_ark_url(&srv).await;
+
+	let (res, _) = tokio::join!(
+		bark1.try_refresh_all_no_retry(),
+		srv.trigger_round(),
+	);
+	let err = res.unwrap_err().to_alt_string();
+	assert!(err.contains("round participation is temporarily disabled"), "err: {err}");
+	bark1.assert_unchanged_after_refusal(spendable).await;
+}
+
+#[tokio::test]
 async fn max_vtxo_exit_depth() {
 	let ctx = TestContext::new("server/max_vtxo_exit_depth").await;
 

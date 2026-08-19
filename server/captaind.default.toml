@@ -104,6 +104,14 @@ nb_round_nonces = 8
 # The duration after which to drop forfeit nonces
 round_forfeit_nonces_timeout = "30s"
 
+# Maximum total output amount for a single round participation
+# Unset means no limit. Zero disables round participation.
+#
+# NB this can strand a large balance: clients can't see the limit and don't
+# split a refresh to fit under it, and a VTXO above it can never be refreshed,
+# leaving a unilateral exit as the only way out.
+#max_round_amount = "1000000 sat"
+
 
 #############
 # OFFBOARDS #

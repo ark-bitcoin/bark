@@ -321,6 +321,15 @@ pub struct Config {
 	/// Unset means no limit. Zero disables lightning sends.
 	#[serde(default, with = "utils::serde::string::opt")]
 	pub max_ln_send_amount: Option<Amount>,
+	/// Maximum total output amount for a single round participation.
+	///
+	/// Unset means no limit. Zero disables round participation.
+	///
+	/// NB this can strand a large balance: clients can't see the limit and
+	/// don't split a refresh to fit under it, and a vtxo above it can never be
+	/// refreshed, leaving a unilateral exit as the only way out.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_round_amount: Option<Amount>,
 	/// Maximum exit depth (genesis chain length) allowed for a VTXO.
 	/// Once a VTXO's exit depth reaches this value the server will refuse to
 	/// cosign further OOR transactions spending it. Clients should refresh
