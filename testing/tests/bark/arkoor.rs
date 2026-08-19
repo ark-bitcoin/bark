@@ -156,3 +156,43 @@ async fn test_ark_address_other_ark() {
 	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().to_alt_string();
 	assert!(err.contains("invalid ark server") || err.contains("Ark address is for different server"), "err: {err:#}");
 }
+
+#[tokio::test]
+async fn max_arkoor_amount() {
+	let ctx = TestContext::new("bark/max_arkoor_amount").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.max_arkoor_amount = Some(sat(100_000));
+		// The offboard limit may not exceed the arkoor one, see Config::validate.
+		cfg.max_offboard_amount = Some(sat(100_000));
+	}).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(500_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+
+	bark1.board_and_confirm_and_register(&ctx, sat(400_000)).await;
+
+	// the input vtxo exceeds the limit
+	let addr2 = bark2.address().await;
+	let spendable = bark1.spendable_balance().await;
+	let err = bark1.try_send_oor(&addr2, sat(200_000), true).await.unwrap_err().to_alt_string();
+	assert!(err.contains("arkoor send amount exceeds limit of 0.00100000 BTC"), "err: {err}");
+	bark1.assert_unchanged_after_refusal(spendable).await;
+
+	// a send within the limit still works
+	srv.stop().await.unwrap();
+	srv.config_mut().max_arkoor_amount = Some(sat(500_000));
+	srv.start().await.unwrap();
+	// A restart reserves new ports, so bark has to be re-pointed at the server.
+	bark1.set_ark_url(&srv).await;
+
+	bark1.send_oor(&addr2, sat(20_000)).await;
+
+	// zero disables arkoor sends entirely, and offboards with them
+	srv.stop().await.unwrap();
+	srv.config_mut().max_arkoor_amount = Some(sat(0));
+	srv.config_mut().max_offboard_amount = Some(sat(0));
+	srv.start().await.unwrap();
+	bark1.set_ark_url(&srv).await;
+
+	let err = bark1.try_send_oor(&addr2, sat(20_000), true).await.unwrap_err().to_alt_string();
+	assert!(err.contains("arkoor send is temporarily disabled"), "err: {err}");
+}

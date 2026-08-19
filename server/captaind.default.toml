@@ -28,6 +28,10 @@ min_board_amount = "20000 sat"
 # Unset means no limit. Zero disables offboards.
 #max_offboard_amount = "1000000 sat"
 
+# Maximum total input amount for an arkoor send
+# Unset means no limit. Zero disables arkoor sends.
+#max_arkoor_amount = "1000000 sat"
+
 # The time between execution of each exit clause of the VTXO, in blocks
 vtxo_exit_delta = 144
 

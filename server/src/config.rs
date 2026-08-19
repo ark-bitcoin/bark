@@ -316,6 +316,11 @@ pub struct Config {
 	/// Unset means no limit. Zero disables offboards.
 	#[serde(default, with = "utils::serde::string::opt")]
 	pub max_offboard_amount: Option<Amount>,
+	/// Maximum total input amount for an arkoor send.
+	///
+	/// Unset means no limit. Zero disables arkoor sends.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_arkoor_amount: Option<Amount>,
 	/// Maximum amount for a lightning send.
 	///
 	/// Unset means no limit. Zero disables lightning sends.
@@ -608,6 +613,18 @@ impl Config {
 			);
 		}
 
+		// A send-onchain splits its inputs with an arkoor over the same total,
+		// so an offboard limit above the arkoor one dies at that split.
+		if self.max_offboard_amount.unwrap_or(Amount::MAX)
+			> self.max_arkoor_amount.unwrap_or(Amount::MAX)
+		{
+			bail!("Invalid configuration: max_offboard_amount ({:?}) may not exceed \
+				max_arkoor_amount ({:?}), otherwise a send-onchain fails halfway \
+				through, when it splits its inputs with an arkoor.",
+				self.max_offboard_amount, self.max_arkoor_amount,
+			);
+		}
+
 		if self.network == bitcoin::Network::Bitcoin && !self.require_board_funding_tx {
 			bail!("Cannot turn off require_board_funding_tx on mainnet");
 		}
@@ -819,6 +836,32 @@ mod test {
 
 		cfg.offboard_check_interval = Duration::from_secs(31);
 		cfg.validate().expect_err("Invalid because sessions would outlive their timeout");
+	}
+
+	#[test]
+	fn validate_max_offboard_amount_against_arkoor() {
+		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+		cfg.bitcoind.cookie = Some(".cookie".into());
+
+		cfg.max_arkoor_amount = Some(Amount::from_sat(100_000));
+		cfg.max_offboard_amount = Some(Amount::from_sat(100_000));
+		cfg.validate().expect("an offboard limit at the arkoor limit is valid");
+
+		cfg.max_offboard_amount = Some(Amount::from_sat(100_001));
+		cfg.validate().expect_err("Invalid because the arkoor split refuses such an offboard");
+
+		cfg.max_offboard_amount = None;
+		cfg.validate().expect_err("Invalid because unlimited offboards exceed the arkoor limit");
+
+		cfg.max_arkoor_amount = None;
+		cfg.validate().expect("without an arkoor limit there is no ceiling on offboards");
+
+		// Zero disables arkoors, so offboards have to be disabled with them.
+		cfg.max_arkoor_amount = Some(Amount::ZERO);
+		cfg.validate().expect_err("Invalid because offboards outlive disabled arkoors");
+
+		cfg.max_offboard_amount = Some(Amount::ZERO);
+		cfg.validate().expect("disabling both together is valid");
 	}
 
 	#[test]
