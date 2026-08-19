@@ -49,7 +49,11 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 		let mut builder = env_logger::Builder::new();
 		builder
 			.filter_module("rusqlite", log::LevelFilter::Warn)
+			// Both bitcoind rpc clients log the full response body at trace,
+			// which for getblock is the entire block in hex. Debug keeps the
+			// request line and the errors, and drops the response bodies.
 			.filter_module("bitcoind_async_client", log::LevelFilter::Debug)
+			.filter_module("bitcoincore_rpc", log::LevelFilter::Debug)
 			.filter_module("rustls", log::LevelFilter::Warn)
 			.filter_module("reqwest", log::LevelFilter::Warn)
 			.filter_module("ureq", log::LevelFilter::Warn)
