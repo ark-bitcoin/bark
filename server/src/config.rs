@@ -316,6 +316,11 @@ pub struct Config {
 	/// Unset means no limit. Zero disables offboards.
 	#[serde(default, with = "utils::serde::string::opt")]
 	pub max_offboard_amount: Option<Amount>,
+	/// Maximum amount for a lightning send.
+	///
+	/// Unset means no limit. Zero disables lightning sends.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_ln_send_amount: Option<Amount>,
 	/// Maximum exit depth (genesis chain length) allowed for a VTXO.
 	/// Once a VTXO's exit depth reaches this value the server will refuse to
 	/// cosign further OOR transactions spending it. Clients should refresh

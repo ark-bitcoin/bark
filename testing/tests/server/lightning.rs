@@ -1655,6 +1655,45 @@ async fn should_refuse_over_max_ln_receive_amount_invoice_request() {
 }
 
 #[tokio::test]
+async fn max_ln_send_amount() {
+	let ctx = TestContext::new("server/max_ln_send_amount").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
+		cfg.max_ln_send_amount = Some(sat(100_000));
+	}).create().await;
+
+	let bark = ctx.bark("bark", &srv).funded(btc(1)).create().await;
+	bark.board_and_confirm_and_register(&ctx, sat(50_000_000)).await;
+
+	// exceeds limit, should fail
+	let invoice = lightning.external.invoice(Some(sat(200_000)), "over", "over the limit").await;
+	lightning.sync().await;
+	let spendable = bark.spendable_balance().await;
+	let err = bark.try_pay_lightning(invoice, None, true).await.unwrap_err().to_alt_string();
+	assert!(err.contains("lightning send amount exceeds limit of 0.00100000 BTC"), "err: {err}");
+
+	// The refusal must release the vtxos locked for the HTLC.
+	bark.assert_unchanged_after_refusal(spendable).await;
+
+	// a payment within the limit still works
+	let invoice = lightning.external.invoice(Some(sat(50_000)), "within", "within the limit").await;
+	bark.pay_lightning_wait(invoice, None).await;
+
+	// zero disables lightning sends entirely
+	srv.stop().await.unwrap();
+	srv.config_mut().max_ln_send_amount = Some(Amount::ZERO);
+	srv.start().await.unwrap();
+	// A restart reserves new ports, so bark has to be re-pointed at the server.
+	bark.set_ark_url(&srv).await;
+
+	let invoice = lightning.external.invoice(Some(sat(10_000)), "disabled", "disabled").await;
+	let err = bark.try_pay_lightning(invoice, None, true).await.unwrap_err().to_alt_string();
+	assert!(err.contains("lightning send is temporarily disabled"), "err: {err}");
+}
+
+#[tokio::test]
 async fn server_can_use_multi_input_from_vtxo_pool() {
 	require_bark_version!(> "0.5.0");
 
