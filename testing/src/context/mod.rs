@@ -371,6 +371,7 @@ impl TestContext {
 			min_trusted_confs: 1,
 			max_vtxo_amount: None,
 			max_board_amount: None,
+			max_offboard_amount: None,
 			max_ln_receive_amount: None,
 			max_vtxo_exit_depth: 50,
 			max_arkoor_fanout: 4,

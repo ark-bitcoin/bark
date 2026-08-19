@@ -28,7 +28,7 @@ use bark::persist::adaptor::StorageAdaptorWrapper;
 use bark::persist::adaptor::filestore::FileStorageAdaptor;
 use bark::persist::sqlite::SqliteClient;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
-use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
+use bark_json::primitives::{UtxoInfo, VtxoStateInfo, WalletVtxoInfo};
 use bitcoin_ext::{BlockHeight, FeeRateExt};
 
 use crate::{Bitcoind, TestContext};
@@ -504,6 +504,21 @@ impl Bark {
 	pub async fn vtxos_no_sync(&self) -> Vec<WalletVtxoInfo> {
 		let res = self.run(["vtxos", "--no-sync"]).await;
 		serde_json::from_str(&res).expect("json error")
+	}
+
+	/// Assert a refused action left every vtxo spendable and the balance
+	/// unchanged. Checked without syncing, so a sync can't mask a stuck vtxo.
+	pub async fn assert_unchanged_after_refusal(&self, spendable_before: Amount) {
+		let vtxos = self.vtxos_no_sync().await;
+		let stuck = vtxos.iter()
+			.filter(|v| v.state != VtxoStateInfo::Spendable)
+			.collect::<Vec<_>>();
+		assert!(stuck.is_empty(),
+			"{}: a refused action left vtxos unspendable: {stuck:?}", self.name,
+		);
+		assert_eq!(self.spendable_balance_no_sync().await, spendable_before,
+			"{}: a refused action changed the spendable balance", self.name,
+		);
 	}
 
 	pub async fn raw_vtxo(&self, vtxo_id: VtxoId) -> Vtxo<Full> {

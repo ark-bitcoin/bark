@@ -13,7 +13,7 @@ use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use bitcoin_ext::P2TR_DUST;
 
-use crate::{Server, SECP};
+use crate::{check_max_amount, Server, SECP};
 use crate::bitcoind as bcd;
 use crate::error::ContextExt;
 use crate::flux::OwnedVtxoFluxGuard;
@@ -207,6 +207,8 @@ impl Server {
 		// Validate the request parameters
 		let fee_info = vtxos.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(&v.vtxo, tip));
 		let gross_amount = vtxos.iter().map(|v| v.vtxo.amount()).sum::<Amount>();
+
+		check_max_amount("offboard", gross_amount, self.config.max_offboard_amount)?;
 
 		// If the user is trying to perform a send-onchain then we add fees onto the request amount.
 		// If the user is performing an offboard then we deduct fees from the total VTXO sum.
