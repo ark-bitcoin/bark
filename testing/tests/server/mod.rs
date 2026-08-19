@@ -405,7 +405,6 @@ async fn restart_key_stability() {
 	assert_ne!(addr1, addr2);
 }
 
-#[ignore]
 #[tokio::test]
 async fn max_vtxo_amount() {
 	require_bark_version!(> "0.5.0");
@@ -415,23 +414,36 @@ async fn max_vtxo_amount() {
 		cfg.max_vtxo_amount = Some(Amount::from_sat(500_000));
 	}).create().await;
 	ctx.fund_captaind(&srv, Amount::from_int_btc(10)).await;
-	let mut bark1 = ctx.bark("bark1", &srv).funded(Amount::from_sat(1_500_000)).create().await;
+	// Enough for both boards plus the refused one, whose funding tx also spends
+	// from this wallet even though no VTXO ever comes out of it.
+	let mut bark1 = ctx.bark("bark1", &srv).funded(Amount::from_sat(2_500_000)).create().await;
 
 	let cfg_max_amount = bark1.ark_info().await.max_vtxo_amount.unwrap();
 
-	// exceeds limit, should fail
+	// Confirm each board before making the next one: the second board's funding
+	// tx spends the first one's change, and the server refuses a funding tx
+	// whose input txs it doesn't know yet.
+	bark1.board_and_confirm_and_register(&ctx, Amount::from_sat(500_000)).await;
+	bark1.board_and_confirm_and_register(&ctx, Amount::from_sat(500_000)).await;
+
+	// A board over the limit is refused.
+	//
+	// NB this has to come after the boards above: the cosign is requested before
+	// the funding tx is broadcast, so a refused board leaves that tx in bark's
+	// wallet unbroadcast. A later board would spend its change and be refused
+	// for having an input tx the server doesn't know, not for the amount.
 	let err = bark1.try_board(Amount::from_sat(600_000)).await.unwrap_err().to_alt_string();
 	assert!(err.contains(
 		&format!("bad user input: board amount exceeds maximum vtxo amount of {}", cfg_max_amount)
 	), "err: {err}");
 
-	bark1.board(Amount::from_sat(500_000)).await;
-	bark1.board(Amount::from_sat(500_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
 	// then try send in a round
 	bark1.set_timeout(srv.max_round_delay());
-	let err = bark1.try_refresh_all_no_retry().await.unwrap_err().to_alt_string();
+	let (res, _) = tokio::join!(
+		bark1.try_refresh_all_no_retry(),
+		srv.trigger_round(),
+	);
+	let err = res.unwrap_err().to_alt_string();
 	assert!(err.contains(
 		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
 	), "err: {err}");
@@ -446,7 +458,8 @@ async fn max_vtxo_amount() {
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark1.maintain().await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
-	assert_eq!(balance, Amount::from_sat(999_100));
+	// The two boarded VTXOs (1_000_000 sat) minus the offboard fees.
+	assert_eq!(balance, Amount::from_sat(999_146));
 }
 
 #[tokio::test]
