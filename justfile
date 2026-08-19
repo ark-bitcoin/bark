@@ -372,7 +372,80 @@ generate-bark-rest-client: dump-bark-rest-openapi-schema
 	rm {{BARK_REST_CLIENT_DIR}}/src/models/*.rs
 	cp bark-rest/helpers/models.rs {{BARK_REST_CLIENT_DIR}}/src/models/mod.rs
 
-generate-static-files: dump-server-sql-schema dump-bark-sql-schema generate-bark-rest-client
+# Append server-rpc's version to ALLOWED_BARK_VERSIONS in
+# server/src/telemetry.rs if not already listed. Idempotent; never
+# removes.
+update-allowed-bark-versions:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	target="server/src/telemetry.rs"
+	rpc_cargo="server-rpc/Cargo.toml"
+	cur=$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$rpc_cargo" | head -n1)
+	if [[ -z "$cur" ]]; then
+		echo "couldn't find version = \"X.Y.Z\" in $rpc_cargo" >&2
+		exit 1
+	fi
+	existing=$(awk '$0 == "const ALLOWED_BARK_VERSIONS: &[&str] = &[" { on=1; next } \
+	                on && $0 == "];" { on=0 } \
+	                on' "$target" \
+	         | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' \
+	         | tr -d '"')
+	if [[ -z "$existing" ]]; then
+		echo "couldn't find ALLOWED_BARK_VERSIONS block in $target" >&2
+		exit 1
+	fi
+	if grep -qxF "$cur" <<<"$existing"; then
+		n=$(wc -l <<<"$existing")
+		echo "$cur already present in ALLOWED_BARK_VERSIONS ($n entries); no change"
+		exit 0
+	fi
+	# Sort by (length desc, semver asc) so output is stable and readable.
+	sorted=$(printf '%s\n%s\n' "$existing" "$cur" | sort -u | awk '
+		{ vals[NR] = $0 }
+		END {
+			for (i = 1; i <= NR; i++)
+				for (j = 1; j <= NR - i; j++) {
+					a = vals[j]; b = vals[j+1]
+					la = length(a); lb = length(b)
+					if (la < lb || (la == lb && semver_gt(a, b))) {
+						vals[j] = b; vals[j+1] = a
+					}
+				}
+			for (i = 1; i <= NR; i++) print vals[i]
+		}
+		function semver_gt(a, b,   ax, bx, i) {
+			split(a, ax, "."); split(b, bx, ".")
+			for (i = 1; i <= 3; i++) {
+				if (ax[i]+0 > bx[i]+0) return 1
+				if (ax[i]+0 < bx[i]+0) return 0
+			}
+			return 0
+		}')
+	# 5-per-line, tab-indented.
+	formatted=$(echo "$sorted" | awk '
+		BEGIN { line = ""; n = 0 }
+		{
+			if (n == 0) line = "\t\"" $0 "\","
+			else        line = line " \"" $0 "\","
+			n++
+			if (n == 5) { print line; line = ""; n = 0 }
+		}
+		END { if (n > 0) print line }')
+	tmp=$(mktemp)
+	awk -v block="$formatted" '
+		$0 == "const ALLOWED_BARK_VERSIONS: &[&str] = &[" {
+			print
+			print block
+			skip = 1; next
+		}
+		skip && $0 == "];" { skip = 0; print; next }
+		!skip { print }
+	' "$target" > "$tmp"
+	mv "$tmp" "$target"
+	total=$(wc -l <<<"$sorted")
+	echo "added $cur → $target ($total entries total)"
+
+generate-static-files: dump-server-sql-schema dump-bark-sql-schema generate-bark-rest-client update-allowed-bark-versions
 
 install-zigbuild:
 	cargo install cargo-zigbuild@0.21.8 --locked

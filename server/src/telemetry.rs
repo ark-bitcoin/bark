@@ -716,10 +716,90 @@ pub fn worker_dropped(worker: &str) {
 	}
 }
 
-pub fn count_bark_version(client: Option<String>) {
+/// Stable bark crate releases. Allowlisting bounds telemetry
+/// cardinality since `bark_version` is client-supplied. Order does not
+/// matter; matching is exact token-based (see [classify_bark_version]).
+const ALLOWED_BARK_VERSIONS: &[&str] = &[
+	"0.1.0", "0.1.1", "0.1.2", "0.1.3", "0.1.4",
+	"0.2.0", "0.2.1", "0.2.2", "0.2.3", "0.2.4",
+	"0.2.5", "0.3.0", "0.4.0", "0.5.0", "0.6.0",
+];
+
+// Compile-time check: the workspace version must be in
+// ALLOWED_BARK_VERSIONS so freshly-built clients count as Known.
+const _: () = {
+	const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
+		if a.len() != b.len() {
+			return false;
+		}
+		let mut i = 0;
+		while i < a.len() {
+			if a[i] != b[i] {
+				return false;
+			}
+			i += 1;
+		}
+		true
+	}
+	const fn version_in_allowlist(ver: &str) -> bool {
+		let ver = ver.as_bytes();
+		let mut i = 0;
+		while i < ALLOWED_BARK_VERSIONS.len() {
+			if bytes_eq(ALLOWED_BARK_VERSIONS[i].as_bytes(), ver) {
+				return true;
+			}
+			i += 1;
+		}
+		false
+	}
+	assert!(
+		version_in_allowlist(server_rpc::BARK_CRATE_VERSION),
+		"server_rpc::BARK_CRATE_VERSION is not in ALLOWED_BARK_VERSIONS \
+		 — bump the list in server/src/telemetry.rs to include the current \
+		 workspace version before releasing",
+	);
+};
+
+/// Length cap on the handshake bark_version; bounds per-request scan
+/// cost and log output.
+const MAX_BARK_VERSION_LEN: usize = 64;
+
+/// Classification of a client-supplied bark_version. Three variants
+/// (not two) so metrics can distinguish "field missing" from "field
+/// present but not recognised".
+#[derive(Debug, Clone, Copy)]
+pub enum BarkVersionClass {
+	Missing,
+	Known(&'static str),
+	Unknown,
+}
+
+/// Splits decorated strings (e.g. `"bark-ffi/0.2.5-android"`) on
+/// non-`[0-9.]` and matches each token exactly against
+/// [ALLOWED_BARK_VERSIONS], so `"0.2.50"` does not collapse onto
+/// `"0.2.5"`.
+pub fn classify_bark_version(client: Option<&str>) -> BarkVersionClass {
+	match client {
+		None => BarkVersionClass::Missing,
+		Some(v) if v.len() > MAX_BARK_VERSION_LEN => BarkVersionClass::Unknown,
+		Some(v) => v.split(|c: char| !c.is_ascii_digit() && c != '.')
+			.filter(|t| !t.is_empty())
+			.find_map(|tok| ALLOWED_BARK_VERSIONS.iter().find(|&&a| a == tok).copied())
+			.map(BarkVersionClass::Known)
+			.unwrap_or(BarkVersionClass::Unknown),
+	}
+}
+
+/// Buckets: one label per allowed version, plus `MISSING` (missing)
+/// and `UNKNOWN` (unrecognised).
+pub fn count_bark_version(class: BarkVersionClass) {
 	if let Some(m) = TELEMETRY.get() {
-		let client = client.unwrap_or_else(|| "UNKNOWN".to_string());
-		let attrs = m.with_global_labels([KeyValue::new(ATTRIBUTE_BARK_VERSION, client)]);
+		let bucket = match class {
+			BarkVersionClass::Missing => "MISSING",
+			BarkVersionClass::Known(v) => v,
+			BarkVersionClass::Unknown => "UNKNOWN",
+		};
+		let attrs = m.with_global_labels([KeyValue::new(ATTRIBUTE_BARK_VERSION, bucket.to_string())]);
 		m.bark_version_counter.add(1, &attrs);
 	}
 }
@@ -1281,5 +1361,64 @@ impl SpanExt for BoxedSpan {
 impl<'a> SpanExt for SpanRef<'a> {
 	fn _set_attribute(&mut self, attribute: KeyValue) {
 	    self.set_attribute(attribute);
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn known(class: BarkVersionClass) -> Option<&'static str> {
+		match class {
+			BarkVersionClass::Known(v) => Some(v),
+			_ => None,
+		}
+	}
+
+	#[test]
+	fn classify_bark_version_missing() {
+		assert!(matches!(classify_bark_version(None), BarkVersionClass::Missing));
+	}
+
+	#[test]
+	fn classify_bark_version_exact() {
+		assert_eq!(known(classify_bark_version(Some("0.2.5"))), Some("0.2.5"));
+	}
+
+	#[test]
+	fn classify_bark_version_decorated() {
+		assert_eq!(
+			known(classify_bark_version(Some("bark-ffi/0.2.5-android"))),
+			Some("0.2.5"),
+		);
+	}
+
+	#[test]
+	fn classify_bark_version_no_substring_bleed() {
+		// 0.2.50 must not contains-match 0.2.5.
+		assert!(matches!(
+			classify_bark_version(Some("0.2.50")),
+			BarkVersionClass::Unknown,
+		));
+		assert!(matches!(
+			classify_bark_version(Some("bark-ffi/0.2.50-android")),
+			BarkVersionClass::Unknown,
+		));
+	}
+
+	#[test]
+	fn classify_bark_version_unknown_and_junk() {
+		assert!(matches!(classify_bark_version(Some("")), BarkVersionClass::Unknown));
+		assert!(matches!(classify_bark_version(Some("9.9.9")), BarkVersionClass::Unknown));
+		assert!(matches!(classify_bark_version(Some("garbage")), BarkVersionClass::Unknown));
+	}
+
+	#[test]
+	fn classify_bark_version_over_length() {
+		let long = "a".repeat(MAX_BARK_VERSION_LEN + 1);
+		assert!(matches!(
+			classify_bark_version(Some(&long)),
+			BarkVersionClass::Unknown,
+		));
 	}
 }

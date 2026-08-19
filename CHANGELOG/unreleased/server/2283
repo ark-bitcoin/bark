@@ -1,0 +1,12 @@
+- Classify bark_version at handshake
+  The Handshake RPC now inspects the client-supplied `bark_version` against
+  an allowlist of released bark crate versions. Clients that omit the field
+  or send a value the server doesn't recognise still receive a normal
+  handshake response, but with a PSA asking them to update or contact
+  support. The `bark_version_counter` metric buckets `MISSING` (field
+  missing) and `UNKNOWN` (unrecognised) separately so dashboards can tell
+  them apart. Matching against the allowlist tokenises the client string
+  on non-`[0-9.]` chars and compares exactly, so decorated strings like
+  `bark-ffi/0.2.5-android` still credit `0.2.5` but `0.2.50` no longer
+  collapses onto `0.2.5`.
+  [#2283](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2283)

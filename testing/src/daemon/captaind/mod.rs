@@ -517,7 +517,10 @@ impl CaptaindHelper {
 
 	async fn try_is_ready(&self) -> anyhow::Result<()> {
 		let mut public = connect_ark_client(&self.ark_url()).await.context("public rpc")?;
-		let req = protos::HandshakeRequest { bark_version: None };
+		// Mirror a real bark client so the server classifies as Known.
+		let req = protos::HandshakeRequest {
+			bark_version: Some(rpc::BARK_CRATE_VERSION.to_string()),
+		};
 		let _ = public.handshake(req).await.context("handshake")?;
 
 		let mut wallet = WalletAdminClient::connect(self.admin_url()).await.context("wallet")?;
