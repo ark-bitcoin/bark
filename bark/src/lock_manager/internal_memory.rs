@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use crate::utils::time::{self, Instant};
+use bark_runtime::Instant;
 
 use super::{LockGuard, LockManager, key::validate_key};
 
@@ -121,7 +121,7 @@ impl LockManager for InternalMemoryLockManager {
 	) -> anyhow::Result<Box<dyn LockGuard>> {
 		super::key::validate_key(key)?;
 		let mutex = self.key_mutex(key);
-		match time::timeout(timeout, mutex.lock_owned()).await {
+		match bark_runtime::timeout(timeout, mutex.lock_owned()).await {
 			Ok(guard) => Ok(Box::new(InternalMemoryGuard { _guard: guard })),
 			Err(_) => anyhow::bail!(
 				"timed out acquiring lock {:?} after {:?}", key, timeout,

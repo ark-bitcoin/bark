@@ -93,8 +93,6 @@ use std::path::PathBuf;
 use anyhow::bail;
 use bitcoin::bip32::Fingerprint;
 
-use crate::utils::time;
-
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Errors from constructing a pid-lock-based [`LockManager`]
@@ -137,7 +135,7 @@ pub trait LockGuard: Send + Sync + std::fmt::Debug {}
 /// Acquire and release named locks.
 ///
 /// Implementations only need to provide [`try_lock`](Self::try_lock); the
-/// default [`lock`](Self::lock) polls it under a [`tokio::time::timeout`].
+/// default [`lock`](Self::lock) polls it under a [`bark_runtime::timeout`].
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait LockManager: Send + Sync + std::fmt::Debug {
@@ -155,12 +153,12 @@ pub trait LockManager: Send + Sync + std::fmt::Debug {
 	async fn lock(&self, key: &str, timeout: Duration)
 		-> anyhow::Result<Box<dyn LockGuard>>
 	{
-		let result = time::timeout(timeout, async {
+		let result = bark_runtime::timeout(timeout, async {
 			loop {
 				if let Some(g) = self.try_lock(key).await {
 					return g;
 				}
-				time::sleep(POLL_INTERVAL).await;
+				bark_runtime::sleep(POLL_INTERVAL).await;
 			}
 		}).await;
 		match result {
@@ -239,10 +237,9 @@ pub fn platform_default(
 	bail!("lock_manager::platform_default: no default backend for this target");
 }
 
-// The shared test harness uses `tokio::spawn` / `tokio::sync::Barrier`
-// / `tokio::time::timeout`, all of which require the `rt` feature that
-// is desktop-only. The web_locks backend has its own wasm-bindgen-test
-// suite in its module.
+// The shared test harness uses `tokio::spawn` / `tokio::sync::Barrier`,
+// both of which require the `rt` feature that is desktop-only. The
+// web_locks backend has its own wasm-bindgen-test suite in its module.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod test {
 	use super::*;
@@ -379,10 +376,10 @@ mod test {
 				mgr.lock("k", TEST_TIMEOUT).await.unwrap()
 			});
 
-			tokio::time::sleep(Duration::from_millis(150)).await;
+			bark_runtime::sleep(Duration::from_millis(150)).await;
 			drop(g);
 
-			let result = time::timeout(Duration::from_secs(2), waiter).await;
+			let result = bark_runtime::timeout(Duration::from_secs(2), waiter).await;
 			assert!(result.is_ok(), "{}: waiter should succeed after holder dropped", tb.name);
 		}
 	}
@@ -411,7 +408,7 @@ mod test {
 					let guard = mgr.try_lock("contested").await;
 					let acquired = guard.is_some();
 					if acquired {
-						tokio::time::sleep(Duration::from_millis(100)).await;
+						bark_runtime::sleep(Duration::from_millis(100)).await;
 					}
 					acquired
 				}));

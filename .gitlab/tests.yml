@@ -159,6 +159,15 @@ bark-wasm:
   script:
     - nix develop .#ci --command bash -c "just build-bark-wasm"
 
+bark-runtime-wasm-tests:
+  interruptible: true
+  stage: test
+  extends: .test-rules-no-tags
+  needs:
+    - test-unit
+  script:
+    - nix develop .#ci --command bash -c "just test-wasm-unit"
+
 bark-wasm-indexed-db-tests:
   interruptible: true
   allow_failure: true

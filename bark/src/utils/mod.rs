@@ -1,6 +1,5 @@
 pub(crate) mod json_patch;
 pub(crate) mod serde;
-pub mod time;
 
 use std::time::Duration;
 
@@ -66,7 +65,7 @@ impl ReconnectBackoff {
 	pub async fn wait(&mut self) {
 		let delay = self.next_delay();
 		trace!("Reconnecting subscription stream in {:?}", delay);
-		crate::utils::time::sleep(delay).await;
+		bark_runtime::sleep(delay).await;
 	}
 }
 
