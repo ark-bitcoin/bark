@@ -53,7 +53,10 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 			.filter_module("rustls", log::LevelFilter::Warn)
 			.filter_module("reqwest", log::LevelFilter::Warn)
 			.filter_module("ureq", log::LevelFilter::Warn)
-			.filter_module("ureq_proto", log::LevelFilter::Warn);
+			.filter_module("ureq_proto", log::LevelFilter::Warn)
+			.filter_module("h2", log::LevelFilter::Warn)
+			.filter_module("tower", log::LevelFilter::Warn)
+			.filter_module("hyper_util", log::LevelFilter::Warn);
 		builder
 	}
 
