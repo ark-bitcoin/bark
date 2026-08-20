@@ -237,7 +237,7 @@
 //! 	let request = wallet.parse_payment_request(destination).await?;
 //!
 //! 	// Or estimate fees and pick an option in your interface.
-//! 	let option = request.default_option().expect("at least one option");
+//! 	let option = request.default_option().expect("no usable payment method");
 //!
 //! 	// Use the request amount, or ask your user for one.
 //! 	let amount = request.amount.or(Some(bitcoin::Amount::from_sat(10_000)));
