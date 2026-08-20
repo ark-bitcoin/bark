@@ -56,8 +56,13 @@ impl Wallet {
 			.collect())
 	}
 
-	/// Queries the database for any VTXO that is an unregistered board. There is a lag time between
-	/// when a board is created and when it becomes spendable.
+	/// Queries the database for any VTXO that is an unregistered board whose funding
+	/// transaction has reached the chain. There is a lag time between when a board is
+	/// created and when it becomes spendable.
+	///
+	/// A board bark does not broadcast itself is left out until its funding
+	/// transaction shows up: nothing has moved on-chain yet, and the party holding the
+	/// signatures may never send it.
 	///
 	/// See [ark::ArkInfo::required_board_confirmations] and [Wallet::sync_pending_boards].
 	pub async fn pending_board_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
@@ -65,16 +70,13 @@ impl Wallet {
 
 		let mut vtxos = Vec::with_capacity(boards.len());
 		for board in boards {
+			// A board still in `Broadcasting` has not been seen on the network, so
+			// nothing has moved and its vtxo may not even be stored yet.
+			if matches!(board.progress, Progress::Broadcasting { .. }) {
+				continue;
+			}
 			let vtxo_id = board.vtxo_id;
-			let vtxo = match self.get_vtxo_by_id(vtxo_id).await {
-				Ok(vtxo) => vtxo,
-				// `Broadcasting` hasn't stored its vtxo yet, so skip it; later
-				// states must have one, so a lookup error is real and propagates.
-				Err(e) => match board.progress {
-					Progress::Broadcasting { .. } => continue,
-					Progress::Confirming { .. } => return Err(e),
-				},
-			};
+			let vtxo = self.get_vtxo_by_id(vtxo_id).await?;
 			// We can silently filter out exited VTXOs, next time we sync they will be dropped from
 			// the pending list. A spent one means the funding tx was double-spent and the board
 			// action is being torn down, which will likewise drop it from the pending list.

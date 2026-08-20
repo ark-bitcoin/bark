@@ -543,9 +543,18 @@ async fn board_psbt_confirms_when_other_party_broadcasts() {
 
 	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
 
+	// Nothing has moved on-chain, so the board does not count yet: the other party
+	// holds the signatures and may never send it.
+	assert_eq!(Amount::ZERO, bark1.pending_board_balance().await);
+
 	// The other party broadcasts, not us.
 	ctx.bitcoind().sync_client().send_raw_transaction(&tx).unwrap();
-	ctx.bitcoind().await_transaction(tx.compute_txid()).await;
+	ctx.await_transaction(tx.compute_txid()).await;
+
+	// On the network now, so the board leaves `Broadcasting` and starts counting.
+	bark1.maintain().await;
+	assert_eq!(sat(BOARD_AMOUNT), bark1.pending_board_balance().await);
+
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(sat(BOARD_AMOUNT), bark1.spendable_balance().await);
@@ -583,7 +592,10 @@ async fn board_psbt_unfinalized_fails_when_input_double_spent() {
 	let board_txid = psbt.unsigned_tx.compute_txid();
 
 	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
-	assert_eq!(sat(BOARD_AMOUNT), bark1.pending_board_balance().await);
+	// Not counted as pending: the funding tx has not reached the chain. The vtxo is
+	// what says the board exists.
+	assert_eq!(Amount::ZERO, bark1.pending_board_balance().await);
+	assert_eq!(1, bark1.vtxos().await.len(), "the board vtxo should exist");
 
 	// The funding tx was never broadcast, so its input is still spendable: drain it
 	// elsewhere and confirm that, which the board can now never outrace.
