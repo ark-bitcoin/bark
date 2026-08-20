@@ -395,17 +395,26 @@ enum FundingConflict {
 ///
 /// First confirm every funding input's parent tx is visible on-chain or in the
 /// mempool. A missing parent is not fatal: an evicted ancestor can re-enter the
-/// mempool once a cluster/package limit clears, so we park and wait. Once all
-/// parents are present, re-broadcasting the funding tx reveals whether its
-/// inputs are still spendable: a `missing or spent inputs` rejection then means
-/// a confirmed conflict consumed one of them and the board is dead. Any other
-/// rejection (a competing unconfirmed spend, an RBF fee shortfall, or a
+/// mempool once a cluster/package limit clears, so we park and wait. An input
+/// whose parent is confirmed is then checked for a confirmed spend, which the
+/// funding tx can never outrace. Finally, re-broadcasting the funding tx reveals
+/// whether its inputs are still spendable: a `missing or spent inputs` rejection
+/// means a confirmed conflict consumed one of them and the board is dead. Any
+/// other rejection (a competing unconfirmed spend, an RBF fee shortfall, or a
 /// transient node error) leaves the outcome open, so we park.
 async fn funding_conflict(wallet: &Wallet, board: &Board) -> anyhow::Result<FundingConflict> {
 	for input in &board.funding()?.input {
 		let parent = input.previous_output.txid;
 		match wallet.inner.chain.tx_status(parent).await? {
-			TxStatus::Confirmed(_) | TxStatus::Mempool => {},
+			// The caller only reaches here while the funding tx itself is absent
+			// from chain and mempool, so a confirmed spend of one of its inputs
+			// belongs to another transaction and this board can never confirm.
+			TxStatus::Confirmed(_) => {
+				if wallet.inner.chain.outpoint_spent_confirmed(input.previous_output).await? {
+					return Ok(FundingConflict::Fatal);
+				}
+			},
+			TxStatus::Mempool => {},
 			TxStatus::NotFound => return Ok(FundingConflict::Undecided(format!(
 				"funding input parent tx {} not yet visible on chain", parent,
 			))),
@@ -415,9 +424,8 @@ async fn funding_conflict(wallet: &Wallet, board: &Board) -> anyhow::Result<Fund
 	let Some(tx) = board.to_broadcast()? else {
 		// Without the signatures there is nothing to probe with: a transaction we
 		// cannot complete would be rejected on its own merits and tell us nothing
-		// about its inputs. The outcome is genuinely still open — the party that
-		// holds the signatures may yet broadcast — so park rather than declare the
-		// board dead.
+		// about its inputs. No input is spent by a confirmed tx, so the outcome is
+		// still open and the party holding the signatures may yet broadcast.
 		return Ok(FundingConflict::Undecided("awaiting external funding broadcast".into()));
 	};
 	match wallet.inner.chain.broadcast_package(std::slice::from_ref(&tx)).await {

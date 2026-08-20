@@ -555,3 +555,51 @@ async fn board_psbt_confirms_when_other_party_broadcasts() {
 		"board should have registered once confirmed",
 	);
 }
+
+/// A board whose funding input is spent by a confirmed transaction is torn down.
+///
+/// The unfinalised counterpart to `board_fails_when_funding_tx_double_spent`: bark
+/// cannot probe by re-broadcasting without the signatures, so the `Confirming` pass
+/// checks the inputs for a confirmed spend instead. Same verdict, other route.
+#[tokio::test]
+async fn board_psbt_unfinalized_fails_when_input_double_spent() {
+	require_bark_version!(> "0.6.1");
+
+	const BOARD_AMOUNT: u64 = 90_000;
+	let ctx = TestContext::new("bark/board_psbt_unfinalized_fails_when_input_double_spent").await;
+	let srv = ctx.captaind("server").create().await;
+	// A single utxo, so the conflicting tx below is forced to spend the same input.
+	let bark1 = ctx.bark("bark1", &srv).create().await;
+	ctx.fund_bark(&bark1, sat(200_000)).await;
+
+	let wallet = bark1.client().await;
+	let mut onchain = bark1.onchain_wallet().await;
+	onchain.sync(wallet.chain()).await.unwrap();
+
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+	let psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
+	let board_txid = psbt.unsigned_tx.compute_txid();
+
+	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
+	assert_eq!(sat(BOARD_AMOUNT), bark1.pending_board_balance().await);
+
+	// The funding tx was never broadcast, so its input is still spendable: drain it
+	// elsewhere and confirm that, which the board can now never outrace.
+	let elsewhere = ctx.bitcoind().get_new_address();
+	let conflict = onchain.prepare_drain_tx(elsewhere, fee_rate).await.unwrap();
+	let conflict = onchain.finish_psbt(conflict).await.unwrap().extract_tx().unwrap();
+	assert_ne!(conflict.compute_txid(), board_txid);
+	ctx.bitcoind().sync_client().send_raw_transaction(&conflict).unwrap();
+	ctx.generate_blocks(1).await;
+
+	wallet.sync_pending_boards().await.unwrap();
+
+	assert_eq!(
+		Amount::ZERO,
+		bark1.pending_board_balance().await,
+		"a board whose input was spent by a confirmed tx must be torn down",
+	);
+	assert_eq!(Amount::ZERO, bark1.spendable_balance().await);
+}
