@@ -40,6 +40,7 @@ bark-cln-rpc = { path = "../cln-rpc"}
 bark-json = { path = "../bark-json", features = ["onchain-bdk"] }
 bark-wallet = { path = "../bark", features = ["filestore", "sqlite", "socks5-proxy"] }
 bark-bitcoin-ext = { path = "../bitcoin-ext" }
+bip321 = { path = "../bip321" }
 bark-rest = { path = "../bark-rest" }
 bark-rest-client = { path = "../bark-rest-client" }
 reqwest = { version = "^0.13", default-features = false }

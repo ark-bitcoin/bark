@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
-use log::{error, warn};
+use log::{error, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::arkoor::ArkoorDestination;
@@ -389,6 +389,10 @@ async fn finalize_arkoor_send(
 	};
 	wallet.inner.movements.finish_movement(movement_id, final_status).await
 		.context("failed to finalize arkoor movement")?;
+
+	if delivery_succeeded {
+		info!("Successfully sent arkoor vtxos");
+	}
 
 	Ok(())
 }

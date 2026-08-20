@@ -11,5 +11,6 @@
 mod lightning;
 mod mailbox;
 mod offboard;
+mod payment_request;
 mod round;
 mod vtxo_lock;

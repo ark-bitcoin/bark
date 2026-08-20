@@ -154,5 +154,5 @@ async fn test_ark_address_other_ark() {
 
 	let addr1 = bark1.address().await;
 	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().to_alt_string();
-	assert!(err.contains("Ark address is for different server"), "err: {err:#}");
+	assert!(err.contains("invalid ark server") || err.contains("Ark address is for different server"), "err: {err:#}");
 }

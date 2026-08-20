@@ -56,5 +56,6 @@ futures.workspace = true
 tokio = { workspace = true, features = ["macros", "fs", "signal", "rt-multi-thread"] }
 tokio-util.workspace = true
 
+dialoguer = "0.12"
 home = "=0.5.9"
 
