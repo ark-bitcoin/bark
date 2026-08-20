@@ -1,3 +1,5 @@
+pub mod tip_watcher;
+
 use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

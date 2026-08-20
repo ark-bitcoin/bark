@@ -338,7 +338,7 @@ mod utils;
 
 pub use self::arkoor::{ArkoorCreateResult, ArkoorAddressError};
 pub use self::config::{BarkNetwork, Config};
-pub use self::daemon::DaemonHandle;
+pub use self::daemon::{tip_watcher, DaemonHandle};
 pub use self::fees::FeeEstimate;
 pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::vtxo::WalletVtxo;
