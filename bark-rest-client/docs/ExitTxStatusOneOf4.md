@@ -7,7 +7,7 @@ Name | Type | Description | Notes
 **block** | [**models::BlockRef**](BlockRef.md) |  | 
 **child_txid** | **String** |  | 
 **origin** | [**models::ExitTxOrigin**](ExitTxOrigin.md) |  | 
-**r#type** | **String** |  | 
+**r#type** | **Type** |  (enum: confirmed) | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

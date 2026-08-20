@@ -31,6 +31,11 @@ let
 			urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];
 			sha256 = "sha256-C6DvXuo679lswXdL4nTD1ZSBLPrAmIgJ1wZzi7Bns+M=";
 		};
+		# nixpkgs' bitcoind gpg-verifies the release SHA256SUMS in preUnpack,
+		# but its checksum files are pinned to the nixpkgs version, which our
+		# version pin above rewires to URLs that don't match those hashes. The
+		# source is already pinned by sha256 here, so skip the verification.
+		preUnpack = "";
 		cmakeFlags = (old.cmakeFlags or []) ++ [
 			"-DENABLE_IPC=OFF"
 		];

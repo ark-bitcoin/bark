@@ -5,8 +5,8 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **fees** | [**models::FeeSchedule**](FeeSchedule.md) | The fee schedule outlining any fees that must be paid to interact with the Ark server. | 
-**htlc_expiry_delta** | **i32** |  | 
-**htlc_send_expiry_delta** | **i32** |  | 
+**htlc_expiry_delta** | **i32** | The number of blocks to keep between Lightning and Ark HTLCs expiries | 
+**htlc_send_expiry_delta** | **i32** | The number of blocks after which an HTLC-send VTXO expires once granted. | 
 **ln_receive_anti_dos_required** | **bool** | Indicates whether the Ark server requires clients to either provide a VTXO ownership proof, or a lightning receive token when preparing a lightning claim. | 
 **mailbox_pubkey** | **String** | The pubkey used for blinding unified mailbox IDs | 
 **max_offboard_inputs** | **i32** | The maximum number of inputs for an offboard | 
@@ -21,9 +21,9 @@ Name | Type | Description | Notes
 **round_interval** | **String** | The interval between each round | 
 **server_pubkey** | **String** | The Ark server pubkey | 
 **tos_link** | Option<**String**> | Link to the server's terms of service, if any. | [optional]
-**vtxo_exit_delta** | **i32** |  | 
-**vtxo_expiry_delta** | **i32** |  | 
-**vtxo_lifetime** | Option<**i32**> |  | [optional]
+**vtxo_exit_delta** | **i32** | Delta between exit confirmation and coins becoming spendable | 
+**vtxo_expiry_delta** | **i32** | The number of blocks a VTXO lives before it expires.  **Deprecated**: renamed to `vtxo_lifetime`. This field is still populated with the same value for backwards compatibility and will be removed in a future release. | 
+**vtxo_lifetime** | Option<**i32**> | The number of blocks a VTXO lives before it expires | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

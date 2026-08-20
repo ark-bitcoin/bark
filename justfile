@@ -366,7 +366,7 @@ generate-bark-rest-client: dump-bark-rest-openapi-schema
 		--package-name bark-rest-client \
 		--artifact-version "{{BARK_REST_VERSION}}" \
 		--additional-properties packageVersion="{{BARK_REST_VERSION}}" \
-		--additional-properties reqwestDefaultFeatures="rustls-tls"
+		--additional-properties reqwestDefaultFeatures="rustls"
 	cargo add --package bark-rest-client --path bark-json
 	cargo add --package bark-rest-client --path bark-rest --no-default-features
 	rm {{BARK_REST_CLIENT_DIR}}/src/models/*.rs
@@ -463,3 +463,74 @@ cachix-push:
 	cachix push bark /tmp/bark-shell-build
 	cachix push bark /tmp/bark-shell-msrv-lib
 
+[doc("build a single nix release package and copy its binaries into build/ suffixed with the target triple")]
+_nix-build-collect package target:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p build
+	out=$(nix build --no-link --print-out-paths ".#{{package}}-{{target}}")
+	for bin in "$out"/bin/*
+	do
+		name=$(basename "$bin")
+		if [[ "$name" == *.exe ]]; then
+			dest="build/${name%.exe}-{{target}}.exe"
+		else
+			dest="build/$name-{{target}}"
+		fi
+		install -m 755 "$bin" "$dest"
+		echo "$dest"
+	done
+
+nix-build-bark-all:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	for target in \
+		x86_64-unknown-linux-gnu \
+		x86_64-unknown-linux-musl \
+		aarch64-unknown-linux-musl \
+		armv7-unknown-linux-musleabihf \
+		x86_64-apple-darwin \
+		aarch64-apple-darwin \
+		x86_64-pc-windows-gnu
+	do
+		just _nix-build-collect bark "$target"
+	done
+	just _nix-build-checksums
+
+# The linux bark artifacts only, used by the nightly release.
+nix-build-bark-linux:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	for target in \
+		x86_64-unknown-linux-gnu \
+		x86_64-unknown-linux-musl \
+		aarch64-unknown-linux-musl \
+		armv7-unknown-linux-musleabihf
+	do
+		just _nix-build-collect bark "$target"
+	done
+	just _nix-build-checksums
+
+nix-build-server-all:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	for target in \
+		x86_64-unknown-linux-gnu \
+		x86_64-unknown-linux-musl
+	do
+		just _nix-build-collect bark-server "$target"
+	done
+	just _nix-build-checksums
+
+nix-build-all: nix-build-bark-all nix-build-server-all
+
+# Regenerates build/SHA256SUMS over all collected artifacts. Removed first so
+# the glob can't pick up a stale copy and hash the file into itself; LC_ALL=C
+# so the ordering doesn't depend on the locale.
+_nix-build-checksums:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd build
+	rm -f SHA256SUMS
+	LC_ALL=C sha256sum * > SHA256SUMS
+	cat SHA256SUMS
