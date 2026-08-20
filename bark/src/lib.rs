@@ -1155,7 +1155,11 @@ impl Wallet {
 						.leak_ref().clone(),
 				)
 			};
-			ChainSourceSpec::Bitcoind { url: url.clone(), auth }
+			ChainSourceSpec::Bitcoind {
+				url: url.clone(),
+				auth,
+				zmq: config.bitcoind_zmq_address.clone(),
+			}
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};

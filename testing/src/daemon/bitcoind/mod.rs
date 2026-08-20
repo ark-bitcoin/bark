@@ -146,7 +146,11 @@ impl Bitcoind {
 	}
 
 	pub fn chain_source(&self) -> ChainSourceSpec {
-		ChainSourceSpec::Bitcoind { url: self.rpc_url(), auth: self.auth() }
+		ChainSourceSpec::Bitcoind {
+			url: self.rpc_url(),
+			auth: self.auth(),
+			zmq: Some(self.zmq_url()),
+		}
 	}
 
 	pub fn rpc_port(&self) -> u16 {

@@ -129,6 +129,13 @@ pub struct Config {
 	/// The [Secret] wrapper keeps the password out of debug logs.
 	pub bitcoind_pass: Option<Secret<String>>,
 
+	/// The ZMQ endpoint of the bitcoind node (e.g. `tcp://127.0.0.1:28332`),
+	/// used to get notified of new blocks.
+	///
+	/// Only used with `bitcoind_address`. When unset, the chain tip is
+	/// polled instead.
+	pub bitcoind_zmq_address: Option<String>,
+
 	/// The number of blocks before expiration to refresh vtxos.
 	///
 	/// Default value: 144 (24h) for mainnet, 12 for testnets
@@ -230,6 +237,7 @@ impl Config {
 			bitcoind_cookiefile: None,
 			bitcoind_user: None,
 			bitcoind_pass: None,
+			bitcoind_zmq_address: None,
 			#[cfg(feature = "socks5-proxy")]
 			socks5_proxy: None,
 			vtxo_refresh_expiry_threshold: 144,
@@ -294,6 +302,7 @@ impl Config {
 			Ok(ChainSourceSpec::Bitcoind {
 				url: url.clone(),
 				auth,
+				zmq: self.bitcoind_zmq_address.clone(),
 			})
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");

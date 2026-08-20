@@ -3,6 +3,7 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr as _;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -29,6 +30,8 @@ use bitcoind_async_client::Client as BitcoindClient;
 use bitcoind_async_client::error::ClientError as BitcoindClientError;
 #[cfg(feature = "bitcoind-rpc")]
 use bitcoind_async_client::traits::{Broadcaster, Reader};
+
+use crate::daemon::tip_watcher::{TipSource, TipWatcher};
 
 const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
 const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
@@ -66,6 +69,9 @@ pub enum ChainSourceSpec {
 		url: String,
 		/// Authentication method for JSON-RPC (cookie file or user/pass).
 		auth: rpc::Auth,
+		/// ZMQ endpoint of the node (e.g. `tcp://127.0.0.1:28332`), used to get
+		/// notified of new blocks. When unset, the chain tip is polled instead.
+		zmq: Option<String>,
 	},
 	Esplora {
 		/// Base URL of the esplora-electrs instance (e.g. <https://esplora.signet.2nd.dev>).
@@ -145,6 +151,7 @@ impl ChainSourceClient {
 /// let spec = ChainSourceSpec::Bitcoind {
 ///     url: "http://localhost:8332".into(),
 ///     auth: Auth::UserPass("user".into(), "password".into()),
+///     zmq: None,
 /// };
 /// let network = Network::Bitcoin;
 /// let fallback_fee = FeeRate::from_sat_per_vb(5);
@@ -157,6 +164,8 @@ impl ChainSourceClient {
 pub struct ChainSource {
 	inner: ChainSourceClient,
 	network: Network,
+	/// The ZMQ endpoint of the bitcoind backend, if one was configured.
+	zmq_endpoint: Option<String>,
 	fee_rates: RwLock<FeeRates>,
 	/// `None` until the first successful (or fallback) `update_fee_rates`.
 	/// `Some(t)` makes subsequent calls within `FEE_RATES_CACHE_TTL` a no-op.
@@ -237,9 +246,9 @@ impl ChainSource {
 		fallback_fee: Option<FeeRate>,
 		#[cfg(feature = "socks5-proxy")] proxy: Option<&str>,
 	) -> anyhow::Result<Self> {
-		let inner = match spec {
+		let (inner, zmq_endpoint) = match spec {
 			#[cfg(feature = "bitcoind-rpc")]
-			ChainSourceSpec::Bitcoind { url, auth } => {
+			ChainSourceSpec::Bitcoind { url, auth, zmq } => {
 				// `bdk_bitcoind_rpc::Emitter` is sync-only upstream, so we keep
 				// a sync companion to drive it inside `spawn_blocking`. The async
 				// client is used everywhere else. `BitcoinRpcClient` (rather
@@ -261,14 +270,14 @@ impl ChainSource {
 				let rpc = BitcoindClient::new(url, async_auth, None, None, None)
 					.context("failed to create async bitcoind rpc client")?;
 				rpc.require_txindex().await?;
-				ChainSourceClient::Bitcoind { rpc, sync }
+				(ChainSourceClient::Bitcoind { rpc, sync }, zmq)
 			},
 			#[cfg(not(feature = "bitcoind-rpc"))]
 			ChainSourceSpec::Bitcoind { .. } => bail!(
 				"bitcoind RPC backend is not available: this build was compiled without \
 				 the `bitcoind-rpc` feature (notably the wasm-web build)",
 			),
-			ChainSourceSpec::Esplora { url } => ChainSourceClient::Esplora({
+			ChainSourceSpec::Esplora { url } => (ChainSourceClient::Esplora({
 				let url = crate::utils::url_with_default_https_scheme(&url);
 				// the esplora client doesn't deal well with trailing slash in url
 				let url = url.strip_suffix("/").unwrap_or(&url);
@@ -279,7 +288,7 @@ impl ChainSource {
 				}
 				builder.build_async()
 					.with_context(|| format!("failed to create esplora client for url {}", url))?
-			}),
+			}), None),
 		};
 
 		inner.check_network(network).await?;
@@ -290,6 +299,7 @@ impl ChainSource {
 		Ok(Self {
 			inner,
 			network,
+			zmq_endpoint,
 			fee_rates,
 			fee_rates_fetched_at: RwLock::new(None),
 			tip_cache: RwLock::new(None),
@@ -341,21 +351,32 @@ impl ChainSource {
 		}
 	}
 
+	/// The ZMQ endpoint of the bitcoind backend, if one was configured.
+	///
+	/// Always `None` for the Esplora backend.
+	pub fn zmq_endpoint(&self) -> Option<&str> {
+		self.zmq_endpoint.as_deref()
+	}
+
+	async fn fetch_tip(&self) -> anyhow::Result<BlockHeight> {
+		match self.inner() {
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				Ok(rpc.get_block_count().await? as BlockHeight)
+			},
+			ChainSourceClient::Esplora(client) => {
+				Ok(client.get_height().await?)
+			},
+		}
+	}
+
 	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
 		if let Some((height, fetched_at)) = *self.tip_cache.read().await {
 			if fetched_at.elapsed() < TIP_CACHE_TTL {
 				return Ok(height);
 			}
 		}
-		let height = match self.inner() {
-			#[cfg(feature = "bitcoind-rpc")]
-			ChainSourceClient::Bitcoind { rpc, .. } => {
-				rpc.get_block_count().await? as BlockHeight
-			},
-			ChainSourceClient::Esplora(client) => {
-				client.get_height().await?
-			},
-		};
+		let height = self.fetch_tip().await?;
 		*self.tip_cache.write().await = Some((height, Instant::now()));
 		Ok(height)
 	}
@@ -371,6 +392,29 @@ impl ChainSource {
 
 	pub async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
 		self.block_ref(self.tip().await?).await
+	}
+
+	/// The current tip, always round-tripping the backend instead of serving
+	/// the `TIP_CACHE_TTL` cache. Used by the tip watcher, which only fetches
+	/// when there is reason to believe the tip changed.
+	pub(crate) async fn tip_ref_uncached(&self) -> anyhow::Result<BlockRef> {
+		self.block_ref(self.fetch_tip().await?).await
+	}
+
+	/// Starts a [TipWatcher] tracking the chain tip of this source.
+	///
+	/// When this source has a ZMQ endpoint configured, block notifications
+	/// wake the watcher and `poll_interval` becomes the reconcile interval;
+	/// otherwise the tip is polled at `poll_interval`.
+	pub async fn tip_watcher(
+		self: &Arc<Self>,
+		poll_interval: Duration,
+	) -> anyhow::Result<TipWatcher> {
+		#[cfg(all(feature = "bitcoind-rpc", not(target_arch = "wasm32")))]
+		if let Some(zmq) = self.zmq_endpoint() {
+			return TipWatcher::start_zmq(self.clone(), zmq, poll_interval).await;
+		}
+		TipWatcher::start_poll(self.clone(), poll_interval).await
 	}
 
 	pub async fn block_ref(&self, height: BlockHeight) -> anyhow::Result<BlockRef> {
@@ -717,6 +761,12 @@ impl ChainSource {
 			*self.fee_rates_fetched_at.write().await = Some(Instant::now());
 		}
 		Ok(())
+	}
+}
+
+impl TipSource for ChainSource {
+	async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
+		ChainSource::tip_ref_uncached(self).await
 	}
 }
 
