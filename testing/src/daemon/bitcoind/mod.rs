@@ -101,11 +101,21 @@ impl Bitcoind {
 	}
 
 	pub fn version() -> String {
-		let output = std::process::Command::new(Self::exec())
-			.arg("--version")
-			.output()
-			.expect("failed to run bitcoind --version");
-		String::from_utf8(output.stdout).expect("invalid utf8 in bitcoind --version")
+		// Cache the version: it is compared against the snapshot version file
+		// on every snapshot validity check, and a transient failure of the
+		// subprocess would read as a version mismatch and trigger a snapshot
+		// regeneration in the middle of a test run.
+		static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+		VERSION.get_or_init(|| {
+			let output = std::process::Command::new(Self::exec())
+				.arg("--version")
+				.output()
+				.expect("failed to run bitcoind --version");
+			assert!(output.status.success(), "bitcoind --version failed: {}",
+				String::from_utf8_lossy(&output.stderr),
+			);
+			String::from_utf8(output.stdout).expect("invalid utf8 in bitcoind --version")
+		}).clone()
 	}
 
 	pub fn new(name: String, config: BitcoindConfig, add_node: Option<String>) -> Self {

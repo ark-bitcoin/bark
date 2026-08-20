@@ -10,8 +10,14 @@ fn is_snapshot_valid(snapshot_dir: &Path) -> bool {
 	if !version_file.exists() {
 		return false;
 	}
-	let stored = std::fs::read_to_string(&version_file).unwrap_or_default();
-	stored == Bitcoind::version()
+	// Fail loudly on read errors: silently treating them as "invalid" would
+	// delete and regenerate the snapshot while other tests are copying it,
+	// leaving different nodes of a single test on conflicting chains.
+	match std::fs::read_to_string(&version_file) {
+		Ok(stored) => stored == Bitcoind::version(),
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+		Err(e) => panic!("failed to read snapshot version file: {:?}", e),
+	}
 }
 
 /// Open the lock file for `snapshot_dir`, creating it if needed.
