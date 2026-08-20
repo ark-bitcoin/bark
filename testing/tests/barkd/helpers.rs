@@ -2,6 +2,7 @@
 use std::time::Duration;
 
 use bitcoin::Amount;
+use futures::StreamExt as _;
 
 use bark_json::exit::ExitState;
 use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
@@ -33,24 +34,30 @@ pub async fn wait_for_onchain_balance(barkd: &Barkd, expected: Amount) {
 }
 
 /// Wait for the daemon's background sync to register all confirmed boards
-/// as spendable VTXOs. Polls `get_pending_boards()` (read-only)
-/// so the daemon does the work, not an explicit sync call.
+/// as spendable VTXOs. Subscribes to the daemon's notification stream and
+/// re-checks the pending set on every wallet event, so the wait ends the
+/// moment the daemon registers the boards instead of at the next poll.
+/// The daemon does the work — no explicit sync call.
 pub async fn wait_for_boards_synced(barkd: &Barkd) {
 	let timeout = Duration::from_secs(15);
 	let start = std::time::Instant::now();
 
+	// Subscribe before the first check so a registration can't slip past.
+	let mut notifications = barkd.notification_websocket().await;
 	loop {
-		let pending = barkd.get_pending_boards().await;
-		if pending.is_empty() {
+		if barkd.get_pending_boards().await.is_empty() {
 			return;
 		}
-		if start.elapsed() > timeout {
-			panic!(
-				"board auto-sync did not clear pending boards within {:?}",
-				timeout,
-			);
+		let remaining = timeout.saturating_sub(start.elapsed());
+		if remaining.is_zero() {
+			panic!("board auto-sync did not clear pending boards within {:?}", timeout);
 		}
-		tokio::time::sleep(poll_interval()).await;
+		// Wake on the next wallet event and re-check; the backstop covers
+		// events that raced ahead of the subscription.
+		let _ = tokio::time::timeout(
+			remaining.min(Duration::from_millis(500)),
+			notifications.next(),
+		).await;
 	}
 }
 
