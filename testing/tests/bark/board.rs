@@ -603,3 +603,64 @@ async fn board_psbt_unfinalized_fails_when_input_double_spent() {
 	);
 	assert_eq!(Amount::ZERO, bark1.spendable_balance().await);
 }
+
+/// A board bark holds the signatures for dies when its input is already spent.
+///
+/// The finalised counterpart to the test above, and the mirror of
+/// `board_fails_when_funding_tx_double_spent`, which lets the funding tx reach the
+/// mempool first. Here the conflict confirms before bark ever pushes, so the push
+/// can only fail: classifying before broadcasting is what turns that into a
+/// teardown rather than an error retried forever.
+#[tokio::test]
+async fn board_fails_when_input_double_spent_before_broadcast() {
+	require_bark_version!(> "0.6.1");
+
+	const BOARD_AMOUNT: u64 = 90_000;
+	let ctx = TestContext::new("bark/board_fails_when_input_double_spent_before_broadcast").await;
+	let srv = ctx.captaind("server").create().await;
+	// A single utxo, so the conflicting tx below is forced to spend the same input.
+	let bark1 = ctx.bark("bark1", &srv).create().await;
+	ctx.fund_bark(&bark1, sat(200_000)).await;
+
+	let wallet = bark1.client().await;
+	let mut onchain = bark1.onchain_wallet().await;
+	onchain.sync(wallet.chain()).await.unwrap();
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+
+	// Built before the board and signed in-memory: `finish_psbt` would persist it to
+	// the wallet db, leaving the board below with nothing to spend.
+	let elsewhere = ctx.bitcoind().get_new_address();
+	let mut conflict = onchain.prepare_drain_tx(elsewhere, fee_rate).await.unwrap();
+	#[allow(deprecated)]
+	let opts = bdk_wallet::SignOptions { trust_witness_utxo: true, ..Default::default() };
+	assert!(onchain.inner.sign(&mut conflict, opts).unwrap(), "conflict psbt must finalize");
+	let conflict = conflict.extract_tx().unwrap();
+
+	// Finalised, so the funding tx is bark's to broadcast.
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
+	let psbt = onchain.finish_psbt(psbt).await.unwrap();
+	assert_ne!(psbt.unsigned_tx.compute_txid(), conflict.compute_txid());
+	drop(onchain);
+
+	// Confirm the conflict before the board is ever pushed.
+	ctx.bitcoind().sync_client().send_raw_transaction(&conflict).unwrap();
+	ctx.generate_blocks(1).await;
+
+	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
+	wallet.sync_pending_boards().await.unwrap();
+
+	assert_eq!(
+		Amount::ZERO,
+		bark1.pending_board_balance().await,
+		"a board that could never be broadcast must be torn down",
+	);
+	assert!(bark1.vtxos().await.is_empty(), "the board vtxo must be gone");
+
+	let history = bark1.history().await;
+	let movement = history.iter()
+		.find(|m| m.subsystem.name == "bark.board")
+		.expect("board movement should exist");
+	assert_eq!(movement.status, MovementStatus::Failed);
+}
