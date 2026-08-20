@@ -55,6 +55,9 @@ pub fn init_logging() {
 		.filter_module("rustls", log::LevelFilter::Off)
 		.filter_module("tonic", log::LevelFilter::Off)
 		.filter_module("tokio_postgres", log::LevelFilter::Off)
+		.filter_module("h2", log::LevelFilter::Off)
+		.filter_module("tower", log::LevelFilter::Off)
+		.filter_module("hyper_util", log::LevelFilter::Off)
 		.parse_env(env_logger::Env::new().filter("TEST_LOG"))
 		.format(|out, rec| {
 			let now = chrono::Local::now();
