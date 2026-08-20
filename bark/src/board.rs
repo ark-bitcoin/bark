@@ -37,15 +37,15 @@ impl Wallet {
 	}
 
 	pub async fn pending_boards(&self) -> anyhow::Result<Vec<PendingBoard>> {
-		Ok(self.boards_in_progress().await?
+		self.boards_in_progress().await?
 			.into_iter()
-			.map(|b| PendingBoard {
-				funding_tx: b.funding_tx,
+			.map(|b| Ok(PendingBoard {
+				funding_tx: b.funding()?.clone(),
 				vtxos: vec![b.vtxo_id],
 				amount: b.amount,
 				movement_id: b.movement_id,
-			})
-			.collect())
+			}))
+			.collect()
 	}
 
 	/// Returns every in-progress board checkpoint.
@@ -251,7 +251,8 @@ impl Wallet {
 		let vtxo_amount = vtxo.amount();
 		let board = Board {
 			id: board_action_id(utxo),
-			funding_tx: tx,
+			funding_tx: Some(tx),
+			funding_psbt: None,
 			vtxo_id,
 			amount: vtxo_amount,
 			movement_id,
@@ -264,7 +265,7 @@ impl Wallet {
 		self.inner.db.upsert_wallet_action_checkpoint(&board.id, &board.clone().into()).await?;
 
 		let pending = PendingBoard {
-			funding_tx: board.funding_tx.clone(),
+			funding_tx: board.funding()?.clone(),
 			vtxos: vec![vtxo_id],
 			amount: vtxo_amount,
 			movement_id,

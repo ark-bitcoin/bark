@@ -6,16 +6,15 @@
 //! synchronously in [`crate::Wallet::board_tx`]. This action takes over at the
 //! first point funds become committed (broadcast) and owns the durable part of
 //! the lifecycle: broadcast -> confirm -> register, plus the near-expiry exit
-//! salvage path. Identity (`id`, `funding_tx`, `vtxo_id`, `amount`,
+//! salvage path. Identity (the funding tx, `id`, `vtxo_id`, `amount`,
 //! `movement_id`) lives on [`Board`] as top-level fields; the mutable bit is the
 //! [`Progress`] enum.
 
 use anyhow::Context;
-use bitcoin::{Amount, OutPoint, SignedAmount, Transaction};
+use bitcoin::{Amount, OutPoint, Psbt, SignedAmount, Transaction, Txid};
 use log::{error, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo};
-use ark::board::BOARD_FUNDING_TX_VTXO_VOUT;
 use ark::vtxo::{Full, VtxoId};
 use bitcoin_ext::{BlockHeight, TxStatus};
 use server_rpc::protos;
@@ -27,16 +26,35 @@ use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::vtxo::{VtxoState, VtxoStateKind};
 
+/// Whether every input has a final witness or scriptSig.
+///
+/// [Psbt::extract_tx] fills missing witnesses with empty ones rather than failing,
+/// so finalisation has to be checked before extracting.
+pub(crate) fn psbt_is_finalized(psbt: &Psbt) -> bool {
+	psbt.inputs.iter().all(|i| i.final_script_sig.is_some() || i.final_script_witness.is_some())
+}
+
 /// An in-flight board, persisted as a single checkpoint row and driven across
 /// crashes by the executor.
+///
+/// The funding transaction is carried so (re-)broadcast is re-drivable without the
+/// on-chain wallet, which isn't available inside `advance`. It sits in `funding_tx`
+/// or `funding_psbt`, exactly one of which is set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Board {
 	// Immutable state:
 	pub id: WalletActionId,
-	/// The signed funding transaction. Carried so (re-)broadcast is re-drivable
-	/// without the on-chain wallet, which isn't available inside `advance`.
-	#[serde(with = "bitcoin_ext::serde::encodable")]
-	pub funding_tx: Transaction,
+	/// The funding transaction of a board checkpointed before `funding_psbt`
+	/// existed. Read, never written: a transaction records its inputs' outpoints but
+	/// not their values, so the `witness_utxo` a PSBT needs cannot be recovered.
+	/// Always finalised, those boards having been broadcast on creation.
+	#[serde(default, skip_serializing_if = "Option::is_none",
+		with = "bitcoin_ext::serde::encodable::opt")]
+	pub funding_tx: Option<Transaction>,
+	/// The funding proposal. Broadcast once finalised, watched for until then.
+	#[serde(default, skip_serializing_if = "Option::is_none",
+		with = "bitcoin_ext::serde::psbt::opt")]
+	pub funding_psbt: Option<Psbt>,
 	/// The board vtxo produced by the cosign, built before this checkpoint
 	/// exists. The full vtxo is reloaded from the db when needed.
 	pub vtxo_id: VtxoId,
@@ -53,14 +71,44 @@ impl Board {
 	pub fn id(&self) -> WalletActionId {
 		self.id.clone()
 	}
+
+	/// The funding transaction, signed or not. For inspection only; broadcasting
+	/// goes through [Board::to_broadcast].
+	pub fn funding(&self) -> anyhow::Result<&Transaction> {
+		self.funding_tx.as_ref()
+			.or(self.funding_psbt.as_ref().map(|psbt| &psbt.unsigned_tx))
+			.context("board checkpoint has no funding transaction")
+	}
+
+	/// The funding txid, which the board cosign commits to and is therefore fixed
+	/// before the signatures exist.
+	pub fn funding_txid(&self) -> anyhow::Result<Txid> {
+		Ok(self.funding()?.compute_txid())
+	}
+
+	/// The funding transaction, but only if we hold the signatures for it. The only
+	/// route from a [Board] to the chain source.
+	pub fn to_broadcast(&self) -> anyhow::Result<Option<Transaction>> {
+		if let Some(tx) = &self.funding_tx {
+			return Ok(Some(tx.clone()));
+		}
+		let psbt = self.funding_psbt.as_ref()
+			.context("board checkpoint has no funding transaction")?;
+		if !psbt_is_finalized(psbt) {
+			return Ok(None);
+		}
+		// `extract_tx` fee-checks, so it needs each input's value; a stored proposal
+		// always carries `witness_utxo`.
+		Ok(Some(psbt.clone().extract_tx().context("failed to extract board funding tx")?))
+	}
 }
 
 /// The phases of an in-flight board.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Progress {
 	/// Vtxo cosigned and built but not yet persisted. Store it (locked under the
-	/// action id) and broadcast the funding tx. Carries the signed vtxo because
-	/// it isn't in the vtxo table until this step stores it.
+	/// action id) and broadcast the funding tx. Carries the signed vtxo because it
+	/// isn't in the vtxo table until this step stores it.
 	Broadcasting {
 		#[serde(with = "ark::encode::serde")]
 		signed_vtxo: Vtxo<Full>,
@@ -129,8 +177,8 @@ impl WalletAction for Board {
 
 /// `Broadcasting -> Confirming`. Store the cosigned vtxo locked under the action
 /// and broadcast the funding tx. Both steps are idempotent: `store_locked_vtxos`
-/// no-ops if the vtxo exists, and we skip the broadcast if the tx is already
-/// known to the chain.
+/// no-ops if the vtxo exists, and we skip the broadcast if the tx is already known
+/// to the chain.
 async fn run_broadcast(
 	wallet: &Wallet,
 	board: &Board,
@@ -146,17 +194,18 @@ async fn run_broadcast(
 		},
 	).await?;
 
-	let utxo = OutPoint::new(board.funding_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
 	// Skip the broadcast only on a positive "already on-chain" signal. A
 	// not-yet-broadcast funding tx is unknown to the chain source, and some
 	// backends report that by erroring rather than returning `NotFound`, so
 	// treat anything but a confirmed/mempool hit as "still needs broadcasting".
 	let already_known = matches!(
-		wallet.inner.chain.tx_status(utxo.txid).await,
+		wallet.inner.chain.tx_status(board.funding_txid()?).await,
 		Ok(TxStatus::Mempool) | Ok(TxStatus::Confirmed(_)),
 	);
 	if !already_known {
-		wallet.inner.chain.broadcast_tx(&board.funding_tx).await?;
+		let tx = board.to_broadcast()?
+			.context("board funding tx is not finalised")?;
+		wallet.inner.chain.broadcast_tx(&tx).await?;
 		info!("Board {} funding tx broadcasted", board.id);
 	}
 	Ok(())
@@ -343,7 +392,7 @@ enum FundingConflict {
 /// rejection (a competing unconfirmed spend, an RBF fee shortfall, or a
 /// transient node error) leaves the outcome open, so we park.
 async fn funding_conflict(wallet: &Wallet, board: &Board) -> anyhow::Result<FundingConflict> {
-	for input in &board.funding_tx.input {
+	for input in &board.funding()?.input {
 		let parent = input.previous_output.txid;
 		match wallet.inner.chain.tx_status(parent).await? {
 			TxStatus::Confirmed(_) | TxStatus::Mempool => {},
@@ -353,11 +402,162 @@ async fn funding_conflict(wallet: &Wallet, board: &Board) -> anyhow::Result<Fund
 		}
 	}
 
-	match wallet.inner.chain.broadcast_package(std::slice::from_ref(&board.funding_tx)).await {
+	let tx = board.to_broadcast()?.context("board funding tx is not finalised")?;
+	match wallet.inner.chain.broadcast_package(std::slice::from_ref(&tx)).await {
 		Ok(()) | Err(BroadcastError::AlreadyKnown) => Ok(FundingConflict::None),
 		Err(BroadcastError::MissingOrSpentInputs) => Ok(FundingConflict::Fatal),
 		Err(e) => Ok(FundingConflict::Undecided(
 			format!("funding tx re-broadcast rejected: {}", e),
 		)),
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use bitcoin::{ScriptBuf, Sequence, TxIn, TxOut, Witness, consensus};
+	use bitcoin::locktime::absolute::LockTime;
+	use bitcoin::transaction::Version;
+
+	use super::*;
+
+	fn unsigned_tx() -> Transaction {
+		Transaction {
+			version: Version::TWO,
+			lock_time: LockTime::ZERO,
+			input: vec![TxIn {
+				previous_output: OutPoint::null(),
+				script_sig: ScriptBuf::new(),
+				sequence: Sequence::MAX,
+				witness: Witness::new(),
+			}],
+			output: vec![TxOut {
+				value: Amount::from_sat(1_000_000),
+				script_pubkey: ScriptBuf::new_op_return(&[0u8; 4]),
+			}],
+		}
+	}
+
+	/// An unfinalised PSBT for [unsigned_tx]. `witness_utxo` is set because
+	/// [Psbt::extract_tx] fee-checks, so it fails without the input value.
+	fn psbt() -> Psbt {
+		let mut psbt = Psbt::from_unsigned_tx(unsigned_tx()).unwrap();
+		psbt.inputs[0].witness_utxo = Some(TxOut {
+			value: Amount::from_sat(1_001_000),
+			script_pubkey: ScriptBuf::new_op_return(&[1u8; 4]),
+		});
+		psbt
+	}
+
+	fn finalized_psbt() -> Psbt {
+		let mut psbt = psbt();
+		psbt.inputs[0].final_script_witness = Some(Witness::from_slice(&[[0u8; 64]]));
+		psbt
+	}
+
+	fn board(funding_tx: Option<Transaction>, funding_psbt: Option<Psbt>) -> Board {
+		Board {
+			id: "board.test.0".to_string(),
+			funding_tx,
+			funding_psbt,
+			vtxo_id: VtxoId::from(OutPoint::null()),
+			amount: Amount::from_sat(1_000_000),
+			movement_id: MovementId(7),
+			progress: Progress::Confirming { last_park_error: None },
+		}
+	}
+
+	/// A board is broadcastable exactly when its proposal is finalised.
+	#[test]
+	fn broadcast_follows_psbt_finalisation() {
+		let unfinalized = board(None, Some(psbt()));
+		assert!(unfinalized.to_broadcast().unwrap().is_none());
+		// Still knows which transaction to watch for.
+		assert_eq!(unfinalized.funding_txid().unwrap(), psbt().unsigned_tx.compute_txid());
+
+		let finalized = board(None, Some(finalized_psbt()));
+		let tx = finalized.to_broadcast().unwrap().expect("finalised proposal is ours to send");
+		assert_eq!(tx.compute_txid(), finalized.funding_txid().unwrap());
+		assert!(!tx.input[0].witness.is_empty(), "extracted tx must carry the witness");
+	}
+
+	/// A checkpoint with neither field has no funding transaction, so it errors
+	/// rather than yielding a board that can never confirm.
+	#[test]
+	fn board_without_funding_is_an_error() {
+		let board = board(None, None);
+		assert!(board.funding().is_err());
+		assert!(board.funding_txid().is_err());
+		assert!(board.to_broadcast().is_err());
+	}
+
+	/// A checkpoint predating `funding_psbt` stays readable and re-broadcastable.
+	#[test]
+	fn legacy_funding_tx_is_read_and_broadcastable() {
+		let tx = {
+			let mut tx = unsigned_tx();
+			tx.input[0].witness = Witness::from_slice(&[[0u8; 64]]);
+			tx
+		};
+		let legacy = serde_json::json!({
+			"id": "board.test.0",
+			"funding_tx": consensus::encode::serialize_hex(&tx),
+			"vtxo_id": VtxoId::from(OutPoint::null()),
+			"amount": 1_000_000,
+			"movement_id": 7,
+			"progress": { "Confirming": { "last_park_error": null } },
+		});
+		let board: Board = serde_json::from_value(legacy).unwrap();
+		assert_eq!(board.funding_tx.as_ref(), Some(&tx));
+		assert_eq!(board.funding_psbt, None);
+		assert_eq!(board.to_broadcast().unwrap(), Some(tx));
+	}
+
+	/// Boards written with `funding_psbt` carry it as BIP-174 hex and nothing else.
+	#[test]
+	fn checkpoint_writes_only_funding_psbt() {
+		let psbt = psbt();
+		let json = serde_json::to_value(board(None, Some(psbt.clone()))).unwrap();
+		assert_eq!(json["funding_psbt"], psbt.serialize_hex());
+		assert!(json.get("funding_tx").is_none(), "one key per board: {json}");
+
+		let board: Board = serde_json::from_value(json).unwrap();
+		assert_eq!(board.funding_psbt, Some(psbt));
+		assert_eq!(board.funding_tx, None);
+	}
+
+	/// Both on-disk shapes of a board checkpoint deserialise, into the field each
+	/// names. This is what lets the two coexist without a migration: rows written
+	/// while the funding transaction was a plain [Transaction] keep their `funding_tx`
+	/// key, and rows written since carry `funding_psbt`.
+	#[test]
+	fn both_checkpoint_versions_deserialise() {
+		fn payload(funding_key: &str, funding_hex: String) -> serde_json::Value {
+			serde_json::json!({
+				"id": "board.test.0",
+				funding_key: funding_hex,
+				"vtxo_id": VtxoId::from(OutPoint::null()),
+				"amount": 1_000_000,
+				"movement_id": 7,
+				"progress": { "Confirming": { "last_park_error": null } },
+			})
+		}
+
+		let tx = finalized_psbt().extract_tx().unwrap();
+		let v1: Board = serde_json::from_value(
+			payload("funding_tx", consensus::encode::serialize_hex(&tx)),
+		).expect("a funding_tx checkpoint must still deserialise");
+		assert_eq!(v1.funding_tx, Some(tx.clone()));
+		assert_eq!(v1.funding_psbt, None);
+
+		let psbt = psbt();
+		let v2: Board = serde_json::from_value(
+			payload("funding_psbt", psbt.serialize_hex()),
+		).expect("a funding_psbt checkpoint must deserialise");
+		assert_eq!(v2.funding_psbt, Some(psbt));
+		assert_eq!(v2.funding_tx, None);
+
+		// Both name the same funding transaction, so the rest of the action reads
+		// them identically.
+		assert_eq!(v1.funding_txid().unwrap(), v2.funding_txid().unwrap());
 	}
 }
