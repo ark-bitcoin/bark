@@ -49,13 +49,22 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 		let mut builder = env_logger::Builder::new();
 		builder
 			.filter_module("rusqlite", log::LevelFilter::Warn)
+			// Both bitcoind rpc clients log the full response body at trace,
+			// which for getblock is the entire block in hex. Debug keeps the
+			// request line and the errors, and drops the response bodies.
 			.filter_module("bitcoind_async_client", log::LevelFilter::Debug)
+			.filter_module("bitcoincore_rpc", log::LevelFilter::Debug)
 			.filter_module("rustls", log::LevelFilter::Warn)
 			.filter_module("reqwest", log::LevelFilter::Warn)
 			.filter_module("ureq", log::LevelFilter::Warn)
 			.filter_module("ureq_proto", log::LevelFilter::Warn)
+			// bark-common enables tracing's "log" feature, so tracing events
+			// from the grpc stack reach us as log records. At trace these are
+			// per-frame and per-chunk. The "hyper" directive also covers
+			// hyper_util: directives match on a target prefix.
 			.filter_module("h2", log::LevelFilter::Warn)
 			.filter_module("tower", log::LevelFilter::Warn)
+			.filter_module("tonic", log::LevelFilter::Info)
 			.filter_module("hyper_util", log::LevelFilter::Warn);
 		builder
 	}
