@@ -3,6 +3,7 @@ pub mod snapshot;
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -10,9 +11,11 @@ use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, Amount, FeeRate, Network, Transaction, Txid};
 use log::{debug, info};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 
 use bark::chain::ChainSourceSpec;
-use bitcoin_ext::{BlockHeight, FeeRateExt};
+use bark::tip_watcher::{TipSource, TipWatcher};
+use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt};
 use bitcoin_ext::rpc::{self, RpcApi};
 
 use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
@@ -21,12 +24,25 @@ use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
 use crate::util::{FutureExt, poll_interval, resolve_path, get_tx_propagation_timeout_millis};
 
+struct BitcoindRpcTipSource {
+	rpc: rpc::BitcoinRpcClient,
+}
+
+impl TipSource for BitcoindRpcTipSource {
+	async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
+		let height = self.rpc.get_block_count()? as u32;
+		let hash = self.rpc.get_block_hash(height as u64)?;
+		Ok(BlockRef { height, hash })
+	}
+}
+
 pub struct BitcoindHelper {
 	name : String,
 	exec: PathBuf,
 	config: BitcoindConfig,
 	state: parking_lot::Mutex<BitcoindState>,
-	add_node: Option<String>
+	add_node: Option<String>,
+	tip_watcher: parking_lot::Mutex<Option<TipWatcher>>,
 }
 
 #[derive(Clone)]
@@ -95,7 +111,14 @@ impl Bitcoind {
 	pub fn new(name: String, config: BitcoindConfig, add_node: Option<String>) -> Self {
 		let state = parking_lot::Mutex::new(BitcoindState::default());
 		let exec = Bitcoind::exec();
-		Daemon::wrap(BitcoindHelper { name, exec, config, state, add_node })
+		Daemon::wrap(BitcoindHelper {
+			name,
+			exec,
+			config,
+			state,
+			add_node,
+			tip_watcher: parking_lot::Mutex::new(None),
+		})
 	}
 
 	pub fn sync_client(&self) -> bitcoin_ext::rpc::BitcoinRpcClient {
@@ -234,14 +257,14 @@ impl Bitcoind {
 		client.get_block_count().unwrap()
 	}
 
+	/// The tip watcher listening on this node's ZMQ block notifications.
+	pub fn tip_watcher(&self) -> TipWatcher {
+		self.inner.tip_watcher()
+	}
+
 	pub async fn wait_for_blockheight(&self, height: BlockHeight) {
-		loop {
-			let current = self.get_block_count().await as BlockHeight;
-			if current >= height {
-				break;
-			}
-			tokio::time::sleep(poll_interval()).await;
-		}
+		self.tip_watcher().wait_for_height(height).await
+			.expect("TipWatcher stopped while waiting for blockheight");
 	}
 
 	pub fn get_new_address(&self) -> Address {
@@ -256,6 +279,13 @@ impl Bitcoind {
 }
 
 impl BitcoindHelper {
+	pub fn tip_watcher(&self) -> TipWatcher {
+		self.tip_watcher.lock()
+			.as_ref()
+			.expect("TipWatcher should be initialized after bitcoind starts")
+			.clone()
+	}
+
 	pub fn auth(&self) -> rpc::Auth {
 		rpc::Auth::CookieFile(self.rpc_cookie())
 	}
@@ -452,6 +482,16 @@ impl DaemonHelper for BitcoindHelper {
 		while !self.is_initialized().await {
 			tokio::time::sleep(poll_interval()).await;
 		}
+		Ok(())
+	}
+
+	async fn post_start(&self, _log_handler_tx: &mpsc::Sender<Box<dyn crate::daemon::LogHandler>>) -> anyhow::Result<()> {
+		let source = Arc::new(BitcoindRpcTipSource {
+			rpc: bitcoin_ext::rpc::BitcoinRpcClient::new(&self.rpc_url(), self.auth())?,
+		});
+
+		let watcher = TipWatcher::start_zmq(source, &self.zmq_url(), poll_interval()).await?;
+		*self.tip_watcher.lock() = Some(watcher);
 		Ok(())
 	}
 }
