@@ -28,6 +28,7 @@
 //! # }
 //! ```
 
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::str::FromStr;
@@ -51,7 +52,7 @@ use bark::persist::adaptor::filestore::FileStorageAdaptor;
 
 use bitcoin_ext::BlockHeight;
 
-use crate::connection::BARKD_LOCK_FILE;
+use crate::connection::{self, BARKD_LOCK_FILE};
 use crate::util;
 
 /// File name of the mnemonic file.
@@ -363,9 +364,12 @@ pub async fn create_wallet(
 				warn!("Error cleaning datadir after failure: {:#}", e);
 			}
 		} else {
-			if let Err(e) = tokio::fs::remove_dir_all(datadir).await {
-				warn!("Error removing datadir after failure: {:#}", e);
+			// A barkd serving this datadir must keep its lock and auth
+			// token; drop the datadir itself only when nothing is left.
+			if let Err(e) = connection::wipe_datadir_except_barkd_files(datadir) {
+				warn!("Error cleaning datadir after failure: {:#}", e);
 			}
+			let _ = fs::remove_dir(datadir);
 		}
 
 		bail!("Error while creating wallet: {:#}", e);
@@ -562,6 +566,54 @@ pub async fn open_wallet(datadir: &Path, user_agent: &str) -> anyhow::Result<Opt
 #[cfg(test)]
 mod test {
 	use super::*;
+
+	fn tmp_dir() -> std::path::PathBuf {
+		let dir = std::env::temp_dir()
+			.join(format!("bark-wallet-{}", std::process::id()))
+			.join(format!("{}", std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+		fs::create_dir_all(&dir).unwrap();
+		dir
+	}
+
+	/// Options that fail wallet creation with "provide config flags or a
+	/// config file", after the datadir checks.
+	fn failing_create_opts() -> CreateOpts {
+		CreateOpts {
+			force: false,
+			use_filestore: false,
+			mainnet: false,
+			regtest: false,
+			signet: true,
+			mutinynet: false,
+			mnemonic: None,
+			birthday_height: None,
+			config: ConfigOpts::default(),
+		}
+	}
+
+	#[tokio::test]
+	async fn failed_create_keeps_barkd_files() {
+		let dir = tmp_dir();
+		fs::write(dir.join(AUTH_TOKEN_FILE), "tok").unwrap();
+		fs::write(dir.join(BARKD_LOCK_FILE), "42").unwrap();
+
+		create_wallet(&dir, "test", failing_create_opts()).await.unwrap_err();
+
+		assert!(dir.join(AUTH_TOKEN_FILE).exists());
+		assert!(dir.join(BARKD_LOCK_FILE).exists());
+
+		let _ = fs::remove_dir_all(&dir);
+	}
+
+	#[tokio::test]
+	async fn failed_create_removes_empty_datadir() {
+		let dir = tmp_dir();
+
+		create_wallet(&dir, "test", failing_create_opts()).await.unwrap_err();
+
+		assert!(!dir.exists());
+	}
 
 	#[test]
 	fn expected_datadir_files_and_their_temps() {
