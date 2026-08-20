@@ -62,10 +62,10 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 			// from the grpc stack reach us as log records. At trace these are
 			// per-frame and per-chunk. The "hyper" directive also covers
 			// hyper_util: directives match on a target prefix.
+			.filter_module("hyper", log::LevelFilter::Warn)
 			.filter_module("h2", log::LevelFilter::Warn)
 			.filter_module("tower", log::LevelFilter::Warn)
-			.filter_module("tonic", log::LevelFilter::Info)
-			.filter_module("hyper_util", log::LevelFilter::Warn);
+			.filter_module("tonic", log::LevelFilter::Info);
 		builder
 	}
 
