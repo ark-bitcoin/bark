@@ -54,6 +54,24 @@ pub fn open_lock_file(snapshot_dir: &Path) -> std::fs::File {
 		.expect("failed to open snapshot lock file")
 }
 
+/// Copy the snapshot's regtest dir into `dest_dir`.
+///
+/// Takes the snapshot lock shared while copying, so a concurrent
+/// regeneration cannot delete the snapshot mid-copy.
+pub async fn copy_snapshot(snapshot_dir: &Path, dest_dir: &Path) -> anyhow::Result<()> {
+	debug!("Copying snapshot from {:?}", snapshot_dir);
+	let lock_file = open_lock_file(snapshot_dir);
+	lock_file.lock_shared().expect("failed to lock snapshot for copying");
+	std::fs::create_dir_all(dest_dir)?;
+	let status = tokio::process::Command::new("cp")
+		.arg("-a")
+		.arg(snapshot_dir.join("regtest"))
+		.arg(dest_dir)
+		.status().await?;
+	anyhow::ensure!(status.success(), "failed to copy bitcoind snapshot");
+	Ok(())
+}
+
 /// Ensure a valid bitcoind snapshot exists at `snapshot_dir`.
 ///
 /// Uses file locking so that concurrent test processes don't race to
