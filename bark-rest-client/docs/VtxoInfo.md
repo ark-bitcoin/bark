@@ -6,9 +6,9 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **amount_sat** | **i64** | The value of this VTXO in sats. | 
 **chain_anchor** | **String** | The on-chain outpoint that roots this VTXO, formatted as `txid:vout`. Typically an output of a round transaction or a board transaction. | 
-**exit_delta** | **i32** |  | 
+**exit_delta** | **i32** | The relative timelock, in blocks, that must elapse before the final on-chain claim in an emergency exit. | 
 **exit_depth** | Option<**i32**> | The number of off-chain transactions in this VTXO. Each must be broadcast and confirmed on-chain in sequence during an emergency exit. | [optional]
-**expiry_height** | **i32** |  | 
+**expiry_height** | **i32** | The block height at which this VTXO expires. After expiry, the server can reclaim the sats. Refresh before expiry to receive new VTXOs, or exit to move them on-chain. | 
 **id** | **String** | Unique identifier for this VTXO, formatted as `txid:vout`. | 
 **policy_type** | **String** | The spending policy that governs this VTXO. | 
 **server_pubkey** | **String** | The Ark server's public key used to co-sign transactions involving this VTXO. | 

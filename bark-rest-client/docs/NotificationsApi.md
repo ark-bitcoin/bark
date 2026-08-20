@@ -21,7 +21,7 @@ Long-polls for wallet notifications. Returns all notifications received since th
 
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
-**since** | Option<**String**> | The timestamp to start waiting for notifications from. If not provided, returns all notifications in the buffer. |  |
+**since** | Option<**chrono::DateTime<chrono::FixedOffset>**> | The timestamp to start waiting for notifications from. If not provided, returns all notifications in the buffer. |  |
 
 ### Return type
 

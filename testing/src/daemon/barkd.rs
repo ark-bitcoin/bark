@@ -314,7 +314,7 @@ impl Barkd {
 	/// `since` (or using a timestamp from before the event).
 	pub async fn wait_notification(&self, since: Option<DateTime<Utc>>) -> WaitNotificationResponse {
 		let config = self.client_config();
-		notifications_api::wait_notification(&config, since.map(|t| t.to_rfc3339())).await
+		notifications_api::wait_notification(&config, since.map(|t| t.fixed_offset())).await
 			.expect("barkd wait_notification failed")
 	}
 

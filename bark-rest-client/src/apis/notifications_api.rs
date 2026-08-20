@@ -34,7 +34,7 @@ pub enum WebsocketTicketError {
 
 
 /// Long-polls for wallet notifications. Returns all notifications received since the given timestamp. If no timestamp is provided, returns all notifications in the buffer. Returned notifications are sorted by timestamp in ascending order.
-pub async fn wait_notification(configuration: &configuration::Configuration, since: Option<String>) -> Result<models::WaitNotificationResponse, Error<WaitNotificationError>> {
+pub async fn wait_notification(configuration: &configuration::Configuration, since: Option<chrono::DateTime<chrono::FixedOffset>>) -> Result<models::WaitNotificationResponse, Error<WaitNotificationError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_query_since = since;
 
