@@ -1,14 +1,30 @@
 use std::path::Path;
+use std::time::Duration;
 
 use bitcoin::{FeeRate, Network};
 use log::{debug, trace};
 
 use crate::{Bitcoind, BitcoindConfig};
 
+/// Snapshots older than this are regenerated. Bitcoin Core considers itself
+/// in IBD while its tip is more than 24h old (nMaxTipAge) and then tells its
+/// peers not to relay transactions to it, so nodes started from a stale
+/// snapshot never see each other's mempool transactions until a fresh block
+/// is mined. Keep a wide margin below the 24h threshold so the snapshot
+/// stays young for the whole test run.
+const MAX_SNAPSHOT_AGE: Duration = Duration::from_secs(12 * 60 * 60);
+
 fn is_snapshot_valid(snapshot_dir: &Path) -> bool {
 	let version_file = snapshot_dir.join("version");
 	if !version_file.exists() {
 		return false;
+	}
+	// The version file is written last, so its mtime is the generation time.
+	match version_file.metadata().and_then(|m| m.modified()) {
+		Ok(m) if !m.elapsed().is_ok_and(|age| age < MAX_SNAPSHOT_AGE) => return false,
+		Ok(_) => {},
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+		Err(e) => panic!("failed to read snapshot version file mtime: {:?}", e),
 	}
 	// Fail loudly on read errors: silently treating them as "invalid" would
 	// delete and regenerate the snapshot while other tests are copying it,
