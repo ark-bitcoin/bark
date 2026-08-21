@@ -205,6 +205,7 @@ pub async fn wallet_delete(State(state): State<ServerState>, Json(req): Json<bar
 		}
 		guard.take()
 	};
+	let fingerprint = wallet.as_ref().map(|w| w.fingerprint().to_string());
 	let loaded = wallet.is_some();
 	if let Some(wallet) = wallet {
 		if let Err(e) = wallet.stop_wait().await {
@@ -223,6 +224,7 @@ pub async fn wallet_delete(State(state): State<ServerState>, Json(req): Json<bar
 	};
 	Ok(Json(bark_json::web::WalletDeleteResponse {
 		deleted: loaded,
+		fingerprint,
 		message: message.to_string(),
 	}))
 }

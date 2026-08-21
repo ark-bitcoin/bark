@@ -755,5 +755,6 @@ pub struct WalletDeleteRequest {
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct WalletDeleteResponse {
 	pub deleted: bool,
+	pub fingerprint: Option<String>,
 	pub message: String,
 }

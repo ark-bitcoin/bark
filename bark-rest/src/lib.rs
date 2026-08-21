@@ -154,8 +154,11 @@ impl ServerWallet {
 
 	/// Stop the wallet's background tasks and wait until they have finished.
 	pub async fn stop_wait(&self) -> anyhow::Result<()> {
-		self.notification_mngr.stop_wait().await?;
-		self.wallet.stop_daemon_wait().await
+		let notification_res = self.notification_mngr.stop_wait().await;
+		let wallet_res = self.wallet.stop_daemon_wait().await;
+
+		notification_res?;
+		wallet_res
 	}
 }
 

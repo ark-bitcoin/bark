@@ -7139,6 +7139,12 @@
           "deleted": {
             "type": "boolean"
           },
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "message": {
             "type": "string"
           }
