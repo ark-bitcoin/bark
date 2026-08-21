@@ -13,7 +13,6 @@ SERVER_SQL_SCHEMA_PATH := "server/schema.sql"
 BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
 BARK_OPENAPI_SCHEMA_PATH := "bark-rest/openapi.json"
 BARK_REST_CLIENT_DIR := "bark-rest-client"
-BARK_REST_VERSION := `grep '^version = ' bark-rest/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/'`
 
 EXAMPLES_DIR := env("EXAMPLES_DIR", CARGO_TARGET / "debug" / "examples")
 
@@ -358,14 +357,20 @@ dump-bark-rest-openapi-schema: ensure-build-examples
 	chmod 644 bark-rest/openapi.json
 
 generate-bark-rest-client: dump-bark-rest-openapi-schema
+	#!/usr/bin/env bash
+	# BARK_REST_VERSION is read here (not as a top-level `:=` binding) so it
+	# reflects any bump that ran earlier in the same `just` invocation,
+	# e.g. `release-new-version` → `bump-workspace-versions` → this recipe.
+	set -euo pipefail
+	BARK_REST_VERSION=$(grep '^version = ' bark-rest/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/')
 	rm -rf {{BARK_REST_CLIENT_DIR}}
 	openapi-generator-cli generate \
 		-i {{BARK_OPENAPI_SCHEMA_PATH}} \
 		-g rust \
 		-o {{BARK_REST_CLIENT_DIR}} \
 		--package-name bark-rest-client \
-		--artifact-version "{{BARK_REST_VERSION}}" \
-		--additional-properties packageVersion="{{BARK_REST_VERSION}}" \
+		--artifact-version "$BARK_REST_VERSION" \
+		--additional-properties packageVersion="$BARK_REST_VERSION" \
 		--additional-properties reqwestDefaultFeatures="rustls"
 	cargo add --package bark-rest-client --path bark-json
 	cargo add --package bark-rest-client --path bark-rest --no-default-features
@@ -446,6 +451,29 @@ update-allowed-bark-versions:
 	echo "added $cur → $target ($total entries total)"
 
 generate-static-files: dump-server-sql-schema dump-bark-sql-schema generate-bark-rest-client update-allowed-bark-versions
+
+# Bump lockstep-group Cargo.toml versions to NEW_VERSION (idempotent).
+bump-workspace-versions NEW_VERSION:
+	bash contrib/bump-workspace-versions.sh {{NEW_VERSION}}
+
+# Release cut: bump versions, regen derived files, verify build.
+# Changelog, commit, tag, and push are manual. See contrib/agents/skills/release-tagging.md.
+release-new-version NEW_VERSION: (bump-workspace-versions NEW_VERSION) generate-static-files checks
+	#!/usr/bin/env bash
+	set -euo pipefail
+	echo ""
+	echo "Workspace bumped, derived state refreshed, and build verified for v{{NEW_VERSION}}."
+	echo ""
+	echo "Next steps (manual, see contrib/agents/skills/release-tagging.md):"
+	echo "  1. Review the diff. Verify Cargo.toml bumps hit every lockstep"
+	echo "     crate and no unrelated external deps got dragged along."
+	echo "  2. Merge unreleased CHANGELOG entries into CHANGELOG.md"
+	echo "     (bash contrib/dump-unreleased-changelog.sh --remove to dump + clear)."
+	echo "  3. git commit -am 'Release v{{NEW_VERSION}}'"
+	echo "  4. Push the branch and open a merge request."
+	echo "  5. After the MR is merged, tag the merge commit on master and push:"
+	echo "       git tag bark-{{NEW_VERSION}} <merge-commit>"
+	echo "       git push origin bark-{{NEW_VERSION}}"
 
 install-zigbuild:
 	cargo install cargo-zigbuild@0.21.8 --locked

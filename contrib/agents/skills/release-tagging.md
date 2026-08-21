@@ -93,5 +93,6 @@ Show what was done:
 Remind user to:
 1. Review the changes
 2. Commit with message: `Release vX.Y.Z`
-3. Create git tag: `git tag vX.Y.Z`
-4. Push: `git push --follow-tags`
+3. Push the branch and open a merge request
+4. After the MR is merged, tag the merge commit on master and push the tag:
+   `git tag vX.Y.Z <merge-commit> && git push origin vX.Y.Z`
