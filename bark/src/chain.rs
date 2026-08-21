@@ -281,7 +281,10 @@ impl ChainSource {
 				let url = crate::utils::url_with_default_https_scheme(&url);
 				// the esplora client doesn't deal well with trailing slash in url
 				let url = url.strip_suffix("/").unwrap_or(&url);
+				#[cfg(feature = "socks5-proxy")]
 				let mut builder = esplora_client::Builder::new(url);
+				#[cfg(not(feature = "socks5-proxy"))]
+				let builder = esplora_client::Builder::new(url);
 				#[cfg(feature = "socks5-proxy")]
 				if let Some(proxy) = proxy {
 					builder = builder.proxy(proxy);
