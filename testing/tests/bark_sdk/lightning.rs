@@ -370,3 +370,57 @@ async fn receive_claim_on_mailbox_notification() {
 	let balance = wallet.balance().await.expect("balance");
 	assert_eq!(balance.spendable, invoice_amount);
 }
+
+/// The cooperative claim and the server's hold settler both settle the hold
+/// invoice off the same preimage, so either can get there first. Settling the
+/// invoice out of band before the claim forces the losing case: the claim
+/// must still hand over the claim vtxos rather than fail on the hold plugin's
+/// "no HTLCs to settle".
+#[tokio::test]
+async fn receive_claim_after_hold_invoice_already_settled() {
+	let ctx = TestContext::new("bark_sdk/receive_claim_after_hold_invoice_already_settled").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|cfg| cfg.daemon_manual_sync = true)
+		.create().await;
+
+	lightning.sync().await;
+
+	let invoice_amount = btc(0.5);
+	let invoice = wallet.bolt11_invoice(invoice_amount, None, None).await
+		.expect("creating invoice");
+	let payment_hash = PaymentHash::from(&invoice);
+	let preimage = wallet.lightning_receive_checkpoint(payment_hash).await
+		.expect("fetching receive checkpoint")
+		.expect("receive checkpoint should exist")
+		.payment_preimage;
+
+	let mut hold_client = lightning.internal.hold_client().await;
+
+	let (pay_result, claim_result) = tokio::join!(
+		lightning.external.try_pay_bolt11(invoice.to_string()),
+		async {
+			wait_for_hold_invoice_accepted(&mut hold_client, payment_hash).await;
+
+			// Stand in for the hold settler getting there first.
+			hold_client.settle(hold::SettleRequest {
+				payment_preimage: preimage.as_ref().to_vec(),
+			}).await.expect("settling the hold invoice out of band");
+
+			wallet.try_claim_lightning_receive(payment_hash, true).await
+		},
+	);
+
+	let state = claim_result.expect("try_claim_lightning_receive errored");
+	assert!(matches!(state, LightningReceiveState::Settled(_)),
+		"receive should be settled after the claim, got {:?}", state);
+
+	pay_result.expect("lightning payment failed");
+
+	let balance = wallet.balance().await.expect("balance");
+	assert_eq!(balance.spendable, invoice_amount);
+}

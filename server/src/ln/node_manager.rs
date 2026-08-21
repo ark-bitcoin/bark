@@ -530,7 +530,7 @@ impl LightningManager {
 	///
 	/// The caller must ensure the preimage has already been recorded in
 	/// the [`HtlcSettler`] before calling this.
-	async fn settle_invoice(
+	pub(crate) async fn settle_invoice(
 		&self,
 		subscription_id: i64,
 		preimage: Preimage,
@@ -563,9 +563,21 @@ impl LightningManager {
 			let mut hold_client = self.node_by_id(htlc_subscription.lightning_node_id)
 				.context("invoice cannot be settled: node is now offline")?
 				.hold_rpc.context("node doesn't support hold anymore")?;
-			hold_client.settle(hold_plugin::SettleRequest {
+			if let Err(err) = hold_client.settle(hold_plugin::SettleRequest {
 				payment_preimage: preimage.to_vec(),
-			}).await?;
+			}).await {
+				// The cooperative claim and the hold settler both settle on
+				// the same preimage, so one of them can find the HTLCs
+				// already gone. That is the outcome we wanted, not a failure.
+				let paid = is_hold_invoice_paid(&mut hold_client, payment_hash).await
+					.with_context(|| format!(
+						"hold settle failed ({}) and the invoice state is unknown", err,
+					))?;
+				if !paid {
+					return Err(err.into());
+				}
+				debug!("Hold invoice for {} was already settled", payment_hash);
+			}
 		}
 
 		// Update the subscription status to settled and notify waiters.
@@ -648,8 +660,10 @@ impl LightningManager {
 	/// - Idempotent: skips subscriptions not in HtlcsReady state. Multiple
 	///   paths write to the settler (cooperative claim_lightning_receive,
 	///   on-chain preimage extraction via the frontier). The settler is the
-	///   single source of truth for preimages; this subscriber is the sole
-	///   path that settles hold invoices on the backend.
+	///   single source of truth for preimages; this subscriber is the
+	///   fallback path that settles hold invoices the cooperative claim
+	///   never got to. Both can end up settling the same invoice, so
+	///   [`LightningManager::settle_invoice`] tolerates losing that race.
 	///
 	/// - Retry on failure: a settlement that fails is retried on the same
 	///   item every 5 seconds until it succeeds, so one stuck preimage does
@@ -691,6 +705,24 @@ async fn run_hold_settler(
 		}
 	}
 	error!("Hold settler exited: hold invoices will no longer be settled automatically");
+}
+
+/// Whether the hold plugin already holds a paid invoice for `payment_hash`.
+///
+/// Used to tell a settlement that lost a race from one that genuinely
+/// failed: the plugin refuses a settle with "no HTLCs to settle" both when
+/// the invoice was already settled and when the HTLCs are gone for good.
+async fn is_hold_invoice_paid(
+	hold_client: &mut hold_plugin::hold_client::HoldClient<tonic::transport::Channel>,
+	payment_hash: PaymentHash,
+) -> anyhow::Result<bool> {
+	let res = hold_client.list(hold_plugin::ListRequest {
+		constraint: Some(hold_plugin::list_request::Constraint::PaymentHash(
+			payment_hash.to_byte_array().to_vec(),
+		)),
+	}).await?.into_inner();
+
+	Ok(res.invoices.iter().any(|i| i.state == hold_plugin::InvoiceState::Paid as i32))
 }
 
 /// Try to settle a single hold invoice. Returns true if the entry was
