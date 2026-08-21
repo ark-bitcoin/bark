@@ -688,6 +688,36 @@ impl ChainSource {
 		Ok(tx.output.get(outpoint.vout as usize).context("outpoint vout out of range")?.value)
 	}
 
+	/// Whether `outpoint` has been spent by a transaction that is confirmed, i.e.
+	/// whether any transaction spending it can still be mined.
+	///
+	/// A spend sitting only in the mempool reports `false`: it can still be
+	/// replaced, so it decides nothing.
+	///
+	/// The caller must know `outpoint`'s own transaction is confirmed. `gettxout`
+	/// reads the confirmed utxo set, so it cannot tell an output spent on-chain
+	/// apart from one whose transaction has yet to be mined.
+	pub async fn outpoint_spent_confirmed(&self, outpoint: OutPoint) -> anyhow::Result<bool> {
+		match self.inner() {
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				// `include_mempool: false` keeps a mempool-only spend out of the
+				// answer: the output stays in the confirmed set until its spender is
+				// mined.
+				let utxo = rpc.try_get_tx_out(outpoint, false).await
+					.with_context(|| format!("gettxout {} failed", outpoint))?;
+				Ok(utxo.is_none())
+			},
+			ChainSourceClient::Esplora(client) => {
+				let status = client.get_output_status(&outpoint.txid, outpoint.vout as u64).await
+					.with_context(|| format!("outspend lookup for {} failed", outpoint))?;
+				Ok(status.is_some_and(|s| {
+					s.spent && s.status.is_some_and(|s| s.confirmed)
+				}))
+			},
+		}
+	}
+
 	/// Gets the current fee rates from the chain source, falling back to user-specified values if
 	/// necessary.
 	///

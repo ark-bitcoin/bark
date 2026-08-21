@@ -4,7 +4,7 @@ use bitcoin::key::Keypair;
 use bitcoin::{Address, OutPoint, Psbt};
 use log::{info, warn};
 
-use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
+use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
 use bitcoin_ext::BlockHeight;
 use server_rpc::{protos, MAX_NB_BOARD_FUNDING_INPUTS};
@@ -37,15 +37,15 @@ impl Wallet {
 	}
 
 	pub async fn pending_boards(&self) -> anyhow::Result<Vec<PendingBoard>> {
-		Ok(self.boards_in_progress().await?
+		self.boards_in_progress().await?
 			.into_iter()
-			.map(|b| PendingBoard {
-				funding_tx: b.funding_tx,
+			.map(|b| Ok(PendingBoard {
+				funding_tx: b.funding()?.clone(),
 				vtxos: vec![b.vtxo_id],
 				amount: b.amount,
 				movement_id: b.movement_id,
-			})
-			.collect())
+			}))
+			.collect()
 	}
 
 	/// Returns every in-progress board checkpoint.
@@ -140,13 +140,13 @@ impl Wallet {
 			wallet.finish_psbt(board_psbt).await?
 		};
 
-		self.board_tx(signed_psbt, user_keypair, expiry_height).await
+		self.board_psbt(signed_psbt, user_keypair, expiry_height).await
 	}
 
 	/// Returns the funding address for a board with the given keypair.
 	///
 	/// The caller can use this address to build a funding transaction, then pass it
-	/// to [Wallet::board_tx] to complete the board setup.
+	/// to [Wallet::board_psbt] to complete the board setup.
 	pub async fn board_funding_address(
 		&self,
 		user_keypair: &Keypair,
@@ -171,11 +171,42 @@ impl Wallet {
 		Ok((addr, expiry_height))
 	}
 
-	/// Board a [ark::Vtxo] using a signed funding PSBT.
-	///
-	/// The PSBT must be signed and send funds to the address returned by
-	/// [Wallet::board_funding_address] at output index [BOARD_FUNDING_TX_VTXO_VOUT].
+	#[deprecated(note = "use board_psbt instead")]
 	pub async fn board_tx(
+		&self,
+		board_psbt: Psbt,
+		user_keypair: Keypair,
+		expiry_height: BlockHeight,
+	) -> anyhow::Result<PendingBoard> {
+		self.board_psbt(board_psbt, user_keypair, expiry_height).await
+	}
+
+	/// Board a [ark::Vtxo] from a funding PSBT.
+	///
+	/// The PSBT must pay to the address returned by [Wallet::board_funding_address].
+	/// It may have been built anywhere: the board output is found by matching the
+	/// [BoardBuilder] funding script-pubkey, so it may sit at any index alongside
+	/// any other outputs.
+	///
+	/// Broadcasting follows from the PSBT rather than being chosen by the caller. A
+	/// finalised PSBT bark broadcasts itself; an unfinalised one leaves the missing
+	/// signatures, and so the broadcast, with another party, and bark waits for the
+	/// transaction to appear.
+	///
+	/// The vtxo commits to `psbt.unsigned_tx.compute_txid()` and bark watches for
+	/// nothing else, so a transaction paying the same board output under a different
+	/// txid — added input, fee bump, payjoin sender falling back to its original —
+	/// goes unnoticed: the board waits forever while the funds land in an output no
+	/// vtxo tracks. The other party must therefore report any change, and the caller
+	/// call this again with the updated PSBT and the same `user_keypair` and
+	/// `expiry_height`; the abandoned board stays pending until its vtxo expires.
+	///
+	/// A receiver contributing its own input, signed `SIGHASH_ALL`, would bind the
+	/// sender to the boarded transaction
+	///
+	/// Inputs that are not natively segwit gain a scriptSig when finalised, changing
+	/// the txid, so a PSBT carrying one cannot be boarded here.
+	pub async fn board_psbt(
 		&self,
 		board_psbt: Psbt,
 		user_keypair: Keypair,
@@ -190,13 +221,21 @@ impl Wallet {
 			ark_info.vtxo_exit_delta,
 		);
 
-		let board_output = board_psbt.unsigned_tx.output.get(BOARD_FUNDING_TX_VTXO_VOUT as usize)
-			.context("PSBT does not have output at board funding vout index")?;
-		let expected_script = builder.funding_script_pubkey();
-		ensure!(
-			board_output.script_pubkey == expected_script,
-			"PSBT output does not pay to the expected board funding address",
+		// The server caps funding inputs. `board` checks this for txs we build; a
+		// tx built elsewhere has to be checked here too.
+		ensure!(board_psbt.unsigned_tx.input.len() <= MAX_NB_BOARD_FUNDING_INPUTS,
+			"funding tx has {} inputs, exceeding the limit of {}",
+			board_psbt.unsigned_tx.input.len(), MAX_NB_BOARD_FUNDING_INPUTS,
 		);
+
+		// Locate the board output by script-pubkey rather than a fixed vout: a tx
+		// built elsewhere orders its outputs freely. Ours puts it at vout 0.
+		let expected_script = builder.funding_script_pubkey();
+		let vout = board_psbt.unsigned_tx.output.iter()
+			.position(|o| o.script_pubkey == expected_script)
+			.context("PSBT output does not pay to the expected board funding address")?
+			as u32;
+		let board_output = &board_psbt.unsigned_tx.output[vout as usize];
 
 		let amount = board_output.value;
 		ensure!(amount >= ark_info.min_board_amount,
@@ -206,7 +245,7 @@ impl Wallet {
 		let fee = ark_info.fees.board.calculate(amount).context("fee overflowed")?;
 		validate_and_subtract_fee(amount, fee)?;
 
-		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
+		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), vout);
 		let builder = builder
 			.set_funding_details(amount, fee, utxo)
 			.context("error setting funding details for board")?
@@ -244,14 +283,19 @@ impl Wallet {
 				.metadata(BoardMovement::metadata(utxo, onchain_fee)),
 		).await?;
 
-		let tx = board_psbt.extract_tx()?;
 		let vtxo_id = vtxo.id();
 		// The board amount net of the board fee, i.e. the vtxo value. This is
 		// what `PendingBoard` has always reported (not the gross funding output).
 		let vtxo_amount = vtxo.amount();
+
+		// `Broadcasting` broadcasts only a finalised proposal, so boards bark won't
+		// send start here too. `funding_tx` is never written: it exists to read
+		// checkpoints from before `funding_psbt`, which a bark that predates it cannot
+		// read in turn.
 		let board = Board {
 			id: board_action_id(utxo),
-			funding_tx: tx,
+			funding_tx: None,
+			funding_psbt: Some(board_psbt),
 			vtxo_id,
 			amount: vtxo_amount,
 			movement_id,
@@ -264,7 +308,7 @@ impl Wallet {
 		self.inner.db.upsert_wallet_action_checkpoint(&board.id, &board.clone().into()).await?;
 
 		let pending = PendingBoard {
-			funding_tx: board.funding_tx.clone(),
+			funding_tx: board.funding()?.clone(),
 			vtxos: vec![vtxo_id],
 			amount: vtxo_amount,
 			movement_id,
@@ -274,7 +318,7 @@ impl Wallet {
 		// drive it to completion. The initial drive is best-effort, so don't
 		// propagate its error (a retry would fund a duplicate board).
 		match self.drive_action(board, DriveMode::UntilParkOrDone).await {
-			Ok(()) => info!("Board broadcasted"),
+			Ok(()) => info!("Board accepted"),
 			Err(e) => warn!("Initial board drive failed, sync will retry: {:#}", e),
 		}
 		Ok(pending)

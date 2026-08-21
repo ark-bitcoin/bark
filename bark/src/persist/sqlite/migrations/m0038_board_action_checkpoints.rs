@@ -100,11 +100,19 @@ mod test {
 
 	/// A minimal funding tx with a single output, matching how `board_tx`
 	/// stores `funding_tx` (consensus hex).
+	///
+	/// The input carries a witness, as every legacy row's does: those transactions
+	/// were extracted from a finalised PSBT and broadcast.
 	fn funding_tx() -> bitcoin::Transaction {
 		bitcoin::Transaction {
 			version: bitcoin::transaction::Version::TWO,
 			lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
-			input: vec![],
+			input: vec![bitcoin::TxIn {
+				previous_output: bitcoin::OutPoint::null(),
+				script_sig: bitcoin::ScriptBuf::new(),
+				sequence: bitcoin::Sequence::MAX,
+				witness: bitcoin::Witness::from_slice(&[[0u8; 64].as_slice()]),
+			}],
 			output: vec![bitcoin::TxOut {
 				value: bitcoin::Amount::from_sat(1_000_000),
 				script_pubkey: bitcoin::ScriptBuf::new_op_return(&[0u8; 4]),
@@ -158,5 +166,10 @@ mod test {
 		assert_eq!(board.vtxo_id, vtxo_id);
 		assert_eq!(board.movement_id.0, 7);
 		assert!(matches!(board.progress, Progress::Confirming { .. }));
+		// These boards have no PSBT to recover, so they land in `funding_tx`. They
+		// are already broadcast, so they must stay re-broadcastable.
+		assert_eq!(board.funding_tx.as_ref(), Some(&funding_tx));
+		assert_eq!(board.funding_psbt, None);
+		assert_eq!(board.to_broadcast().unwrap(), Some(funding_tx));
 	}
 }

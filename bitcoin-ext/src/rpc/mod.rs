@@ -16,6 +16,8 @@ use bitcoind_async_client::error::ClientError as AsyncClientError;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::hex::FromHex;
 use bitcoin::{Address, Amount, FeeRate, Transaction, Txid, Weight};
+#[cfg(feature = "rpc-async")]
+use bitcoin::OutPoint;
 use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
 
@@ -476,12 +478,35 @@ pub enum TxindexError {
 	NotEnabled,
 }
 
+/// How the async client reports a JSON-RPC `result` of `null`.
+///
+/// It has no typed representation for one: `Client::call` turns a missing result
+/// into `ClientError::Other` carrying this message, and `call_raw` delegates to
+/// `call`, so matching the message is the only way to tell a null result from a
+/// genuine failure. Keep it in one place — were the upstream wording to change,
+/// every caller of [BitcoinAsyncRpcExt::try_get_tx_out] would quietly stop recognising
+/// a spent output.
+#[cfg(feature = "rpc-async")]
+const ASYNC_CLIENT_NULL_RESULT: &str = "Empty data received";
+
 /// Extension trait for the async bitcoind rpc client.
 #[cfg(feature = "rpc-async")]
 #[async_trait]
 pub trait BitcoinAsyncRpcExt {
 	/// Checks that the connected bitcoind runs with `txindex=1`.
 	async fn require_txindex(&self) -> Result<(), TxindexError>;
+
+	/// `gettxout`, reporting the `null` of a spent or unknown output as `Ok(None)`.
+	///
+	/// Distinct from `Reader::get_tx_out`, which surfaces that `null` as an error.
+	///
+	/// Without `include_mempool` this reads the confirmed utxo set alone, so an
+	/// output spent only by a mempool transaction still reports as present.
+	async fn try_get_tx_out(
+		&self,
+		outpoint: OutPoint,
+		include_mempool: bool,
+	) -> Result<Option<json::GetTxOutResult>, AsyncClientError>;
 }
 
 #[cfg(feature = "rpc-async")]
@@ -493,6 +518,23 @@ impl BitcoinAsyncRpcExt for AsyncClient {
 			return Err(TxindexError::NotEnabled);
 		}
 		Ok(())
+	}
+
+	async fn try_get_tx_out(
+		&self,
+		outpoint: OutPoint,
+		include_mempool: bool,
+	) -> Result<Option<json::GetTxOutResult>, AsyncClientError> {
+		let params = [
+			serde_json::Value::String(outpoint.txid.to_string()),
+			outpoint.vout.into(),
+			include_mempool.into(),
+		];
+		match self.call_raw::<json::GetTxOutResult>("gettxout", &params).await {
+			Ok(res) => Ok(Some(res)),
+			Err(AsyncClientError::Other(msg)) if msg == ASYNC_CLIENT_NULL_RESULT => Ok(None),
+			Err(e) => Err(e),
+		}
 	}
 }
 

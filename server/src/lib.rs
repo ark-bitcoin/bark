@@ -872,7 +872,8 @@ impl Server {
 
 		// bitcoind rpc documents that if a mempool tx spends a utxo in the utxoset,
 		// if will not appear in gettxout when include_mempool is set to true
-		let is_spent = bcd::get_tx_out(&self.bitcoind, &funding_txid, funding_vout, Some(true)).await
+		let is_spent = self.bitcoind
+			.try_get_tx_out(OutPoint::new(funding_txid, funding_vout), true).await
 			.context("failed to check board utxo spend status")?
 			.is_none();
 		if is_spent {

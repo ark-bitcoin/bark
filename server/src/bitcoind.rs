@@ -28,11 +28,6 @@ use serde_json::Value;
 
 const MIN_BITCOIND_VERSION: usize = 29_00_00;
 
-/// The literal error message the upstream client produces when bitcoind
-/// returns JSON-RPC `result: null` (e.g. `gettxout` for spent/unknown
-/// outputs). Used to translate that to `Ok(None)`.
-const UPSTREAM_NULL_RESULT_MSG: &str = "Empty data received";
-
 /// Build a [`bitcoind_async_client::Client`] from our config-supplied auth.
 ///
 /// The upstream `Auth` enum has no `None` variant; anonymous auth is
@@ -207,23 +202,6 @@ pub async fn estimate_mempool_feerate(
 fn ancestor_feerate(ancestor_fee: Amount, ancestor_size_vb: u64) -> Option<FeeRate> {
 	let weight = Weight::from_vb(ancestor_size_vb)?;
 	FeeRate::from_amount_and_weight_ceil(ancestor_fee, weight)
-}
-
-/// `gettxout`. The upstream client surfaces JSON `null` (i.e. spent or
-/// unknown output) as `ClientError::Other("Empty data received")`, which
-/// we translate into `Ok(None)`.
-pub async fn get_tx_out(
-	client: &Client, txid: &Txid, vout: u32, include_mempool: Option<bool>,
-) -> Result<Option<rpc::json::GetTxOutResult>, ClientError> {
-	let mut params = vec![json_arg(txid)?, vout.into()];
-	if let Some(i) = include_mempool {
-		params.push(i.into());
-	}
-	match client.call_raw::<rpc::json::GetTxOutResult>("gettxout", &params).await {
-		Ok(v) => Ok(Some(v)),
-		Err(ClientError::Other(msg)) if msg == UPSTREAM_NULL_RESULT_MSG => Ok(None),
-		Err(e) => Err(e),
-	}
 }
 
 pub async fn submit_package<T: Borrow<Transaction>>(
