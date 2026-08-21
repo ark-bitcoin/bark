@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bitcoin::secp256k1::{Keypair, rand::thread_rng};
+use bitcoin_ext::AmountExt;
 use futures::future::join_all;
 
 use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoPolicy, SECP};
@@ -295,6 +296,7 @@ async fn mailbox_lightning_receive_pending() {
 	// Verify the payment hash is valid
 	PaymentHash::try_from(incoming.payment_hash.clone())
 		.expect("valid payment hash");
+	assert_eq!(incoming.amount_msat, pay_amount.to_msat());
 
 	// We don't need to claim or await the payment — we only care that
 	// the notification arrived. Drop the handle to avoid a panic from

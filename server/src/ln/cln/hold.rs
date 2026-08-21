@@ -342,7 +342,7 @@ impl ClnHoldProcess {
 			// Post mailbox notification so the client knows to come online and claim
 			let payment_hash = PaymentHash::from(*htlc_subscription.invoice.payment_hash());
 			post_lightning_receive_notification(
-				&self.db, &self.mailbox_manager, payment_hash,
+				&self.db, &self.mailbox_manager, payment_hash, htlc_subscription.amount(),
 			).await;
 		}
 

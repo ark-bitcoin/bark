@@ -1857,31 +1857,27 @@ async fn lightning_receive_notification_mailbox_duplicate() {
 	let payment_hash = bolt11.as_payment_hash();
 	let payment_hash_str = payment_hash.to_string();
 
-	// Set up the originating receive subscription with this mailbox id so the
-	// read-side JOIN can resolve the amount.
-	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
-	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
-	let invoice_amount_msat = 4242;
-	db.write(async |t| t.store_generated_lightning_receive(
-		node_id, &bolt11, invoice_amount_msat, Some(&mailbox_id),
-	).await).await.unwrap();
+	let amount = bitcoin::Amount::from_sat(4242);
 
 	// First insert returns a checkpoint.
-	let cp1 = db.write(async |t| t.store_lightning_receive_notification(mailbox_id, &payment_hash_str).await).await.unwrap()
-		.expect("first insert should return a checkpoint");
+	let cp1 = db.write(async |t| t.store_lightning_receive_notification(
+		mailbox_id, &payment_hash_str, amount,
+	).await).await.unwrap().expect("first insert should return a checkpoint");
 
 	// Re-posting the same payment hash is ignored, not rejected.
-	let dup = db.write(async |t| t.store_lightning_receive_notification(mailbox_id, &payment_hash_str).await).await.unwrap();
+	let dup = db.write(async |t| t.store_lightning_receive_notification(
+		mailbox_id, &payment_hash_str, amount,
+	).await).await.unwrap();
 	assert!(dup.is_none(), "duplicate insert should return None");
 
-	// The mailbox holds exactly one notification, joined to the subscription's amount.
+	// The mailbox holds exactly one notification, carrying its own amount.
 	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, 0, 10).await).await.unwrap();
 	assert_eq!(messages.len(), 1);
 	assert_eq!(messages[0].checkpoint, cp1);
 	match messages[0].payload {
-		MailboxPayload::LightningReceive { payment_hash: ph, amount_msat } => {
+		MailboxPayload::LightningReceive { payment_hash: ph, amount: stored } => {
 			assert_eq!(ph, payment_hash);
-			assert_eq!(amount_msat, invoice_amount_msat);
+			assert_eq!(stored, amount);
 		},
 		ref other => panic!("expected LightningReceive payload, got {:?}", other),
 	}
