@@ -57,12 +57,24 @@ impl<'t> Tx<'t> {
 
 		// store round participations for the interactive participants
 		let remove_existing_stmt = self.prepare_typed(
-			"DELETE FROM round_participation
-			WHERE id IN (
-				SELECT participation_id
-				FROM round_part_input
-				WHERE vtxo_id = ANY($1)
-			);", &[Type::TEXT_ARRAY],
+			"WITH deleted AS (
+				DELETE FROM round_participation
+				WHERE id IN (
+					SELECT participation_id
+					FROM round_part_input
+					WHERE vtxo_id = ANY($1)
+				)
+				RETURNING id
+			),
+			_inputs AS (
+				DELETE FROM round_part_input
+				WHERE participation_id IN (SELECT id FROM deleted)
+			),
+			_outputs AS (
+				DELETE FROM round_part_output
+				WHERE participation_id IN (SELECT id FROM deleted)
+			)
+			SELECT id FROM deleted", &[Type::TEXT_ARRAY],
 		).await?;
 		for (unlock_hash, part) in interactive_participations {
 			// remove any existing ones, but if the round was not full,
