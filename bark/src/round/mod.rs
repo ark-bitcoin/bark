@@ -1216,7 +1216,7 @@ async fn sign_vtxo_tree(
 	// expected vtxo lifetime.
 	let tip = wallet.inner.chain.tip().await.context("chain source error")?;
 	let min_expiry_height = tip
-		.saturating_add(ark_info.vtxo_expiry_delta as BlockHeight)
+		.saturating_add(ark_info.vtxo_lifetime as BlockHeight)
 		.saturating_sub(VTXO_EXPIRY_HEIGHT_BUFFER);
 	validate_vtxo_tree_params(
 		vtxo_tree.server_pubkey, vtxo_tree.exit_delta, vtxo_tree.expiry_height,
