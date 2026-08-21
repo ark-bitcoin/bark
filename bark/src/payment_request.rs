@@ -164,9 +164,16 @@ impl PaymentRequest {
 	/// Returns the option to use when the caller doesn't want to pick one
 	/// itself.
 	///
-	/// Returns [None] when the request has no options.
+	/// Defaults to Ark, then Lightning, then onchain. Options carrying a
+	/// [PaymentMethodParsingError] are skipped.
+	///
+	/// Returns [None] when no option is free of errors.
 	pub fn default_option(&self) -> Option<&AvailablePaymentMethod> {
-		self.options.first()
+		let usable = || self.options.iter().filter(|o| o.errors.is_empty());
+
+		usable().find(|o| o.method.is_ark())
+			.or_else(|| usable().find(|o| o.method.is_lightning()))
+			.or_else(|| usable().find(|o| o.method.is_bitcoin()))
 	}
 }
 
@@ -817,10 +824,58 @@ mod test {
 
 	use super::*;
 
+	const INVOICE: &str = "lntbs100u1p5j0x82sp5d0rwfh7tgrrlwsegy9rx3tzpt36cqwjqza5x4wvcjxjzscfaf6jspp5d8q7354dg3p8h0kywhqq5dq984r8f5en98hf9ln85ug0w8fx6hhsdqqcqzpc9qyysgqyk54v7tpzprxll7e0jyvtxcpgwttzk84wqsfjsqvcdtq47zt2wssxsmtjhz8dka62mdnf9jafhu3l4cpyfnsx449v4wstrwzzql2w5qqs8uh7p";
+	const ONCHAIN_ADDRESS: &str = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";
+
 	fn dummy_ark_address(testnet: bool) -> ark::Address {
 		let server = Keypair::new(&SECP, &mut thread_rng()).public_key();
 		let user = Keypair::new(&SECP, &mut thread_rng()).public_key();
 		ark::Address::new(testnet, server, VtxoPolicy::new_pubkey(user), vec![])
+	}
+
+	fn ark_option(errors: Vec<PaymentMethodParsingError>) -> AvailablePaymentMethod {
+		let method = PaymentMethod::Ark(dummy_ark_address(true));
+		AvailablePaymentMethod { method, errors }
+	}
+
+	fn lightning_option(errors: Vec<PaymentMethodParsingError>) -> AvailablePaymentMethod {
+		let invoice = Bolt11Invoice::from_str(INVOICE).unwrap();
+		AvailablePaymentMethod { method: PaymentMethod::Invoice(Invoice::Bolt11(invoice)), errors }
+	}
+
+	fn onchain_option(errors: Vec<PaymentMethodParsingError>) -> AvailablePaymentMethod {
+		let address = bitcoin::Address::from_str(ONCHAIN_ADDRESS).unwrap();
+		AvailablePaymentMethod { method: PaymentMethod::Bitcoin(address), errors }
+	}
+
+	fn request(options: Vec<AvailablePaymentMethod>) -> PaymentRequest {
+		PaymentRequest { amount: None, label: None, message: None, options }
+	}
+
+	/// Parse order must not decide the default, and an option carrying errors
+	/// must never be handed back as one.
+	#[test]
+	fn default_option() {
+		let err = vec![PaymentMethodParsingError::NetworkMismatch];
+
+		let req = request(vec![onchain_option(vec![]), lightning_option(vec![]), ark_option(vec![])]);
+		assert!(req.default_option().unwrap().method.is_ark());
+
+		let req = request(vec![onchain_option(vec![]), lightning_option(vec![])]);
+		assert!(req.default_option().unwrap().method.is_lightning());
+
+		let req = request(vec![onchain_option(vec![])]);
+		assert!(req.default_option().unwrap().method.is_bitcoin());
+
+		// An unusable option falls through to the next one.
+		let req = request(vec![ark_option(err.clone()), lightning_option(vec![])]);
+		assert!(req.default_option().unwrap().method.is_lightning());
+
+		let req = request(vec![ark_option(err.clone()), lightning_option(err.clone()), onchain_option(vec![])]);
+		assert!(req.default_option().unwrap().method.is_bitcoin());
+
+		assert!(request(vec![ark_option(err.clone()), onchain_option(err)]).default_option().is_none());
+		assert!(request(vec![]).default_option().is_none());
 	}
 
 	/// The upper-cased URI must parse back to an equal URI, which only holds
