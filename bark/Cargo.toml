@@ -14,7 +14,7 @@ default = ["rand", "sqlite", "native", "tls-native-roots", "bitcoind-rpc"]
 onchain-bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 
 # Native bitcoind JSON-RPC backend for the on-chain layer.
-bitcoind-rpc = ["dep:bitcoind-async-client", "bark-bitcoin-ext/rpc-async"]
+bitcoind-rpc = ["dep:bitcoind-async-client", "dep:zeromq", "bark-bitcoin-ext/rpc-async"]
 
 # The default persistence
 sqlite = ["rusqlite", "bdk_wallet/rusqlite"]
@@ -93,6 +93,8 @@ lightning.workspace = true
 tonic = { version = "0.14.2", default-features = false }
 tokio = { workspace = true, features = ["sync"] }
 tokio-stream.workspace = true
+# ZMQ block notifications for the bitcoind tip watcher
+zeromq = { version = "0.6", optional = true }
 futures.workspace = true
 parking_lot.workspace = true
 http = { workspace = true, optional = true }

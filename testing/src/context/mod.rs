@@ -564,6 +564,7 @@ impl TestContext {
 			bitcoind_cookiefile: bitcoind.map(|b| b.rpc_cookie()),
 			bitcoind_user: None,
 			bitcoind_pass: None,
+			bitcoind_zmq_address: bitcoind.map(|b| b.zmq_url()),
 			socks5_proxy: None,
 
 			vtxo_refresh_expiry_threshold: 24,

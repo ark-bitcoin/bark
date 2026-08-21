@@ -412,7 +412,7 @@ pub use self::payment_request::{
 	AvailablePaymentMethod, PaymentInitOutput, PaymentMethodParsingError, PaymentRequest,
 };
 pub use self::config::{BarkNetwork, Config};
-pub use self::daemon::DaemonHandle;
+pub use self::daemon::{tip_watcher, DaemonHandle};
 pub use self::fees::FeeEstimate;
 pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::vtxo::WalletVtxo;
@@ -1229,7 +1229,11 @@ impl Wallet {
 						.leak_ref().clone(),
 				)
 			};
-			ChainSourceSpec::Bitcoind { url: url.clone(), auth }
+			ChainSourceSpec::Bitcoind {
+				url: url.clone(),
+				auth,
+				zmq: config.bitcoind_zmq_address.clone(),
+			}
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};

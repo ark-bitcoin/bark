@@ -1,3 +1,5 @@
+pub mod tip_watcher;
+
 use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -277,6 +279,21 @@ impl DaemonProcess {
 	}
 
 	async fn run_sync_processes(&self) {
+		// Watch the chain tip so new blocks trigger a sync pass immediately
+		// instead of waiting for the full sync interval, which stays as a
+		// backstop. On bitcoind the watcher listens on ZMQ when configured;
+		// otherwise (including Esplora and wasm) it polls the backend.
+		let mut tip_rx = match self.wallet() {
+			Some(wallet) => match wallet.chain().tip_watcher(self.sync_interval).await {
+				Ok(watcher) => Some(watcher.subscribe()),
+				Err(e) => {
+					warn!("Daemon failed to start tip watcher, syncing on interval only: {e:#}");
+					None
+				},
+			},
+			None => None,
+		};
+
 		// NB: a ticking interval needs Instant::now(), which panics on wasm,
 		// so the loop sleeps between iterations instead.
 		loop {
@@ -310,6 +327,19 @@ impl DaemonProcess {
 
 			futures::select! {
 				_ = bark_runtime::sleep(self.sync_interval).fuse() => {},
+				triggered = async {
+					match tip_rx.as_mut() {
+						Some(rx) => rx.changed().await.is_ok(),
+						None => std::future::pending::<bool>().await,
+					}
+				}.fuse() => {
+					if triggered {
+						trace!("Daemon sync triggered by new chain tip");
+					} else {
+						warn!("Tip watcher stopped; daemon falls back to interval-only syncing");
+						tip_rx = None;
+					}
+				},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting down sync processes...");
 					break;
