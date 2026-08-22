@@ -42,10 +42,9 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 		process::exit(1);
 	}
 
-	let env = env_logger::Env::new().filter("BARK_LOG");
-
-	// Builder has no clone and we don't want to repeat this
-	fn base() -> env_logger::Builder {
+	// Builder has no clone and we don't want to repeat this.
+	// Filter included: both sinks must select the same records.
+	fn base(verbose: bool) -> env_logger::Builder {
 		let mut builder = env_logger::Builder::new();
 		builder
 			.filter_module("rusqlite", log::LevelFilter::Warn)
@@ -66,21 +65,23 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 			.filter_module("h2", log::LevelFilter::Warn)
 			.filter_module("tower", log::LevelFilter::Warn)
 			.filter_module("tonic", log::LevelFilter::Info);
-		builder
-	}
-
-	let terminal = if !quiet {
-		let mut logger = base();
 
 		// We first set the default and then let the env_logger
 		// env overwrite it.
-		logger.filter_level(if verbose {
+		builder.filter_level(if verbose {
 			log::LevelFilter::Trace
 		} else {
 			log::LevelFilter::Info
 		});
+		builder.parse_env(env_logger::Env::new().filter("BARK_LOG"));
 
-		logger.parse_env(env)
+		builder
+	}
+
+	let terminal = if !quiet {
+		let mut logger = base(verbose);
+
+		logger
 			.format(move |out, rec| {
 				let now = chrono::Local::now();
 				let ts = now.format("%Y-%m-%d %H:%M:%S.%3f %:z");
@@ -110,9 +111,9 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 		let path = datadir.join("debug.log");
 		let mut opts = std::fs::File::options();
 		opts.create(true).append(true);
-		// The debug log records wallet activity at trace level; create it
-		// owner-only so other users can't read it. mode() only applies when
-		// the file is newly created, so an existing log keeps its perms.
+		// The debug log records wallet activity; create it owner-only so other
+		// users can't read it. mode() only applies when the file is newly
+		// created, so an existing log keeps its perms.
 		#[cfg(unix)]
 		{
 			use std::os::unix::fs::OpenOptionsExt;
@@ -122,9 +123,8 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 			Ok(mut file) => {
 				// try write a newline into the file to separate commands
 				let _ = file.write_all("\n\n".as_bytes());
-				let mut logger = base();
+				let mut logger = base(verbose);
 				logger
-					.filter_level(log::LevelFilter::Trace)
 					.format_timestamp_millis()
 					.format_module_path(true)
 					.format_file(true)
