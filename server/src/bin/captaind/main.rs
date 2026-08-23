@@ -101,6 +101,16 @@ enum Command {
 		#[arg(long)]
 		force: bool,
 	},
+
+	/// Check a config file for validity
+	#[command()]
+	CheckConfig {
+		/// Path to the config file to check
+		path: PathBuf,
+		/// Check a watchmand config instead of captaind config
+		#[arg(long)]
+		watchman: bool,
+	},
 }
 
 #[derive(clap::Subcommand)]
@@ -289,6 +299,21 @@ async fn inner_main() -> anyhow::Result<()> {
 	let cli = Cli::parse();
 	let config_path: Option<&PathBuf> = cli.config.as_ref();
 
+	if let Command::CheckConfig { path, watchman } = cli.command {
+		if watchman {
+			let cfg = server::config::watchmand::Config::load(&path)
+				.context("error loading watchmand config file")?;
+			cfg.validate().context("invalid watchmand configuration")?;
+			println!("Watchmand config is valid");
+		} else {
+			let cfg = Config::load(&path)
+				.context("error loading captaind config file")?;
+			cfg.validate().context("invalid captaind configuration")?;
+			println!("Captaind config is valid");
+		}
+		return Ok(());
+	}
+
 	if let Command::Rpc { cmd, addr } = cli.command {
 		// Setting simple logging with no telemetry for RPC commands
 		tracing_subscriber::fmt::init();
@@ -309,7 +334,7 @@ async fn inner_main() -> anyhow::Result<()> {
 
 	let cfg = Config::load(config_path.context("no config file path provided")?)
 		.context("error loading config file")?;
-	cfg.validate().expect("invalid configuration");
+	cfg.validate().context("invalid configuration")?;
 
 	if let Command::Start = cli.command {
 		if let Err(e) = Server::run(cfg).await {
@@ -325,6 +350,7 @@ async fn inner_main() -> anyhow::Result<()> {
 	tracing_subscriber::fmt::init();
 
 	match cli.command {
+		Command::CheckConfig { .. } => unreachable!(),
 		Command::Rpc { .. } => unreachable!(),
 		Command::Start => unreachable!(),
 		Command::Create => {
