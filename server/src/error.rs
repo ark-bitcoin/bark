@@ -226,6 +226,7 @@ where
 #[cfg(test)]
 mod test {
 	use super::*;
+	use crate::rpcserver::ToStatusResult;
 
 	struct TestError;
 	impl fmt::Debug for TestError {
@@ -296,5 +297,15 @@ mod test {
 	fn macros() {
 		let _: anyhow::Result<()> = badarg!("bla: {}", 15);
 		let _: anyhow::Result<()> = not_found!([12], "bla: {}", 15);
+	}
+
+	#[test]
+	fn non_ascii_not_found_identifier_does_not_panic() {
+		// A non-ASCII identifier reaches this path via user input like the
+		// Lightning-receive anti-DoS token. The RPC conversion must not panic.
+		let result: anyhow::Result<()> = not_found!(["\u{2603}"], "missing");
+		let status = result.to_status().unwrap_err();
+
+		assert_eq!(status.code(), tonic::Code::NotFound);
 	}
 }
