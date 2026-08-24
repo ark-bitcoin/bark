@@ -70,9 +70,6 @@ pub struct Config {
 	/// maximum arkoor depth to keep change until
 	#[serde(alias = "vtxo_max_arkoor_depth")]
 	pub max_vtxo_exit_depth: u16,
-
-	#[serde(with = "crate::utils::serde::duration")]
-	pub issue_interval: Duration,
 }
 
 impl Default for Config {
@@ -83,7 +80,6 @@ impl Default for Config {
 			vtxo_lifetime: 144 * 3,
 			vtxo_pre_expiry: 144,
 			max_vtxo_exit_depth: 3,
-			issue_interval: Duration::from_secs(60),
 		}
 	}
 }
@@ -475,6 +471,15 @@ impl Process {
 			return Ok(());
 		}
 
+		// Gate the tx-committing path on shutdown: we don't want to broadcast
+		// an issuance funding tx on the way out. Past this point the critical
+		// worker guard keeps shutdown waiting for the wallet commit and
+		// broadcast to finish, so this is the last chance to bail out cleanly.
+		if self.srv.rtmgr.shutdown_requested() {
+			info!("Shutdown pending; skipping VTXO pool issuance");
+			return Ok(());
+		}
+
 		let (requests, leaf_keys) = {
 			let mut leaf_keys = Vec::with_capacity(nb_vtxos);
 			let mut requests = Vec::with_capacity(nb_vtxos);
@@ -663,11 +668,22 @@ impl Process {
 	async fn run(self) {
 		let _worker = self.srv.rtmgr.spawn_critical("VtxoPool");
 
-		let mut timer = tokio::time::interval(self.config.issue_interval);
+		// Grab the tip watcher before the initial check so any block that
+		// arrives while we're checking still triggers a follow-up.
+		let mut chain_tip_rx = self.srv.chain_tip_watcher();
+
+		if let Err(e) = self.check_maybe_issue_vtxos().await {
+			error!("Error from VTXO pool: {:#}", e);
+		}
+
 		loop {
 			tokio::select! {
-				// Periodic interval for issuing new vtxos
-				_ = timer.tick() => {},
+				res = chain_tip_rx.changed() => {
+					if res.is_err() {
+						info!("Chain tip watcher closed. Exiting VtxoPool...");
+						return;
+					}
+				},
 				_ = self.srv.rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting VtxoPool...");
 					return;
@@ -675,10 +691,8 @@ impl Process {
 			}
 
 			if let Err(e) = self.check_maybe_issue_vtxos().await {
-				warn!("Error from VTXO pool: {:#}", e);
+				error!("Error from VTXO pool: {:#}", e);
 			}
-
-			timer.reset();
 		}
 	}
 }
