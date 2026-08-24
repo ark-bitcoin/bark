@@ -18,7 +18,7 @@ use bitcoin::consensus::encode::{deserialize, serialize_hex};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::key::Keypair;
-use bitcoin::secp256k1::{schnorr, PublicKey};
+use bitcoin::secp256k1::schnorr;
 use futures::future::join_all;
 use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
@@ -39,6 +39,7 @@ use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 use crate::subsystem::{RoundMovement, Subsystem};
+use crate::vtxo::validate_vtxo_tree_params;
 
 /// How long [`Wallet::lock_wait_round_state`] waits for a contended
 /// round lock before giving up. Long enough to outlast a normal round.
@@ -916,38 +917,6 @@ fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo<Full>) -> an
 		)),
 		Err(e) => Err(anyhow!("new VTXO {} failed validation: {:#}", vtxo.id(), e)),
 	}
-}
-
-/// Validate the tree-level security parameters the server chose for the VTXOs
-/// we're about to accept in a round.
-///
-/// Checks that server pubkey and exit delta match.
-/// Checks that expiry height is above minimum threshold.
-fn validate_vtxo_tree_params(
-	server_pubkey: PublicKey,
-	exit_delta: BlockDelta,
-	expiry_height: BlockHeight,
-	expected_server_pubkey: PublicKey,
-	expected_exit_delta: BlockDelta,
-	min_expiry_height: BlockHeight,
-) -> anyhow::Result<()> {
-	ensure!(server_pubkey == expected_server_pubkey,
-		"round VTXO tree uses an unexpected server pubkey: got {}, expected {}",
-		server_pubkey, expected_server_pubkey,
-	);
-
-	ensure!(exit_delta == expected_exit_delta,
-		"round VTXO tree uses an unexpected exit delta: got {}, expected {}",
-		exit_delta, expected_exit_delta,
-	);
-
-	ensure!(expiry_height >= min_expiry_height,
-		"round VTXO tree expiry height {} is below the required minimum {}; \
-		server may be trying to sweep before we can exit",
-		expiry_height, min_expiry_height,
-	);
-
-	Ok(())
 }
 
 /// The minimum expiry height that leaves us enough room for a unilateral
@@ -2154,7 +2123,6 @@ mod test {
 
 	use ark::VtxoPolicy;
 	use ark::tree::signed::{HashlockVersion, UnlockPreimage};
-	use ark::vtxo::policy::MAX_BLOCK_DELTA;
 
 	fn pubkey() -> bitcoin::secp256k1::PublicKey {
 		let secp = Secp256k1::new();
@@ -2234,40 +2202,6 @@ mod test {
 		assert!(tampered.validate_unsigned(&funding_tx).is_err());
 		assert!(check_vtxo_fails_hash_lock(&funding_tx, &tampered).is_err(),
 			"tampered point must be rejected before forfeits are sent");
-	}
-
-	#[test]
-	fn vtxo_tree_params_accepts_honest_and_rejects_hostile() {
-		let secp = Secp256k1::new();
-		let mut rng = rand::thread_rng();
-		let server = Keypair::new(&secp, &mut rng).public_key();
-		let other = Keypair::new(&secp, &mut rng).public_key();
-
-		let exit_delta: BlockDelta = 144;
-		let min_expiry: BlockHeight = 100_000;
-
-		// Expiry at or above the minimum, with matching pubkey and delta, passes.
-		validate_vtxo_tree_params(server, exit_delta, min_expiry, server, exit_delta, min_expiry)
-			.expect("expiry exactly at the minimum should validate");
-		validate_vtxo_tree_params(
-			server, exit_delta, min_expiry + 5_000, server, exit_delta, min_expiry,
-		).expect("expiry above the minimum should validate");
-
-		// A wrong server pubkey is rejected.
-		assert!(validate_vtxo_tree_params(
-			other, exit_delta, min_expiry, server, exit_delta, min_expiry,
-		).is_err(), "wrong server pubkey must be rejected");
-
-		// An inflated exit delta (hostage) is rejected.
-		assert!(validate_vtxo_tree_params(
-			server, MAX_BLOCK_DELTA, min_expiry, server, exit_delta, min_expiry,
-		).is_err(), "inflated exit delta must be rejected");
-
-		// An expiry below the minimum (e.g. the short-expiry sweep attack) is
-		// rejected, right down to a single block short.
-		assert!(validate_vtxo_tree_params(
-			server, exit_delta, min_expiry - 1, server, exit_delta, min_expiry,
-		).is_err(), "expiry one block below the minimum must be rejected");
 	}
 
 	#[test]
