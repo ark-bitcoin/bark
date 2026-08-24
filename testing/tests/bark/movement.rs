@@ -207,7 +207,7 @@ async fn lightning_send_invoice_receive() {
 	assert_eq!(send_movement.received_on.len(), 0);
 	assert_eq!(send_movement.input_vtxos.len(), 1);
 	assert_eq!(send_movement.input_vtxos, bark1_vtxos);
-	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 }; // HTLC VTXOs aren't included here
+	let nb_change = if is_bark_version!(> "0.6.1") { 2 } else { 1 }; // HTLC VTXOs aren't included here
 	assert_eq!(send_movement.output_vtxos.len(), nb_change);
 	assert_ne!(send_movement.output_vtxos, bark1_vtxos);
 	assert_eq!(send_movement.exited_vtxos.len(), 0);
@@ -287,7 +287,7 @@ async fn lightning_send_invoice_revoke() {
 	assert_eq!(send_movement.received_on.len(), 0);
 	assert_eq!(send_movement.input_vtxos.len(), 1);
 	assert_eq!(send_movement.input_vtxos, vtxos_pre_pay);
-	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 }; // Change + revocation VTXO
+	let nb_change = if is_bark_version!(> "0.6.1") { 2 } else { 1 }; // Change + revocation VTXO
 	assert_eq!(send_movement.output_vtxos.len(), nb_change + 1);
 	assert_vec_unsorted_equal(send_movement.output_vtxos, vtxos_post_pay);
 	assert_eq!(send_movement.exited_vtxos.len(), 0);
@@ -347,7 +347,7 @@ async fn lightning_send_offer() {
 			.filter(|v| movement.input_vtxos.contains(&v.id))
 			.map(|v| v.amount)
 			.sum::<Amount>();
-		let nb_change = if is_bark_version!(> "0.6.0") && input_amount - amount > amount {
+		let nb_change = if is_bark_version!(> "0.6.1") && input_amount - amount > amount {
 			2
 		} else {
 			1

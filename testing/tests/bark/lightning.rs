@@ -79,7 +79,7 @@ async fn bark_pay_ln_succeeds() {
 
 #[tokio::test]
 async fn bark_pay_ln_change_split() {
-	require_bark_version!(> "0.6.0");
+	require_bark_version!(> "0.6.1");
 
 	let ctx = TestContext::new("lightningd/bark_pay_ln_change_split").await;
 
@@ -324,7 +324,7 @@ async fn bark_pay_ln_fails_then_succeeds() {
 
 	let vtxos = bark.vtxos().await;
 	assert!(!vtxos.iter().any(|v| v.id == board_vtxo), "board vtxo not spent");
-	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 };
+	let nb_change = if is_bark_version!(> "0.6.1") { 2 } else { 1 };
 	assert_eq!(vtxos.len(), nb_change + 1,
 		"user should get change and a revocation VTXO, got: {:?}", vtxos,
 	);
@@ -863,7 +863,7 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 	bark_2.pay_lightning_wait(invoice_info.invoice, None).await;
 
 	let vtxos = bark_2.vtxos().await;
-	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 };
+	let nb_change = if is_bark_version!(> "0.6.1") { 2 } else { 1 };
 	assert_eq!(vtxos.len(), nb_change + 1, "user should get change and a revocation VTXO");
 	let change_piece = (board_amount - pay_amount) / nb_change as u64;
 	assert_eq!(vtxos.iter().filter(|v| {
@@ -935,7 +935,7 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 	bark_2.maintain().await;
 
 	let vtxos = bark_2.vtxos().await;
-	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 };
+	let nb_change = if is_bark_version!(> "0.6.1") { 2 } else { 1 };
 	assert_eq!(vtxos.len(), nb_change + 1, "user should get change and a revocation VTXO");
 	let change_piece = (board_amount - pay_amount) / nb_change as u64;
 	assert_eq!(vtxos.iter().filter(|v| {
@@ -1330,7 +1330,7 @@ async fn bark_pay_twice_ln_offer() {
 /// returning a genuinely issuer-signed invoice for a larger amount.
 #[tokio::test]
 async fn bark_reject_inflated_ln_offer_invoice() {
-	require_bark_version!(> "0.6.0");
+	require_bark_version!(> "0.6.1");
 
 	#[derive(Clone)]
 	struct InflateOfferAmount;
