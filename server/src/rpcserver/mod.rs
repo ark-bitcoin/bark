@@ -68,8 +68,13 @@ impl ToStatus for anyhow::Error {
 		trace!("RPC ERROR: {:?}", self);
 		if let Some(nf) = self.downcast_ref::<NotFound>() {
 			let mut metadata = tonic::metadata::MetadataMap::new();
-			let ids = nf.identifiers().join(",").parse().expect("non-ascii identifier");
-			metadata.insert("identifiers", ids);
+			// Identifiers can originate from arbitrary user input (e.g. a
+			// Lightning-receive anti-DoS token) so they are not guaranteed to be
+			// ASCII. Metadata headers must be ASCII, so drop the metadata rather
+			// than panic if the joined identifiers do not parse.
+			if let Ok(ids) = nf.identifiers().join(",").parse() {
+				metadata.insert("identifiers", ids);
+			}
 			tonic::Status::with_metadata(tonic::Code::NotFound, format!("{:#}", self), metadata)
 		} else if let Some(ui) = self.downcast_ref::<UnusableInputs>() {
 			// Like a bad argument, but we attach the offending VTXO ids so the
