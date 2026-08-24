@@ -603,6 +603,11 @@ pub fn get_vtxo_state(
 /// Updates the state of a VTXO from one of the
 /// values in `old_state` to `new_state`.
 ///
+/// A VTXO already in exactly `new_state` is a no-op that succeeds without
+/// appending a history row, whatever `old_states` says. See
+/// [BarkPersister::update_vtxo_state_checked][crate::persist::BarkPersister::update_vtxo_state_checked]
+/// for the full contract.
+///
 /// The method is atomic. If another process tries
 /// to update the state only one of them will succeed.
 ///

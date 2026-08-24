@@ -362,22 +362,41 @@ async fn get_vtxo<S: StorageAdaptor>(adaptor: &S, id: VtxoId) -> anyhow::Result<
 	}
 }
 
+/// Whether a checked state update still has anything to write.
+enum StateTransition {
+	/// The vtxo already carries the exact target state; re-appending it
+	/// would only grow the state history.
+	AlreadyApplied,
+	/// The vtxo is in an allowed old state and must be moved.
+	Apply,
+}
+
+/// Fetch `vtxo_id` and decide whether it may move to `new_state`.
+///
+/// A vtxo that already carries `new_state` is accepted regardless of
+/// `allowed_states`, so repeating a transition is a no-op rather than an
+/// error. Any other vtxo must currently be in one of `allowed_states`.
 async fn get_check_vtxo_state<S: StorageAdaptor>(
 	adaptor: &S,
 	vtxo_id: VtxoId,
+	new_state: &VtxoState,
 	allowed_states: &[VtxoStateKind],
-) -> anyhow::Result<SerdeVtxo> {
+) -> anyhow::Result<(SerdeVtxo, StateTransition)> {
 	let vtxo = get_vtxo(adaptor, vtxo_id).await?
 		.context("vtxo not found")?;
 
 	let current_state = vtxo.current_state().context("vtxo has no state")?;
-	if !allowed_states.contains(&current_state.kind()) {
+	let transition = if current_state == new_state {
+		StateTransition::AlreadyApplied
+	} else if allowed_states.contains(&current_state.kind()) {
+		StateTransition::Apply
+	} else {
 		bail!("current state {:?} not in allowed states {:?}",
 			current_state.kind(), allowed_states
 		);
-	}
+	};
 
-	Ok(vtxo)
+	Ok((vtxo, transition))
 }
 
 async fn update_vtxo_state_checked<S: StorageAdaptor>(
@@ -386,21 +405,24 @@ async fn update_vtxo_state_checked<S: StorageAdaptor>(
 	new_state: VtxoState,
 	allowed_old_states: &[VtxoStateKind],
 ) -> anyhow::Result<WalletVtxo> {
-	let mut serde_vtxo = get_check_vtxo_state(adaptor, vtxo_id, allowed_old_states).await?;
+	let (mut serde_vtxo, transition) =
+		get_check_vtxo_state(adaptor, vtxo_id, &new_state, allowed_old_states).await?;
 
-	let sk = sort::vtxo_sort_key(
-		new_state.kind(), serde_vtxo.vtxo.expiry_height(), serde_vtxo.vtxo.amount()
-	);
+	if let StateTransition::Apply = transition {
+		let sk = sort::vtxo_sort_key(
+			new_state.kind(), serde_vtxo.vtxo.expiry_height(), serde_vtxo.vtxo.amount()
+		);
 
-	serde_vtxo.states.push(new_state.clone());
-	let updated_record = Record::from_data(
-		partition::VTXO,
-		&vtxo_id.to_bytes(),
-		Some(sk),
-		&serde_vtxo,
-	)?;
+		serde_vtxo.states.push(new_state.clone());
+		let updated_record = Record::from_data(
+			partition::VTXO,
+			&vtxo_id.to_bytes(),
+			Some(sk),
+			&serde_vtxo,
+		)?;
 
-	adaptor.put(updated_record).await?;
+		adaptor.put(updated_record).await?;
+	}
 
 	Ok(wallet_vtxo_from_full(&serde_vtxo.vtxo, new_state, serde_vtxo.registered))
 }
@@ -821,7 +843,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		// the put loop cannot be rolled back from here — that is a
 		// fundamental limitation of the adaptor.
 		for id in vtxo_ids {
-			get_check_vtxo_state(&*lock, *id, allowed_old_states).await?;
+			get_check_vtxo_state(&*lock, *id, &new_state, allowed_old_states).await?;
 		}
 		for id in vtxo_ids {
 			update_vtxo_state_checked(&mut *lock, *id, new_state.clone(), allowed_old_states).await?;

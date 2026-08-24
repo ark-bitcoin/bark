@@ -272,6 +272,7 @@ mod vtxo_lifecycle {
 		test_store_and_get_vtxo(a, b).await;
 		test_get_vtxos_by_state(a, b).await;
 		test_vtxo_state_transition_ok(a, b).await;
+		test_vtxo_state_transition_repeated(a, b).await;
 		test_vtxo_state_transition_rejected(a, b).await;
 		test_vtxo_state_transition_holder_upgrade(a, b).await;
 		test_remove_vtxo(a, b).await;
@@ -368,6 +369,35 @@ mod vtxo_lifecycle {
 		let rb = b.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, VtxoStateKind::UNSPENT_STATES).await;
 		assert_eq!(ra.is_ok(), rb.is_ok(), "update_vtxo_state_checked: ok/err mismatch");
 		assert_eq!(ra.unwrap(), rb.unwrap(), "update_vtxo_state_checked result mismatch");
+	}
+
+	/// Repeating a transition that already took effect must be an accepted
+	/// no-op on every backend, so an interrupted operation can be retried.
+	/// The two calls differ in whether the target kind is itself listed as an
+	/// allowed old state: neither may error, and neither may change the state.
+	async fn test_vtxo_state_transition_repeated<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		// test_vtxo_state_transition_ok left this vtxo Spent on both backends.
+		let vtxo = &VTXO_VECTORS.round1_vtxo;
+
+		// Target kind absent from the allowed old states. The guard would
+		// reject this were the vtxo not already in the target state.
+		let ra = a.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, VtxoStateKind::UNSPENT_STATES).await;
+		let rb = b.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, VtxoStateKind::UNSPENT_STATES).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "repeated transition: ok/err mismatch");
+		let ra = ra.expect("a: repeating a transition must be a no-op, not an error");
+		let rb = rb.expect("b: repeating a transition must be a no-op, not an error");
+		assert_eq!(ra, rb, "repeated transition result mismatch");
+		assert_eq!(ra.state, VtxoState::Spent, "repeated transition must leave the state alone");
+
+		// Target kind present in the allowed old states, so the guard passes
+		// and only the already-applied check prevents a redundant write.
+		let ra = a.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, &[VtxoStateKind::Spent]).await;
+		let rb = b.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, &[VtxoStateKind::Spent]).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "repeated self-transition: ok/err mismatch");
+		let ra = ra.expect("a: self-transition on an already-spent vtxo");
+		let rb = rb.expect("b: self-transition on an already-spent vtxo");
+		assert_eq!(ra, rb, "repeated self-transition result mismatch");
+		assert_eq!(ra.state, VtxoState::Spent, "self-transition must leave the state alone");
 	}
 
 	async fn test_vtxo_state_transition_rejected<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {

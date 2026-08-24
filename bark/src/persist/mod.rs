@@ -614,6 +614,13 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Updates the state of the VTXO corresponding to the given [VtxoId], provided that their
 	/// current state is one of the given `allowed_states`.
 	///
+	/// The update is idempotent: a VTXO that already carries exactly `new_state` is left
+	/// untouched and returned as-is, whether or not its current state kind appears in
+	/// `allowed_states`. Retrying an interrupted transition therefore succeeds without
+	/// appending a redundant state history entry. Callers who need to know whether they
+	/// were the ones to move the VTXO must track that themselves; the return value does
+	/// not distinguish the two cases.
+	///
 	/// # Parameters
 	/// - `vtxo_id`: The ID of the [Vtxo] to update.
 	/// - `state`: The new state to be set for the specified [Vtxo].
@@ -621,12 +628,13 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///   [Vtxo] must currently be in for their state to be updated to the new `state`.
 	///
 	/// # Returns
-	/// - `Ok(WalletVtxo)` if the state update is successful.
+	/// - `Ok(WalletVtxo)` if the state update is successful, or was already applied.
 	/// - `Err(anyhow::Error)` if the VTXO fails to meet the required conditions,
 	///    or if another error occurs during the operation.
 	///
 	/// # Errors
-	/// - Returns an error if the current state is not within the `allowed_states`.
+	/// - Returns an error if the current state differs from `new_state` and is not
+	///   within the `allowed_states`.
 	/// - Returns an error for any other issues encountered during the operation.
 	async fn update_vtxo_state_checked(
 		&self,
