@@ -39,48 +39,51 @@ impl Server {
 		count: Option<u32>,
 	) -> anyhow::Result<Vec<IntegrationToken>> {
 		if is_hardcoded_captaind_key(api_key) {
-			return badarg!("Minting is not permitted for the built-in captaind API keys");
+			return badarg!("Generating tokens is not permitted for the built-in captaind API keys");
 		}
 		let integration_api_key = self.db.read(async |t| t.get_integration_api_key_by_api_key(api_key).await).await?;
 		let (integration, integration_api_key) =
 			self.verify_integration_api_key(client_address, &integration_api_key).await?;
-		let (open_count, integration_token_config) = self.db.read(async |t| {
-			let open_count = t.count_open_integration_tokens(integration.id, token_type).await?;
-			let config = t.get_integration_token_config(token_type, integration.id).await?
+
+		// The quota check and the inserts must happen in one serialized
+		// transaction. Otherwise two concurrent callers can both observe
+		// `open_count < maximum_open_tokens` and both insert, exceeding the
+		// operator-configured quota. Locking the config row with FOR UPDATE
+		// blocks the second token generator until the first commits, so its recount
+		// sees the newly inserted tokens.
+		let requested = count.unwrap_or(1);
+		self.db.write(async |t| {
+			let config = t.get_integration_token_config_for_update(token_type, integration.id).await?
 				.context("no integration token configuration found")?;
-			Ok((open_count, config))
-		}).await?;
-		if integration_token_config.maximum_open_tokens <= open_count {
-			bail!("Maximum tokens reached")
-		}
+			let open_count = t.count_open_integration_tokens(integration.id, token_type).await?;
+			if config.maximum_open_tokens <= open_count {
+				bail!("Maximum tokens reached")
+			}
 
-		let allowed_delta = integration_token_config.maximum_open_tokens - open_count;
-		let generate_token_count = if allowed_delta > count.unwrap_or(1) {
-			count.unwrap_or(1)
-		} else {
-			allowed_delta
-		};
+			let allowed_delta = config.maximum_open_tokens - open_count;
+			let generate_token_count = allowed_delta.min(requested);
 
-		let mut result = Vec::with_capacity(generate_token_count as usize);
-		for _ in 0..generate_token_count {
-			let token_string = uuid::Uuid::new_v4().to_string();
-			let token_expiry_time = Local::now() +
-				chrono::Duration::seconds(integration_token_config.active_seconds as i64);
+			let mut result = Vec::with_capacity(generate_token_count as usize);
+			for _ in 0..generate_token_count {
+				let token_string = uuid::Uuid::new_v4().to_string();
+				let token_expiry_time = Local::now() +
+					chrono::Duration::seconds(config.active_seconds as i64);
 
-			let filters = Filters::new();
-			let inserted = self.db.write(async |t| t.store_integration_token(
-				token_string.as_str(),
-				token_type,
-				TokenStatus::Unused,
-				token_expiry_time,
-				&filters,
-				integration.id,
-				integration_api_key.id,
-			).await).await?;
-			result.push(inserted);
-		}
+				let filters = Filters::new();
+				let inserted = t.store_integration_token(
+					token_string.as_str(),
+					token_type,
+					TokenStatus::Unused,
+					token_expiry_time,
+					&filters,
+					integration.id,
+					integration_api_key.id,
+				).await?;
+				result.push(inserted);
+			}
 
-		Ok(result)
+			Ok(result)
+		}).await
 	}
 
 	pub async fn get_integration_token(

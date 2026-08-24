@@ -213,6 +213,10 @@ impl Captaind {
 		self.inner.ark_url()
 	}
 
+	pub fn integration_url(&self) -> String {
+		self.inner.integration_url()
+	}
+
 	pub async fn get_public_rpc(&self) -> ArkClient {
 		connect_ark_client(&self.ark_url()).await.expect("can't connect server public rpc")
 	}
@@ -586,6 +590,10 @@ impl CaptaindHelper {
 
 	pub fn admin_url(&self) -> String {
 		format!("http://{}", self.cfg.lock().rpc.admin_address.expect("missing admin addr"))
+	}
+
+	pub fn integration_url(&self) -> String {
+		format!("http://{}", self.cfg.lock().rpc.integration_address.expect("missing integration addr"))
 	}
 
 	async fn create(&self) -> anyhow::Result<()> {
