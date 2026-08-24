@@ -535,6 +535,9 @@ impl rpc::server::ArkService for Server {
 		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Send + 'static
 	>>;
 
+	// Concurrency of open SubscribeRounds streams is bounded upstream by
+	// the reverse proxy in front of captaind. Don't add a server-side
+	// limit here.
 	#[tracing::instrument(skip(self, _req))]
 	async fn subscribe_rounds(
 		&self,

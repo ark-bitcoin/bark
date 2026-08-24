@@ -204,6 +204,9 @@ impl rpc::server::MailboxService for crate::Server {
 		dyn Stream<Item = Result<protos::mailbox_server::MailboxMessage, tonic::Status>> + Send + 'static
 	>>;
 
+	// Concurrency of open SubscribeMailbox streams is bounded upstream by
+	// the reverse proxy in front of captaind. Don't add a server-side
+	// limit here.
 	#[tracing::instrument(skip(self, req), fields(
 		checkpoint = req.get_ref().checkpoint
 	))]
