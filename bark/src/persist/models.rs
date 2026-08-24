@@ -382,6 +382,11 @@ enum SerdeRoundFlowState<'a> {
 		scheduled_height: Option<BlockHeight>,
 	},
 
+	/// A delegated participation replacing itself with a fresh submission
+	Redelegating {
+		scheduled_height: Option<BlockHeight>,
+	},
+
 	/// Waiting for round to happen
 	InteractivePending,
 	/// Interactive part ongoing
@@ -415,6 +420,11 @@ impl<'a> From<&'a RoundFlowState> for SerdeRoundFlowState<'a> {
 					scheduled_height: *scheduled_height,
 				}
 			},
+			RoundFlowState::Redelegating { scheduled_height } => {
+				SerdeRoundFlowState::Redelegating {
+					scheduled_height: *scheduled_height,
+				}
+			},
 			RoundFlowState::InteractivePending => SerdeRoundFlowState::InteractivePending,
 			RoundFlowState::InteractiveOngoing { round_seq, attempt_seq, state } => {
 				SerdeRoundFlowState::InteractiveOngoing {
@@ -444,6 +454,9 @@ impl<'a> From<SerdeRoundFlowState<'a>> for RoundFlowState {
 		match state {
 			SerdeRoundFlowState::NonInteractivePending { unlock_hash, scheduled_height } => {
 				RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height }
+			},
+			SerdeRoundFlowState::Redelegating { scheduled_height } => {
+				RoundFlowState::Redelegating { scheduled_height }
 			},
 			SerdeRoundFlowState::InteractivePending => RoundFlowState::InteractivePending,
 			SerdeRoundFlowState::InteractiveOngoing { round_seq, attempt_seq, state } => {

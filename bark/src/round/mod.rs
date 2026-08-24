@@ -233,6 +233,7 @@ impl RoundState {
 	pub fn flow_kind(&self) -> RoundFlowKind {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. } => RoundFlowKind::DelegatedPending,
+			RoundFlowState::Redelegating { .. } => RoundFlowKind::DelegatedPending,
 			RoundFlowState::InteractivePending => RoundFlowKind::Pending,
 			RoundFlowState::InteractiveOngoing { .. } => RoundFlowKind::Ongoing,
 			RoundFlowState::Finished { .. } => RoundFlowKind::AwaitingConfirmations,
@@ -245,6 +246,7 @@ impl RoundState {
 	pub fn scheduled_height(&self) -> Option<BlockHeight> {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { scheduled_height, .. } => scheduled_height,
+			RoundFlowState::Redelegating { scheduled_height } => scheduled_height,
 			_ => None,
 		}
 	}
@@ -253,6 +255,7 @@ impl RoundState {
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { unlock_hash, .. } => Some(unlock_hash),
+			RoundFlowState::Redelegating { .. } => None,
 			RoundFlowState::InteractivePending => None,
 			RoundFlowState::InteractiveOngoing { .. } => None,
 			RoundFlowState::Failed { .. } => None,
@@ -264,6 +267,7 @@ impl RoundState {
 	pub fn funding_tx(&self) -> Option<&Transaction> {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. } => None,
+			RoundFlowState::Redelegating { .. } => None,
 			RoundFlowState::InteractivePending => None,
 			RoundFlowState::InteractiveOngoing { .. } => None,
 			RoundFlowState::Failed { .. } => None,
@@ -279,6 +283,7 @@ impl RoundState {
 	pub fn ongoing_participation(&self) -> bool {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. } => false,
+			RoundFlowState::Redelegating { .. } => false,
 			RoundFlowState::InteractivePending => true,
 			RoundFlowState::InteractiveOngoing { .. } => true,
 			RoundFlowState::Failed { .. } => false,
@@ -299,7 +304,9 @@ impl RoundState {
 	/// or if it was already canceled or failed
 	pub async fn try_cancel(&mut self, wallet: &Wallet) -> anyhow::Result<bool> {
 		let ret = match self.flow {
-			RoundFlowState::NonInteractivePending { .. } => {
+			RoundFlowState::NonInteractivePending { .. }
+				| RoundFlowState::Redelegating { .. }
+			=> {
 				//TODO(stevenroose) we have to cancel with server
 				bail!("it is currently not yet possible to cancel pending delegated rounds");
 			},
@@ -419,6 +426,75 @@ impl RoundState {
 		}
 		self.participation = participation;
 		Ok(())
+	}
+
+	/// Replace this participation with a fresh submission of the inputs it
+	/// has left, and hand the movement over. It ends up canceled, not
+	/// failed: it is replaced, not abandoned.
+	///
+	/// Runs from the persisted [RoundFlowState::Redelegating], so a crash can
+	/// enter it twice. It then skips the submission when a replacement
+	/// already holds our movement.
+	async fn finish_redelegation(
+		&mut self,
+		wallet: &Wallet,
+		scheduled_height: Option<BlockHeight>,
+	) -> anyhow::Result<RoundStatus> {
+		let submitted = match self.movement_id {
+			Some(mid) => {
+				// Check if the round participation was already replaced by a new one.
+				// If so, we just need to drop the current one.
+				let pending_rounds = wallet.pending_round_states().await?;
+				pending_rounds.iter().any(|stored| {
+					let state = stored.state();
+					state.movement_id == Some(mid)
+						&& matches!(state.flow, RoundFlowState::NonInteractivePending { .. })
+				})
+			},
+			None => false,
+		};
+
+		if submitted {
+			info!("Re-delegated round participation was already submitted; dropping the \
+				participation it replaced",
+			);
+		} else {
+			// Shrink against the inputs as they are now: more may have gone.
+			// Read-only: the replacement locks at its own attempt start.
+			let holder = self.movement_id.map(VtxoLockHolder::from);
+			let lost = wallet.unavailable_vtxos(&self.participation.inputs, holder).await?;
+			let shrunk = match self.try_shrink_participation(wallet, &lost).await? {
+				Some(p) => p,
+				None => {
+					info!("Delegated round participation cannot be shrunk after losing \
+						{} input(s); dropping it", lost.len(),
+					);
+					self.flow = RoundFlowState::Canceled;
+					persist_round_failure(wallet, &self.participation, self.movement_id).await
+						.context("failed to persist dropped delegated round failure")?;
+					return Ok(RoundStatus::Canceled);
+				},
+			};
+
+			let resubmitted = wallet.join_delegated_round_inner(
+				shrunk, self.movement_id, scheduled_height,
+			).await.context("failed to re-delegate round participation")?;
+			info!("Re-delegated round participation as #{} without its {} lost input(s)",
+				resubmitted.id(), lost.len(),
+			);
+
+			if let Some(mid) = self.movement_id {
+				wallet.sync_movement_to_participation(
+					mid, resubmitted.state().participation(),
+				).await?;
+			}
+		}
+
+		// The replacement owns the movement now, so drop our claim. A later
+		// sync must not fail a movement that is no longer ours.
+		self.movement_id = None;
+		self.flow = RoundFlowState::Canceled;
+		Ok(RoundStatus::Canceled)
 	}
 
 	/// Lock the inputs this participation can still claim for a starting round
@@ -586,6 +662,7 @@ impl RoundState {
 				};
 			},
 			RoundFlowState::NonInteractivePending { .. }
+				| RoundFlowState::Redelegating { .. }
 				| RoundFlowState::Finished { .. }
 				| RoundFlowState::Failed { .. }
 				| RoundFlowState::Canceled => return false,
@@ -605,6 +682,10 @@ impl RoundState {
 			},
 
 			RoundFlowState::InteractiveOngoing { .. } => Ok(RoundStatus::Pending),
+
+			RoundFlowState::Redelegating { scheduled_height } => {
+				self.finish_redelegation(wallet, scheduled_height).await
+			},
 
 			RoundFlowState::InteractivePending => {
 				// A pending participation does not lock its inputs, so another
@@ -640,6 +721,28 @@ impl RoundState {
 			},
 
 			RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height } => {
+				// A pending participation does not lock its inputs either, and
+				// the server drops one as soon as one input is consumed, which
+				// kills the refresh of the others. Resubmit them before we ask
+				// about a participation the server no longer holds.
+				//
+				// NB: only while some inputs remain. Losing every input is
+				// indistinguishable from this participation's own round
+				// consuming them, so progress_delegated handles that case.
+				//
+				// Only record the decision here; the next sync carries it out.
+				// Read-only: a pending participation must not claim an input
+				// an interactive registration can still take.
+				let holder = self.movement_id.map(VtxoLockHolder::from);
+				let lost = wallet.unavailable_vtxos(&self.participation.inputs, holder).await?;
+				if !lost.is_empty() && lost.len() < self.participation.inputs.len() {
+					info!("Delegated round participation lost {} of its {} input(s); \
+						re-delegating the rest", lost.len(), self.participation.inputs.len(),
+					);
+					self.flow = RoundFlowState::Redelegating { scheduled_height };
+					return Ok(RoundStatus::Pending);
+				}
+
 				match progress_delegated(
 					wallet, &self.participation, self.movement_id, unlock_hash, scheduled_height,
 					self.sent_forfeit_sigs,
@@ -770,6 +873,7 @@ impl RoundState {
 			// pending_round_input_vtxos keeps only the ones locked by this
 			// round's movement.
 			RoundFlowState::NonInteractivePending { .. }
+				| RoundFlowState::Redelegating { .. }
 				| RoundFlowState::InteractivePending
 				| RoundFlowState::InteractiveOngoing { .. }
 			=> {
@@ -800,6 +904,7 @@ impl RoundState {
 
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. }
+				| RoundFlowState::Redelegating { .. }
 				| RoundFlowState::InteractivePending
 				| RoundFlowState::InteractiveOngoing { .. }
 				| RoundFlowState::Finished { .. }
@@ -825,6 +930,16 @@ pub enum RoundFlowState {
 		/// The block height we asked the server to schedule this participation
 		/// for, if any. We use it to verify the server honoured our schedule:
 		/// the new VTXOs must not expire before this height.
+		scheduled_height: Option<BlockHeight>,
+	},
+
+	/// A delegated participation that lost inputs and replaces itself with a
+	/// fresh submission of the ones it has left
+	///
+	/// Persisted before that submission, so a crash in between recovers:
+	/// this record still owns the movement until it is done.
+	Redelegating {
+		/// The block height the replacement is scheduled for, if any
 		scheduled_height: Option<BlockHeight>,
 	},
 

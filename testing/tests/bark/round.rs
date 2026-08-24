@@ -827,8 +827,9 @@ async fn interactive_round_redelegates_the_inputs_it_did_not_take() {
 	// The round took B and C, so the delegated participation lost B and is
 	// resubmitted with only A. The inputs are only marked spent once the
 	// round tx is deeply confirmed, so the sync that settles the round is
-	// also the one that re-delegates A.
+	// the one that records the re-delegation; the next one carries it out.
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark.sync().await;
 	bark.sync().await;
 
 	// The interactive participation stays around until the round tx confirms,

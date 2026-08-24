@@ -8,12 +8,13 @@ use ark::VtxoId;
 use ark::fees::RefreshFees;
 use ark::rounds::RoundEvent;
 use bark::movement::MovementStatus;
+use bark::round::RoundFlowKind;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::{VtxoLockHolder, VtxoState};
 use server_log::{NoRoundPayments, RoundFinished, RoundParticipationRejected};
 use server_rpc::protos;
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, sat, secs, TestContext};
 use ark_testing::constants::ROUND_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient, Captaind};
 use ark_testing::util::{FutureExt, poll_interval};
@@ -943,4 +944,62 @@ async fn participation_is_canceled_when_the_remainder_cannot_stand_alone() {
 		"a participation whose remainder cannot be refreshed should be canceled");
 	assert_eq!(wallet.get_vtxo_by_id(b).await.unwrap().state, VtxoState::Spendable,
 		"the remaining input should be left spendable");
+}
+
+#[tokio::test]
+async fn delegated_participation_is_redelegated_when_input_consumed() {
+	//! When some (but not all) inputs of a pending delegated participation
+	//! get consumed by another operation, syncing it re-delegates the
+	//! remaining inputs under a fresh submission — the server drops a
+	//! pending participation wholesale once one of its inputs is gone —
+	//! keeping the scheduled height.
+
+	let ctx = TestContext::new("bark_sdk/delegated_participation_is_redelegated_when_input_consumed").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).funded(btc(10)).create().await;
+	let wallet = ctx.bark_sdk("bark", &srv).funded(sat(1_000_000))
+		.boarded(sat(400_000))
+		.boarded(sat(300_000))
+		.create().await;
+
+	let vtxos = wallet.spendable_vtxos().await.unwrap();
+	assert_eq!(vtxos.len(), 2, "should have two spendable vtxos");
+	let a = vtxos.iter().find(|v| v.vtxo.amount() == sat(400_000)).unwrap().vtxo.id();
+	let b = vtxos.iter().find(|v| v.vtxo.amount() == sat(300_000)).unwrap().vtxo.id();
+
+	let height = ctx.bitcoind().get_block_count().await as u32 + 10;
+	wallet.refresh_vtxos_scheduled(vec![a, b], height).await.unwrap()
+		.expect("delegated refresh should register");
+
+	// A concurrent operation consumes one input.
+	let holder = VtxoLockHolder::Action { id: "other-op-test-action".to_string() };
+	wallet.lock_vtxos(vec![a], Some(holder)).await.unwrap();
+	wallet.mark_vtxos_as_spent(vec![a]).await.unwrap();
+
+	// Two ticks: the first records the re-delegation, the second carries it
+	// out. The decision is persisted in between so a crash can resume it.
+	wallet.sync().await;
+	wallet.sync().await;
+
+	// The participation was re-delegated with the remaining input and the
+	// same schedule.
+	let pending = wallet.pending_round_states().await.unwrap();
+	assert_eq!(pending.len(), 1);
+	assert_eq!(pending[0].state().flow_kind(), RoundFlowKind::DelegatedPending);
+	let inputs = pending[0].state().participation().inputs.iter()
+		.map(|v| v.id()).collect::<Vec<_>>();
+	assert_eq!(inputs, vec![b], "the re-delegated participation should keep the other input");
+	assert_eq!(pending[0].state().scheduled_height(), Some(height),
+		"the scheduled height should carry over to the resubmission");
+
+	// Once the scheduled height is reached, the re-delegated participation
+	// executes.
+	ctx.generate_blocks(10).await;
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	let finished = log_round_finished.recv().wait(secs(30)).await
+		.expect("the re-delegated refresh should execute in the round");
+	assert_eq!(finished.nb_input_vtxos, 1,
+		"exactly the re-delegated input should have been forfeited");
 }
