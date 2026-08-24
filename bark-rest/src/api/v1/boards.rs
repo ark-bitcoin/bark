@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
@@ -22,7 +24,7 @@ use crate::ServerState;
 )]
 pub struct BoardsApiDoc;
 
-pub fn router() -> Router<ServerState> {
+pub fn router() -> Router<Arc<ServerState>> {
 	Router::new()
 		.route("/board-amount", post(board_amount))
 		.route("/board-all", post(board_all))
@@ -46,7 +48,7 @@ pub fn router() -> Router<ServerState> {
 )]
 #[debug_handler]
 pub async fn board_amount(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Json(body): Json<bark_json::web::BoardRequest>,
 ) -> HandlerResult<Json<bark_json::cli::PendingBoardInfo>> {
 	let wallet = state.require_wallet()?;
@@ -72,7 +74,7 @@ pub async fn board_amount(
 )]
 #[debug_handler]
 pub async fn board_all(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 ) -> HandlerResult<Json<bark_json::cli::PendingBoardInfo>> {
 	let wallet = state.require_wallet()?;
 	let board = wallet.board_all().await?;
@@ -93,7 +95,7 @@ pub async fn board_all(
 )]
 #[debug_handler]
 pub async fn get_pending_boards(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::PendingBoardInfo>>> {
 	let wallet = state.require_wallet()?;
 

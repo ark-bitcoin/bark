@@ -1,5 +1,6 @@
 
 use std::fmt;
+use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
@@ -16,7 +17,10 @@ use crate::error::{ErrorResponse, unauthorized};
 
 const BEARER_PREFIX: &str = "Bearer ";
 
-pub fn authed_router(state: &ServerState, router: Router<ServerState>) -> Router<ServerState> {
+pub fn authed_router(
+	state: &Arc<ServerState>,
+	router: Router<Arc<ServerState>>,
+) -> Router<Arc<ServerState>> {
 	router.route_layer(axum::middleware::from_fn_with_state(state.clone(), guard_auth))
 }
 
@@ -124,7 +128,7 @@ fn extract_auth_token(req: &Request<Body>) -> Result<Option<String>, &'static st
 }
 
 pub fn authenticate_request(
-	State(state): State<ServerState>,
+	state: &ServerState,
 	req: &Request<Body>,
 ) -> Result<(), ErrorResponse> {
 	// If no auth token is configured, allow unauthenticated access.
@@ -152,11 +156,11 @@ pub fn authenticate_request(
 }
 
 pub(crate) async fn guard_auth(
-	state: State<ServerState>,
+	state: State<Arc<ServerState>>,
 	req: Request<Body>,
 	next: Next,
 ) -> Response {
-	match authenticate_request(state, &req) {
+	match authenticate_request(&state.0, &req) {
 		Ok(()) => next.run(req).await,
 		Err(e) => e.into_response(),
 	}
@@ -172,9 +176,9 @@ mod tests {
 		AuthToken::new([42u8; 32])
 	}
 
-	fn make_state(token: AuthToken) -> State<ServerState> {
+	fn make_state(token: AuthToken) -> ServerState {
 		let shutdown = CancellationToken::new();
-		State(ServerState::builder().auth_token(token).build(shutdown))
+		ServerState::builder().auth_token(token).build(shutdown)
 	}
 
 	#[test]
@@ -228,14 +232,14 @@ mod tests {
 		};
 
 		// valid token passes
-		let res = authenticate_request(make_state(token.clone()), &req(Some(&token.encode())));
+		let res = authenticate_request(&make_state(token.clone()), &req(Some(&token.encode())));
 		assert!(res.is_ok(), "valid token should pass: {:?}", res);
 
 		// missing, wrong, and garbage tokens all fail
 		let state = make_state(token);
 		let no_hdr = Request::builder().body(Body::empty()).unwrap();
-		assert!(authenticate_request(state.clone(), &no_hdr).is_err());
-		assert!(authenticate_request(state.clone(), &req(Some(&AuthToken::new([0u8; 32]).encode()))).is_err());
-		assert!(authenticate_request(state, &req(Some("not-a-valid-token"))).is_err());
+		assert!(authenticate_request(&state, &no_hdr).is_err());
+		assert!(authenticate_request(&state, &req(Some(&AuthToken::new([0u8; 32]).encode()))).is_err());
+		assert!(authenticate_request(&state, &req(Some("not-a-valid-token"))).is_err());
 	}
 }

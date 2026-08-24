@@ -410,7 +410,7 @@ async fn main() -> anyhow::Result<()>{
 		None
 	};
 
-	let on_wallet_create: Arc<OnWalletCreate> = Arc::new({
+	let on_wallet_create: Box<OnWalletCreate> = Box::new({
 		let datadir = datadir.clone();
 
 		move |req: CreateWalletRequest| {
@@ -435,7 +435,7 @@ async fn main() -> anyhow::Result<()>{
 		}
 	});
 
-	let on_wallet_delete: Arc<OnWalletDelete> = Arc::new({
+	let on_wallet_delete: Box<OnWalletDelete> = Box::new({
 		let datadir = datadir.clone();
 		move || {
 			let datadir = datadir.clone();
@@ -449,9 +449,9 @@ async fn main() -> anyhow::Result<()>{
 		}
 	});
 
-	let on_get_mnemonic: Option<Arc<OnGetMnemonic>> = if cli.expose_mnemonic {
+	let on_get_mnemonic: Option<Box<OnGetMnemonic>> = if cli.expose_mnemonic {
 		let datadir = datadir.clone();
-		Some(Arc::new(move || {
+		Some(Box::new(move || {
 			let datadir = datadir.clone();
 			Box::pin(async move { read_mnemonic(&datadir).await })
 		}))
@@ -467,7 +467,7 @@ async fn main() -> anyhow::Result<()>{
 		.on_wallet_delete(on_wallet_delete)
 		.on_get_mnemonic(on_get_mnemonic)
 		.build(shutdown.clone());
-	let server = RestServer::start(&config, state, shutdown.clone()).await?;
+	let server = RestServer::start(&config, Arc::new(state), shutdown.clone()).await?;
 
 	run_shutdown_signal_listener(shutdown.clone()).await;
 
