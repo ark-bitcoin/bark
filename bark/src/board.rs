@@ -229,13 +229,18 @@ impl Wallet {
 		);
 
 		// Locate the board output by script-pubkey rather than a fixed vout: a tx
-		// built elsewhere orders its outputs freely. Ours puts it at vout 0.
+		// built elsewhere orders its outputs freely. Ours puts it at vout 0. Paying
+		// the script twice is refused rather than resolved to the first match, which
+		// would board one output and leave the other tracked by nothing.
 		let expected_script = builder.funding_script_pubkey();
-		let vout = board_psbt.unsigned_tx.output.iter()
-			.position(|o| o.script_pubkey == expected_script)
-			.context("PSBT output does not pay to the expected board funding address")?
-			as u32;
-		let board_output = &board_psbt.unsigned_tx.output[vout as usize];
+		let mut board_outputs = board_psbt.unsigned_tx.output.iter().enumerate()
+			.filter(|(_, o)| o.script_pubkey == expected_script);
+		let (vout, board_output) = board_outputs.next()
+			.context("PSBT output does not pay to the expected board funding address")?;
+		ensure!(board_outputs.next().is_none(),
+			"PSBT pays to the board funding address more than once",
+		);
+		let vout = vout as u32;
 
 		let amount = board_output.value;
 		ensure!(amount >= ark_info.min_board_amount,
