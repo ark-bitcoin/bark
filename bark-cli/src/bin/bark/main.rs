@@ -70,6 +70,20 @@ struct Cli {
 	)]
 	quiet: bool,
 
+	/// Write the debug log to this file instead of the default
+	/// `<datadir>/debug.log`
+	#[arg(long, env = "BARK_LOGFILE", global = true, conflicts_with = "no_logfile")]
+	logfile: Option<PathBuf>,
+	/// Disable the debug log file entirely
+	#[arg(
+		long,
+		env = "BARK_NO_LOGFILE",
+		global = true,
+		conflicts_with = "logfile",
+		value_parser = BoolishValueParser::new(),
+	)]
+	no_logfile: bool,
+
 	/// The datadir of the bark wallet
 	#[arg(long, env = "BARK_DATADIR", global = true, default_value_t = default_datadir())]
 	datadir: String,
@@ -385,7 +399,7 @@ enum Command {
 async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
 
-	init_logging(cli.verbose, cli.quiet, &datadir);
+	init_logging(cli.verbose, cli.quiet, &datadir, cli.logfile.clone(), cli.no_logfile);
 
 	info!("Starting bark version {} with datadir {}", FULL_VERSION, datadir.display());
 
