@@ -273,6 +273,9 @@ impl RoundState {
 	}
 
 	/// Whether the interactive part of the round is still ongoing
+	///
+	/// Includes the wait for the round to start. For an attempt in flight,
+	/// use [RoundState::ongoing_attempt].
 	pub fn ongoing_participation(&self) -> bool {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. } => false,
@@ -282,6 +285,14 @@ impl RoundState {
 			RoundFlowState::Canceled => false,
 			RoundFlowState::Finished { .. } => false,
 		}
+	}
+
+	/// Whether an attempt is currently running with the server
+	///
+	/// Excludes a participation that only waits for its round, which a sync
+	/// still has work to do on.
+	pub fn ongoing_attempt(&self) -> bool {
+		matches!(self.flow, RoundFlowState::InteractiveOngoing { .. })
 	}
 
 	/// Tries to cancel the round and returns whether it was succesfully canceled
@@ -593,7 +604,28 @@ impl RoundState {
 				})
 			},
 
-			RoundFlowState::InteractivePending | RoundFlowState::InteractiveOngoing { .. } => {
+			RoundFlowState::InteractiveOngoing { .. } => Ok(RoundStatus::Pending),
+
+			RoundFlowState::InteractivePending => {
+				// A pending participation does not lock its inputs, so another
+				// operation can have taken one while it waited. Read-only: it
+				// only claims what is left once its attempt starts.
+				let holder = self.movement_id.map(VtxoLockHolder::from);
+				let lost = wallet.unavailable_vtxos(&self.participation.inputs, holder).await?;
+				if !lost.is_empty() {
+					match self.try_shrink_participation(wallet, &lost).await? {
+						Some(shrunk) => self.adopt_participation(wallet, shrunk).await?,
+						None => {
+							info!("Pending round participation cannot be shrunk; canceling it");
+							self.flow = RoundFlowState::Canceled;
+							persist_round_failure(
+								wallet, &self.participation, self.movement_id,
+							).await.context("failed to persist round cancelation")?;
+							return Ok(RoundStatus::Canceled);
+						},
+					}
+				}
+
 				Ok(RoundStatus::Pending)
 			},
 			RoundFlowState::Failed { ref error } => {
@@ -1756,6 +1788,24 @@ impl Wallet {
 		Ok(None)
 	}
 
+	/// Load and lock one round state by id, without waiting.
+	///
+	/// Returns `None` when the state is gone or another holder has it, which
+	/// a caller making opportunistic progress skips.
+	async fn try_lock_round_state(
+		&self,
+		id: RoundStateId,
+	) -> anyhow::Result<Option<StoredRoundState>> {
+		let guard = match self.inner.lock_manager.try_lock(
+			&format!("{}.round.{}", self.fingerprint(), id),
+		).await {
+			Some(g) => g,
+			None => return Ok(None),
+		};
+
+		Ok(self.inner.db.get_round_state_by_id(id).await?.map(|s| s.lock(guard)))
+	}
+
 	/// Ask the server when the next round is scheduled to start
 	pub async fn next_round_start_time(&self) -> anyhow::Result<SystemTime> {
 		let (mut srv, _) = self.require_server().await?;
@@ -2104,12 +2154,21 @@ impl Wallet {
 		tokio_stream::iter(states).for_each_concurrent(10, |state| {
 			let ret = ret.clone();
 			async move {
-				// not processing events here
-				if state.state().ongoing_participation() {
+				// Round events drive an attempt; one only waiting for its
+				// round is ours to sync.
+				if state.state().ongoing_attempt() {
 					return;
 				}
 
-				let mut state = match self.lock_wait_round_state(state.id()).await {
+				// drive_round_state holds that one's lock for the whole wait,
+				// so skip it when contended rather than time out. The rest is
+				// held briefly and worth waiting for.
+				let locked = if state.state().ongoing_participation() {
+					self.try_lock_round_state(state.id()).await
+				} else {
+					self.lock_wait_round_state(state.id()).await
+				};
+				let mut state = match locked {
 					Ok(Some(state)) => state,
 					Ok(None) => return,
 					Err(e) => {

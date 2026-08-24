@@ -89,7 +89,8 @@ impl Wallet {
 	/// locked by `holder` itself. Anything else — locked by someone else,
 	/// spent, exited, or absent from the wallet — is unavailable.
 	///
-	/// The availability predicate used by [Wallet::lock_available_vtxos].
+	/// The shared predicate behind [Wallet::unavailable_vtxos] and
+	/// [Wallet::lock_available_vtxos], so the two cannot disagree.
 	///
 	/// # Errors
 	/// - If a database error occurs.
@@ -110,9 +111,33 @@ impl Wallet {
 		})
 	}
 
+	/// The VTXOs of `vtxos` that are no longer available to `holder`, without
+	/// touching any of them.
+	///
+	/// The read-only counterpart of [Wallet::lock_available_vtxos]: use this
+	/// to find out what an operation lost while it held no lock, and
+	/// [Wallet::lock_available_vtxos] when it is time to claim what is left.
+	///
+	/// # Errors
+	/// - If a database error occurs.
+	pub async fn unavailable_vtxos(
+		&self,
+		vtxos: &[Vtxo<Full>],
+		holder: Option<VtxoLockHolder>,
+	) -> anyhow::Result<Vec<VtxoId>> {
+		let mut unavailable = Vec::new();
+		for vtxo in vtxos.iter() {
+			if !self.vtxo_available_for(vtxo, &holder).await? {
+				unavailable.push(vtxo.id());
+			}
+		}
+		Ok(unavailable)
+	}
+
 	/// Locks the VTXOs still available to `holder` as one atomic batch, and
 	/// returns the ones that are not.
 	///
+	/// The locking counterpart of [Wallet::unavailable_vtxos].
 	/// [Wallet::lock_vtxos] is all-or-nothing; this is for operations that
 	/// can continue with fewer VTXOs than they started with.
 	///
