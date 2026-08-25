@@ -1,5 +1,11 @@
 FROM docker.io/ubuntu:25.04
 
+# All cargo builds run inside the nix devShells, which provide their own
+# toolchain, protobuf, sqlite, postgres etc. The packages here only cover
+# what runs outside those shells: the justfile release recipes (just, jq,
+# cargo for `cargo metadata`), registry pushes (podman, buildah, passt),
+# repo mirroring (openssh-client), CI helper scripts (python3, ripgrep) and
+# the nix install itself (curl, xz-utils).
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \
 	wget \
@@ -7,28 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	git \
 	xz-utils \
 	build-essential \
-	cmake \
-	clang \
-	make \
 	pkg-config \
 	ripgrep \
-	libsodium-dev \
-	libssl-dev \
-	libclang-dev \
-	zlib1g-dev \
-	sqlite3 \
-	libsqlite3-dev \
-	libpq5 \
-	postgresql \
-	postgresql-contrib \
-	protobuf-compiler \
 	jq \
-	mingw-w64 \
-	gcc-mingw-w64 \
-	llvm \
-	libxml2-dev \
+	just \
 	python3 \
-	libpq-dev \
 	sudo \
 	podman \
 	buildah \
@@ -66,12 +55,10 @@ RUN echo "nixuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/nixuser && chmod 044
 USER nixuser
 WORKDIR /home/nixuser
 
-RUN sudo chown -R nixuser:nixbld /nix
-
-# When changing SWAGGER_UI_DOWNLOAD_URL one should also change the env vars in CI.
+# When changing this path one should also change SWAGGER_UI_DOWNLOAD_URL in
+# .gitlab-ci.yml and nix/ci-shell.nix.
 RUN mkdir -p /home/nixuser/assets/swagger-ui && \
-	wget -O /home/nixuser/assets/swagger-ui/v5.30.2.zip https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.30.2.zip && \
-	export SWAGGER_UI_DOWNLOAD_URL=file:///home/nixuser/assets/swagger-ui/v5.30.2.zip
+	wget -O /home/nixuser/assets/swagger-ui/v5.30.2.zip https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.30.2.zip
 
 RUN mkdir -p ~/.config/containers && \
 	echo '{"default":[{"type":"insecureAcceptAnything"}],"transports":{"docker":{"":[{"type":"insecureAcceptAnything"}]},"docker-archive":{"":[{"type":"insecureAcceptAnything"}]}}}' > ~/.config/containers/policy.json
@@ -84,22 +71,19 @@ RUN curl -L https://nixos.org/nix/install | bash -s -- --daemon && \
 	nix-env --version
 
 RUN mkdir -p ~/.config/nix && \
-	echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf # && \
-#	echo "sandbox = false" >> ~/.config/nix/nix.conf
+	echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
 
 RUN mkdir -p /nix/var/nix/profiles/per-user/nixuser/channels
 
+# The justfile resolves CARGO_TARGET with `cargo metadata` at startup, so a
+# cargo binary is needed even for recipes that only drive nix (the release
+# recipes run outside the nix shells). Everything that actually compiles
+# runs inside the nix shells with their own toolchain and sccache.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
 
-RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
-	rustup toolchain install ${RUSTUP_TOOLCHAIN_VERSION} && \
-	rustup target add x86_64-unknown-linux-gnu
+RUN echo "Installing Rust toolchain version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
+	rustup toolchain install ${RUSTUP_TOOLCHAIN_VERSION}
 
-RUN echo "Installing sccache"
-RUN cargo install --locked sccache --features memcached
-ENV SCCACHE_MEMCACHED=tcp://127.0.0.1:11211
-ENV SCCACHE_DIRECT=true
-ENV RUSTC_WRAPPER=sccache
 # Normalize source paths in rustc metadata so this pre-built target/
 # (at /home/nixuser/bark) is fingerprint-compatible with what CI produces
 # from $CI_PROJECT_DIR (typically /builds/ark-bitcoin/bark). Uses
@@ -114,9 +98,6 @@ ENV NIX_CONFIG="accept-flake-config = true"
 RUN echo "extra-trusted-users = nixuser" | sudo tee -a /etc/nix/nix.conf && \
 	echo "extra-substituters = https://bark.cachix.org" | sudo tee -a /etc/nix/nix.conf && \
 	echo "extra-trusted-public-keys = bark.cachix.org-1:Iaihe4ABbOQz1CHBoYUZS/sHVAcISasJZ+lL3I4gRB0=" | sudo tee -a /etc/nix/nix.conf
-
-RUN echo "Installing just"
-RUN cargo install --locked just
 
 RUN echo "clone bark" && \
 	git clone -b master https://gitlab.com/ark-bitcoin/bark.git

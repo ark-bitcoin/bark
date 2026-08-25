@@ -20,9 +20,9 @@ let
 		CARGO_BUILD_RUSTFLAGS = "--remap-path-prefix=/builds/ark-bitcoin/bark=/build --remap-path-prefix=/home/nixuser/bark=/build";
 		# Pinned inside the shell so build scripts run under `nix develop`
 		# see it deterministically. The base image writes the zip at this
-		# path (Dockerfile line 76), so referencing it here (rather than
-		# hoping the CI-side env leaks in through nix develop) keeps the
-		# utoipa-swagger-ui build.rs happy.
+		# path (.gitlab/images/tests/Dockerfile), so referencing it here
+		# (rather than hoping the CI-side env leaks in through nix develop)
+		# keeps the utoipa-swagger-ui build.rs happy.
 		SWAGGER_UI_DOWNLOAD_URL = "file:///home/nixuser/assets/swagger-ui/v5.30.2.zip";
 		# Show panic messages and backtraces on build.rs failures so we
 		# get the `thread 'main' panicked at '…'` line above the stack
