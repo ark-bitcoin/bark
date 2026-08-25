@@ -42,6 +42,8 @@ let
 		doCheck = false;
 	});
 
+	swaggerUi = import ./swagger-ui.nix { inherit pkgs; };
+
 	hal = rustPlatform.buildRustPackage rec {
 		pname = "hal";
 		version = "0.11.0";
@@ -155,6 +157,7 @@ let
 	};
 
 	env = buildShell.env // {
+		SWAGGER_UI_DOWNLOAD_URL = "file://${swaggerUi}";
 		POSTGRES_BINS = "${postgresql}/bin";
 		BITCOIND_EXEC = "${bitcoin}/bin/bitcoind";
 		ESPLORA_ELECTRS_EXEC = "${esploraElectrs}/bin/electrs";

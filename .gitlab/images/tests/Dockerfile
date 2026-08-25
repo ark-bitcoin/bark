@@ -8,7 +8,6 @@ FROM docker.io/ubuntu:25.04
 # the nix install itself (curl, xz-utils).
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \
-	wget \
 	curl \
 	git \
 	xz-utils \
@@ -54,11 +53,6 @@ RUN useradd -m -s /bin/bash -g nixbld -G nixbld nixuser
 RUN echo "nixuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/nixuser && chmod 0440 /etc/sudoers.d/nixuser
 USER nixuser
 WORKDIR /home/nixuser
-
-# When changing this path one should also change SWAGGER_UI_DOWNLOAD_URL in
-# .gitlab-ci.yml and nix/ci-shell.nix.
-RUN mkdir -p /home/nixuser/assets/swagger-ui && \
-	wget -O /home/nixuser/assets/swagger-ui/v5.30.2.zip https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.30.2.zip
 
 RUN mkdir -p ~/.config/containers && \
 	echo '{"default":[{"type":"insecureAcceptAnything"}],"transports":{"docker":{"":[{"type":"insecureAcceptAnything"}]},"docker-archive":{"":[{"type":"insecureAcceptAnything"}]}}}' > ~/.config/containers/policy.json
