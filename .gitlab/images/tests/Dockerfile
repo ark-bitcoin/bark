@@ -89,18 +89,6 @@ RUN mkdir -p ~/.config/nix && \
 
 RUN mkdir -p /nix/var/nix/profiles/per-user/nixuser/channels
 
-COPY Xcode_16.3.xip /tmp/
-RUN echo "xcode prep work"  && \
-	. /etc/profile.d/nix.sh && \
-	cd /tmp && \
-	nix-shell -p xar pbzx cpio rcodesign --command "\
-		xar -xf Xcode_16.3.xip && \
-		pbzx -n Content | cpio -i && \
-		rcodesign verify Xcode.app/Contents/MacOS/Xcode" && \
-	nix-store --add-fixed --recursive sha256 Xcode.app && \
-	sudo rm Xcode_16.3.xip Content Metadata && \
-	sudo rm -rf Xcode.app
-
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
 
 RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
