@@ -486,9 +486,11 @@ ci-warmup: check build check-fuzz check-release check-bark-as-libs test-doc test
 cachix-push:
 	nix develop .#default  --profile /tmp/bark-shell-dev      -c true
 	nix develop .#build    --profile /tmp/bark-shell-build    -c true
+	nix develop .#ci       --profile /tmp/bark-shell-ci       -c true
 	nix develop .#msrv-lib --profile /tmp/bark-shell-msrv-lib -c true
 	cachix push bark /tmp/bark-shell-dev
 	cachix push bark /tmp/bark-shell-build
+	cachix push bark /tmp/bark-shell-ci
 	cachix push bark /tmp/bark-shell-msrv-lib
 
 [doc("build a single nix release package and copy its binaries into build/ suffixed with the target triple")]
