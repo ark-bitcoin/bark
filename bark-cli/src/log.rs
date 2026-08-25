@@ -1,7 +1,7 @@
 
 use std::{cmp, process};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Simple logger that splits into two logger
 struct SplitLogger {
@@ -36,7 +36,17 @@ impl log::Log for SplitLogger {
 	}
 }
 
-pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
+/// Sets up logging to the terminal (unless `quiet`) and to a debug log file.
+///
+/// The debug log file defaults to `datadir/debug.log`, but can be
+/// overridden with `logfile`, or disabled entirely with `no_logfile`.
+pub fn init_logging(
+	verbose: bool,
+	quiet: bool,
+	datadir: &Path,
+	logfile: Option<PathBuf>,
+	no_logfile: bool,
+) {
 	if verbose && quiet {
 		println!("Can't set both --verbose and --quiet");
 		process::exit(1);
@@ -107,8 +117,19 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 		None
 	};
 
-	let logfile = if datadir.exists() {
-		let path = datadir.join("debug.log");
+	// The default location is only used once the datadir actually exists;
+	// an explicit --logfile is always attempted, so a bad path is reported.
+	let logfile_path = if no_logfile {
+		None
+	} else if let Some(path) = logfile {
+		Some(path)
+	} else if datadir.exists() {
+		Some(datadir.join("debug.log"))
+	} else {
+		None
+	};
+
+	let logfile = logfile_path.and_then(|path| {
 		let mut opts = std::fs::File::options();
 		opts.create(true).append(true);
 		// The debug log records wallet activity; create it owner-only so other
@@ -119,7 +140,7 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 			use std::os::unix::fs::OpenOptionsExt;
 			opts.mode(0o600);
 		}
-		match opts.open(path) {
+		match opts.open(&path) {
 			Ok(mut file) => {
 				// try write a newline into the file to separate commands
 				let _ = file.write_all("\n\n".as_bytes());
@@ -133,13 +154,11 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 				Some(logger)
 			},
 			Err(e) => {
-				eprintln!("Failed to open debug.log file: {:#}", e);
+				eprintln!("Failed to open debug log file {}: {:#}", path.display(), e);
 				None
 			},
 		}
-	} else {
-		None
-	};
+	});
 
 	match (terminal, logfile) {
 		(Some(mut l1), Some(mut l2)) => SplitLogger::init(l1.build(), l2.build()),

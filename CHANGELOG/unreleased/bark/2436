@@ -1,0 +1,4 @@
+- add `--logfile` argument to specify logfile path
+  [#2436](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2436)
+- add `--no-logfile` flag to disable logging to file
+  [#2436](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2436)
