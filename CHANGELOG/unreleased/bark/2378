@@ -1,2 +1,0 @@
-- bugfix: fix inability to finish delegated refreshes scheduled before v0.6.0
-  [#2378](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2378)

@@ -1,3 +1,0 @@
-- Add a `tos_link` config option to announce the server's terms of service
-  The link is sent to clients via `ArkInfo.tos_link`.
-  [#2396](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2396)

@@ -1,6 +1,0 @@
-- Raise the minimum protocol version to 4
-  The fee calculations for protocol versions 3 and below are gone, so clients on
-  them would be charged fees they calculate differently. They are now refused at
-  the handshake instead.
-  [#2373](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2373)
-  - **BREAKING:** clients below bark 0.5.0 can no longer connect.

@@ -1,3 +1,0 @@
-- Support zmq to get instant notifications of new blocks
-  - Configure `bitcoind_zmq_address` to get notified faster if a block confirms
-  [#2356](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2356)

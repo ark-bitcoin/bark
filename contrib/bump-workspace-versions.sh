@@ -19,6 +19,7 @@ lockstep="
 	bark-json/Cargo.toml
 	bark-rest-client/Cargo.toml
 	bark-rest/Cargo.toml
+	bark-runtime/Cargo.toml
 	bark/Cargo.toml
 	bitcoin-ext/Cargo.toml
 	lib/Cargo.toml
@@ -34,6 +35,7 @@ packages="
 	bark-json
 	bark-rest-client
 	bark-rest
+	bark-runtime
 	bark-wallet
 	bark-bitcoin-ext
 	ark-lib

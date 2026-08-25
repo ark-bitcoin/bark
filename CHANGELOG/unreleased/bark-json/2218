@@ -1,5 +1,0 @@
-- Identify the offending VTXO in `ExitError::DustLimit`
-  The error now reports which VTXO is below the dust limit, not just its value.
-  [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)
-  - **BREAKING:** `DustLimit.vtxo` is now the VTXO id (string); the sub-dust
-    value moved to the new `amount` field

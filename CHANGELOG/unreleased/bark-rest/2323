@@ -1,5 +1,0 @@
-- Add `POST /v1/message/sign` and `POST /v1/message/verify`
-  `sign` signs a message with the key of the provided Ark address, and
-  returns the signature. `verify` statelessly verifies a signature
-  against a public key or an Ark address.
-  [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)

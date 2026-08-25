@@ -1,6 +1,0 @@
-- do proper sanity checks on round participation results from server
-  - general sanity checks of parameters
-  - expiry height must honour our scheduled height if requested
-  - otherwise, expiry height must not be before any of our input VTXO expiries
-  [#2384](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2384)
-

@@ -1,8 +1,0 @@
-- Create the server data directory and the mnemonic file owner-only
-  `captaind` and `watchmand` warn at startup if an existing data
-  directory or mnemonic file is accessible to other users
-  (either by a deploy manually overriding the now default protection
-  or it it had a previous server deployed).
-
-  Vulnerability reported by the Red Team and Loupe.
-  [#2391](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2391)

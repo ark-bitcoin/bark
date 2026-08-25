@@ -1,2 +1,0 @@
-- prevent users from publishing non-pubkey VTXOs to mailboxes
-  [#2390](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2390/)

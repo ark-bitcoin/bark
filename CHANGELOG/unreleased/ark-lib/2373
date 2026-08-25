@@ -1,5 +1,0 @@
-- Remove the fee calculations for protocol versions 3 and below
-  [#2373](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2373)
-  - **BREAKING:** removed `calc_ppm_expiry_fee_legacy` and `calculate_legacy` from
-    `BoardFees`, `OffboardFees`, `RefreshFees`, `LightningReceiveFees` and
-    `LightningSendFees`.
