@@ -1,8 +1,8 @@
 FROM docker.io/ubuntu:25.04
 
 # Everything that runs a build or a CI helper needing real tools does so
-# inside the nix devShells (jobs wrap their commands in `nix develop`), so
-# the packages here only cover what runs outside any shell: the runner's
+# inside the nix devShells (jobs wrap their commands in the contrib/ci-env scripts),
+# so the packages here only cover what runs outside any shell: the runner's
 # checkout and before_script (git, sudo), registry pushes (podman, buildah,
 # qemu-user-static, passt), repo mirroring (openssh-client) and the nix
 # install itself (curl, xz-utils).

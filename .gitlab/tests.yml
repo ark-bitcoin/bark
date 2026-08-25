@@ -25,7 +25,7 @@ check-commits:
     - git log --oneline -1
     - |
       if [ -z "$CI_COMMIT_TAG" ]; then
-        nix develop .#ci --command bash -c "just check-commits"
+        bash contrib/ci-env/ci.sh bash -c "just check-commits"
       else
         echo "Skipping check-commits for tag event"
       fi
@@ -48,7 +48,7 @@ build:
     # shows non-zero requests, the outer `sccache --show-stats` in
     # `after_script` is querying a different (freshly-started) sccache
     # instance — a display artifact, not a real "sccache did nothing".
-    - nix develop .#ci --command bash -c "just build-ci && echo '=== sccache stats (inside .#ci) ===' && sccache --show-stats"
+    - bash contrib/ci-env/ci.sh bash -c "just build-ci && echo '=== sccache stats (inside .#ci) ===' && sccache --show-stats"
     # target/ is a symlink out of $CI_PROJECT_DIR when the base image
     # seeded it; GitLab's artifact uploader won't follow it. Materialize
     # just the declared artifacts under a real target/ inside the project.
@@ -80,7 +80,7 @@ build-test-archives:
     # Stats query inside the same shell that ran the build, same reason as
     # in the `build` job — the outer sccache in `after_script` sees zero
     # because it's a different sccache instance.
-    - nix develop .#ci --command bash -c "just build-unit-tests-ci && just build-integration-tests-ci && echo '=== sccache stats (inside .#ci) ===' && sccache --show-stats"
+    - bash contrib/ci-env/ci.sh bash -c "just build-unit-tests-ci && just build-integration-tests-ci && echo '=== sccache stats (inside .#ci) ===' && sccache --show-stats"
     # Same breakout as `build`: materialize the archives inside
     # $CI_PROJECT_DIR because GitLab won't follow the target symlink.
     - |
@@ -101,12 +101,13 @@ compare-static-files:
   stage: test
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - build
   variables:
     ASSUME_BUILT: "1"
     EXAMPLES_DIR: target/ci/examples
   script:
-    - nix develop .#ci --command bash -c "just generate-static-files"
+    - bash contrib/ci-env/ci.sh bash -c "just generate-static-files"
     - bash contrib/check-clean-diff.sh bark/schema.sql
     - bash contrib/check-clean-diff.sh server/schema.sql
     - bash contrib/check-clean-diff.sh bark-rest/openapi.json
@@ -117,10 +118,11 @@ test-unit:
   stage: test
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - build-test-archives
   script:
     - git log --oneline -1
-    - nix develop .#ci --command bash -c "just test-unit-prebuilt"
+    - bash contrib/ci-env/ci.sh bash -c "just test-unit-prebuilt"
 
 test-doctests:
   interruptible: true
@@ -130,7 +132,7 @@ test-doctests:
     - prechecks
   script:
     - git log --oneline -1
-    - nix develop .#ci --command bash -c "just test-doc"
+    - bash contrib/ci-env/ci.sh bash -c "just test-doc"
 
 use-bark-as-dependency:
   interruptible: true
@@ -139,7 +141,7 @@ use-bark-as-dependency:
   needs:
     - prechecks
   script:
-    - nix develop .#ci --command bash -c "just check-use-bark-as-dependency"
+    - bash contrib/ci-env/ci.sh bash -c "just check-use-bark-as-dependency"
 
 bark-as-libs:
   interruptible: true
@@ -148,25 +150,27 @@ bark-as-libs:
   needs:
     - prechecks
   script:
-    - nix develop .#ci --command bash -c "just check-bark-as-libs"
+    - bash contrib/ci-env/ci.sh bash -c "just check-bark-as-libs"
 
 bark-wasm:
   interruptible: true
   stage: test
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - test-unit
   script:
-    - nix develop .#ci --command bash -c "just build-bark-wasm"
+    - bash contrib/ci-env/ci.sh bash -c "just build-bark-wasm"
 
 bark-runtime-wasm-tests:
   interruptible: true
   stage: test
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - test-unit
   script:
-    - nix develop .#ci --command bash -c "just test-wasm-unit"
+    - bash contrib/ci-env/ci.sh bash -c "just test-wasm-unit"
 
 bark-wasm-indexed-db-tests:
   interruptible: true
@@ -174,9 +178,10 @@ bark-wasm-indexed-db-tests:
   stage: test
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - test-unit
   script:
-    - nix develop .#ci --command bash -c "just test-bark-wasm-indexed-db"
+    - bash contrib/ci-env/ci.sh bash -c "just test-bark-wasm-indexed-db"
 
 lib-msrv:
   interruptible: true
@@ -185,7 +190,7 @@ lib-msrv:
   needs:
     - prechecks
   script:
-    - nix develop .#msrv-lib --command bash -c "just build-msrv-lib"
+    - bash contrib/ci-env/msrv-lib.sh bash -c "just build-msrv-lib"
 
 check-fuzz:
   interruptible: true
@@ -195,7 +200,7 @@ check-fuzz:
   needs:
     - prechecks
   script:
-    - nix develop .#ci --command bash -c "just check-fuzz"
+    - bash contrib/ci-env/ci.sh bash -c "just check-fuzz"
 
 cargo-audit:
   interruptible: true
@@ -205,8 +210,8 @@ cargo-audit:
   needs:
     - prechecks
   script:
-    - nix develop .#ci --command bash -c "cargo audit --file Cargo.lock"
-    - nix develop .#ci --command bash -c "cargo audit --file fuzz/Cargo.lock"
+    - bash contrib/ci-env/ci.sh bash -c "cargo audit --file Cargo.lock"
+    - bash contrib/ci-env/ci.sh bash -c "cargo audit --file fuzz/Cargo.lock"
 
 check-release:
   interruptible: true
@@ -215,7 +220,7 @@ check-release:
   needs:
     - prechecks
   script:
-    - nix develop .#ci --command bash -c "just check-release"
+    - bash contrib/ci-env/ci.sh bash -c "just check-release"
 
 check-lib-arithmetic:
   interruptible: true
@@ -224,7 +229,7 @@ check-lib-arithmetic:
   needs:
     - prechecks
   script:
-    - nix develop .#ci --command bash -c "just check-lib-arithmetic"
+    - bash contrib/ci-env/ci.sh bash -c "just check-lib-arithmetic"
 
 bark-esplora:
   interruptible: true
@@ -235,6 +240,7 @@ bark-esplora:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -262,6 +268,7 @@ bark-mempool:
     - datastore
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -289,6 +296,7 @@ bark-btc30:
     - datastore
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -319,6 +327,7 @@ bark-filestore:
       changes:
         - bark/src/persist/**/*
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -346,6 +355,7 @@ wasm-tests:
     - datastore
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - check-commits
     - build
   variables:
@@ -368,6 +378,7 @@ core-server:
     - datastore
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -393,6 +404,7 @@ bark-sdk:
     - datastore
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -418,6 +430,7 @@ bark-int-action-reentrancy:
     - datastore
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -446,6 +459,7 @@ compat-bark-0.5.0:
     - datastore
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -467,7 +481,7 @@ compat-bark-0.5.0:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - >-
-      export BARK_EXEC=$(nix develop .#ci --command python3 contrib/fetch-bark-release.py
+      export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
@@ -482,6 +496,7 @@ compat-bark-0.6.0:
     - datastore
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -503,7 +518,7 @@ compat-bark-0.6.0:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - >-
-      export BARK_EXEC=$(nix develop .#ci --command python3 contrib/fetch-bark-release.py
+      export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
@@ -518,6 +533,7 @@ compat-bark-0.6.2:
     - datastore
   extends: .test-rules-no-tags
   needs:
+    - prechecks
     - check-commits
     - build
     - build-test-archives
@@ -539,7 +555,7 @@ compat-bark-0.6.2:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - >-
-      export BARK_EXEC=$(python3 contrib/fetch-bark-release.py
+      export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")

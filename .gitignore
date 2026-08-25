@@ -28,3 +28,5 @@ contrib/agents/ci-debugging/
 
 # LLMs
 .investigations/
+# CI devShell env payloads, generated per-pipeline by contrib/generate-ci-env.sh
+/contrib/ci-env/*.env

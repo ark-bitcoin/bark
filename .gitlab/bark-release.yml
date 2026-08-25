@@ -23,10 +23,12 @@ build-bark:
   stage: build
   extends: .bark-release-rules
   needs:
+    - job: prechecks
+      optional: true
     - parse-versions-bark
   script:
     - cat VERSION
-    - nix develop .#ci --command bash -c "just nix-build-bark-all"
+    - bash contrib/ci-env/ci.sh bash -c "just nix-build-bark-all"
     - cp ./build/bark-x86_64-unknown-linux-gnu         bark-linux-x86_64
     - cp ./build/barkd-x86_64-unknown-linux-gnu        barkd-linux-x86_64
     - cp ./build/bark-x86_64-unknown-linux-musl        bark-linux-x86_64-musl
@@ -186,9 +188,11 @@ publish-bark-gitlab:
   stage: release
   extends: .bark-release-rules-gitlab
   needs:
+    - job: prechecks
+      optional: true
     - parse-versions-bark
     - release-bark
   script:
     - cat VERSION
     # Wrapped in the ci shell for glab.
-    - nix develop .#ci --command bash ./contrib/ci-gitlab-release.sh "./bark*$(cat VERSION)*-linux-* ./bark*$(cat VERSION)*-windows-x86_64.exe ./bark*$(cat VERSION)*-apple-* ./SHA256SUMS"
+    - bash contrib/ci-env/ci.sh bash ./contrib/ci-gitlab-release.sh "./bark*$(cat VERSION)*-linux-* ./bark*$(cat VERSION)*-windows-x86_64.exe ./bark*$(cat VERSION)*-apple-* ./SHA256SUMS"

@@ -11,7 +11,7 @@ check-master-status:
     - |
       RESPONSE=$(curl -s -X GET 'https://gitlab.com/api/v4/projects/75519706/pipelines?ref=master&order_by=updated_at&sort=desc&per_page=2')
       echo "Response from API: $RESPONSE"
-      if echo "$RESPONSE" | nix develop .#ci --command jq -e '.[0].status == "running" and .[1].status == "success"' >/dev/null; then
+      if echo "$RESPONSE" | bash contrib/ci-env/ci.sh jq -e '.[0].status == "running" and .[1].status == "success"' >/dev/null; then
         echo "Master branch CI is in a successful state."
       else
         echo "Master branch CI is NOT in a successful state. Aborting pipeline."
@@ -39,14 +39,14 @@ build-nightly:
     - assign-version
   script:
     - cat VERSION
-    - nix develop .#ci --command bash -c "just nix-build-bark-linux"
+    - bash contrib/ci-env/ci.sh bash -c "just nix-build-bark-linux"
     - cp ./build/bark-x86_64-unknown-linux-gnu         bark-linux-x86_64
     - cp ./build/barkd-x86_64-unknown-linux-gnu        barkd-linux-x86_64
     - cp ./build/bark-aarch64-unknown-linux-musl       bark-linux-aarch64
     - cp ./build/barkd-aarch64-unknown-linux-musl      barkd-linux-aarch64
     - cp ./build/bark-armv7-unknown-linux-musleabihf   bark-linux-armv7
     - cp ./build/barkd-armv7-unknown-linux-musleabihf  barkd-linux-armv7
-    - nix develop .#ci --command bash -c "just _nix-build-collect bark-server x86_64-unknown-linux-gnu"
+    - bash contrib/ci-env/ci.sh bash -c "just _nix-build-collect bark-server x86_64-unknown-linux-gnu"
     - cp ./build/captaind-x86_64-unknown-linux-gnu     captaind-linux-x86_64
     - cp ./build/watchmand-x86_64-unknown-linux-gnu    watchmand-linux-x86_64
   artifacts:
