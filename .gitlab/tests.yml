@@ -467,7 +467,7 @@ compat-bark-0.5.0:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - >-
-      export BARK_EXEC=$(python3 contrib/fetch-bark-release.py
+      export BARK_EXEC=$(nix develop .#ci --command python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
@@ -503,7 +503,7 @@ compat-bark-0.6.0:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - >-
-      export BARK_EXEC=$(python3 contrib/fetch-bark-release.py
+      export BARK_EXEC=$(nix develop .#ci --command python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")

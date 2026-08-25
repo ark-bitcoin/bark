@@ -26,7 +26,7 @@ build-server:
     - parse-versions-server
   script:
     - cat VERSION
-    - just nix-build-server-all
+    - nix develop .#ci --command bash -c "just nix-build-server-all"
     - cp ./build/captaind-x86_64-unknown-linux-gnu    captaind-linux-x86_64
     - cp ./build/watchmand-x86_64-unknown-linux-gnu   watchmand-linux-x86_64
     - cp ./build/captaind-x86_64-unknown-linux-musl   captaind-linux-x86_64-musl
@@ -117,4 +117,5 @@ publish-server-gitlab:
     - release-server
   script:
     - cat VERSION
-    - bash ./contrib/ci-gitlab-release.sh "./captaind-$(cat VERSION)-linux-x86_64 ./watchmand-$(cat VERSION)-linux-x86_64 ./captaind-$(cat VERSION)-linux-x86_64-musl ./watchmand-$(cat VERSION)-linux-x86_64-musl ./SHA256SUMS"
+    # Wrapped in the ci shell for glab.
+    - nix develop .#ci --command bash ./contrib/ci-gitlab-release.sh "./captaind-$(cat VERSION)-linux-x86_64 ./watchmand-$(cat VERSION)-linux-x86_64 ./captaind-$(cat VERSION)-linux-x86_64-musl ./watchmand-$(cat VERSION)-linux-x86_64-musl ./SHA256SUMS"

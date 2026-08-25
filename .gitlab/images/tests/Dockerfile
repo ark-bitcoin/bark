@@ -1,43 +1,28 @@
 FROM docker.io/ubuntu:25.04
 
-# All cargo builds run inside the nix devShells, which provide their own
-# toolchain, protobuf, sqlite, postgres etc. The packages here only cover
-# what runs outside those shells: the justfile release recipes (just, jq,
-# cargo for `cargo metadata`), registry pushes (podman, buildah, passt),
-# repo mirroring (openssh-client), CI helper scripts (python3, ripgrep) and
-# the nix install itself (curl, xz-utils).
+# Everything that runs a build or a CI helper needing real tools does so
+# inside the nix devShells (jobs wrap their commands in `nix develop`), so
+# the packages here only cover what runs outside any shell: the runner's
+# checkout and before_script (git, sudo), registry pushes (podman, buildah,
+# qemu-user-static, passt), repo mirroring (openssh-client) and the nix
+# install itself (curl, xz-utils).
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \
 	curl \
 	git \
 	xz-utils \
-	build-essential \
-	pkg-config \
-	ripgrep \
-	jq \
-	just \
-	python3 \
 	sudo \
 	podman \
 	buildah \
-	gnupg2 \
 	openssh-client \
 	qemu-user-static \
 	passt \
 	&& rm -rf /var/lib/apt/lists/*
 
-COPY wakemeops.gpg /etc/apt/trusted.gpg.d/
-RUN cat /etc/apt/trusted.gpg.d/wakemeops.gpg | gpg --dearmor > /etc/apt/trusted.gpg.d/wakemeops-keyring.gpg && \
-	echo "deb [signed-by=/etc/apt/trusted.gpg.d/wakemeops-keyring.gpg] http://deb.wakemeops.com/wakemeops stable dev devops" > /etc/apt/sources.list.d/wakemeops.list && \
-	apt-get update && \
-	apt-get install -y --no-install-recommends glab && \
-	rm -rf /var/lib/apt/lists/*
-
 ENV RUST_BACKTRACE=full \
-	RUSTUP_TOOLCHAIN_VERSION=1.90 \
 	CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG=true \
 	DEBIAN_FRONTEND=noninteractive \
-	PATH=/home/nixuser/.cargo/bin:/home/nixuser/.nix-profile/bin:/home/nixuser/.nix-profile/sbin:/home/nixuser/.nix-profile/lib:/nix/var/nix/profiles/default/bin:$PATH \
+	PATH=/home/nixuser/.nix-profile/bin:/home/nixuser/.nix-profile/sbin:/home/nixuser/.nix-profile/lib:/nix/var/nix/profiles/default/bin:$PATH \
 	NIX_PATH=/nix/var/nix/profiles/per-user/nixuser/channels \
 	NIX_PROFILES="/nix/var/nix/profiles/default /nixuser/.nix-profile"
 RUN echo '* soft nproc 65535' >> /etc/security/limits.conf && \
@@ -68,15 +53,6 @@ RUN mkdir -p ~/.config/nix && \
 	echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
 
 RUN mkdir -p /nix/var/nix/profiles/per-user/nixuser/channels
-
-# The justfile resolves CARGO_TARGET with `cargo metadata` at startup, so a
-# cargo binary is needed even for recipes that only drive nix (the release
-# recipes run outside the nix shells). Everything that actually compiles
-# runs inside the nix shells with their own toolchain and sccache.
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
-
-RUN echo "Installing Rust toolchain version ${RUSTUP_TOOLCHAIN_VERSION}..." && \
-	rustup toolchain install ${RUSTUP_TOOLCHAIN_VERSION}
 
 # Normalize source paths in rustc metadata so this pre-built target/
 # (at /home/nixuser/bark) is fingerprint-compatible with what CI produces

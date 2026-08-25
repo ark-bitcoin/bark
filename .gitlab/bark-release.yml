@@ -26,7 +26,7 @@ build-bark:
     - parse-versions-bark
   script:
     - cat VERSION
-    - just nix-build-bark-all
+    - nix develop .#ci --command bash -c "just nix-build-bark-all"
     - cp ./build/bark-x86_64-unknown-linux-gnu         bark-linux-x86_64
     - cp ./build/barkd-x86_64-unknown-linux-gnu        barkd-linux-x86_64
     - cp ./build/bark-x86_64-unknown-linux-musl        bark-linux-x86_64-musl
@@ -190,4 +190,5 @@ publish-bark-gitlab:
     - release-bark
   script:
     - cat VERSION
-    - bash ./contrib/ci-gitlab-release.sh "./bark*$(cat VERSION)*-linux-* ./bark*$(cat VERSION)*-windows-x86_64.exe ./bark*$(cat VERSION)*-apple-* ./SHA256SUMS"
+    # Wrapped in the ci shell for glab.
+    - nix develop .#ci --command bash ./contrib/ci-gitlab-release.sh "./bark*$(cat VERSION)*-linux-* ./bark*$(cat VERSION)*-windows-x86_64.exe ./bark*$(cat VERSION)*-apple-* ./SHA256SUMS"
