@@ -385,6 +385,44 @@ impl Captaind {
 		}
 	}
 
+	/// Snapshot the current vtxopool issuance txid (if any).
+	///
+	/// Callers wanting to wait for a fresh issuance should capture the baseline
+	/// with this helper before triggering the issuance, then pass it to
+	/// [`wait_for_vtxopool_issuance_after`]. Sampling only after the trigger
+	/// races the issuance path, which since the chain-tip rewire can complete
+	/// before the waiter reads the state.
+	pub fn vtxopool_last_issuance(&self) -> Option<Txid> {
+		match self.inner.state.lock().vtxopool_state {
+			VtxoPoolState::Ready(txid) => Some(txid),
+			VtxoPoolState::NotReady => None,
+		}
+	}
+
+	/// Wait for a vtxopool issuance more recent than `last`.
+	///
+	/// Pool issuance runs off chain-tip changes, so tests that drain the pool
+	/// between blocks must generate a block and wait for the resulting refill
+	/// before continuing.
+	pub async fn wait_for_vtxopool_issuance_after(
+		&self,
+		ctx: &TestContext,
+		last: Option<Txid>,
+	) {
+		info!("Waiting for next VtxoPool issuance (last: {:?})...", last);
+		loop {
+			let vtxopool_state = self.inner.state.lock().vtxopool_state.clone();
+			if let VtxoPoolState::Ready(txid) = vtxopool_state {
+				if Some(txid) != last {
+					info!("VtxoPool issued: waiting for tx {} propagation", txid);
+					ctx.await_transaction(txid).await;
+					return;
+				}
+			}
+			tokio::time::sleep(poll_interval()).await;
+		}
+	}
+
 	/// Wait until synced to the given height.
 	///
 	/// Returns immediately if the daemon has been stopped, so callers that

@@ -380,7 +380,6 @@ impl TestContext {
 				vtxo_lifetime: 432,
 				vtxo_pre_expiry: 12,
 				max_vtxo_exit_depth: 3,
-				issue_interval: Duration::from_secs(3),
 			},
 			offboard_session_timeout: Duration::from_secs(30),
 			offboard_check_interval: Duration::from_secs(1),

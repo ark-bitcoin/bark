@@ -297,8 +297,6 @@ vtxo_lifetime = 432
 vtxo_pre_expiry = 144
 # Maximum depth for pool VTXOs
 max_vtxo_exit_depth = 3
-# The interval at which to check if an issuance should be made
-issue_interval = "1m"
 
 
 #################

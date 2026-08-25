@@ -639,6 +639,10 @@ impl Server {
 		self.sync_manager.chain_tip()
 	}
 
+	pub fn chain_tip_watcher(&self) -> tokio::sync::watch::Receiver<BlockRef> {
+		self.sync_manager.chain_tip_watcher()
+	}
+
 	/// Rebalance coins between the rounds and watchman wallets.
 	///
 	/// If the watchman wallet balance is below `watchman_min_balance`,

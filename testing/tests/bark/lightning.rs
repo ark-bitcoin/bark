@@ -2388,12 +2388,21 @@ async fn lightning_receive_pool_change_arkoor_depth_capped() {
 	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
-	// With a cap of 1, each pool leaf funds at most two receives (the leaf,
-	// then its change once). Four receives therefore consume both leaves and
-	// their change: leaf1, change1, leaf2, change1'.
+	// With a cap of 1, the pool's own leaves are already too deep to keep
+	// arkoor change for, so every receive is funded from a fresh leaf and
+	// the pool must refill twice: once at startup and again after the first
+	// pair of receives drains both leaves. Pool issuance now runs off
+	// chain-tip changes, so we advance the chain between the pairs to
+	// trigger the refill.
 	let pay_amount = sat(100_000);
 	const NB_RECEIVES: u16 = 4;
 	for i in 0..NB_RECEIVES {
+		if i > 0 && i % 2 == 0 {
+			let last = srv.vtxopool_last_issuance();
+			ctx.generate_blocks(1).await;
+			srv.wait_for_vtxopool_issuance_after(&ctx, last).await;
+		}
+
 		let invoice_info = bark.bolt11_invoice(pay_amount).await;
 
 		let invoice_str = invoice_info.invoice.clone();

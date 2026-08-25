@@ -204,4 +204,12 @@ impl SyncManager {
 	pub fn sync_height_watcher(&self) -> watch::Receiver<BlockRef> {
 		self.sync_height_rx.clone()
 	}
+
+	/// Get a watcher for the chain tip.
+	///
+	/// The returned receiver can be used to react to new blocks as soon as
+	/// they are observed, before the sync listeners have caught up.
+	pub fn chain_tip_watcher(&self) -> watch::Receiver<BlockRef> {
+		self.chain_tip_rx.clone()
+	}
 }
