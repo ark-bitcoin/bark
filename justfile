@@ -470,7 +470,7 @@ _nix-build-collect package target:
 	#!/usr/bin/env bash
 	set -euo pipefail
 	mkdir -p build
-	out=$(nix build --no-link --print-out-paths ".#{{package}}-{{target}}")
+	out=$(nix build --no-link --print-out-paths ${NIX_BUILD_FLAGS:-} ".#{{package}}-{{target}}")
 	for bin in "$out"/bin/*
 	do
 		name=$(basename "$bin")
@@ -482,6 +482,28 @@ _nix-build-collect package target:
 		install -m 755 "$bin" "$dest"
 		echo "$dest"
 	done
+
+# Builds the bark flake package with the right version stamp, mirroring
+# bark-cli/build.rs: only a build of the commit carrying the bark-X.Y.Z
+# release tag gets the clean release version, anything else gets the crate
+# version with a -dev suffix (the package-bark.nix default). The nix
+# sandbox can't see .git, so when the tag is present the version is passed
+# in through the BARK_VERSION env var, which requires an impure build.
+_nix-build-collect-bark target:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	tag=$(git tag --points-at HEAD | grep '^bark-' | head -n1 || true)
+	if [ -z "$tag" ]; then
+		just _nix-build-collect bark {{target}}
+	else
+		tag_version=${tag#bark-}
+		crate_version=$(grep '^version = ' bark-cli/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/')
+		if [ "$tag_version" != "$crate_version" ]; then
+			echo "warning: tag version $tag_version differs from bark-cli/Cargo.toml version $crate_version, using the tag version" >&2
+		fi
+		BARK_VERSION="$tag_version" NIX_BUILD_FLAGS=--impure \
+			just _nix-build-collect bark {{target}}
+	fi
 
 nix-build-bark-all:
 	#!/usr/bin/env bash
@@ -495,7 +517,7 @@ nix-build-bark-all:
 		aarch64-apple-darwin \
 		x86_64-pc-windows-gnu
 	do
-		just _nix-build-collect bark "$target"
+		just _nix-build-collect-bark "$target"
 	done
 	just _nix-build-checksums
 
@@ -509,9 +531,27 @@ nix-build-bark-linux:
 		aarch64-unknown-linux-musl \
 		armv7-unknown-linux-musleabihf
 	do
-		just _nix-build-collect bark "$target"
+		just _nix-build-collect-bark "$target"
 	done
 	just _nix-build-checksums
+
+# Same as _nix-build-collect-bark but for the server package, keyed on the
+# server-X.Y.Z release tag and the SERVER_VERSION env var.
+_nix-build-collect-server target:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	tag=$(git tag --points-at HEAD | grep '^server-' | head -n1 || true)
+	if [ -z "$tag" ]; then
+		just _nix-build-collect bark-server {{target}}
+	else
+		tag_version=${tag#server-}
+		crate_version=$(grep '^version = ' server/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/')
+		if [ "$tag_version" != "$crate_version" ]; then
+			echo "warning: tag version $tag_version differs from server/Cargo.toml version $crate_version, using the tag version" >&2
+		fi
+		SERVER_VERSION="$tag_version" NIX_BUILD_FLAGS=--impure \
+			just _nix-build-collect bark-server {{target}}
+	fi
 
 nix-build-server-all:
 	#!/usr/bin/env bash
@@ -520,7 +560,7 @@ nix-build-server-all:
 		x86_64-unknown-linux-gnu \
 		x86_64-unknown-linux-musl
 	do
-		just _nix-build-collect bark-server "$target"
+		just _nix-build-collect-server "$target"
 	done
 	just _nix-build-checksums
 

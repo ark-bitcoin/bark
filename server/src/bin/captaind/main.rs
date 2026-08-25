@@ -27,8 +27,8 @@ const DEFAULT_ADMIN_RPC_ADDR: &str = "127.0.0.1:3536";
 
 /// The full semver version to set, which includes the git commit hash
 /// as the build suffix.
-/// (GIT_HASH is set in build.rs)
-const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("GIT_HASH"));
+/// (SERVER_VERSION and GIT_HASH are set in build.rs)
+const FULL_VERSION: &str = concat!(env!("SERVER_VERSION"), "+", env!("GIT_HASH"));
 
 #[derive(Parser)]
 #[command(

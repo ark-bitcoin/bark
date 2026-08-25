@@ -89,7 +89,7 @@ macro_rules! is_bark_version {
 /// require_bark_version!(>= "0.1.0-beta.8");
 /// ```
 ///
-/// DIRTY builds always satisfy `>=` and `>` checks (DIRTY is greater than any release).
+/// Dev builds always satisfy `>=` and `>` checks (dev is greater than any release).
 #[macro_export]
 macro_rules! require_bark_version {
 	($op:tt $version:literal) => {
