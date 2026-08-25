@@ -870,7 +870,7 @@ impl Server {
 		let vtxo_policy = cosign_request.requests.first()
 			.and_then(|r| r.outputs.first())
 			.map(|o| o.policy.clone()).context("no destination VTXO policy present")?;
-		slog!(LightningReceiveClaimRequested, payment_hash, payment_preimage, vtxo_policy: vtxo_policy.clone());
+		slog!(LightningReceiveClaimRequested, payment_hash, vtxo_policy: vtxo_policy.clone());
 
 		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
@@ -953,7 +953,7 @@ impl Server {
 			amount: sub.amount(),
 			policy: vtxo_policy,
 		};
-		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, vtxo_request,
+		slog!(LightningReceiveClaimed, payment_hash, vtxo_request,
 			amount: sub.amount());
 
 		Ok(builder.cosign_response())

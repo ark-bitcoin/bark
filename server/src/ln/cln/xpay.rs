@@ -517,7 +517,6 @@ async fn call_xpay(
 
 	slog!(XpayRpcReturned,
 		payment_hash: payment_hash,
-		preimage: result.as_ref().ok().copied(),
 		error: result.as_ref().err().map(|e| e.to_string()),
 	);
 

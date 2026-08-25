@@ -3,8 +3,12 @@ use bitcoin::Amount;
 use bitcoin::secp256k1::PublicKey;
 
 use ark::{VtxoId, VtxoPolicy, VtxoRequest};
-use ark::lightning::{PaymentHash, Preimage};
+use ark::lightning::PaymentHash;
 use bitcoin_ext::BlockHeight;
+
+// NB: preimages are the bearer secret that satisfies their matching HTLC and
+// must never appear in log output. Do not add a preimage field to any struct
+// in this file; log the [`PaymentHash`] for correlation instead.
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +79,6 @@ impl_slog!(LightningReceiveCanceled, INFO, "canceled lightning receive");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceiveClaimRequested {
 	pub payment_hash: PaymentHash,
-	pub payment_preimage: Preimage,
 	#[serde(with = "ark::encode::serde")]
 	pub vtxo_policy: VtxoPolicy,
 }
@@ -84,7 +87,6 @@ impl_slog!(LightningReceiveClaimRequested, TRACE, "requested lightning receive c
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceiveClaimed {
 	pub payment_hash: PaymentHash,
-	pub payment_preimage: Preimage,
 	pub vtxo_request: VtxoRequest,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
@@ -121,7 +123,6 @@ impl_slog!(XpayRpcCalled, DEBUG, "Calling xpay gRPC");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct XpayRpcReturned {
 	pub payment_hash: PaymentHash,
-	pub preimage: Option<Preimage>,
 	pub error: Option<String>,
 }
 impl_slog!(XpayRpcReturned, DEBUG, "Xpay gRPC returned");
@@ -129,7 +130,6 @@ impl_slog!(XpayRpcReturned, DEBUG, "Xpay gRPC returned");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HtlcSettled {
 	pub payment_hash: PaymentHash,
-	pub preimage: Preimage,
 }
 impl_slog!(HtlcSettled, DEBUG, "an HTLC was settled");
 
