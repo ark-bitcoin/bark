@@ -1,6 +1,0 @@
-- Calculate ppm-expiry fees independent of the VTXO order
-  With a fee-chargeable amount below the sum of the VTXOs, one VTXO is only
-  partially charged, so the fee depended on the order they were passed in: a
-  wallet pricing its inputs soonest-expiring first disagreed with a server
-  charging them in the order they arrived, and send-onchain payments failed.
-  [#2372](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2372)

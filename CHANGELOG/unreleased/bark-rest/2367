@@ -1,4 +1,0 @@
-- Compare auth tokens in constant time
-  Bearer token comparison no longer depends on how much of a presented token
-  matches the configured one. Privately disclosed by the Red Team.
-  [#2367](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2367)

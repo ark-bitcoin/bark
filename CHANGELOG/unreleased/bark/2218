@@ -1,9 +1,0 @@
-- Estimate the on-chain cost of an emergency (unilateral) exit
-  `Exit::estimate_emergency_exit_fee` and `Wallet::estimate_emergency_exit_fee`
-  return an `ExitFeeEstimate` splitting the cost into the CPFP broadcast fee
-  and the later claim/drain fee. The broadcast leg replays the real walk on a
-  replica of the onchain wallet, so fees are what the CPFP children actually
-  commit: confirmed transactions cost nothing, in-mempool packages are priced
-  as RBF replacements, and `fundable` reports whether confirmed funds cover
-  the walk. Estimating never mutates the wallet.
-  [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)

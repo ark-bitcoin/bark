@@ -1,8 +1,0 @@
-- New crate for utilities shared between the bark wallet and the server
-  It holds the `fs_perms` module, moved from `bark`. `bark` re-exports the
-  module, so the `bark` API is unchanged.
-  [#2395](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2395)
-- Add the `Secret` wrapper, which hides secret values from `Debug` output
-  The module moved from the server crate. The server re-exports it, so the
-  server API is unchanged.
-  [#2395](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2395)

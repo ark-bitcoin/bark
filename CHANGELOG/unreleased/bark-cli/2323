@@ -1,6 +1,0 @@
-- Add `bark message sign` and `bark message verify` commands
-  `message sign` signs a message with the key of the provided
-  provided Ark address, if it belongs to the wallet. `message verify`
-  statelessly verifies a signature against a public key (`--pubkey`)
-  or an Ark address (`--address`), so it works without a wallet.
-  [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)

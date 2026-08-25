@@ -1,5 +1,0 @@
-- Add `bark exit estimate-fee` to preview emergency-exit costs
-  Estimates the on-chain cost of unilaterally exiting one or more VTXOs (or
-  `--all`) before or during an exit, breaking it into the broadcast and claim fees and
-  reporting whether the wallet's confirmed funds can cover the exit.
-  [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)

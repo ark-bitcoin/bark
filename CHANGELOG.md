@@ -6,6 +6,261 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.6.2
+
+Special thanks to the Red team and project Loupe for responsible disclsure.
+
+
+- `ark-lib`
+  - Add the `message` module for signing and verifying arbitrary messages
+    Messages are signed with a BIP-340 Schnorr signature over a hash of
+    the message bytes. Verification is stateless and can be done against
+    a public key or against the user public key of an Ark address.
+    [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)
+  - Calculate ppm-expiry fees independent of the VTXO order
+    With a fee-chargeable amount below the sum of the VTXOs, one VTXO is only
+    partially charged, so the fee depended on the order they were passed in: a
+    wallet pricing its inputs soonest-expiring first disagreed with a server
+    charging them in the order they arrived, and send-onchain payments failed.
+    [#2372](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2372)
+  - Remove the fee calculations for protocol versions 3 and below
+    [#2373](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2373)
+    - **BREAKING:** removed `calc_ppm_expiry_fee_legacy` and `calculate_legacy` from
+      `BoardFees`, `OffboardFees`, `RefreshFees`, `LightningReceiveFees` and
+      `LightningSendFees`.
+  - deprecate ArkInfo::vtxo_expiry_delta and rename to ArkInfo::vtxo_lifetime
+    [#2385](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2385)
+  - Add `ArkInfo::tos_link`, a link to the server's terms of service, if any
+    [#2396](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2396)
+
+- `bark`
+  - Estimate the on-chain cost of an emergency (unilateral) exit
+    `Exit::estimate_emergency_exit_fee` and `Wallet::estimate_emergency_exit_fee`
+    return an `ExitFeeEstimate` splitting the cost into the CPFP broadcast fee
+    and the later claim/drain fee. The broadcast leg replays the real walk on a
+    replica of the onchain wallet, so fees are what the CPFP children actually
+    commit: confirmed transactions cost nothing, in-mempool packages are priced
+    as RBF replacements, and `fundable` reports whether confirmed funds cover
+    the walk. Estimating never mutates the wallet.
+    [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)
+  - Advertise zstd compression to the server
+    bark advertises zstd on its gRPC connections so capable servers compress
+    their responses, which is where nearly all the savings are. Its own
+    requests are left uncompressed.
+    [#2310](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2310)
+  - Split arkoor change into two pieces so repeated payments build a tree of VTXOs
+    A single change output made every payment chain off the previous one, so exit
+    depth hit the server's `max_vtxo_exit_depth` (default 100) after ~50 payments
+    and forced a disruptive whole-wallet refresh. Change larger than the amount
+    paid is now split in two, and input selection spends the deepest VTXOs first
+    on equal expiry and skips VTXOs over the server's depth limit instead of
+    failing the payment. Piece amounts are stored on the action checkpoint, so
+    retries rebuild the same package across upgrades. The new
+    `change_vtxo_split_factor` config field tunes the split: 1 disables it, 3
+    splits the maximum allowed by the server's default arkoor fanout limit.
+    [#2322](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2322)
+  - Add message signing to the wallet
+    `Wallet::sign_message` signs an arbitrary message with the
+    key of the provided adress, if it belongs to the wallet. Signatures
+    can be verified statelessly with the new `ark::message` module.
+    [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)
+  - Support zmq to get instant notifications of new blocks
+    - Configure `bitcoind_zmq_address` to get notified faster if a block confirms
+  - Refuse servers below protocol version 4
+    bark has always calculated fees the current way, so a server still calculating
+    them per VTXO would charge a fee bark disagrees with. It now refuses those
+    servers when it connects rather than failing later on a fee mismatch.
+    [#2373](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2373)
+  - bugfix: fix inability to finish delegated refreshes scheduled before v0.6.0
+    [#2378](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2378)
+  - do proper sanity checks on round participation results from server
+    - general sanity checks of parameters
+    - expiry height must honour our scheduled height if requested
+    - otherwise, expiry height must not be before any of our input VTXO expiries
+    [#2384](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2384)
+  
+  - deprecate ArkInfo::vtxo_expiry_delta and rename to ArkInfo::vtxo_lifetime
+    [#2385](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2385)
+  - add sanity checking to incoming VTXOs from the mailbox
+    [#2390](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2390/)
+  
+  - Split lightning-send change into two pieces so repeated payments build a tree of VTXOs
+    Lightning-send change larger than the amount paid (plus fee) now follows the same
+    `change_vtxo_split_factor` config field that arkoor send does, and the piece amounts
+    are stored on the action checkpoint so retries rebuild the same package across upgrades.
+    [#2397](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2397)
+  - Skip VTXOs at the server's exit-depth limit when selecting send-onchain inputs
+    Send-onchain runs an arkoor split before offboarding, so inputs at the limit
+    would be rejected by the server. Input selection now filters them like arkoor
+    and lightning sends already do; offboarding such VTXOs whole still works.
+    [#2397](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2397)
+  - `Wallet::board_psbt` boards from a funding transaction someone else broadcasts
+    Boarding used to require bark to sign and broadcast the funding transaction
+    itself, which ruled out payjoin: there the sender builds and broadcasts it. bark
+    now cosigns the board and then either broadcasts the transaction, if the PSBT is
+    complete, or waits for it to appear if it is not. The board output may sit at any
+    output index. Replaces `Wallet::board_tx`, now deprecated.
+    [#2419](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2419)
+  - A pending board is failed once its funding transaction can no longer confirm
+    If a funding input is spent by a confirmed transaction, the board is torn down and
+    its movement marked failed, instead of staying pending indefinitely.
+    [#2419](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2419)
+  - add `--logfile` argument to specify logfile path
+    [#2436](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2436)
+  - add `--no-logfile` flag to disable logging to file
+    [#2436](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2436)
+
+- `bark-cli`
+  - Add `bark exit estimate-fee` to preview emergency-exit costs
+    Estimates the on-chain cost of unilaterally exiting one or more VTXOs (or
+    `--all`) before or during an exit, breaking it into the broadcast and claim fees and
+    reporting whether the wallet's confirmed funds can cover the exit.
+    [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)
+  - Add `bark message sign` and `bark message verify` commands
+    `message sign` signs a message with the key of the provided
+    provided Ark address, if it belongs to the wallet. `message verify`
+    statelessly verifies a signature against a public key (`--pubkey`)
+    or an Ark address (`--address`), so it works without a wallet.
+    [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)
+  - Only let command-line flags disable barkd authentication
+    Disabling authentication is now a decision that has to be visible in the
+    command line, and `--no-auth` no longer starts at all on a bind address
+    other hosts can reach. barkd serves plaintext HTTP with no TLS of its own,
+    so a reachable port with no auth hands full wallet access to every client
+    that can route to it. Privately disclosed by the Red Team.
+    [#2361](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2361)
+    - **BREAKING:** `BARKD_NO_AUTH` is no longer read. A deployment relying on
+      it starts with authentication enabled and generates a token, so clients
+      that sent no `Authorization` header now get 401s. Pass `--no-auth` to
+      keep the old behaviour.
+    - Adds `--dangerously-allow-remote-no-auth`, which disables authentication
+      *and* permits a non-loopback `--host`. It implies `--no-auth`, so it is
+      passed on its own.
+
+- `bark-common`
+  - New crate for utilities shared between the bark wallet and the server
+    It holds the `fs_perms` module, moved from `bark`. `bark` re-exports the
+    module, so the `bark` API is unchanged.
+    [#2395](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2395)
+  - Add the `Secret` wrapper, which hides secret values from `Debug` output
+    The module moved from the server crate. The server re-exports it, so the
+    server API is unchanged.
+    [#2395](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2395)
+
+- `bark-json`
+  - Identify the offending VTXO in `ExitError::DustLimit`
+    The error now reports which VTXO is below the dust limit, not just its value.
+    [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)
+    - **BREAKING:** `DustLimit.vtxo` is now the VTXO id (string); the sub-dust
+      value moved to the new `amount` field
+  - Add `cli::SignedMessage` and `cli::MessageVerification` types
+    Output types for the new message signing and verification commands,
+    along with the `web::SignMessageRequest` and `web::VerifyMessageRequest`
+    request types for the corresponding REST endpoints.
+    [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)
+  - Add `payment_hash` to `SendResponse` and `LightningPayResponse`
+    payment_hash is an optional field which is used by lightning payment
+    responses so a client can save that info and query the status later.
+    [#2324](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2324)
+  - Add `LightningSendInfo` as a shared model between the REST and CLI. 
+    [#2324](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2324)
+  - Add `tos_link` to `ArkInfo`
+    [#2396](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2396)
+
+- `bark-rest`
+  - Add `GET /v1/exits/estimate-fee` to preview emergency-exit costs
+    Estimates the on-chain cost of unilaterally exiting a set of VTXOs (or the
+    whole wallet), returning the broadcast and claim fees and whether the wallet's
+    confirmed on-chain funds can cover the exit.
+    [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)
+  - Identify the offending VTXO in dust-limit exit errors
+    [#2218](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2218)
+    - **BREAKING:** in the `DustLimit` exit error, `vtxo` is now the VTXO id
+      (string); the sub-dust value moved to the new `amount` field
+  - Add `POST /v1/message/sign` and `POST /v1/message/verify`
+    `sign` signs a message with the key of the provided Ark address, and
+    returns the signature. `verify` statelessly verifies a signature
+    against a public key or an Ark address.
+    [#2323](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2323)
+  - Add `GET /lightning/sends/{identifier}` to check outgoing Lightning payments
+    Mirrors the receive-side status endpoint: pass a payment hash or BOLT11
+    invoice and get the payment lifecycle state reading from the database.
+    This means no sync is performed as it is just a read.
+    [#2324](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2324)
+  - Return the payment hash from `POST /wallet/send` and `POST /lightning/pay`
+    Facilitates the query for a payment_hash by adding it as a field on the
+    response of a send/payment.
+    [#2324](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2324)
+  - Compare auth tokens in constant time
+    Bearer token comparison no longer depends on how much of a presented token
+    matches the configured one. Privately disclosed by the Red Team.
+    [#2367](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2367)
+  - Expose `tos_link` in the `ArkInfo` response
+    [#2396](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2396)
+
+- `server`
+  - Classify bark_version at handshake
+    The Handshake RPC now inspects the client-supplied `bark_version` against
+    an allowlist of released bark crate versions. Clients that omit the field
+    or send a value the server doesn't recognise still receive a normal
+    handshake response, but with a PSA asking them to update or contact
+    support. The `bark_version_counter` metric buckets `MISSING` (field
+    missing) and `UNKNOWN` (unrecognised) separately so dashboards can tell
+    them apart. Matching against the allowlist tokenises the client string
+    on non-`[0-9.]` chars and compares exactly, so decorated strings like
+    `bark-ffi/0.2.5-android` still credit `0.2.5` but `0.2.50` no longer
+    collapses onto `0.2.5`.
+    [#2283](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2283)
+  - Negotiate zstd compression on the gRPC services
+    The Ark and mailbox services now accept zstd-compressed requests and
+    compress responses for clients that advertise support; older clients
+    are unaffected. Only responses are compressed, so this shrinks the
+    download path (most notably mailbox reads, which ship batches of VTXO
+    data, by roughly 50-60%) rather than client uploads. This helps
+    low-bandwidth clients. Works over both native gRPC and gRPC-Web, so
+    wasm clients benefit too.
+    [#2310](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2310)
+  - *BREAKING*: replace captaind and watchmand config variable `watchman.process_interval`
+    with new `watchman.reaction_interval` and `watchman.sweep_interval`
+    [#2326](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2326)
+  - Fix a bug where `captaind` would stop syncing if an error occurs during a reorg
+    Previously, a chain reorganization error would halt block synchronization.
+    [#2359](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2359)
+  - Keep the excess when a client overpays an offboard fee
+    A client that calculated its fee against a different chain tip can land in another
+    ppm-expiry bracket and overpay, which used to fail the offboard outright. The
+    onchain output stays the amount the client asked for, and the surplus is ours -
+    the same way refresh and lightning send already treat their fees.
+    [#2372](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2372)
+  - Raise the minimum protocol version to 4
+    The fee calculations for protocol versions 3 and below are gone, so clients on
+    them would be charged fees they calculate differently. They are now refused at
+    the handshake instead.
+    [#2373](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2373)
+    - **BREAKING:** clients below bark 0.5.0 can no longer connect.
+  - bugfix: correctly handle forfeits for delegated refreshes scheduled before v0.6.0
+    [#2378](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2378)
+  - prevent users from publishing non-pubkey VTXOs to mailboxes
+    [#2390](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2390/)
+  - Create the server data directory and the mnemonic file owner-only
+    `captaind` and `watchmand` warn at startup if an existing data
+    directory or mnemonic file is accessible to other users
+    (either by a deploy manually overriding the now default protection
+    or it it had a previous server deployed).
+
+    Vulnerability reported by the Red Team and Loupe.
+    [#2391](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2391)
+  - Add a `tos_link` config option to announce the server's terms of service
+    The link is sent to clients via `ArkInfo.tos_link`.
+    [#2396](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2396)
+- `server-rpc`
+  - deprecate ArkInfo::vtxo_expiry_delta and rename to ArkInfo::vtxo_lifetime
+    [#2385](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2385)
+  - Add an optional `tos_link` field to the `ArkInfo` message
+    [#2396](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2396)
+
+
+
 # v0.6.0
 
 Special thanks to Philipp Hoenisch of Lendasat for the report behind a fix.

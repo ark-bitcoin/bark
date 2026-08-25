@@ -1,3 +1,0 @@
-- *BREAKING*: replace captaind and watchmand config variable `watchman.process_interval`
-  with new `watchman.reaction_interval` and `watchman.sweep_interval`
-  [#2326](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2326)
