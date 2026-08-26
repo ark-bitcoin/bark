@@ -74,9 +74,9 @@ async fn refresh_all() {
 	ctx.refresh_all(&srv, &[&bark1]).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(400_000)).await;
 
-	// We want bark2 to have change (split in two on bark > 0.6.0), board
+	// We want bark2 to have change (split in two on bark > 0.6.1), board
 	// and oor vtxos
-	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 };
+	let nb_change = if is_bark_version!(> "0.6.1") { 2 } else { 1 };
 	let pk1 = bark1.address().await;
 	let pk2 = bark2.address().await;
 	bark2.send_oor(&pk1, sat(20_000)).await; // generates change

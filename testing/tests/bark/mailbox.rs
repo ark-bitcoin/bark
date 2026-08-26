@@ -156,11 +156,11 @@ async fn accept_mailbox() {
 	bark.send_oor(bark3.address().await, sat(60_000)).await;
 
 	bark3.maintain().await;
-	// An arkoor output is created per input. On bark > 0.6.0 the sender's
+	// An arkoor output is created per input. On bark > 0.6.1 the sender's
 	// change is split in two pieces and the second send needs two of them to
 	// cover it, so bark3 receives three VTXOs from the two sends. Older barks
 	// don't split change, so each send uses a single input.
-	let expected_vtxos = if is_bark_version!(> "0.6.0") { 3 } else { 2 };
+	let expected_vtxos = if is_bark_version!(> "0.6.1") { 3 } else { 2 };
 	let bark3_vtxos = bark3.vtxos().await;
 	assert_eq!(bark3_vtxos.len(), expected_vtxos, "unexpected number of VTXOs for bark3");
 
@@ -269,8 +269,8 @@ async fn recovery_mailbox_receives_vtxo_ids() {
 
 	// === Test 3: Sending arkoor posts change vtxo_ids to recovery mailbox ===
 	// bark1 sent arkoor above and should have change, split in two pieces
-	// on bark > 0.6.0
-	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 };
+	// on bark > 0.6.1
+	let nb_change = if is_bark_version!(> "0.6.1") { 2 } else { 1 };
 	let bark1_vtxos_after_send = bark1_wallet.vtxos().await.unwrap();
 	assert_eq!(bark1_vtxos_after_send.len(), nb_change, "bark1 should only have change VTXOs");
 

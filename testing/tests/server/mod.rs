@@ -484,7 +484,7 @@ async fn wallet_skips_vtxos_at_exit_depth_limit() {
 
 #[tokio::test]
 async fn send_onchain_skips_vtxos_at_exit_depth_limit() {
-	require_bark_version!(> "0.6.0");
+	require_bark_version!(> "0.6.1");
 
 	let ctx = TestContext::new("server/send_onchain_skips_vtxos_at_exit_depth_limit").await;
 

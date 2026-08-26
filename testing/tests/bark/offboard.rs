@@ -135,8 +135,8 @@ async fn bark_send_onchain() {
 	ctx.generate_blocks(2).await;
 
 	let offboard_fee = sat(938);
-	// bark > 0.6.0 splits change in two
-	let nb_change = if is_bark_version!(> "0.6.0") { 2 } else { 1 };
+	// bark > 0.6.1 splits change in two
+	let nb_change = if is_bark_version!(> "0.6.1") { 2 } else { 1 };
 	let change_vtxos = bark1.vtxos().await;
 	assert_eq!(change_vtxos.len(), nb_change);
 	let change_total = change_vtxos.iter().map(|v| v.amount).sum::<Amount>();
