@@ -534,6 +534,12 @@ impl Server {
 			return badarg!("payment hash collides with an existing unlock hash");
 		}
 
+		// A recorded settlement means the preimage is already known, so it is
+		// public and anyone can claim an HTLC to this hash.
+		if let Some(preimage) = self.htlc_settler.is_settled(payment_hash).await? {
+			return badarg!("invoice has already been paid, preimage: {}", preimage);
+		}
+
 		if amount == Amount::ZERO {
 			return badarg!("Cannot create invoice for 0 sats (this would create an explicit 0 sat invoice, not an any-amount invoice)");
 		}
@@ -875,6 +881,10 @@ impl Server {
 		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 
+		let is_self_payment = self.db.read(async |t|
+			t.get_open_lightning_payment_attempt_by_subscription_id(sub.id).await
+		).await?.is_some();
+
 		match sub.status {
 			// Cosigning releases the granted HTLC-recv VTXOs; that is only safe
 			// while the incoming side can still be collected. For intra-ark
@@ -884,9 +894,6 @@ impl Server {
 			// is needed. For external receives the server can only recover the
 			// grant by settling the hold invoice while the inbound HTLC lives.
 			LightningHtlcSubscriptionStatus::HtlcsReady => {
-				let is_self_payment = self.db.read(async |t|
-					t.get_open_lightning_payment_attempt_by_subscription_id(sub.id).await
-				).await?.is_some();
 				if !is_self_payment {
 					let lowest_incoming_htlc_expiry = sub.lowest_incoming_htlc_expiry
 						.context("no incoming HTLCs found for this payment")?;
@@ -947,6 +954,13 @@ impl Server {
 		// settlement paths (cooperative and on-chain) converge here.
 		self.htlc_settler.settle(payment_preimage).await
 			.context("could not record htlc settlement")?;
+
+		// Settle the hold invoice before releasing the grant, so the inbound
+		// HTLC is collected while it is still live.
+		if !is_self_payment && matches!(sub.status, LightningHtlcSubscriptionStatus::HtlcsReady) {
+			self.cln.settle_invoice(sub.id, payment_preimage).await
+				.context("could not settle hold invoice, refusing to release the claim")?;
+		}
 
 		let (builder, _) = self.cosign_oor_with_builder(builder).await?;
 		let vtxo_request = VtxoRequest {

@@ -1073,21 +1073,23 @@ impl Server {
 	}
 
 	/// Cosign the hArk leaf VTXO
+	///
+	/// Returns an error if the VTXO is not a hArk leaf VTXO.
 	pub fn cosign_hashlocked_leaf(
 		&self,
 		request: &LeafVtxoCosignRequest,
 		vtxo: &Vtxo<Full>,
 		funding_tx: &Transaction,
-	) -> LeafVtxoCosignResponse {
+	) -> anyhow::Result<LeafVtxoCosignResponse> {
 		// NB there is no danger in doing this multiple times
 		// because user needs the preimage alongside the signature
 
 		trace!("Signing hArk leaf for VTXO {}", request.vtxo_id);
 		let ret = LeafVtxoCosignResponse::new_cosign(
 			request, vtxo, funding_tx, self.server_key.leak_ref(),
-		);
+		).badarg("VTXO is not a hArk leaf VTXO")?;
 		slog!(HarkLeafSigned, vtxo_id: request.vtxo_id, funding_txid: funding_tx.compute_txid());
-		ret
+		Ok(ret)
 	}
 
 	/// Cosign the hArk leaf VTXO from a known round
@@ -1104,7 +1106,7 @@ impl Server {
 				.badarg("VTXO's chain anchor is not a known round")?;
 			Ok((vtxo, round))
 		}).await?;
-		Ok(self.cosign_hashlocked_leaf(request, &vtxo.vtxo, &round.funding_tx))
+		self.cosign_hashlocked_leaf(request, &vtxo.vtxo, &round.funding_tx)
 	}
 
 }

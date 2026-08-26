@@ -759,7 +759,8 @@ async fn hark_cosign_leaf(
 		.with_context(|| format!(
 			"keypair {} not found for VTXO {}", vtxo.user_pubkey(), vtxo.id(),
 		))?.1;
-	let (ctx, cosign_req) = LeafVtxoCosignContext::new(vtxo, funding_tx, &key);
+	let (ctx, cosign_req) = LeafVtxoCosignContext::new(vtxo, funding_tx, &key)
+		.with_context(|| format!("can't cosign leaf of VTXO {}", vtxo.id()))?;
 	let cosign_resp = srv.client.request_leaf_vtxo_cosign(
 		protos::LeafVtxoCosignRequest::from(cosign_req),
 	).await

@@ -1188,6 +1188,12 @@ pub fn hashlocked_leaf_sighash_v0(
 	).expect("sighash error")
 }
 
+/// The VTXO can't take part in the hArk leaf cosign flow because its
+/// last genesis transition is not hash-locked.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("VTXO {0} is not a hArk leaf VTXO")]
+pub struct NotHarkLeafError(VtxoId);
+
 /// Create the leaf tx sighash from an existing VTXO
 ///
 /// This is used after the interactive part of the round is finished by
@@ -1196,7 +1202,7 @@ pub fn hashlocked_leaf_sighash_v0(
 fn hashlocked_leaf_sighash_from_vtxo(
 	vtxo: &Vtxo<Full>,
 	chain_anchor: &Transaction,
-) -> TapSighash {
+) -> Result<TapSighash, NotHarkLeafError> {
 	assert_eq!(chain_anchor.compute_txid(), vtxo.chain_anchor().txid);
 
 	// we need the penultimate TxOut and last tx
@@ -1221,19 +1227,19 @@ fn hashlocked_leaf_sighash_from_vtxo(
 	match &last_genesis.transition {
 		GenesisTransition::HashLockedCosigned(inner) => {
 			debug_assert_eq!(inner.user_pubkey, vtxo.user_pubkey());
-			hashlocked_leaf_sighash(
+			Ok(hashlocked_leaf_sighash(
 				&leaf_tx, inner.user_pubkey, vtxo.server_pubkey(), inner.unlock.hash(),
 				&preleaf_txout,
-			)
+			))
 		},
 		GenesisTransition::HashLockedCosigned_v0(inner) => {
 			debug_assert_eq!(inner.user_pubkey, vtxo.user_pubkey());
-			hashlocked_leaf_sighash_v0(
+			Ok(hashlocked_leaf_sighash_v0(
 				&leaf_tx, inner.user_pubkey, vtxo.server_pubkey(), inner.unlock.hash(),
 				&preleaf_txout,
-			)
+			))
 		},
-		_ => panic!("VTXO is not a HashLockedCosigned VTXO"),
+		_ => Err(NotHarkLeafError(vtxo.id())),
 	}
 }
 
@@ -1253,19 +1259,20 @@ pub struct LeafVtxoCosignContext<'a> {
 impl<'a> LeafVtxoCosignContext<'a> {
 	/// Create a new [LeafVtxoCosignRequest] for the given VTXO
 	///
-	/// Panics if the chain_anchor tx is incorrect or if this VTXO is not a
-	/// hArk leaf VTXO.
+	/// Returns an error if this VTXO is not a hArk leaf VTXO.
+	///
+	/// Panics if the chain_anchor tx is incorrect.
 	pub fn new(
 		vtxo: &Vtxo<Full>,
 		chain_anchor: &Transaction,
 		key: &'a Keypair,
-	) -> (Self, LeafVtxoCosignRequest) {
-		let sighash = hashlocked_leaf_sighash_from_vtxo(&vtxo, chain_anchor);
+	) -> Result<(Self, LeafVtxoCosignRequest), NotHarkLeafError> {
+		let sighash = hashlocked_leaf_sighash_from_vtxo(&vtxo, chain_anchor)?;
 		let (sec_nonce, pub_nonce) = musig::nonce_pair_with_msg(key, &sighash.to_byte_array());
 		let vtxo_id = vtxo.id();
 		let req = LeafVtxoCosignRequest { vtxo_id, pub_nonce };
 		let ret = Self { key, pub_nonce, sec_nonce, sighash };
-		(ret, req)
+		Ok((ret, req))
 	}
 
 	/// Finalize the VTXO using the response from the server
@@ -1310,14 +1317,16 @@ pub struct LeafVtxoCosignResponse {
 
 impl LeafVtxoCosignResponse {
 	/// Cosign a [LeafVtxoCosignRequest]
+	///
+	/// Returns an error if the VTXO is not a hArk leaf VTXO.
 	pub fn new_cosign(
 		request: &LeafVtxoCosignRequest,
 		vtxo: &Vtxo<Full>,
 		chain_anchor: &Transaction,
 		server_key: &Keypair,
-	) -> Self {
+	) -> Result<Self, NotHarkLeafError> {
 		debug_assert_eq!(server_key.public_key(), vtxo.server_pubkey());
-		let sighash = hashlocked_leaf_sighash_from_vtxo(&vtxo, chain_anchor);
+		let sighash = hashlocked_leaf_sighash_from_vtxo(&vtxo, chain_anchor)?;
 		let (public_nonce, partial_signature) = musig::deterministic_partial_sign(
 			server_key,
 			[vtxo.user_pubkey()],
@@ -1325,7 +1334,7 @@ impl LeafVtxoCosignResponse {
 			sighash.to_byte_array(),
 			None,
 		);
-		Self { public_nonce, partial_signature }
+		Ok(Self { public_nonce, partial_signature })
 	}
 }
 
@@ -1811,6 +1820,7 @@ mod test {
 
 	use crate::encode;
 	use crate::test_util::{encoding_roundtrip, json_roundtrip};
+	use crate::test_util::dummy::{DummyTestVtxoSpec, DUMMY_SERVER_KEY, DUMMY_USER_KEY};
 	use crate::tree::signed::builder::SignedTreeBuilder;
 	use crate::vtxo::policy::{ServerVtxoPolicy, VtxoPolicy};
 
@@ -2002,8 +2012,8 @@ mod test {
 					assert!(with_preimage.validate(&funding_tx).is_err());
 				}
 
-				let (ctx, req) = LeafVtxoCosignContext::new(&vtxo, &funding_tx, &vtxo_key);
-				let cosign = LeafVtxoCosignResponse::new_cosign(&req, &vtxo, &funding_tx, &server_key);
+				let (ctx, req) = LeafVtxoCosignContext::new(&vtxo, &funding_tx, &vtxo_key).unwrap();
+				let cosign = LeafVtxoCosignResponse::new_cosign(&req, &vtxo, &funding_tx, &server_key).unwrap();
 				assert!(ctx.finalize(&mut vtxo, cosign));
 
 
@@ -2125,12 +2135,27 @@ mod test {
 				GenesisTransition::HashLockedCosigned_v0(_),
 			));
 
-			let (ctx, req) = LeafVtxoCosignContext::new(&vtxo, &v0_funding_tx, &user_key);
-			let resp = LeafVtxoCosignResponse::new_cosign(&req, &vtxo, &v0_funding_tx, &server_key);
+			let (ctx, req) = LeafVtxoCosignContext::new(&vtxo, &v0_funding_tx, &user_key).unwrap();
+			let resp = LeafVtxoCosignResponse::new_cosign(&req, &vtxo, &v0_funding_tx, &server_key).unwrap();
 			assert!(ctx.finalize(&mut vtxo, resp));
 			assert!(vtxo.provide_unlock_preimage(preimage));
 			vtxo.validate(&v0_funding_tx).expect("unlocked v0 leaf vtxo should be valid");
 		}
+	}
+
+	#[test]
+	fn leaf_cosign_rejects_non_hark_vtxo() {
+		// a board VTXO's last genesis transition is not hash-locked
+		let (funding_tx, vtxo) = DummyTestVtxoSpec::default().build();
+
+		let err = LeafVtxoCosignContext::new(&vtxo, &funding_tx, &DUMMY_USER_KEY).err().unwrap();
+		assert_eq!(err, NotHarkLeafError(vtxo.id()));
+
+		let (_sec_nonce, pub_nonce) = musig::nonce_pair(&DUMMY_USER_KEY);
+		let req = LeafVtxoCosignRequest { vtxo_id: vtxo.id(), pub_nonce };
+		let err = LeafVtxoCosignResponse::new_cosign(&req, &vtxo, &funding_tx, &DUMMY_SERVER_KEY)
+			.unwrap_err();
+		assert_eq!(err, NotHarkLeafError(vtxo.id()));
 	}
 
 	#[test]
