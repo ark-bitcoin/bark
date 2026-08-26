@@ -255,6 +255,35 @@ impl<'t> Tx<'t> {
 		Ok(row.map(IntegrationTokenConfig::from))
 	}
 
+	/// Same as [`Self::get_integration_token_config`] but takes a row-level
+	/// lock on the config row for the remainder of the transaction. Used to
+	/// serialize concurrent token generator against `maximum_open_tokens`: the second
+	/// caller blocks here until the first commits, so its subsequent
+	/// count of open tokens sees the newly inserted rows.
+	pub async fn get_integration_token_config_for_update(
+		&self,
+		token_type: TokenType,
+		integration_id: i64,
+	) -> anyhow::Result<Option<IntegrationTokenConfig>> {
+		let statement = self.prepare("
+			SELECT id,
+				type::TEXT, maximum_open_tokens, active_seconds,
+				integration_id,
+				created_at, updated_at, deleted_at
+			FROM integration_token_config
+			WHERE integration_id = $1 AND type = $2::TEXT::token_type
+			FOR UPDATE
+		").await?;
+
+		let token_type = token_type.to_string();
+		let row = self.query_opt(&statement, &[
+			&integration_id,
+			&token_type,
+		]).await?;
+
+		Ok(row.map(IntegrationTokenConfig::from))
+	}
+
 	pub async fn update_integration_token_config(
 		&self,
 		old_integration_token_config: IntegrationTokenConfig,

@@ -204,6 +204,51 @@ async fn integration() {
 }
 
 #[tokio::test]
+async fn integration_token_quota_is_atomic() {
+	// Regression test for a TOCTOU race between the quota check and token
+	// insert in Server::get_integration_tokens. Two concurrent callers that
+	// both observed open_count < maximum_open_tokens could both insert,
+	// exceeding the operator-configured quota.
+	let ctx = TestContext::new("server/integration_token_quota_is_atomic").await;
+	let srv = ctx.captaind("server").create().await;
+
+	srv.integration_cmd(&["add", "quota-race"]).await;
+	let stdout = srv.integration_cmd(&[
+		"generate-api-key", "quota-race", "racing-key", "1h",
+	]).await;
+	let api_key = stdout.split_whitespace().last().unwrap().to_string();
+	srv.integration_cmd(&[
+		"configure-token-type", "quota-race", "single-use-board", "1", "60",
+	]).await;
+
+	let channel = tonic::transport::Channel::from_shared(srv.integration_url()).unwrap()
+		.connect().await.unwrap();
+	let client = protos::intman::integration_service_client::IntegrationServiceClient::new(channel);
+	let barrier = Arc::new(tokio::sync::Barrier::new(32));
+
+	let requests = (0..32).map(|_| {
+		let mut client = client.clone();
+		let barrier = barrier.clone();
+		let api_key = api_key.clone();
+		async move {
+			barrier.wait().await;
+			client.get_tokens(protos::intman::TokensRequest {
+				api_key,
+				r#type: protos::intman::TokenType::SingleUseBoard.into(),
+				count: Some(1),
+			}).await
+		}
+	});
+
+	let issued = join_all(requests).await.into_iter()
+		.filter_map(Result::ok)
+		.map(|response| response.into_inner().tokens.len())
+		.sum::<usize>();
+
+	assert_eq!(issued, 1, "concurrent requests exceeded the configured token quota");
+}
+
+#[tokio::test]
 async fn bitcoind_auth_connection() {
 	let ctx = TestContext::new("server/bitcoind_auth_connection").await;
 
