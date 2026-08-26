@@ -33,7 +33,7 @@ use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::persist::models::SettledLightningReceive;
 use crate::subsystem::{LightningMovement, LightningReceiveMovement, Subsystem};
-use crate::vtxo::VtxoLockHolder;
+use crate::vtxo::{validate_vtxo_tree_params, VtxoLockHolder};
 
 const LN_RECV_NAMESPACE: &str = "ln_recv";
 
@@ -131,9 +131,9 @@ impl WalletAction for LightningReceive {
 				}
 			},
 			Progress::HtlcsReady(htlcs) => {
-				// Preimage not revealed yet: if the HTLCs are near expiry,
-				// abandon rather than commit;
-				if is_htlc_near_expiry(wallet, &htlcs).await? {
+				// Preimage not revealed yet: if we can no longer finish a
+				// unilateral claim in time, abandon rather than commit.
+				if is_htlc_claim_window_closed(wallet, &htlcs).await? {
 					abandon_lightning_receive(wallet, &self, &htlcs).await?;
 					return Ok(Advance::Done);
 				}
@@ -186,9 +186,9 @@ impl WalletAction for LightningReceive {
 				Ok(park_with_backoff(self, retries, Some(error)))
 			},
 			Progress::HtlcsReady(htlcs) => {
-				if is_htlc_near_expiry(wallet, &htlcs).await? {
+				if is_htlc_claim_window_closed(wallet, &htlcs).await? {
 					abandon_lightning_receive(wallet, &self, &htlcs).await?;
-					let err = anyhow!("HTLCs near expiry, abandoning");
+					let err = anyhow!("HTLC claim window closed, abandoning");
 					return Ok(Advance::Failed(err));
 				}
 				Ok(park_with_backoff(self, retries, Some(error)))
@@ -448,6 +448,23 @@ fn htlc_recv_exit_blocks_needed(
 		.context("HTLC recv exit delta components sum overflows")
 }
 
+/// The number of blocks of life we need, counted from now, on the tree
+/// backing an HTLC-recv vtxo.
+///
+/// Much shorter than [htlc_recv_exit_blocks_needed]: the expiry height binds
+/// the tree nodes above the leaf, not the HTLC leaf script itself (see
+/// [VtxoPolicy::taproot]), so the tree only has to outlive confirmation of
+/// our exit chain, which [Config::vtxo_exit_margin] bounds.
+///
+/// One margin covers the grant however it plays out. If the server refuses to
+/// cosign the claim, we exit the HTLC-recv vtxo. If it does cosign, the claim
+/// output inherits the tree's expiry and exits over the same branch. Only one
+/// of the two ever happens, and [is_htlc_claim_window_closed] re-checks the
+/// margin against the tip before we reveal the preimage.
+fn htlc_recv_tree_blocks_needed(config: &Config) -> BlockDelta {
+	config.vtxo_exit_margin
+}
+
 /// AwaitingPayment -> HtlcsReady. Asks the server to grant HTLC-recv
 /// vtxos for the inbound payment, validates them, creates the receive
 /// movement and stores the vtxos locked.
@@ -528,6 +545,22 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 					can claim it from height {}",
 					claim_by, vtxo.exit_delta(), p.htlc_expiry_delta, p.htlc_expiry,
 				)));
+			}
+
+			// The server also chose the leaf's tree-level parameters, so validate
+			// them against the advertised ones like round outputs.
+			let blocks_needed = BlockHeight::from(htlc_recv_tree_blocks_needed(config));
+			let tree_expiry_by = match current_height.checked_add(blocks_needed) {
+				Some(height) => height,
+				None => return Ok(Grant::Rejected(
+					anyhow!("HTLC VTXO tree expiry deadline overflows"),
+				)),
+			};
+			if let Err(e) = validate_vtxo_tree_params(
+				vtxo.server_pubkey(), vtxo.exit_delta(), vtxo.expiry_height(),
+				ark_info.server_pubkey, ark_info.vtxo_exit_delta, tree_expiry_by,
+			) {
+				return Ok(Grant::Rejected(e));
 			}
 		} else {
 			return Err(anyhow!("invalid HTLC VTXO policy: {:?}", vtxo.policy()).into());
@@ -752,23 +785,52 @@ pub(crate) async fn abandon_lightning_receive(
 	Ok(())
 }
 
-/// Returns whether the HTLC-recv vtxos are near (or past) expiry. The
-/// expiry height lives on the vtxo policy, so we read it from the stored
-/// vtxos rather than the checkpoint.
-pub(crate) async fn is_htlc_near_expiry(
+/// Returns whether the claim window on the granted HTLC-recv vtxos has
+/// closed, in which case the caller must abandon rather than reveal the
+/// preimage.
+///
+/// Every granted vtxo is held to the two budgets
+/// [prepare_lightning_receive_htlcs] accepted the grant against: the claim
+/// must finish before the server can race us at the HTLC expiry, and our
+/// exit chain must confirm before the server can sweep the tree at the VTXO
+/// expiry. Both deadlines live on the stored vtxos, not the checkpoint.
+pub(crate) async fn is_htlc_claim_window_closed(
 	wallet: &Wallet,
 	htlcs: &Htlcs,
 ) -> anyhow::Result<bool> {
-	let id = *htlcs.vtxo_ids.first().context("no HTLC vtxos on receive")?;
-	let vtxo = wallet.get_vtxo_by_id(id).await?;
-	let expiry = match vtxo.vtxo.policy() {
-		VtxoPolicy::ServerHtlcRecv(p) => p.htlc_expiry,
-		other => bail!("HTLC receive vtxo has unexpected policy: {:?}", other),
-	};
+	ensure!(!htlcs.vtxo_ids.is_empty(), "no HTLC vtxos on receive");
+
+	let config = wallet.config();
 	let tip = wallet.inner.chain.tip().await?;
-	Ok(tip > expiry.saturating_sub(
-		wallet.config().vtxo_refresh_expiry_threshold as BlockHeight,
-	))
+	// Bails if any id is missing, so every granted vtxo is checked.
+	let vtxos = wallet.inner.db.get_full_vtxos(&htlcs.vtxo_ids).await
+		.context("failed to hydrate htlc vtxos")?;
+	for vtxo in &vtxos {
+		let p = match vtxo.policy() {
+			VtxoPolicy::ServerHtlcRecv(p) => p,
+			other => bail!("HTLC receive vtxo has unexpected policy: {:?}", other),
+		};
+
+		let claim_by = htlc_recv_exit_blocks_needed(
+			vtxo.exit_delta(), p.htlc_expiry_delta, config,
+		).map(|blocks| tip.saturating_add(BlockHeight::from(blocks)))?;
+		if claim_by > p.htlc_expiry {
+			debug!("HTLC vtxo {} needs until height {} to claim, but the server \
+				can claim it from height {}", vtxo.id(), claim_by, p.htlc_expiry);
+			return Ok(true);
+		}
+
+		let tree_expiry_by = tip.saturating_add(
+			BlockHeight::from(htlc_recv_tree_blocks_needed(config)),
+		);
+		if tree_expiry_by > vtxo.expiry_height() {
+			debug!("HTLC vtxo {} needs its backing tree until height {}, but it \
+				expires at height {}", vtxo.id(), tree_expiry_by, vtxo.expiry_height());
+			return Ok(true);
+		}
+	}
+
+	Ok(false)
 }
 
 /// Whether an unpaid invoice has passed its bolt11 expiry plus a grace
@@ -860,5 +922,18 @@ mod tests {
 
 		htlc_recv_exit_blocks_needed(BlockDelta::MAX, BlockDelta::MAX, &config)
 			.expect_err("summing the deltas should overflow");
+	}
+
+	/// The tree only has to outlive one exit margin, far less than the whole
+	/// claim needs, so a tree bark can still exit from isn't refused.
+	#[test]
+	fn htlc_recv_tree_blocks_needed_stays_under_a_full_claim() {
+		let mut config = Config::network_default(bitcoin::Network::Bitcoin);
+		config.vtxo_exit_margin = 12;
+
+		assert_eq!(htlc_recv_tree_blocks_needed(&config), 12);
+
+		let needed = htlc_recv_exit_blocks_needed(144, 40, &config).unwrap();
+		assert!(htlc_recv_tree_blocks_needed(&config) < needed);
 	}
 }
