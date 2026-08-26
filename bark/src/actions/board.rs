@@ -106,19 +106,21 @@ impl Board {
 /// The phases of an in-flight board.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Progress {
-	/// Vtxo cosigned and built but not yet persisted. Store it (locked under the
-	/// action id) and broadcast the funding tx if it is ours to broadcast.
+	/// Vtxo cosigned and built but not yet persisted, and the funding tx not yet
+	/// seen on the network. Store the vtxo (locked under the action id), broadcast
+	/// the funding tx if it is ours to broadcast, and stay here until it shows up.
 	/// Carries the signed vtxo because it isn't in the vtxo table until this step
 	/// stores it.
 	Broadcasting {
 		#[serde(with = "ark::encode::serde")]
 		signed_vtxo: Vtxo<Full>,
 	},
-	/// Funding tx broadcast. Each pass waits for `required_board_confirmations`,
-	/// registers with the server once confirmed, and kicks off an exit if the
-	/// vtxo nears expiry unregistered (salvage). This mirrors the pre-action
-	/// `sync_pending_boards` loop body so registration keeps being retried (with
-	/// the vtxo left Locked) until it succeeds, the board exits, or it expires.
+	/// Funding tx seen in the mempool or a block. Each pass waits for
+	/// `required_board_confirmations`, registers with the server once confirmed, and
+	/// kicks off an exit if the vtxo nears expiry unregistered (salvage). This
+	/// mirrors the pre-action `sync_pending_boards` loop body so registration keeps
+	/// being retried (with the vtxo left Locked) until it succeeds, the board exits,
+	/// or it expires.
 	Confirming {
 		/// Most recent reason a registration attempt failed, for diagnostics.
 		last_park_error: Option<String>,
@@ -142,11 +144,16 @@ impl WalletAction for Board {
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		match self.progress.clone() {
 			Progress::Broadcasting { signed_vtxo } => {
-				run_broadcast(wallet, &self, signed_vtxo).await?;
-				Ok(Advance::Next(Board {
-					progress: Progress::Confirming { last_park_error: None },
-					..self
-				}))
+				match run_broadcast(wallet, &self, signed_vtxo).await? {
+					BroadcastOutcome::Seen => Ok(Advance::Next(Board {
+						progress: Progress::Confirming { last_park_error: None },
+						..self
+					})),
+					BroadcastOutcome::Conflicted => fail_dead_board(wallet, &self).await,
+					// Not on the network yet, so there is nothing to confirm.
+					BroadcastOutcome::Waiting =>
+						Ok(Advance::Park { state: self, wake_after: None, error: None }),
+				}
 			},
 			Progress::Confirming { .. } => run_confirm(wallet, self).await,
 		}
@@ -176,15 +183,24 @@ impl WalletAction for Board {
 	}
 }
 
-/// `Broadcasting -> Confirming`. Store the cosigned vtxo locked under the action
-/// and broadcast the funding tx if we hold its signatures. Both steps are
-/// idempotent: `store_locked_vtxos` no-ops if the vtxo exists, and we skip the
-/// broadcast if the tx is already known to the chain.
+/// What a `Broadcasting` pass established about the funding tx.
+enum BroadcastOutcome {
+	/// In the mempool or a block.
+	Seen,
+	/// A funding input is spent by a confirmed tx, so it can never confirm.
+	Conflicted,
+	/// Absent, but still able to arrive.
+	Waiting,
+}
+
+/// Store the cosigned vtxo locked under the action and get the funding tx onto the
+/// network if we hold its signatures. Both steps are idempotent: the store no-ops if
+/// the vtxo exists, and a tx already on the network is not pushed again.
 async fn run_broadcast(
 	wallet: &Wallet,
 	board: &Board,
 	signed_vtxo: Vtxo<Full>,
-) -> Result<(), AdvanceError> {
+) -> Result<BroadcastOutcome, AdvanceError> {
 	// The server doesn't know this vtxo until `register_board`, so skip the
 	// recovery-mailbox post `store_locked_vtxos` would do (it would fail the
 	// mailbox FK to `vtxo`); `register_board` posts it once accepted.
@@ -195,30 +211,40 @@ async fn run_broadcast(
 		},
 	).await?;
 
-	// Skip the broadcast only on a positive "already on-chain" signal. A
-	// not-yet-broadcast funding tx is unknown to the chain source, and some
-	// backends report that by erroring rather than returning `NotFound`, so
-	// treat anything but a confirmed/mempool hit as "still needs broadcasting".
-	let already_known = matches!(
+	// Leave on a positive "already on-chain" signal only. A not-yet-broadcast
+	// funding tx is unknown to the chain source, and some backends report that by
+	// erroring rather than returning `NotFound`, so treat anything but a
+	// confirmed/mempool hit as "still needs broadcasting".
+	if matches!(
 		wallet.inner.chain.tx_status(board.funding_txid()?).await,
 		Ok(TxStatus::Mempool) | Ok(TxStatus::Confirmed(_)),
-	);
-	match board.to_broadcast()? {
-		// Broadcasting is up to whoever holds the missing signatures, so watch for
-		// the transaction rather than pushing it.
-		None => {
-			if already_known {
-				info!("Board {} funding tx is not ours to broadcast, awaiting it", board.id)
-			}
+	) {
+		return Ok(BroadcastOutcome::Seen);
+	}
+
+	// Classify before pushing, the probe doubling as the push: a push that fails on a
+	// spent input is retried rather than fatal, so classifying afterwards would never
+	// reach the teardown. Only valid while the funding tx is absent, since a
+	// confirmed one spends its own inputs.
+	match funding_conflict(wallet, board).await? {
+		// A confirmed funding tx spends its own inputs, which reads as a conflict, and
+		// the probe above cannot rule that out when the chain source errors. Write the
+		// board off on a positive "absent" answer only.
+		FundingConflict::Fatal => match wallet.inner.chain.tx_status(board.funding_txid()?).await {
+			Ok(TxStatus::Mempool) | Ok(TxStatus::Confirmed(_)) => Ok(BroadcastOutcome::Seen),
+			Ok(TxStatus::NotFound) => Ok(BroadcastOutcome::Conflicted),
+			Err(_) => Ok(BroadcastOutcome::Waiting),
 		},
-		Some(tx) => {
-			if !already_known {
-				wallet.inner.chain.broadcast_tx(&tx).await?;
-				info!("Board {} funding tx broadcasted", board.id);
-			}
+		// The probe pushed it for us.
+		FundingConflict::None => {
+			info!("Board {} funding tx broadcasted", board.id);
+			Ok(BroadcastOutcome::Seen)
+		},
+		FundingConflict::Undecided(reason) => {
+			info!("Board {} funding tx not on the network yet: {}", board.id, reason);
+			Ok(BroadcastOutcome::Waiting)
 		},
 	}
-	Ok(())
 }
 
 /// `Confirming`. Mirrors the pre-action `sync_pending_boards` loop body, run
@@ -264,18 +290,7 @@ async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, Ad
 		// it in a park-and-retry loop forever.
 		Ok(TxStatus::NotFound) => {
 			match funding_conflict(wallet, &board).await? {
-				FundingConflict::Fatal => {
-					warn!("Board {} funding input was spent by a confirmed \
-						conflicting tx, failing the board", board.id);
-					wallet.inner.db.update_vtxo_state_checked(
-						board.vtxo_id, VtxoState::Spent, &[VtxoStateKind::Locked],
-					).await.context("failed to mark double-spent board vtxo as spent")?;
-					wallet.inner.movements.finish_movement_with_update(
-						board.movement_id, MovementStatus::Failed,
-						MovementUpdate::new().effective_balance(SignedAmount::ZERO),
-					).await.context("failed to finalize double-spent board movement")?;
-					return Ok(Advance::Done);
-				},
+				FundingConflict::Fatal => return fail_dead_board(wallet, &board).await,
 				// The funding tx may still confirm: park and re-check next
 				// drive.
 				FundingConflict::Undecided(reason) => {
@@ -585,4 +600,23 @@ mod test {
 		// them identically.
 		assert_eq!(v1.funding_txid().unwrap(), v2.funding_txid().unwrap());
 	}
+}
+
+/// Fail a board whose funding tx can never confirm: mark its vtxo spent and close
+/// the movement out at zero. Reached from either phase, since a funding input can
+/// be spent before the transaction is ever seen as well as after.
+async fn fail_dead_board(
+	wallet: &Wallet,
+	board: &Board,
+) -> Result<Advance<Board>, AdvanceError> {
+	warn!("Board {} funding input was spent by a confirmed conflicting tx, \
+		failing the board", board.id);
+	wallet.inner.db.update_vtxo_state_checked(
+		board.vtxo_id, VtxoState::Spent, &[VtxoStateKind::Locked],
+	).await.context("failed to mark double-spent board vtxo as spent")?;
+	wallet.inner.movements.finish_movement_with_update(
+		board.movement_id, MovementStatus::Failed,
+		MovementUpdate::new().effective_balance(SignedAmount::ZERO),
+	).await.context("failed to finalize double-spent board movement")?;
+	Ok(Advance::Done)
 }
