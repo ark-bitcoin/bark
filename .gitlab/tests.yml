@@ -197,6 +197,17 @@ check-fuzz:
   script:
     - nix develop .#ci --command bash -c "just check-fuzz"
 
+cargo-audit:
+  interruptible: true
+  allow_failure: true
+  stage: test
+  extends: .test-rules-no-tags
+  needs:
+    - prechecks
+  script:
+    - nix develop .#ci --command bash -c "cargo audit --file Cargo.lock"
+    - nix develop .#ci --command bash -c "cargo audit --file fuzz/Cargo.lock"
+
 check-release:
   interruptible: true
   stage: test

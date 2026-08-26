@@ -201,6 +201,9 @@ in {
 			# for all tests
 			pkgs.cargo-nextest
 
+			# for CI advisory scans against Cargo.lock (RustSec db)
+			pkgs.cargo-audit
+
 			# for inspecting tokio runtime tasks (paired with the
 			# `tokio-console` cargo feature on bark-server)
 			pkgs.tokio-console
