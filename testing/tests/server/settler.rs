@@ -116,7 +116,7 @@ async fn concurrent_subscribers_no_missed_wakeups() {
 		let mut stream = Box::pin(settler.subscribe(0));
 		tasks.push(tokio::spawn(async move {
 			for _ in 0..n {
-				stream.next().ready().await.unwrap();
+				stream.next().wait(Duration::from_secs(10)).await.unwrap();
 			}
 		}));
 
