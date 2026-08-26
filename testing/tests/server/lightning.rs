@@ -758,7 +758,8 @@ async fn server_generated_invoice_has_configured_expiry() {
 	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
 	let payment_hash = invoice.payment_hash().to_byte_array().to_vec();
 
-	tokio::time::sleep(cfg_invoice_expiry).await;
+	// Add 1 second because the server rounds down to the second
+	tokio::time::sleep(cfg_invoice_expiry + Duration::from_secs(1)).await;
 
 	// Poll for the cancellation instead of a single fixed-delay check: the
 	// expiry sweep runs on a periodic tick, so a one-shot sleep can race it
