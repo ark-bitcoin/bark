@@ -500,10 +500,10 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 				return Err(anyhow!("invalid pubkey on HTLC VTXOs received from server: {}",
 					p.user_pubkey).into());
 			}
-			if p.htlc_expiry < htlc_recv_expiry {
-				return Err(anyhow!("HTLC VTXO expiry height is less than requested: Requested {}, received {}",
-					htlc_recv_expiry, p.htlc_expiry).into());
-			}
+			// NB: p.htlc_expiry isn't compared against the freshly computed
+			// htlc_recv_expiry: the server hands back the first attempt's
+			// grant, so any block mined since would fail on every retry. The
+			// claim deadline check below covers the grant's headroom.
 
 			// Ensure that the server didn't inflate the deltas for the client's
 			// unilateral exit clauses. Don't retry on any failure here: the

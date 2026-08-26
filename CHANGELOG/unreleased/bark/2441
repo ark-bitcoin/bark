@@ -1,0 +1,5 @@
+- bugfix: stop retried lightning receive claims from failing forever
+  The server hands back the VTXOs it granted on the first attempt, so comparing
+  the granted HTLC expiry against a freshly computed one failed on every retry
+  once a block was mined, and the receive could never be claimed.
+  [#2441](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2441)
