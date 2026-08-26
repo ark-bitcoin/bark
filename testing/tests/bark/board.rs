@@ -512,7 +512,7 @@ async fn board_psbt_unfinalized_is_not_broadcast() {
 /// conflict probe has more than one outpoint to check.
 #[tokio::test]
 async fn board_psbt_confirms_when_other_party_broadcasts() {
-	require_bark_version!(> "0.6.1");
+	require_bark_version!(> "0.6.2");
 
 	const BOARD_AMOUNT: u64 = 120_000;
 	let ctx = TestContext::new("bark/board_psbt_confirms_when_other_party_broadcasts").await;
@@ -572,7 +572,7 @@ async fn board_psbt_confirms_when_other_party_broadcasts() {
 /// checks the inputs for a confirmed spend instead. Same verdict, other route.
 #[tokio::test]
 async fn board_psbt_unfinalized_fails_when_input_double_spent() {
-	require_bark_version!(> "0.6.1");
+	require_bark_version!(> "0.6.2");
 
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_psbt_unfinalized_fails_when_input_double_spent").await;
@@ -625,7 +625,7 @@ async fn board_psbt_unfinalized_fails_when_input_double_spent() {
 /// teardown rather than an error retried forever.
 #[tokio::test]
 async fn board_fails_when_input_double_spent_before_broadcast() {
-	require_bark_version!(> "0.6.1");
+	require_bark_version!(> "0.6.2");
 
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_fails_when_input_double_spent_before_broadcast").await;
