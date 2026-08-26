@@ -1610,6 +1610,125 @@ async fn bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta() {
 	assert!(bark.list_lightning_receives().await.is_empty());
 }
 
+/// A grant's HTLC leaf timelocks can look safe while the backing tree expires
+/// first, letting the server sweep it after learning the preimage.
+#[tokio::test]
+async fn bark_rejects_htlc_recv_vtxo_from_short_lived_tree() {
+	require_bark_version!(> "0.6.2");
+
+	let ctx = TestContext::new("lightningd/bark_rejects_htlc_recv_vtxo_from_short_lived_tree").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Trees expiring 8 blocks after issuance leave less than the exit margin
+	// (`vtxo_exit_margin`, 12) bark needs to exit the grant, while the grant's
+	// own HTLC leaf expiry still honors the requested CLTV.
+	// `vtxo_pre_expiry` has to come down too, or the pool discards its leaves
+	// before serving any.
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
+		cfg.vtxopool.vtxo_lifetime = 8;
+		cfg.vtxopool.vtxo_pre_expiry = 2;
+	}).funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = ctx.bark("bark1", &srv).funded(btc(3)).create().await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let invoice = invoice_info.invoice.clone();
+	let external = lightning.external;
+	// try_ so an expected payment failure doesn't panic an orphan task, and
+	// not awaited: an htlcs-ready subscription is skipped by the
+	// receive_htlc_forward_timeout reaper, so the payer stays on the hook
+	// until the invoice expires (10 min here).
+	tokio::spawn(async move {
+		external.try_pay_bolt11(invoice).await
+	});
+
+	// Wait for the HTLCs to be held: a receive with nothing to claim yet
+	// looks the same as one that rejected.
+	let payment_hash = PaymentHash::from(
+		&Bolt11Invoice::from_str(&invoice_info.invoice).expect("valid bolt11 invoice"),
+	);
+	lightning.internal.wait_for_hold_invoice_accepted(payment_hash).await;
+
+	let rejection = bark.try_lightning_receive_no_wait(&invoice_info.invoice)
+		.try_wait_millis(15_000).await.expect("claim command timed out")
+		.expect_err("expected bark to reject the granted HTLC vtxos");
+	assert!(format!("{rejection:?}").contains("below the required minimum"), "{rejection:?}");
+
+	// We never revealed the preimage, so we still hold nothing.
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(0));
+
+	// The rejection is terminal: the receive is dropped instead of retrying
+	// the same grant until the inbound HTLC expires.
+	assert!(bark.list_lightning_receives().await.is_empty());
+}
+
+/// A grant whose backing tree commits to a different exit delta than the
+/// server advertised must be rejected before the preimage is revealed.
+#[tokio::test]
+async fn bark_rejects_htlc_recv_vtxo_with_unexpected_exit_delta() {
+	require_bark_version!(> "0.6.2");
+
+	let ctx = TestContext::new("lightningd/bark_rejects_htlc_recv_vtxo_with_unexpected_exit_delta").await;
+
+	/// What the proxy advertises; the server builds its trees with the
+	/// test default of 12.
+	const ADVERTISED_EXIT_DELTA: BlockDelta = 13;
+
+	#[derive(Clone)]
+	struct MismatchedExitDeltaProxy;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for MismatchedExitDeltaProxy {
+		async fn get_ark_info(
+			&self, upstream: &mut ArkClient, req: protos::Empty,
+		) -> Result<protos::ArkInfo, tonic::Status> {
+			let mut info = upstream.get_ark_info(req).await?.into_inner();
+			info.vtxo_exit_delta = ADVERTISED_EXIT_DELTA as u32;
+			Ok(info)
+		}
+	}
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("server").lightningd(&lightning.internal)
+		.funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let proxy = srv.start_proxy_no_mailbox(MismatchedExitDeltaProxy).await;
+
+	let bark = ctx.bark("bark1", &proxy.address).funded(btc(3)).create().await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let invoice = invoice_info.invoice.clone();
+	let external = lightning.external;
+	// try_ so an expected payment failure doesn't panic an orphan task, and
+	// not awaited: an htlcs-ready subscription is skipped by the
+	// receive_htlc_forward_timeout reaper, so the payer stays on the hook
+	// until the invoice expires (10 min here).
+	tokio::spawn(async move {
+		external.try_pay_bolt11(invoice).await
+	});
+
+	// Wait for the HTLCs to be held: a receive with nothing to claim yet
+	// looks the same as one that rejected.
+	let payment_hash = PaymentHash::from(
+		&Bolt11Invoice::from_str(&invoice_info.invoice).expect("valid bolt11 invoice"),
+	);
+	lightning.internal.wait_for_hold_invoice_accepted(payment_hash).await;
+
+	let rejection = bark.try_lightning_receive_no_wait(&invoice_info.invoice)
+		.try_wait_millis(15_000).await.expect("claim command timed out")
+		.expect_err("expected bark to reject the granted HTLC vtxos");
+	assert!(format!("{rejection:?}").contains("unexpected exit delta"), "{rejection:?}");
+
+	// We never revealed the preimage, so we still hold nothing.
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(0));
+
+	assert!(bark.list_lightning_receives().await.is_empty());
+}
+
 #[tokio::test]
 async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used() {
 	require_bark_version!(> "0.5.0");
