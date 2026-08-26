@@ -831,34 +831,16 @@ impl Server {
 		Ok(())
 	}
 
+	/// Canceling a lightning receive is disabled on the server.
+	///
+	/// The flow keeps showing up in vulnerability reports and no client
+	/// depends on it, so the endpoint now always refuses.
 	#[tracing::instrument(skip(self))]
 	pub async fn cancel_lightning_receive(
 		&self,
-		payment_hash: PaymentHash,
+		_payment_hash: PaymentHash,
 	) -> anyhow::Result<()> {
-		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
-			.not_found([payment_hash], "no pending payment with this payment hash")?;
-
-		match sub.status {
-			LightningHtlcSubscriptionStatus::Created |
-			LightningHtlcSubscriptionStatus::Accepted => {}, // allowed
-			LightningHtlcSubscriptionStatus::HtlcsReady => {
-				return badarg!("cannot cancel: HTLC-recv vtxos have already been granted");
-			},
-			LightningHtlcSubscriptionStatus::Settled => {
-				return badarg!("cannot cancel: payment already settled");
-			},
-			LightningHtlcSubscriptionStatus::Canceled => {
-				return Ok(()); // idempotent
-			},
-		}
-
-		slog!(LightningReceiveCanceled, payment_hash);
-
-		self.cln.cancel_invoice(sub.clone()).await
-			.context("could not cancel hold invoice")?;
-
-		Ok(())
+		badarg!("this feature has been disabled by the server")
 	}
 
 	#[tracing::instrument(skip(self, cosign_request))]

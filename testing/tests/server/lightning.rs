@@ -2135,8 +2135,8 @@ async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 	//    server cancels the subscription. The outgoing attempt is a genuine
 	//    xpay, not a self-payment of this subscription, so it must stay open.
 	//
-	//    NB: the CancelLightningReceive RPC bypasses cancel_htlc_subscription
-	//    entirely; only the timeout path used to hit the bug.
+	//    NB: the timeout path is the only way a subscription gets canceled;
+	//    the CancelLightningReceive RPC is disabled.
 	tokio::time::sleep(cfg_htlc_forward_timeout + srv.config().invoice_check_interval).await;
 	assert_eq!(
 		lightning_subscription_status(&db, payment_hash).await.as_deref(),
