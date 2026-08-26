@@ -211,7 +211,7 @@ impl WalletAction for LightningSend {
 			},
 		}
 
-		Ok(park_with_backoff(self, retries))
+		Ok(park_with_backoff(self, retries, None))
 	}
 
 	async fn on_rejection(self, wallet: &Wallet, error: AdvanceError) -> anyhow::Result<Advance<Self>> {

@@ -213,10 +213,17 @@ impl AdvanceError {
 	}
 }
 
-pub fn park_with_backoff<A: WalletAction>(state: A, attempts: u32) -> Advance<A> {
+/// Park action with backoff
+///
+/// Pass the error when the caller should hear why it parked.
+pub fn park_with_backoff<A: WalletAction>(
+	state: A,
+	attempts: u32,
+	error: Option<AdvanceError>,
+) -> Advance<A> {
 	let delay = attempts.pow(2) * BASE_RETRY_BACKOFF;
 	debug!("action {} retrying; sleeping {:?} before re-drive", state.id(), delay);
-	Advance::Park { state, wake_after: Some(delay), error: None }
+	Advance::Park { state, wake_after: Some(delay), error }
 }
 
 /// Whether to double-drive each action step to check reentrancy, set via the
@@ -291,7 +298,7 @@ pub trait WalletAction: Sized + Send + Sync {
 		attempts: u32,
 		_error: AdvanceError,
 	) -> anyhow::Result<Advance<Self>> {
-		Ok(park_with_backoff(self, attempts))
+		Ok(park_with_backoff(self, attempts, None))
 	}
 
 	/// Called when the server rejected one of our requests

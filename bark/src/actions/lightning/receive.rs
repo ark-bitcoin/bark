@@ -116,7 +116,7 @@ impl WalletAction for LightningReceive {
 					},
 					IncomingStatus::Canceled => {
 						let err = anyhow!("Lightning receive {} canceled server-side", self.payment_hash);
-						return Ok(Advance::Failed(err.into()));
+						return Ok(Advance::Failed(err));
 					},
 					IncomingStatus::Ready => {
 						match prepare_lightning_receive_htlcs(wallet, &self).await? {
@@ -124,7 +124,7 @@ impl WalletAction for LightningReceive {
 							Grant::Rejected(err) => {
 								error!("Rejecting the HTLC vtxos granted for lightning receive {}: {:#}",
 									self.payment_hash, err);
-								return Ok(Advance::Failed(err.into()));
+								return Ok(Advance::Failed(err));
 							},
 						}
 					},
@@ -177,19 +177,21 @@ impl WalletAction for LightningReceive {
 		Ok(Advance::Next(LightningReceive { progress: new_progress, ..self }))
 	}
 
-	async fn on_retry(self, wallet: &Wallet, retries: u32, _error: AdvanceError)
+	async fn on_retry(self, wallet: &Wallet, retries: u32, error: AdvanceError)
 		-> anyhow::Result<Advance<Self>>
 	{
 		match self.progress.clone() {
 			// No money committed; just back off. Expiry reaping happens in advance.
-			Progress::AwaitingPayment => Ok(park_with_backoff(self, retries)),
+			Progress::AwaitingPayment => {
+				Ok(park_with_backoff(self, retries, Some(error)))
+			},
 			Progress::HtlcsReady(htlcs) => {
 				if is_htlc_near_expiry(wallet, &htlcs).await? {
 					abandon_lightning_receive(wallet, &self, &htlcs).await?;
 					let err = anyhow!("HTLCs near expiry, abandoning");
-					return Ok(Advance::Failed(err.into()));
+					return Ok(Advance::Failed(err));
 				}
-				Ok(park_with_backoff(self, retries))
+				Ok(park_with_backoff(self, retries, Some(error)))
 			},
 			Progress::PreimageRevealed(_) | Progress::Delivering(_) => {
 				let budget = u32::from(wallet.config().lightning_receive_claim_retries);
@@ -197,7 +199,7 @@ impl WalletAction for LightningReceive {
 					let err = anyhow!("lightning receive claim retry budget exhausted");
 					return Ok(Advance::Park { state: self, wake_after: None, error: Some(err.into()) });
 				}
-				Ok(park_with_backoff(self, retries))
+				Ok(park_with_backoff(self, retries, None))
 			},
 		}
 	}
