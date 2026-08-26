@@ -98,8 +98,6 @@ struct Data {
 	/// A quick manual index into the vtxo pool.
 	/// We first order by expiry height and then by amount.
 	pool: BTreeMap<BlockHeight, BTreeMap<Amount, Vec<VtxoId>>>,
-	/// Sorted target amounts, used for amount-bucket telemetry.
-	bucket_amounts: Vec<Amount>,
 }
 
 impl Data {
@@ -117,13 +115,12 @@ impl Data {
 
 	pub async fn load_from_db(
 		db: &database::Db,
-		bucket_amounts: Vec<Amount>,
 		max_exit_depth: u16,
 	) -> anyhow::Result<Self> {
 		let stream = db.load_vtxopool().await?;
 		tokio::pin!(stream);
 
-		let mut ret = Data { pool: BTreeMap::new(), bucket_amounts };
+		let mut ret = Data { pool: BTreeMap::new() };
 		while let Some(v) = stream.try_next().await? {
 			if v.exit_depth() > max_exit_depth {
 				warn!("Not serving vtxo pool vtxo {}: exit depth {} exceeds \
@@ -134,7 +131,7 @@ impl Data {
 			ret.insert(v.id(), v.expiry_height(), v.amount());
 		}
 
-		telemetry::set_vtxo_pool_metrics(&ret.pool, &ret.bucket_amounts);
+		telemetry::set_vtxo_pool_metrics(&ret.pool);
 
 		Ok(ret)
 	}
@@ -242,7 +239,7 @@ impl Data {
 
 fn update_all_bucket_metrics(data: &parking_lot::Mutex<Data>) {
 	let data = data.lock();
-	telemetry::set_vtxo_pool_metrics(&data.pool, &data.bucket_amounts);
+	telemetry::set_vtxo_pool_metrics(&data.pool);
 }
 
 /// Checks that change outputs contains at most one non-dust and one dust output
@@ -420,13 +417,7 @@ impl VtxoPool {
 	}
 
 	pub async fn new(config: Config, db: &database::Db) -> anyhow::Result<VtxoPool> {
-		// Compute sorted bucket amounts once
-		let mut bucket_amounts = config.vtxo_targets.iter()
-			.map(|t| t.amount)
-			.collect::<Vec<_>>();
-		bucket_amounts.sort();
-
-		let data = Data::load_from_db(db, bucket_amounts, config.max_vtxo_exit_depth).await?;
+		let data = Data::load_from_db(db, config.max_vtxo_exit_depth).await?;
 
 		Ok(VtxoPool {
 			config,
@@ -754,7 +745,7 @@ mod test {
 		];
 		let len = vtxos.len();
 
-		let mut data = Data { pool: BTreeMap::new(), bucket_amounts: vec![] };
+		let mut data = Data { pool: BTreeMap::new() };
 		for (v, h, a) in vtxos {
 			data.insert(v, h, a);
 		}
