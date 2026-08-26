@@ -17,7 +17,7 @@ use ark::vtxo::Full;
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use ark::tree::signed::builder::SignedTreeBuilder;
-use bitcoin_ext::{BlockDelta, BlockHeight, P2TR_DUST};
+use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef, P2TR_DUST};
 
 use crate::database::vtxopool::PoolVtxo;
 use crate::database::tree::VtxoTreeUpdate;
@@ -435,7 +435,11 @@ impl VtxoPool {
 		})
 	}
 
-	pub fn start(&self, srv: Arc<Server>) {
+	pub fn start(
+		&self,
+		srv: Arc<Server>,
+		sync_height_rx: tokio::sync::watch::Receiver<BlockRef>,
+	) {
 		if self.started.swap(true, atomic::Ordering::Relaxed) {
 			return;
 		}
@@ -444,6 +448,7 @@ impl VtxoPool {
 			srv: srv.clone(),
 			config: self.config.clone(),
 			data: self.data.clone(),
+			sync_height_rx,
 		};
 		tokio::spawn(proc.run());
 	}
@@ -454,6 +459,9 @@ struct Process {
 	config: Config,
 
 	data: Arc<parking_lot::Mutex<Data>>,
+
+	/// Issuance occurs after a sync has completed
+	sync_height_rx: tokio::sync::watch::Receiver<BlockRef>,
 }
 
 impl Process {
@@ -659,22 +667,25 @@ impl Process {
 		Ok(())
 	}
 
-	async fn run(self) {
+	async fn run(mut self) {
 		let _worker = self.srv.rtmgr.spawn_critical("VtxoPool");
 
-		// Grab the tip watcher before the initial check so any block that
-		// arrives while we're checking still triggers a follow-up.
-		let mut chain_tip_rx = self.srv.chain_tip_watcher();
-
-		if let Err(e) = self.check_maybe_issue_vtxos().await {
-			error!("Error from VTXO pool: {:#}", e);
-		}
-
 		loop {
+			// Don't issue until we are fully caught up: the wallet only holds
+			// every confirmed utxo once we reach the tip. Comparing the whole
+			// block ref also holds off on an equal-height reorg, where the tip
+			// has moved to another block of the same height.
+			let synced = *self.sync_height_rx.borrow() == self.srv.chain_tip();
+			if synced {
+				if let Err(e) = self.check_maybe_issue_vtxos().await {
+					error!("Error from VTXO pool: {:#}", e);
+				}
+			}
+
 			tokio::select! {
-				res = chain_tip_rx.changed() => {
+				res = self.sync_height_rx.changed() => {
 					if res.is_err() {
-						info!("Chain tip watcher closed. Exiting VtxoPool...");
+						info!("Sync height watcher closed. Exiting VtxoPool...");
 						return;
 					}
 				},
@@ -682,10 +693,6 @@ impl Process {
 					info!("Shutdown signal received. Exiting VtxoPool...");
 					return;
 				},
-			}
-
-			if let Err(e) = self.check_maybe_issue_vtxos().await {
-				error!("Error from VTXO pool: {:#}", e);
 			}
 		}
 	}

@@ -564,7 +564,7 @@ impl Server {
 		});
 
 		// VtxoPool
-		srv.vtxopool.start(srv.clone());
+		srv.vtxopool.start(srv.clone(), srv.sync_manager.sync_height_watcher());
 
 		// RPC
 
