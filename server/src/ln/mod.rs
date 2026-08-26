@@ -1,6 +1,7 @@
 pub mod node_manager;
 
 pub mod cln;
+pub mod guard;
 pub mod settler;
 
 mod payment_handler;
