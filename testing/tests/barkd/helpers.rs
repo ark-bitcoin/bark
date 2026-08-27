@@ -133,6 +133,25 @@ pub async fn wait_for_rounds_complete(ctx: &TestContext, barkd: &Barkd) {
 	}
 }
 
+/// Drive exits to Claimable with explicit `exit_progress()` calls, for
+/// daemons running with `daemon_manual_sync = true` where the background
+/// `run_exits()` loop is disabled. Use [wait_for_exits_claimable] instead
+/// when the daemon should do the work itself.
+pub async fn progress_exits_until_claimable(ctx: &TestContext, barkd: &Barkd) {
+	let timeout = Duration::from_secs(120);
+	let start = std::time::Instant::now();
+	loop {
+		let resp = barkd.exit_progress().await;
+		if resp.done {
+			return;
+		}
+		if start.elapsed() > timeout {
+			panic!("exits did not become claimable within {:?}: {:?}", timeout, resp.exits);
+		}
+		ctx.generate_blocks(1).await;
+	}
+}
+
 /// Wait for all in-progress exits to reach the Claimable (or Claimed) state.
 ///
 /// Polls the exit status endpoint, letting the daemon's background
