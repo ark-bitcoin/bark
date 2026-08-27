@@ -1,0 +1,8 @@
+- Make mailbox blinding fallible
+  A peer-supplied blinded point that cancels the ECDH tweak used to
+  panic through the public gRPC surface. Return an error instead so
+  callers can treat it as invalid peer input.
+  [#2456](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2456)
+  - **BREAKING:** `MailboxIdentifier::to_blinded` and
+    `MailboxIdentifier::from_blinded` now return
+    `Result<_, MailboxBlindingError>`.
