@@ -501,7 +501,9 @@ impl Builder {
 			return Err("VTXO key does not match policy".into());
 		}
 
-		self.mailbox_id = Some(mailbox.to_blinded(server_mailbox_pubkey, vtxo_key));
+		let blinded = mailbox.to_blinded(server_mailbox_pubkey, vtxo_key)
+			.map_err(|_| "mailbox blinding failed: point at infinity")?;
+		self.mailbox_id = Some(blinded);
 		Ok(self)
 	}
 
@@ -629,7 +631,8 @@ mod test {
 		};
 
 		let unblinded = MailboxIdentifier::from_blinded(
-			blinded, addr.policy().user_pubkey(), &server_mailbox_key);
+			blinded, addr.policy().user_pubkey(), &server_mailbox_key,
+		).expect("unblinding a valid blinded id should succeed");
 
 		assert_eq!(mailbox, unblinded);
 	}

@@ -62,7 +62,7 @@ use ark::vtxo::Full;
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
 use ark::lightning::PaymentHash;
-use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
+use ark::mailbox::{BlindedMailboxIdentifier, MailboxBlindingError, MailboxIdentifier};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPreimage};
@@ -1002,12 +1002,16 @@ impl Server {
 		Ok(())
 	}
 
-	/// Unblind a [BlindedMailboxIdentifier]
+	/// Unblind a [BlindedMailboxIdentifier].
+	///
+	/// Returns an error when the peer-supplied blinded point cancels the
+	/// ECDH tweak; the caller is responsible for surfacing an invalid-argument
+	/// status to the peer.
 	pub fn unblind_mailbox_id(
 		&self,
 		blinded: BlindedMailboxIdentifier,
 		vtxo_pubkey: PublicKey,
-	) -> MailboxIdentifier {
+	) -> Result<MailboxIdentifier, MailboxBlindingError> {
 		MailboxIdentifier::from_blinded(blinded, vtxo_pubkey, self.mailbox_key.leak_ref())
 	}
 
