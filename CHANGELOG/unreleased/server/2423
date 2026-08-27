@@ -1,0 +1,5 @@
+- Store the amount of a pending lightning receive on the mailbox row itself
+  Mailbox messages are stand-alone records now: reading a mailbox no longer
+  resolves the amount from the lightning HTLC subscription, so a message keeps
+  reading correctly for as long as it is in the mailbox.
+  [#2423](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2423)

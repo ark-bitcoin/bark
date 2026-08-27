@@ -376,7 +376,7 @@ impl LightningManager {
 
 				// Post mailbox notification so the client knows to come online and claim
 				post_lightning_receive_notification(
-					&self.db, &self.mailbox_manager, payment_hash,
+					&self.db, &self.mailbox_manager, payment_hash, subscription.amount(),
 				).await;
 
 				// Cancel the hold invoice on the receiving node: the intra-Ark
@@ -762,11 +762,12 @@ async fn try_settle_hold_invoice(
 
 /// Post a lightning receive notification to the mailbox if the invoice has a
 /// mailbox_id associated with it. This notifies the client that a payment
-/// has arrived and they should come online to claim it.
+/// of `amount` has arrived and they should come online to claim it.
 pub(crate) async fn post_lightning_receive_notification(
 	db: &database::Db,
 	mailbox_manager: &crate::mailbox_manager::MailboxManager,
 	payment_hash: PaymentHash,
+	amount: Amount,
 ) {
 	let res = db.write(async |t| {
 		if let Some(id) = t.get_lightning_receiver_mailbox_id(payment_hash).await
@@ -774,7 +775,9 @@ pub(crate) async fn post_lightning_receive_notification(
 		{
 			// `None` means a notification for this payment hash already exists;
 			// the re-post is silently ignored.
-			let cp = t.store_lightning_receive_notification(id, &payment_hash.to_string()).await?;
+			let cp = t.store_lightning_receive_notification(
+				id, &payment_hash.to_string(), amount,
+			).await?;
 			Ok(cp.map(|cp| (id, cp)))
 		} else {
 			Ok(None)

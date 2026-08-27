@@ -1,5 +1,6 @@
 use std::pin::Pin;
 use bitcoin::hashes::Hash;
+use bitcoin_ext::AmountExt;
 use futures::Stream;
 use futures::StreamExt;
 use server_rpc::{MAX_NB_MAILBOX_ARKOOR_VTXOS, MAX_NB_MAILBOX_RECOVERY_IDS};
@@ -55,12 +56,12 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 				checkpoint: entry.checkpoint.into(),
 			}
 		},
-		MailboxPayload::LightningReceive { payment_hash, amount_msat } => {
+		MailboxPayload::LightningReceive { payment_hash, amount } => {
 			protos::mailbox_server::MailboxMessage {
 				message: Some(protos::mailbox_server::mailbox_message::Message::IncomingLightningPayment(
 					protos::mailbox_server::IncomingLightningPaymentMessage {
 						payment_hash: payment_hash.to_vec(),
-						amount_msat,
+						amount_msat: amount.to_msat(),
 					}
 				)),
 				checkpoint: entry.checkpoint.into(),

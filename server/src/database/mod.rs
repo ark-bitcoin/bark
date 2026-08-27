@@ -40,7 +40,7 @@ use ark::vtxo::{Bare, Full};
 use bb8::{ManageConnection, Pool, PooledConnection};
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
@@ -122,7 +122,7 @@ pub enum MailboxPayload {
 	},
 	LightningReceive {
 		payment_hash: PaymentHash,
-		amount_msat: u64,
+		amount: Amount,
 	},
 	RecoveryVtxoIds {
 		vtxo_ids: Vec<VtxoId>,
@@ -495,16 +495,8 @@ impl<'t> Tx<'t> {
 		let statement = self.prepare(&format!("
 			SELECT
 				m.vtxo_id, m.vtxo, m.payment_hash, m.unlock_hash, m.preimage,
-				m.checkpoint, m.mailbox_type::TEXT AS entry_type,
-				lhs.final_amount_msat AS ln_recv_amount_msat
+				m.checkpoint, m.mailbox_type::TEXT AS entry_type, m.amount_sat
 			FROM mailbox m
-			-- Resolve the amount for ln-recv-pending rows from the originating
-			-- subscription. Re-injected subscriptions on the same payment hash
-			-- leave receiver_mailbox_id NULL so they don't match here.
-			LEFT JOIN lightning_htlc_subscription lhs
-				ON m.mailbox_type = 'ln-recv-pending'
-				AND lhs.payment_hash = m.payment_hash
-				AND lhs.receiver_mailbox_id = m.unblinded_mailbox_id
 			WHERE m.unblinded_mailbox_id = $1 AND m.checkpoint > $2
 			ORDER BY m.checkpoint ASC, entry_type ASC
 			LIMIT {limit};
@@ -539,16 +531,17 @@ impl<'t> Tx<'t> {
 
 					let payment_hash = PaymentHash::from_str(&row.get::<_, &str>("payment_hash"))
 						.context("invalid payment hash in mailbox notification")?;
-					// Invariant: a ln-recv-pending mailbox row is only ever
-					// posted when the originating subscription exists, and
-					// store_generated_lightning_receive always sets
-					// final_amount_msat. A NULL here means corrupt state.
-					let amount_msat = row.get::<_, Option<i64>>("ln_recv_amount_msat")
-						.context("ln-recv-pending mailbox row missing matching subscription with final_amount_msat")?
-						as u64;
+					// Invariant: a ln-recv-pending mailbox row is always posted
+					// with its amount. A NULL is a row from before the V57
+					// migration for which no subscription amount could be
+					// recovered, the same row that used to fail the join here.
+					let amount_sat = row.get::<_, Option<i64>>("amount_sat")
+						.context("ln-recv-pending mailbox row without amount_sat")?;
+					let amount = Amount::from_sat(u64::try_from(amount_sat)
+						.context("negative amount_sat in mailbox row")?);
 					res.push(MailboxEntry {
 						checkpoint: cp,
-						payload: MailboxPayload::LightningReceive { payment_hash, amount_msat },
+						payload: MailboxPayload::LightningReceive { payment_hash, amount },
 					});
 					telemetry::set_mailbox_get_metric(mailbox_type, 1);
 
@@ -686,6 +679,7 @@ impl<'t> Tx<'t> {
 		&self,
 		mailbox_id: MailboxIdentifier,
 		payment_hash: &str,
+		amount: Amount,
 	) -> anyhow::Result<Option<Checkpoint>> {
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
@@ -697,14 +691,19 @@ impl<'t> Tx<'t> {
 		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 		let mailbox_type_str = String::from(MailboxType::LnRecvPendingPayment);
 
+		// A re-post of the same payment hash is ignored, so the amount of the
+		// first notification stands.
 		let statement = self.prepare("
-			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, checkpoint, mailbox_type, created_at)
-			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW())
+			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, amount_sat, checkpoint, mailbox_type, created_at)
+			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW())
 			ON CONFLICT (mailbox_type, payment_hash) DO NOTHING;
 		").await?;
+		let amount_sat = i64::try_from(amount.to_sat())
+			.context("amount does not fit the amount_sat column")?;
 		let rows_inserted = self.execute(&statement, &[
 			&mailbox_id.to_string(),
 			&payment_hash.to_string(),
+			&amount_sat,
 			&checkpoint,
 			&mailbox_type_str,
 		]).await?;

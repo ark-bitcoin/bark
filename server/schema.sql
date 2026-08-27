@@ -1014,7 +1014,8 @@ CREATE TABLE public.mailbox (
     mailbox_type public.mailbox_type NOT NULL,
     payment_hash text,
     unlock_hash text,
-    preimage text
+    preimage text,
+    amount_sat bigint
 );
 
 
