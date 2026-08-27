@@ -1340,7 +1340,7 @@ async fn settled_hash_replay_claim_still_settles_hold() {
 		let invoice_2 = invoice_2.clone();
 		tokio::spawn(async move { eve_ln.try_pay_bolt11(invoice_2).await })
 	};
-	wait_for_accepted_subscription(&db, payment_hash).await;
+	wait_for_subscription_status(&db, payment_hash, "accepted").await;
 
 	// 3. Settle the seed. The preimage is now recorded and the hold settler sees
 	//    H while the receive is only Accepted, so it advances past the hash.
@@ -1962,18 +1962,19 @@ async fn is_preimage_recorded(
 	}).await.unwrap()
 }
 
-/// Waits until the server's htlc subscription for `payment_hash` is accepted.
-async fn wait_for_accepted_subscription(
+/// Waits until the server's htlc subscription for `payment_hash` reaches `status`.
+async fn wait_for_subscription_status(
 	db: &Db,
 	payment_hash: ark::lightning::PaymentHash,
+	status: &str,
 ) {
 	for _ in 0..50 {
-		if lightning_subscription_status(db, payment_hash).await.as_deref() == Some("accepted") {
+		if lightning_subscription_status(db, payment_hash).await.as_deref() == Some(status) {
 			return;
 		}
 		tokio::time::sleep(Duration::from_millis(200)).await;
 	}
-	panic!("subscription never reached Accepted");
+	panic!("subscription never reached {status}");
 }
 
 /// Waits until a settlement (preimage) for `payment_hash` is recorded.
@@ -2129,7 +2130,7 @@ async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 	};
 
 	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
-	wait_for_accepted_subscription(&db, payment_hash).await;
+	wait_for_subscription_status(&db, payment_hash, "accepted").await;
 
 	// 5. Eve never claims invoice-2. After receive_htlc_forward_timeout the
 	//    server cancels the subscription. The outgoing attempt is a genuine
@@ -2137,12 +2138,7 @@ async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 	//
 	//    NB: the timeout path is the only way a subscription gets canceled;
 	//    the CancelLightningReceive RPC is disabled.
-	tokio::time::sleep(cfg_htlc_forward_timeout + srv.config().invoice_check_interval).await;
-	assert_eq!(
-		lightning_subscription_status(&db, payment_hash).await.as_deref(),
-		Some("canceled"),
-		"subscription should be canceled",
-	);
+	wait_for_subscription_status(&db, payment_hash, "canceled").await;
 	assert_ne!(
 		lightning_attempt_status(&db, payment_hash).await.as_deref(),
 		Some("failed"),
