@@ -434,7 +434,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, Network, OutPoint};
+use bitcoin::{Amount, FeeRate, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use futures::stream::FuturesUnordered;
@@ -455,7 +455,7 @@ use server_rpc::protos::VtxoSpendState;
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
-use crate::exit::Exit;
+use crate::exit::{Exit, ExitError, PresignedExits};
 use crate::lock_manager::LockManager;
 use crate::movement::{Movement, MovementId, PaymentMethod};
 use crate::movement::manager::MovementManager;
@@ -2090,6 +2090,18 @@ impl Wallet {
 	pub async fn progress_exits(&self) -> anyhow::Result<()> {
 		self.exit_mgr().progress_exits_with_cpfp(&self, None).await?;
 		Ok(())
+	}
+
+	/// Presign the CPFP children needed to unilaterally (emergency) exit the given VTXOs.
+	///
+	/// Thin wrapper over [Exit::presign_emergency_exit]; see it and [PresignedExits] for the
+	/// broadcast rules and the wallet state this touches.
+	pub async fn presign_emergency_exit(
+		&self,
+		vtxos: &[VtxoId],
+		fee_rate: Option<FeeRate>,
+	) -> anyhow::Result<PresignedExits, ExitError> {
+		self.exit_mgr().presign_emergency_exit(vtxos, self, fee_rate).await
 	}
 
 	/// Detect spendable VTXOs that were exited on-chain without the user asking for it — e.g.

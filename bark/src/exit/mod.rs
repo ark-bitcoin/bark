@@ -116,6 +116,7 @@
 mod models;
 mod vtxo;
 mod estimate;
+mod presign;
 pub mod bdk;
 pub(crate) mod progress;
 pub(crate) mod transaction_manager;
@@ -129,6 +130,10 @@ pub use self::models::{
 };
 pub use self::vtxo::ExitVtxo;
 pub use self::estimate::{DEFAULT_BROADCAST_FEE_MARGIN, ExitFeeEstimate};
+pub use self::presign::{
+	PresignedExit, PresignedExitChildInfo, PresignedExitPackage, PresignedExitStatus,
+	PresignedExits, PresignedWave,
+};
 
 use std::borrow::Borrow;
 use std::cmp;
