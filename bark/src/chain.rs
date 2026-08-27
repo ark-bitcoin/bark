@@ -170,9 +170,9 @@ pub struct ChainSource {
 	/// `None` until the first successful (or fallback) `update_fee_rates`.
 	/// `Some(t)` makes subsequent calls within `FEE_RATES_CACHE_TTL` a no-op.
 	fee_rates_fetched_at: RwLock<Option<Instant>>,
-	/// Last observed tip height with the time it was fetched, used to
-	/// short-circuit repeat `tip()` calls within `TIP_CACHE_TTL`.
-	tip_cache: RwLock<Option<(BlockHeight, Instant)>>,
+	/// Last observed tip with the time it was fetched, used to short-circuit
+	/// repeat `tip_ref()` / `tip()` calls within `TIP_CACHE_TTL`.
+	tip_cache: RwLock<Option<(BlockRef, Instant)>>,
 }
 
 impl ChainSource {
@@ -373,15 +373,24 @@ impl ChainSource {
 		}
 	}
 
-	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
-		if let Some((height, fetched_at)) = *self.tip_cache.read().await {
+	pub async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
+		if let Some((block_ref, fetched_at)) = *self.tip_cache.read().await {
 			if fetched_at.elapsed() < TIP_CACHE_TTL {
-				return Ok(height);
+				return Ok(block_ref);
 			}
 		}
-		let height = self.fetch_tip().await?;
-		*self.tip_cache.write().await = Some((height, Instant::now()));
-		Ok(height)
+		let block_ref = self.tip_ref_uncached().await?;
+		self.record_observed_tip(block_ref).await;
+		Ok(block_ref)
+	}
+
+	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
+		Ok(self.tip_ref().await?.height)
+	}
+
+	/// Store an observed tip as the current `tip_cache` entry.
+	async fn record_observed_tip(&self, block_ref: BlockRef) {
+		*self.tip_cache.write().await = Some((block_ref, Instant::now()));
 	}
 
 	/// Drop the cached tip and fee-rate values, forcing the next call to
@@ -391,10 +400,6 @@ impl ChainSource {
 	pub async fn invalidate_caches(&self) {
 		*self.tip_cache.write().await = None;
 		*self.fee_rates_fetched_at.write().await = None;
-	}
-
-	pub async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
-		self.block_ref(self.tip().await?).await
 	}
 
 	/// The current tip, always round-tripping the backend instead of serving
@@ -799,7 +804,12 @@ impl ChainSource {
 
 impl TipSource for ChainSource {
 	async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
-		ChainSource::tip_ref_uncached(self).await
+		let block_ref = ChainSource::tip_ref_uncached(self).await?;
+		// The tip watcher observes new blocks before any subscriber
+		// reacts. Refresh `tip_cache` here so callers of `tip()` cannot
+		// serve a height older than what the watcher already knows.
+		self.record_observed_tip(block_ref).await;
+		Ok(block_ref)
 	}
 }
 
