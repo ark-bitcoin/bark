@@ -1,5 +1,6 @@
 pub mod error;
 pub mod package;
+pub mod presign;
 pub mod states;
 
 #[cfg(feature = "utoipa")]
