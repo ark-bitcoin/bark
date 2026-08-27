@@ -1,3 +1,11 @@
+//! gRPC server implementations for the public ark, mailbox, admin and intman
+//! services.
+//!
+//! Rate limiting, per-IP throttling and per-method concurrency caps are
+//! **not** implemented here. All of that is owned by the reverse proxy in
+//! front of captaind. Don't add a server-side equivalent; that path was
+//! removed on purpose and would duplicate configuration that ops already
+//! owns.
 
 pub mod admin;
 pub mod ark;
