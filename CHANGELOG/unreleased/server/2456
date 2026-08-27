@@ -1,0 +1,5 @@
+- Remove the cancel Lightning payment RPC
+  The feature was untested and appeared in several vulnerability
+  reports. Removing it shrinks the Lightning attack surface.
+  [#2456](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2456)
+  - **BREAKING:** The cancel Lightning payment RPC is gone.

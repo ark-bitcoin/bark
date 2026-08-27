@@ -61,8 +61,7 @@ use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::Full;
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
-use ark::lightning::PaymentHash;
-use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
+use ark::mailbox::{BlindedMailboxIdentifier, MailboxBlindingError, MailboxIdentifier};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPreimage};
@@ -78,6 +77,7 @@ use crate::sync::{ChainEventListener, SyncManager};
 use crate::error::ContextExt;
 use crate::watchman::VtxoExitFrontier;
 use crate::flux::VtxosInFlux;
+use crate::ln::guard::PaymentGuards;
 use crate::ln::node_manager::LightningManager;
 use crate::ln::settler::HtlcSettler;
 use crate::mailbox_manager::MailboxManager;
@@ -198,14 +198,9 @@ pub struct Server {
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
-	/// Payment hashes for which HTLC-recv vtxos are currently being allocated.
-	///
-	/// Guards the read-check-allocate-write in [Server::prepare_lightning_claim]:
-	/// the subscription status is only flipped to `htlcs-ready` after the
-	/// arkoor is persisted, so without this concurrent calls each allocate a
-	/// full HTLC set for a single invoice and can each return a different one.
-	/// That pays out a multiple of the invoice amount from the vtxopool.
-	ln_claims_in_flux: parking_lot::Mutex<HashSet<PaymentHash>>,
+	/// The payment hash locks. Each lightning call that decides on a payment
+	/// holds the lock of its payment hash for the whole call.
+	payment_guards: PaymentGuards,
 	cln: LightningManager,
 	htlc_settler: Arc<HtlcSettler>,
 	vtxopool: VtxoPool,
@@ -513,7 +508,7 @@ impl Server {
 			},
 			forfeit_nonces: parking_lot::Mutex::new(TimedEntryMap::new()),
 			vtxos_in_flux: VtxosInFlux::new(),
-			ln_claims_in_flux: parking_lot::Mutex::new(HashSet::new()),
+			payment_guards: PaymentGuards::new(),
 			config: cfg.clone(),
 			db,
 			server_pubkey: server_key.public_key(),
@@ -1002,12 +997,16 @@ impl Server {
 		Ok(())
 	}
 
-	/// Unblind a [BlindedMailboxIdentifier]
+	/// Unblind a [BlindedMailboxIdentifier].
+	///
+	/// Returns an error when the peer-supplied blinded point cancels the
+	/// ECDH tweak; the caller is responsible for surfacing an invalid-argument
+	/// status to the peer.
 	pub fn unblind_mailbox_id(
 		&self,
 		blinded: BlindedMailboxIdentifier,
 		vtxo_pubkey: PublicKey,
-	) -> MailboxIdentifier {
+	) -> Result<MailboxIdentifier, MailboxBlindingError> {
 		MailboxIdentifier::from_blinded(blinded, vtxo_pubkey, self.mailbox_key.leak_ref())
 	}
 

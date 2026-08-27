@@ -112,23 +112,35 @@ impl MailboxIdentifier {
 		&self,
 		server_pubkey: PublicKey,
 		vtxo_key: &Keypair,
-	) -> BlindedMailboxIdentifier {
+	) -> Result<BlindedMailboxIdentifier, MailboxBlindingError> {
 		BlindedMailboxIdentifier::new(*self, server_pubkey, vtxo_key)
 	}
 
-	/// Unblind a blinded mailbox identifier
+	/// Unblind a blinded mailbox identifier.
+	///
+	/// Returns [MailboxBlindingError] when the peer-supplied blinded point
+	/// cancels the ECDH tweak (the sum is the point at infinity, which
+	/// libsecp256k1 rejects). Callers must treat this as invalid peer input.
 	pub fn from_blinded(
 		blinded: BlindedMailboxIdentifier,
 		vtxo_pubkey: PublicKey,
 		server_key: &Keypair,
-	) -> MailboxIdentifier {
+	) -> Result<MailboxIdentifier, MailboxBlindingError> {
 		let dh = ecdh::shared_secret_point(&vtxo_pubkey, &server_key.secret_key());
 		let neg_dh_pk = point_to_pubkey(&dh).negate(&SECP);
 		let ret = PublicKey::combine_keys(&[&blinded.as_pubkey(), &neg_dh_pk])
-			.expect("error adding DH secret to mailbox key");
-		Self(ret)
+			.map_err(|_| MailboxBlindingError)?;
+		Ok(Self(ret))
 	}
 }
+
+/// The blinded mailbox point and the ECDH tweak sum to the point at
+/// infinity, which is not a valid curve point. This happens when the peer
+/// chose the blinded point equal to the ECDH-derived tweak, so treat it as
+/// an invalid peer input.
+#[derive(Debug, thiserror::Error)]
+#[error("mailbox blinding produced the point at infinity")]
+pub struct MailboxBlindingError;
 
 impl fmt::Display for MailboxIdentifier {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -186,12 +198,12 @@ impl BlindedMailboxIdentifier {
 		mailbox_id: MailboxIdentifier,
 		server_pubkey: PublicKey,
 		vtxo_key: &Keypair,
-	) -> BlindedMailboxIdentifier {
+	) -> Result<BlindedMailboxIdentifier, MailboxBlindingError> {
 		let dh = ecdh::shared_secret_point(&server_pubkey, &vtxo_key.secret_key());
 		let dh_pk = point_to_pubkey(&dh);
 		let ret = PublicKey::combine_keys(&[&mailbox_id.as_pubkey(), &dh_pk])
-			.expect("error adding DH secret to mailbox key");
-		Self(ret.serialize())
+			.map_err(|_| MailboxBlindingError)?;
+		Ok(Self(ret.serialize()))
 	}
 
 	/// Convert to public key
@@ -332,13 +344,57 @@ mod test {
 
 		let mailbox = MailboxIdentifier::from_pubkey(mailbox_key.public_key());
 
-		let blinded = mailbox.to_blinded(server_mailbox_key.public_key(), &vtxo_key);
+		let blinded = mailbox.to_blinded(server_mailbox_key.public_key(), &vtxo_key)
+			.expect("blinding a random mailbox id should succeed");
 
 		let unblinded = MailboxIdentifier::from_blinded(
 			blinded, vtxo_key.public_key(), &server_mailbox_key,
-		);
+		).expect("unblinding a valid blinded id should succeed");
 
 		assert_eq!(unblinded, mailbox);
+	}
+
+	/// A peer that chooses `blinded_id` equal to the ECDH-derived tweak
+	/// makes the unblind sum land on the point at infinity. libsecp256k1
+	/// rejects that, so `from_blinded` must surface the error rather than
+	/// panicking. Prior to the fix this reproduced a public gRPC panic on
+	/// `post_arkoor_message`.
+	#[test]
+	fn from_blinded_rejects_point_at_infinity() {
+		let server_mailbox_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let vtxo_key = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		// The attacker knows both its own vtxo_key and the server's public
+		// mailbox key, so it can compute the ECDH point itself and submit
+		// it as the blinded id.
+		let dh = ecdh::shared_secret_point(
+			&server_mailbox_key.public_key(), &vtxo_key.secret_key(),
+		);
+		let blinded = BlindedMailboxIdentifier::from_pubkey(point_to_pubkey(&dh));
+
+		let res = MailboxIdentifier::from_blinded(
+			blinded, vtxo_key.public_key(), &server_mailbox_key,
+		);
+		assert!(res.is_err(), "expected identity-point error, got {:?}", res);
+	}
+
+	/// Blinding is client-side, but a hostile address that publishes a
+	/// mailbox point equal to the negation of the sender's ECDH tweak
+	/// would push the sum to infinity. `to_blinded` must surface the
+	/// error rather than panicking.
+	#[test]
+	fn to_blinded_rejects_point_at_infinity() {
+		let server_mailbox_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let vtxo_key = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let dh = ecdh::shared_secret_point(
+			&server_mailbox_key.public_key(), &vtxo_key.secret_key(),
+		);
+		let neg_dh = point_to_pubkey(&dh).negate(&SECP);
+		let mailbox = MailboxIdentifier::from_pubkey(neg_dh);
+
+		let res = mailbox.to_blinded(server_mailbox_key.public_key(), &vtxo_key);
+		assert!(res.is_err(), "expected identity-point error, got {:?}", res);
 	}
 
 	#[test]

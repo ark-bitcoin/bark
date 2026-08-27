@@ -133,7 +133,16 @@ impl rpc::server::MailboxService for crate::Server {
 			self::badarg!("all vtxos should share vtxo pubkey when mailbox is provided");
 		}
 
-		let mailbox_id = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
+		// The blinded id is peer-controlled. An attacker that submits a
+		// blinded point equal to the ECDH tweak forces the sum to the
+		// point at infinity, which libsecp256k1 rejects. Reject as an
+		// invalid argument instead of panicking the request task.
+		let unblind = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
+		let mailbox_id = if let Ok(id) = unblind {
+			id
+		} else {
+			self::badarg!("invalid blinded mailbox id");
+		};
 
 		// This endpoint is unauthenticated (senders aren't the recipient), so
 		// only accept vtxos the server itself cosigned: unknown ids are

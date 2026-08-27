@@ -98,6 +98,8 @@ pub enum ArkoorConstructionError {
 	Dust,
 	#[error("At least one output is required")]
 	NoOutputs,
+	#[error("An output has zero value")]
+	ZeroValueOutput,
 	#[error("Too many outputs provided")]
 	TooManyOutputs,
 	#[error("Too many inputs provided")]
@@ -998,6 +1000,16 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		// We need at least one output in the outputs vec
 		if outputs.is_empty() {
 			return Err(ArkoorConstructionError::NoOutputs)
+		}
+
+		// Every output must carry value. A zero-value output yields a VTXO that
+		// holds nothing: it can't be boarded or spent through arkoor, so it only
+		// wastes signing work and storage. Sub-dust (but non-zero) outputs stay
+		// allowed; those are what dust isolation handles.
+		if outputs.iter().chain(isolation_outputs.iter())
+			.any(|o| o.total_amount == Amount::ZERO)
+		{
+			return Err(ArkoorConstructionError::ZeroValueOutput)
 		}
 
 		// Output vouts are encoded as u8 in the genesis chain, so the counts must fit u8.

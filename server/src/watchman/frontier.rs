@@ -3,11 +3,12 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use bitcoin::{OutPoint, Txid, Witness};
+use bitcoin::taproot::LeafVersion;
 use tokio::sync::RwLock;
-use tracing::{error, trace, warn};
+use tracing::{error, trace};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
-use ark::vtxo::policy::clause::{HashDelaySignClause, HashDelaySignClause_v0};
+use ark::vtxo::policy::clause::{HashDelaySignClause, HashDelaySignClause_v0, TapScriptClause};
 use bitcoin_ext::BlockHeight;
 
 use crate::database::Db;
@@ -170,25 +171,44 @@ impl VtxoExitFrontier {
 /// ServerHtlcSend is not checked because the server already learns the
 /// preimage from the downstream Lightning node when the payment succeeds.
 fn try_extract_preimage(vtxo: &ServerVtxo, witness: &Witness) -> Option<ark::lightning::Preimage> {
-	let (payment_hash, preimage) = match vtxo.policy() {
-		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv(p)) => {
-			(p.payment_hash, HashDelaySignClause::extract_preimage_from_witness(witness, p.payment_hash))
-		},
-		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv_v0(p)) => {
-			(p.payment_hash, HashDelaySignClause_v0::extract_preimage_from_witness(witness, p.payment_hash))
-		},
+	let exit_delta = vtxo.exit_delta();
+	let (payment_hash, user_preimage_claim_script, preimage) = match vtxo.policy() {
+		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv(p)) => (
+			p.payment_hash,
+			p.user_reveals_preimage_clause(exit_delta).tapscript(),
+			HashDelaySignClause::extract_preimage_from_witness(witness, p.payment_hash),
+		),
+		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv_v0(p)) => (
+			p.payment_hash,
+			p.user_reveals_preimage_clause(exit_delta).tapscript(),
+			HashDelaySignClause_v0::extract_preimage_from_witness(witness, p.payment_hash),
+		),
 		_ => return None,
 	};
+
 	if preimage.is_none() {
-		// Not necessarily an error: the VTXO may have been spent via the
-		// arkoor path by its next owner after the HTLC was settled between
-		// user and server.
-		warn!(
-			"HTLC-recv VTXO {} spent on-chain without preimage in witness \
-			(witness len={}). Hold invoice for {} will not be settled from \
-			this spend.",
-			vtxo.id(), witness.len(), payment_hash,
-		);
+		// The caller persists this spend and drops the frontier entry, so nothing
+		// looks at the witness again. Separate the two cases before that happens.
+		let spent_user_preimage_claim_script = witness.taproot_leaf_script().is_some_and(|leaf| {
+			leaf.version == LeafVersion::TapScript && leaf.script == user_preimage_claim_script.as_script()
+		});
+		if spent_user_preimage_claim_script {
+			// This case means there is disagreement between consensus and our extraction
+			// code which would be a serious problem.
+			error!(
+				"HTLC-recv VTXO {} was claimed on-chain through its preimage clause, \
+				but no preimage for {} could be read from the witness. The hold invoice \
+				cannot be settled, and the HTLC expires back to the payer. \
+				Witness: {:?}",
+				vtxo.id(), payment_hash, witness,
+			);
+		} else {
+			trace!(
+				"HTLC-recv VTXO {} was spent on-chain, but not through its preimage \
+				clause. The hold invoice for {} is not settled from this spend.",
+				vtxo.id(), payment_hash,
+			);
+		}
 	}
 	preimage
 }

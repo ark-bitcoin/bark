@@ -1,6 +1,7 @@
 pub mod node_manager;
 
 pub mod cln;
+pub mod guard;
 pub mod settler;
 
 mod payment_handler;
@@ -39,34 +40,6 @@ use crate::error::ContextExt;
 use crate::{Server, CAPTAIND_API_KEY};
 
 
-
-/// Guard releasing a payment hash from [Server::ln_claims_in_flux] on drop.
-struct LnClaimGuard<'a> {
-	srv: &'a Server,
-	payment_hash: PaymentHash,
-}
-
-impl<'a> LnClaimGuard<'a> {
-	/// Claim exclusive right to allocate the HTLC-recv vtxos for `payment_hash`.
-	///
-	/// Returns `None` when another task is already allocating for this hash.
-	fn try_lock(srv: &'a Server, payment_hash: PaymentHash) -> Option<LnClaimGuard<'a>> {
-		if srv.ln_claims_in_flux.lock().insert(payment_hash) {
-			Some(LnClaimGuard { srv, payment_hash })
-		} else {
-			None
-		}
-	}
-}
-
-impl Drop for LnClaimGuard<'_> {
-	fn drop(&mut self) {
-		assert!(
-			self.srv.ln_claims_in_flux.lock().remove(&self.payment_hash),
-			"LnClaimGuard already unlocked; payment_hash={}", self.payment_hash,
-		);
-	}
-}
 
 /// Validate the client-requested HTLC-recv VTXO expiry leaves at
 /// least `htlc_expiry_delta` blocks of settlement margin below the
@@ -200,6 +173,10 @@ impl Server {
 
 		let payment_hash = requested_policy.payment_hash;
 
+		// Held for the whole call, so no other call decides on this payment
+		// while these HTLCs are validated and cosigned.
+		let _guard = self.payment_guards.lock(payment_hash).await;
+
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
 		// We will mask the old value
 		let request = request.set_vtxos(input_vtxos.iter().map(|v| v.vtxo.clone()))?;
@@ -269,6 +246,10 @@ impl Server {
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
 		let payment_hash = invoice.payment_hash();
+
+		// Held for the whole call, so no other call decides on this payment
+		// while the payment is validated and handed to the lightning node.
+		let _guard = self.payment_guards.lock(payment_hash).await;
 
 		let htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&htlc_vtxo_ids).await).await?;
 
@@ -423,6 +404,10 @@ impl Server {
 			.as_server_htlc_send()
 			.context("vtxo is not htlc send")?.clone();
 
+		// Held for the whole call, so no other call decides on this payment
+		// while the revocation is validated and the HTLCs are refunded.
+		let _guard = self.payment_guards.lock(input_policy.payment_hash).await;
+
 		let payment_hash = input_policy.payment_hash;
 		slog!(LightningPayHtlcsRevocationRequested, payment_hash,
 			htlc_vtxo_ids: htlc_vtxo_ids.clone(),
@@ -527,6 +512,10 @@ impl Server {
 		description: Option<String>,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
+
+		// Held for the whole call, so no other call decides on this payment
+		// while the existing subscriptions are read and the invoice is made.
+		let _guard = self.payment_guards.lock(payment_hash).await;
 
 		// Reusing an hArk unlock hash as a lightning payment hash would put
 		// the same secret in two domains at once.
@@ -701,14 +690,11 @@ impl Server {
 		htlc_recv_expiry: BlockHeight,
 		anti_dos: Option<protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos>,
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo<Full>>)> {
-		// Held for the entire read-check-allocate-write below: the status only
-		// becomes `htlcs-ready` after the arkoor is persisted, so concurrent
-		// calls each allocate a full HTLC set for one invoice and can each
-		// return a different one, paying out a multiple of the invoice amount.
-		let _claim_guard = match LnClaimGuard::try_lock(self, payment_hash) {
-			Some(guard) => guard,
-			None => bail!("a claim for this payment hash is already in progress"),
-		};
+		// Held for the whole call. The status only becomes `htlcs-ready` after
+		// the arkoor is persisted, so without this lock concurrent calls each
+		// allocate a full HTLC set for one invoice and can each return a
+		// different one, paying out a multiple of the invoice amount.
+		let _guard = self.payment_guards.lock(payment_hash).await;
 
 		let mut sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
@@ -831,34 +817,16 @@ impl Server {
 		Ok(())
 	}
 
+	/// Canceling a lightning receive is disabled on the server.
+	///
+	/// The flow keeps showing up in vulnerability reports and no client
+	/// depends on it, so the endpoint now always refuses.
 	#[tracing::instrument(skip(self))]
 	pub async fn cancel_lightning_receive(
 		&self,
-		payment_hash: PaymentHash,
+		_payment_hash: PaymentHash,
 	) -> anyhow::Result<()> {
-		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
-			.not_found([payment_hash], "no pending payment with this payment hash")?;
-
-		match sub.status {
-			LightningHtlcSubscriptionStatus::Created |
-			LightningHtlcSubscriptionStatus::Accepted => {}, // allowed
-			LightningHtlcSubscriptionStatus::HtlcsReady => {
-				return badarg!("cannot cancel: HTLC-recv vtxos have already been granted");
-			},
-			LightningHtlcSubscriptionStatus::Settled => {
-				return badarg!("cannot cancel: payment already settled");
-			},
-			LightningHtlcSubscriptionStatus::Canceled => {
-				return Ok(()); // idempotent
-			},
-		}
-
-		slog!(LightningReceiveCanceled, payment_hash);
-
-		self.cln.cancel_invoice(sub.clone()).await
-			.context("could not cancel hold invoice")?;
-
-		Ok(())
+		badarg!("this feature has been disabled by the server")
 	}
 
 	#[tracing::instrument(skip(self, cosign_request))]
@@ -869,6 +837,10 @@ impl Server {
 		cosign_request: ArkoorPackageCosignRequest<VtxoId>,
 		pver: u64,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
+		// Held for the whole call, so no other call decides on this payment
+		// while the claim is validated, settled and cosigned.
+		let _guard = self.payment_guards.lock(payment_hash).await;
+
 		if payment_hash != payment_preimage.compute_payment_hash() {
 			return badarg!("preimage doesn't match payment hash");
 		}

@@ -124,14 +124,15 @@ impl VtxoSigner<ServerVtxoPolicy> for WatchmanSigner {
 		vtxo: &Vtxo<G, ServerVtxoPolicy>,
 		sighash: TapSighash,
 	) -> Option<schnorr::Signature> {
-		let tap_merkle_root = vtxo.output_taproot().merkle_root();
-		let key = self.server_keypair.leak_ref().for_keyspend(&*SECP, tap_merkle_root);
-		if vtxo.output_taproot().internal_key() != key.public_key().x_only_public_key().0 {
+		let taproot = vtxo.output_taproot();
+		let server_pubkey = self.server_keypair.leak_ref().public_key();
+		if taproot.internal_key() != server_pubkey.x_only_public_key().0 {
 			error!("Watchman asked to sign VTXO {} which has internal key {} but our key is {}",
-				vtxo.id(), vtxo.output_taproot().internal_key(), key.public_key(),
+				vtxo.id(), taproot.internal_key(), server_pubkey,
 			);
 			return None;
 		}
+		let key = self.server_keypair.leak_ref().for_keyspend(&*SECP, taproot.merkle_root());
 		Some(ark::SECP.sign_schnorr(&sighash.into(), &key))
 	}
 

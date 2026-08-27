@@ -107,7 +107,7 @@ async fn mailbox_checkpoint_visibility_gap() {
 
 	let writer_handles: Vec<_> = vtxo_pairs.iter().map(|(kp, vtxo)| {
 		let ark_url = ark_url.clone();
-		let blinded_id = mailbox_id.to_blinded(mailbox_pubkey, kp);
+		let blinded_id = mailbox_id.to_blinded(mailbox_pubkey, kp).unwrap();
 		let vtxo_bytes = ProtocolEncoding::serialize(vtxo).to_vec();
 
 		tokio::spawn(async move {
@@ -177,7 +177,7 @@ async fn mailbox_post_arkoor_requires_known_vtxos() {
 		..Default::default()
 	}.build();
 	let err = rpc.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
-		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &attacker_kp).as_ref().to_vec(),
+		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &attacker_kp).unwrap().as_ref().to_vec(),
 		vtxos: vec![ProtocolEncoding::serialize(&unknown_vtxo).to_vec()],
 	}).await.unwrap_err();
 	assert!(err.message().contains("does not exist"),
@@ -189,7 +189,7 @@ async fn mailbox_post_arkoor_requires_known_vtxos() {
 	let mut raw = RawVtxo::deserialize(&ProtocolEncoding::serialize(&vtxo)).unwrap();
 	raw.policy = ServerVtxoPolicy::User(VtxoPolicy::new_pubkey(attacker_kp.public_key()));
 	let err = rpc.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
-		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &attacker_kp).as_ref().to_vec(),
+		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &attacker_kp).unwrap().as_ref().to_vec(),
 		vtxos: vec![raw.serialize()],
 	}).await.unwrap_err();
 	assert!(err.message().contains("doesn't belong to the provided vtxo pubkey"),
@@ -202,7 +202,7 @@ async fn mailbox_post_arkoor_requires_known_vtxos() {
 
 	// The genuine vtxo still goes through.
 	rpc.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
-		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &owner_kp).as_ref().to_vec(),
+		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &owner_kp).unwrap().as_ref().to_vec(),
 		vtxos: vec![ProtocolEncoding::serialize(&vtxo).to_vec()],
 	}).await.expect("post of a known vtxo should succeed");
 
@@ -224,7 +224,7 @@ async fn mailbox_post_arkoor_caps_vtxos_per_request() {
 	let mailbox_pubkey = srv.ark_info().await.mailbox_pubkey;
 
 	let err = rpc.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
-		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &mailbox_kp).as_ref().to_vec(),
+		blinded_id: mailbox_id.to_blinded(mailbox_pubkey, &mailbox_kp).unwrap().as_ref().to_vec(),
 		vtxos: vec![vec![0u8]; MAX_NB_MAILBOX_ARKOOR_VTXOS + 1],
 	}).await.unwrap_err();
 	assert!(err.message().contains("too many vtxos"),

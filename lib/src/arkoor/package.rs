@@ -1396,6 +1396,66 @@ mod test {
 	}
 
 	#[test]
+	fn zero_value_output_rejected() {
+		// Every arkoor output must carry value; a zero-value output would yield
+		// a valueless dead-end VTXO. The check lives in validate_amounts, so it
+		// applies even alongside a value-carrying output.
+		let (_funding_tx, vtxo) = dummy_vtxo_for_amount(P2TR_DUST);
+		let outputs = vec![
+			ArkoorDestination {
+				total_amount: P2TR_DUST,
+				policy: VtxoPolicy::new_pubkey(bob_public_key()),
+			},
+			ArkoorDestination {
+				total_amount: Amount::ZERO,
+				policy: VtxoPolicy::new_pubkey(alice_public_key()),
+			},
+		];
+
+		let result = ArkoorBuilder::new_with_checkpoint_isolate_dust(vtxo, outputs);
+		assert_eq!(result.err(), Some(ArkoorConstructionError::ZeroValueOutput));
+	}
+
+	#[test]
+	fn zero_value_cosign_request_rejected() {
+		// The client package path drops zero change instead of emitting it, but
+		// the server cosign path builds parts straight from the wire. An
+		// authenticated owner can therefore craft a part with a zero-value
+		// output: the attestation is signed with their own key, so it verifies.
+		// The server-facing cosign entry point must reject it.
+		let (_funding_tx, vtxo) = dummy_vtxo_for_amount(P2TR_DUST);
+		let outputs = vec![
+			ArkoorDestination {
+				total_amount: P2TR_DUST,
+				policy: VtxoPolicy::new_pubkey(bob_public_key()),
+			},
+			ArkoorDestination {
+				total_amount: Amount::ZERO,
+				policy: VtxoPolicy::new_pubkey(alice_public_key()),
+			},
+		];
+
+		// A non-checkpoint arkoor needs a single user nonce. With the right
+		// count and a valid attestation, the request is well-formed, so only the
+		// amount check can reject it.
+		let nonces = vec![crate::musig::nonce_pair(&alice_keypair()).1];
+		let request = ArkoorCosignRequest::new(
+			nonces,
+			vtxo,
+			outputs,
+			vec![],
+			false,
+			&alice_keypair(),
+		);
+
+		let package = ArkoorPackageCosignRequest { requests: vec![request] };
+		assert!(
+			ArkoorPackageBuilder::from_cosign_request(package).is_err(),
+			"a zero-value output must not be accepted for server cosigning",
+		);
+	}
+
+	#[test]
 	fn output_sum_overflow_rejected() {
 		// Output amounts come straight off the wire uncapped; two near-
 		// `u64::MAX` amounts must be rejected, not panic the `Amount` sum.

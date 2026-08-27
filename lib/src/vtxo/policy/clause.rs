@@ -248,25 +248,22 @@ impl HashDelaySignClause {
 
 	/// Try to extract the preimage from a witness that spends this clause.
 	///
-	/// Witness layout: `[signature, preimage, tapscript, control_block]`.
-	/// Returns the preimage if it is 32 bytes and hashes to the given payment hash.
+	/// Our own clauses build the witness `[signature, preimage, tapscript,
+	/// control_block]`. Bitcoin accepts more than that one shape for the same spend.
+	/// BIP341 permits an optional annex as the final witness item, and script
+	/// execution removes the annex before the tapscript runs. So `[signature,
+	/// preimage, tapscript, control_block, annex]` satisfies the same clause, and
+	/// consensus accepts it.
+	///
+	/// A 32-byte item that hashes to the payment hash is the preimage, whatever its
+	/// position. The witness is already mined, so the preimage is public either way.
 	pub fn extract_preimage_from_witness(
 		witness: &Witness,
 		payment_hash: PaymentHash,
 	) -> Option<Preimage> {
-		if witness.len() != 4 {
-			return None;
-		}
-
-		let bytes = witness.nth(1)?;
-		let bytes: [u8; 32] = bytes.try_into().ok()?;
-
-		let preimage = Preimage::from(bytes);
-		if preimage.compute_payment_hash() != payment_hash {
-			return None;
-		}
-
-		Some(preimage)
+		witness.iter()
+			.filter_map(|item| Preimage::try_from(item).ok())
+			.find(|preimage| preimage.compute_payment_hash() == payment_hash)
 	}
 }
 
@@ -337,25 +334,22 @@ impl HashDelaySignClause_v0 {
 
 	/// Try to extract the preimage from a witness that spends this clause.
 	///
-	/// Witness layout: `[signature, preimage, tapscript, control_block]`.
-	/// Returns the preimage if it is 32 bytes and hashes to the given payment hash.
+	/// Our own clauses build the witness `[signature, preimage, tapscript,
+	/// control_block]`. Bitcoin accepts more than that one shape for the same spend.
+	/// BIP341 permits an optional annex as the final witness item, and script
+	/// execution removes the annex before the tapscript runs. So `[signature,
+	/// preimage, tapscript, control_block, annex]` satisfies the same clause, and
+	/// consensus accepts it.
+	///
+	/// A 32-byte item that hashes to the payment hash is the preimage, whatever its
+	/// position. The witness is already mined, so the preimage is public either way.
 	pub fn extract_preimage_from_witness(
 		witness: &Witness,
 		payment_hash: PaymentHash,
 	) -> Option<Preimage> {
-		if witness.len() != 4 {
-			return None;
-		}
-
-		let bytes = witness.nth(1)?;
-		let bytes: [u8; 32] = bytes.try_into().ok()?;
-
-		let preimage = Preimage::from(bytes);
-		if preimage.compute_payment_hash() != payment_hash {
-			return None;
-		}
-
-		Some(preimage)
+		witness.iter()
+			.filter_map(|item| Preimage::try_from(item).ok())
+			.find(|preimage| preimage.compute_payment_hash() == payment_hash)
 	}
 }
 
@@ -857,13 +851,114 @@ mod tests {
 		);
 		assert!(extracted.is_none());
 
-		// Extract should fail with wrong witness length
-		let short_witness = Witness::from_slice(&[&sig[..], &preimage_bytes[..]]);
+		// Extract should fail on a witness that reveals no matching preimage
+		let other_preimage = [7u8; 32];
+		let no_preimage = Witness::from_slice(&[
+			&sig[..],
+			&other_preimage[..],
+			clause.tapscript().as_bytes(),
+			&cb.serialize()[..],
+		]);
 		let extracted = HashDelaySignClause_v0::extract_preimage_from_witness(
-			&short_witness,
+			&no_preimage,
 			payment_hash.into(),
 		);
 		assert!(extracted.is_none());
+	}
+
+	/// Build a script-path spend of a hash-delay tapscript that carries a BIP341
+	/// annex, and return its witness.
+	///
+	/// Panics if consensus rejects the spend. A caller therefore always asserts
+	/// against a witness that a miner can confirm.
+	fn annexed_hash_delay_spend(
+		tapscript: ScriptBuf,
+		sequence: Sequence,
+		preimage: [u8; 32],
+	) -> Witness {
+		let (taproot, cb) = taproot_material(tapscript.clone());
+		let tx_in = TxOut {
+			script_pubkey: taproot.script_pubkey(),
+			value: Amount::from_sat(1_000_000),
+		};
+
+		let mut tx = transaction();
+		tx.input.push(TxIn {
+			previous_output: OutPoint::new(Txid::all_zeros(), 0),
+			script_sig: ScriptBuf::default(),
+			sequence,
+			witness: Witness::new(),
+		});
+
+		// A final witness item that starts with 0x50 is the annex. The sighash
+		// commits to the annex, but script execution removes it before the
+		// tapscript runs. The stack the tapscript reads is unchanged.
+		let annex = [0x50u8, 0xde, 0xad, 0xbe, 0xef];
+
+		let leaf_hash = taproot::TapLeafHash::from_script(
+			&tapscript,
+			taproot::LeafVersion::TapScript,
+		);
+		let mut shc = sighash::SighashCache::new(&tx);
+		let sighash = shc.taproot_signature_hash(
+			0,
+			&sighash::Prevouts::All(&[tx_in.clone()]),
+			Some(sighash::Annex::new(&annex).unwrap()),
+			Some((leaf_hash, 0xFFFFFFFF)),
+			sighash::TapSighashType::Default,
+		).expect("all prevouts provided");
+		let sig = SECP.sign_schnorr(&sighash.into(), &*USER_KEYPAIR);
+
+		let witness = Witness::from_slice(&[
+			&sig[..],
+			&preimage[..],
+			tapscript.as_bytes(),
+			&cb.serialize()[..],
+			&annex[..],
+		]);
+		assert!(witness.taproot_annex().is_some());
+		tx.input[0].witness = witness.clone();
+
+		// The annex makes this spend nonstandard to relay, but not invalid.
+		// Consensus accepts it, so a miner can confirm a spend that a parser
+		// which expects a four-item witness does not recognize.
+		verify_tx(&[tx_in], 0, &tx).expect("annexed spend is invalid");
+
+		witness
+	}
+
+	#[test]
+	fn test_extract_preimage_from_annexed_witness() {
+		let preimage_bytes = [42u8; 32];
+		let payment_hash = sha256::Hash::hash(&preimage_bytes);
+
+		let clause = HashDelaySignClause {
+			pubkey: USER_KEYPAIR.public_key(),
+			hash: payment_hash,
+			block_delta: 24,
+		};
+		let witness = annexed_hash_delay_spend(
+			clause.tapscript(), clause.sequence(), preimage_bytes,
+		);
+		let extracted = HashDelaySignClause::extract_preimage_from_witness(
+			&witness,
+			payment_hash.into(),
+		).expect("no preimage extracted from annexed witness");
+		assert_eq!(extracted.as_ref(), &preimage_bytes);
+
+		let clause_v0 = HashDelaySignClause_v0 {
+			pubkey: USER_KEYPAIR.public_key(),
+			hash: payment_hash,
+			block_delta: 24,
+		};
+		let witness = annexed_hash_delay_spend(
+			clause_v0.tapscript(), clause_v0.sequence(), preimage_bytes,
+		);
+		let extracted = HashDelaySignClause_v0::extract_preimage_from_witness(
+			&witness,
+			payment_hash.into(),
+		).expect("no preimage extracted from annexed witness");
+		assert_eq!(extracted.as_ref(), &preimage_bytes);
 	}
 
 	#[test]

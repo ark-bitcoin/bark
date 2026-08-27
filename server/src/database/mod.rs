@@ -907,6 +907,10 @@ impl<'t> Tx<'t> {
 			.mark_vtxos_offboard_spent(offboard_triples);
 		tree::execute_vtxo_tree_update(&self, update).await?;
 
+		// register the connector output vtxo directly into the frontier, so
+		// the watchman can sweep it once the input vtxos have expired
+		self.add_funding_vtxos_to_frontier(offboard_txid, None).await?;
+
 		Ok(())
 	}
 

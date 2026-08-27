@@ -3,6 +3,7 @@ use bitcoin::Txid;
 use bitcoin::hashes::Hash;
 
 use ark::ServerVtxo;
+use ark::encode::ProtocolEncoding;
 use ark::test_util::VTXO_VECTORS;
 
 use server::database::{Db, SpendState};
@@ -492,7 +493,9 @@ async fn provide_signatures_unknown_vtxos_fail() {
 		).await?;
 		Ok(row.get::<_, Vec<u8>>(0))
 	}).await.unwrap();
-	assert!(blob.is_empty(), "stored bytes should still be empty after rollback");
+	assert_eq!(blob, ServerVtxo::from(known.clone()).to_bare().serialize(),
+		"stored bytes should still be the bare encoding after rollback",
+	);
 }
 
 /// Providing signatures for a vtxo that is no longer `unregistered` must not

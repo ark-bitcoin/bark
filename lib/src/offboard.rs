@@ -4,9 +4,13 @@
 //!
 //! ## Connector VTXOs
 //!
-//! We create internal "ServerVtxo"s for the connector outputs. Because they must not
-//! be swept before they are no longer required (i.e. when the input VTXO expires),
-//! we use the expiry height on the VTXO to indicate when they can be swept.
+//! Connector outputs are plain key-spend p2tr outputs for the server key, so
+//! the watchman can sweep their dust once they are no longer needed. We create
+//! internal "ServerVtxo"s for them. Because they must not be swept before they
+//! are no longer required (i.e. when the input VTXO expires) — spending a
+//! connector invalidates the forfeit tx it belongs to, forgoing the full input
+//! VTXO amount, not just the dust — we use the expiry height on the VTXO to
+//! indicate when they can be swept.
 //!
 
 use std::borrow::Borrow;
@@ -270,7 +274,6 @@ where
 	pub fn finish(
 		&self,
 		server_key: &Keypair,
-		connector_key: &Keypair,
 		server_pub_nonces: &[musig::PublicNonce],
 		server_sec_nonces: Vec<musig::SecretNonce>,
 		user_pub_nonces: &[musig::PublicNonce],
@@ -286,7 +289,7 @@ where
 		let connector_fanout_prev = OutPoint::new(offboard_txid, OFFBOARD_TX_CONNECTOR_VOUT as u32);
 		let connector_fanout_txout = self.offboard_tx.output.get(OFFBOARD_TX_CONNECTOR_VOUT)
 			.expect("invalid offboard tx");
-		let tweaked_connector_key = connector_key.for_keyspend_only(&*SECP);
+		let tweaked_connector_key = server_key.for_keyspend_only(&*SECP);
 
 		let mut ret = OffboardForfeitResult {
 			forfeit_txs: Vec::with_capacity(self.input_vtxos.len()),
@@ -322,7 +325,7 @@ where
 				);
 
 				// The connector fanout tx spends the offboard's connector output, a
-				// key-path-only p2tr for the connector key. Sign it; otherwise it would
+				// key-path-only p2tr for the server key. Sign it; otherwise it would
 				// be stored/broadcast with an empty witness and rejected by the mempool.
 				let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
 					0, &Prevouts::All(&[connector_fanout_txout]), TapSighashType::Default,
@@ -391,7 +394,9 @@ fn construct_forfeit_vtxo<G>(
 	ServerVtxo {
 		point: OutPoint::new(forfeit_tx.compute_txid(), 0),
 		policy: ServerVtxoPolicy::ServerOwned,
-		amount: input.amount,
+		// the forfeit tx output accumulates the connector dust on
+		// top of the input amount
+		amount: forfeit_tx.output[0].value,
 		anchor_point: input.anchor_point,
 		server_pubkey: input.server_pubkey,
 		expiry_height: input.expiry_height,
@@ -667,9 +672,9 @@ mod test {
 			..Default::default()
 		}.build();
 
-		let conn_key = Keypair::new(&*SECP, &mut bitcoin::secp256k1::rand::thread_rng());
+		// connectors pay a plain keyspend of the server key
 		let conn_spk = ScriptBuf::new_p2tr(
-			&*SECP, conn_key.public_key().x_only_public_key().0, None,
+			&*SECP, server_key.public_key().x_only_public_key().0, None,
 		);
 
 		let change_amt = Amount::ONE_BTC * 2;
@@ -714,7 +719,6 @@ mod test {
 
 		let result = ctx.finish(
 			&server_key,
-			&conn_key,
 			&server_pub_nonces,
 			server_sec_nonces,
 			&user_sigs.public_nonces,
@@ -740,6 +744,12 @@ mod test {
 				.expect(&format!("forfeit tx {} vtxo input invalid against real connector prevout", i));
 			crate::test_util::verify_tx(&real_prevouts, 1, forfeit_tx)
 				.expect(&format!("forfeit tx {} connector input invalid against real connector prevout", i));
+
+			// The recorded forfeit vtxo must describe the actual forfeit tx
+			// output, or the watchman can never sweep it.
+			assert_eq!(result.forfeit_vtxos[i].txout(), forfeit_tx.output[0],
+				"forfeit vtxo {} doesn't match its forfeit tx output", i,
+			);
 		}
 	}
 }
