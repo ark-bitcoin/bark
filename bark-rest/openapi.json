@@ -397,6 +397,58 @@
         }
       }
     },
+    "/api/v1/exits/presign": {
+      "post": {
+        "tags": [
+          "exits"
+        ],
+        "summary": "Presign emergency exit chains",
+        "description": "Signs, without broadcasting, the CPFP child of every transaction that still needs to be broadcast to unilaterally (emergency) exit the specified VTXOs, for as long as the wallet's confirmed on-chain funds last. The result is a self-contained broadcast plan meant for later execution by any independent party: broadcast all of a wave's `(exit, child)` packages together, wait for every one to confirm, then move to the next wave—each wave's children spend change confirmed by the previous wave. Exit transactions already in the mempool are listed in the first wave's `in_mempool`. Each exit's `status` reports whether its packages are `fully-signed` (`exited_in_wave` names the wave whose confirmation completes the exit), `partially-signed` (confirmed funds ran out mid-chain; `last_wave` holds the last signed package and the unfunded tail is listed under `unsigned`), or `unsigned`. How much more funding a partial result would need is not reported: adding funds changes which coins the next child selects and therefore what it costs. Use `GET /exits/fee` for the remaining broadcast cost. Presigning reserves no funds, so a later spend from the on-chain wallet can invalidate the remaining children. It does reveal the on-chain addresses the children pay their change to, so one wallet sync recognizes the whole chain once broadcast, and repeat calls against unchanged funds re-derive the same addresses.",
+        "operationId": "exit_presign",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExitPresignRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the presigned exit packages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignedExits"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A VTXO is unknown, non-standard, already exited, or already spent, or a parameter is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/exits/progress": {
       "post": {
         "tags": [
@@ -5096,6 +5148,30 @@
           }
         ]
       },
+      "ExitPresignRequest": {
+        "type": "object",
+        "description": "Request body for presigning emergency exit chains.",
+        "properties": {
+          "fee_rate_sat_per_vb": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The fee rate to sign the CPFP children at, in sat/vB (fractions allowed). When omitted,\nthe current `fast` rate is used."
+          },
+          "vtxos": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The IDs of the VTXOs to presign exit chains for, in the order they will be broadcast.\nWhen omitted, every spendable VTXO in the wallet is used."
+          }
+        }
+      },
       "ExitProcessingState": {
         "type": "object",
         "required": [
@@ -6859,6 +6935,188 @@
             "format": "int64",
             "description": "PPM (parts per million) fee rate to apply for this expiry period.",
             "minimum": 0
+          }
+        }
+      },
+      "PresignedExit": {
+        "type": "object",
+        "description": "The presigned broadcast work for one VTXO.",
+        "required": [
+          "vtxo_id",
+          "status",
+          "unsigned"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/PresignedExitStatus"
+          },
+          "unsigned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransactionInfo"
+            },
+            "description": "The remaining tail of this exit's chain that could not be funded, in broadcast order;\nits first transaction spends this exit's last signed one. Empty when fully signed."
+          },
+          "vtxo_id": {
+            "type": "string"
+          }
+        }
+      },
+      "PresignedExitChildInfo": {
+        "type": "object",
+        "description": "A signed CPFP child transaction and the fee it commits.",
+        "required": [
+          "txid",
+          "tx",
+          "fee_info"
+        ],
+        "properties": {
+          "fee_info": {
+            "$ref": "#/components/schemas/FeeInfo",
+            "description": "The exit transaction is zero-fee, so this is the fee of the whole package."
+          },
+          "tx": {
+            "type": "string"
+          },
+          "txid": {
+            "type": "string"
+          }
+        }
+      },
+      "PresignedExitPackage": {
+        "type": "object",
+        "description": "An `(exit, child)` transaction package, to be broadcast as one unit.",
+        "required": [
+          "vtxo_id",
+          "exit",
+          "child"
+        ],
+        "properties": {
+          "child": {
+            "$ref": "#/components/schemas/PresignedExitChildInfo",
+            "description": "The signed CPFP child paying for `exit`."
+          },
+          "exit": {
+            "$ref": "#/components/schemas/TransactionInfo",
+            "description": "The zero-fee exit transaction."
+          },
+          "vtxo_id": {
+            "type": "string",
+            "description": "The VTXO whose exit this package advances."
+          }
+        }
+      },
+      "PresignedExitStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Every package has a signed child; the exit's broadcast completes once wave\n`exited_in_wave` confirms (absent when the chain is already confirmed and there is\nnothing to broadcast). `fee_info` totals the children's fees over the combined weight\nof this exit's packages.",
+            "required": [
+              "fee_info",
+              "type"
+            ],
+            "properties": {
+              "exited_in_wave": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "fee_info": {
+                "$ref": "#/components/schemas/FeeInfo"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "fully-signed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Confirmed funds ran out mid-chain: wave `last_wave` holds this exit's last signed\npackage and `unsigned` continues right after it.",
+            "required": [
+              "last_wave",
+              "type"
+            ],
+            "properties": {
+              "last_wave": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "partially-signed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "No package could be funded.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unsigned"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "How much of a [PresignedExit]'s remaining broadcast work could be funded and signed."
+      },
+      "PresignedExits": {
+        "type": "object",
+        "description": "Presigned emergency-exit chains for a set of VTXOs: a wave-by-wave broadcast plan plus a\nper-VTXO summary.\n\nExecute the plan in wave order: broadcast all of a wave's packages together, then wait for\nevery one, and its `in_mempool` transactions, to confirm before the next wave — each\nwave's children spend change confirmed by the previous wave.",
+        "required": [
+          "exits",
+          "waves"
+        ],
+        "properties": {
+          "exits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresignedExit"
+            },
+            "description": "One entry per requested VTXO, in request order."
+          },
+          "waves": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresignedWave"
+            },
+            "description": "The broadcast plan. Confirmed transactions are omitted, relayed ones are listed in\n`in_mempool`, and a package shared by several exits appears once, under the first exit\nthat references it."
+          }
+        }
+      },
+      "PresignedWave": {
+        "type": "object",
+        "description": "One step of the broadcast plan; see [PresignedExits] for the rules.",
+        "required": [
+          "packages",
+          "in_mempool"
+        ],
+        "properties": {
+          "in_mempool": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransactionInfo"
+            },
+            "description": "Exit transactions already in the mempool; they confirm with this wave. Only the first\nwave has any."
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresignedExitPackage"
+            },
+            "description": "Packages funded independently of each other, broadcast together."
           }
         }
       },

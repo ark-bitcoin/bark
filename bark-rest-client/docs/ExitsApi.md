@@ -8,6 +8,7 @@ Method | HTTP request | Description
 [**exit_cancel**](ExitsApi.md#exit_cancel) | **POST** /api/v1/exits/cancel/{vtxo_id} | Cancel an exit
 [**exit_claim_all**](ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | Claim all exited VTXOs
 [**exit_claim_vtxos**](ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | Claim specific exited VTXOs
+[**exit_presign**](ExitsApi.md#exit_presign) | **POST** /api/v1/exits/presign | Presign emergency exit chains
 [**exit_progress**](ExitsApi.md#exit_progress) | **POST** /api/v1/exits/progress | Progress exits
 [**exit_start_all**](ExitsApi.md#exit_start_all) | **POST** /api/v1/exits/start/all | Start exit for all VTXOs
 [**exit_start_vtxos**](ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | Start exit for specific VTXOs
@@ -130,6 +131,36 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**models::ExitClaimResponse**](ExitClaimResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## exit_presign
+
+> models::PresignedExits exit_presign(exit_presign_request)
+Presign emergency exit chains
+
+Signs, without broadcasting, the CPFP child of every transaction that still needs to be broadcast to unilaterally (emergency) exit the specified VTXOs, for as long as the wallet's confirmed on-chain funds last. The result is a self-contained broadcast plan meant for later execution by any independent party: broadcast all of a wave's `(exit, child)` packages together, wait for every one to confirm, then move to the next wave—each wave's children spend change confirmed by the previous wave. Exit transactions already in the mempool are listed in the first wave's `in_mempool`. Each exit's `status` reports whether its packages are `fully-signed` (`exited_in_wave` names the wave whose confirmation completes the exit), `partially-signed` (confirmed funds ran out mid-chain; `last_wave` holds the last signed package and the unfunded tail is listed under `unsigned`), or `unsigned`. How much more funding a partial result would need is not reported: adding funds changes which coins the next child selects and therefore what it costs. Use `GET /exits/fee` for the remaining broadcast cost. Presigning reserves no funds, so a later spend from the on-chain wallet can invalidate the remaining children. It does reveal the on-chain addresses the children pay their change to, so one wallet sync recognizes the whole chain once broadcast, and repeat calls against unchanged funds re-derive the same addresses.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**exit_presign_request** | [**ExitPresignRequest**](ExitPresignRequest.md) |  | [required] |
+
+### Return type
+
+[**models::PresignedExits**](PresignedExits.md)
 
 ### Authorization
 

@@ -52,6 +52,15 @@ pub enum ExitClaimVtxosError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`exit_presign`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExitPresignError {
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`exit_progress`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -301,6 +310,47 @@ pub async fn exit_claim_vtxos(configuration: &configuration::Configuration, exit
     } else {
         let content = resp.text().await?;
         let entity: Option<ExitClaimVtxosError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Signs, without broadcasting, the CPFP child of every transaction that still needs to be broadcast to unilaterally (emergency) exit the specified VTXOs, for as long as the wallet's confirmed on-chain funds last. The result is a self-contained broadcast plan meant for later execution by any independent party: broadcast all of a wave's `(exit, child)` packages together, wait for every one to confirm, then move to the next wave—each wave's children spend change confirmed by the previous wave. Exit transactions already in the mempool are listed in the first wave's `in_mempool`. Each exit's `status` reports whether its packages are `fully-signed` (`exited_in_wave` names the wave whose confirmation completes the exit), `partially-signed` (confirmed funds ran out mid-chain; `last_wave` holds the last signed package and the unfunded tail is listed under `unsigned`), or `unsigned`. How much more funding a partial result would need is not reported: adding funds changes which coins the next child selects and therefore what it costs. Use `GET /exits/fee` for the remaining broadcast cost. Presigning reserves no funds, so a later spend from the on-chain wallet can invalidate the remaining children. It does reveal the on-chain addresses the children pay their change to, so one wallet sync recognizes the whole chain once broadcast, and repeat calls against unchanged funds re-derive the same addresses.
+pub async fn exit_presign(configuration: &configuration::Configuration, exit_presign_request: models::ExitPresignRequest) -> Result<models::PresignedExits, Error<ExitPresignError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_exit_presign_request = exit_presign_request;
+
+    let uri_str = format!("{}/api/v1/exits/presign", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_exit_presign_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::PresignedExits`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::PresignedExits`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<ExitPresignError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }
