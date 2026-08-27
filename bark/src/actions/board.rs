@@ -416,22 +416,32 @@ enum FundingConflict {
 /// whether its inputs are still spendable: a `missing or spent inputs` rejection
 /// means a confirmed conflict consumed one of them and the board is dead. Any
 /// other rejection (a competing unconfirmed spend, an RBF fee shortfall, or a
-/// transient node error) leaves the outcome open, so we park.
+/// transient node error) leaves the outcome open, so we park. A chain source
+/// error on either probe is likewise left open rather than propagated: it says
+/// nothing about the funding tx itself.
 async fn funding_conflict(wallet: &Wallet, board: &Board) -> anyhow::Result<FundingConflict> {
 	for input in &board.funding()?.input {
 		let parent = input.previous_output.txid;
-		match wallet.inner.chain.tx_status(parent).await? {
+		match wallet.inner.chain.tx_status(parent).await {
 			// The caller only reaches here while the funding tx itself is absent
 			// from chain and mempool, so a confirmed spend of one of its inputs
 			// belongs to another transaction and this board can never confirm.
-			TxStatus::Confirmed(_) => {
-				if wallet.inner.chain.outpoint_spent_confirmed(input.previous_output).await? {
-					return Ok(FundingConflict::Fatal);
+			Ok(TxStatus::Confirmed(_)) => {
+				match wallet.inner.chain.outpoint_spent_confirmed(input.previous_output).await {
+					Ok(true) => return Ok(FundingConflict::Fatal),
+					Ok(false) => {},
+					Err(e) => return Ok(FundingConflict::Undecided(format!(
+						"failed to check funding input parent tx {} for a confirmed spend: {:#}",
+						parent, e,
+					))),
 				}
 			},
-			TxStatus::Mempool => {},
-			TxStatus::NotFound => return Ok(FundingConflict::Undecided(format!(
+			Ok(TxStatus::Mempool) => {},
+			Ok(TxStatus::NotFound) => return Ok(FundingConflict::Undecided(format!(
 				"funding input parent tx {} not yet visible on chain", parent,
+			))),
+			Err(e) => return Ok(FundingConflict::Undecided(format!(
+				"failed to fetch status of funding input parent tx {}: {:#}", parent, e,
 			))),
 		}
 	}
