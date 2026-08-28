@@ -6,6 +6,7 @@ use std::time::Duration;
 use bark::{Wallet, WalletNotification};
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
+use parking_lot::Mutex;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -99,7 +100,8 @@ struct NotificationManagerInner {
 	/// Child of the server-wide token, created in [Self::start]: a server
 	/// shutdown reaches this manager, but cancelling it stops the manager alone.
 	shutdown: CancellationToken,
-	_jh: tokio::task::JoinHandle<()>,
+	/// Taken by [NotificationManager::stop_wait] to await the task.
+	jh: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 #[derive(Clone)]
@@ -119,13 +121,25 @@ impl NotificationManager {
 		Self(Arc::new(NotificationManagerInner {
 			buffer,
 			shutdown,
-			_jh: jh,
+			jh: Mutex::new(Some(jh)),
 		}))
 	}
 
 	/// Stop the process task, waking any pending [Self::wait_notifications].
 	pub(crate) fn stop(&self) {
 		self.0.shutdown.cancel();
+	}
+
+	/// Stop the process task and wait until it has finished.
+	pub(crate) async fn stop_wait(&self) -> anyhow::Result<()> {
+		self.stop();
+
+		let jh = { self.0.jh.lock().take() };
+
+		if let Some(jh) = jh {
+			jh.await?;
+		}
+		Ok(())
 	}
 
 	pub(crate) async fn wait_notifications(&self, since: Option<DateTime<Utc>>) -> Option<(DateTime<Utc>, Vec<WalletNotification>)> {

@@ -168,12 +168,17 @@ pub async fn wallet_exists(State(state): State<ServerState>) -> HandlerResult<Js
 #[utoipa::path(
 	delete,
 	path = "",
+	summary = "Delete the wallet",
 	request_body = bark_json::web::WalletDeleteRequest,
 	responses(
 		(status = 200, description = "Wallet deletion status", body = bark_json::web::WalletDeleteResponse),
 		(status = 400, description = "Invalid request", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
+	description = "Stops the wallet and removes every wallet file from the datadir; barkd's \
+		own files survive. Requires `dangerous: true` and, while a wallet is loaded, the \
+		wallet's fingerprint. With no wallet loaded, the call still removes any leftover \
+		wallet files. A retry completes an interrupted deletion.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -182,30 +187,45 @@ pub async fn wallet_delete(State(state): State<ServerState>, Json(req): Json<bar
 		badarg!("deletion not confirmed: set dangerous=true");
 	}
 
-	{
-		let wallet = state.wallet.read();
-		let Some(w) = wallet.as_ref() else {
-			return Ok(Json(bark_json::web::WalletDeleteResponse {
-				deleted: false,
-				message: "No wallet to delete".to_string(),
-			}));
-		};
-		if w.fingerprint().to_string() != req.fingerprint {
-			badarg!("Fingerprint does not match the loaded wallet");
-		}
-	}
-
 	let Some(hook) = state.on_wallet_delete.as_ref() else {
 		badarg!("No wallet deletion hook configured");
 	};
-	hook().await.context("Couldn't delete wallet")?;
-	let wallet = state.wallet.write().take();
+
+	let _lifecycle = state.wallet_lifecycle.lock().await;
+
+	// Take the wallet out of the state before the wipe, so no new request
+	// reaches it, and stop its daemon: a daemon task that runs during the
+	// wipe can re-create wallet files.
+	let wallet = {
+		let mut guard = state.wallet.write();
+		if let Some(w) = guard.as_ref() {
+			if w.fingerprint().to_string() != req.fingerprint {
+				badarg!("Fingerprint does not match the loaded wallet");
+			}
+		}
+		guard.take()
+	};
+	let fingerprint = wallet.as_ref().map(|w| w.fingerprint().to_string());
+	let loaded = wallet.is_some();
 	if let Some(wallet) = wallet {
-		wallet.stop();
+		if let Err(e) = wallet.stop_wait().await {
+			log::warn!("Error stopping wallet tasks during delete: {:#}", e);
+		}
 	}
+
+	// The wipe also runs when no wallet is loaded: it completes a delete
+	// that failed midway and removes wallet files a failed create left.
+	hook().await.context("Couldn't delete wallet")?;
+
+	let message = if loaded {
+		"Wallet deleted"
+	} else {
+		"No wallet was loaded; wiped any leftover wallet files"
+	};
 	Ok(Json(bark_json::web::WalletDeleteResponse {
-		deleted: true,
-		message: "Wallet deleted".to_string(),
+		deleted: loaded,
+		fingerprint,
+		message: message.to_string(),
 	}))
 }
 
@@ -228,6 +248,8 @@ pub async fn create_wallet(
 	State(state): State<ServerState>,
 	Json(req): Json<bark_json::web::CreateWalletRequest>,
 ) -> HandlerResult<Json<bark_json::web::CreateWalletResponse>> {
+	let _lifecycle = state.wallet_lifecycle.lock().await;
+
 	if state.wallet.read().is_some() {
 		badarg!("Wallet already set");
 	}

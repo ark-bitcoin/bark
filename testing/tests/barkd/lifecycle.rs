@@ -70,3 +70,55 @@ async fn wallet_delete_keeps_daemon_files() {
 		.expect("the stored token must still authenticate");
 	assert_eq!(exists.fingerprint, None, "the wallet should be gone");
 }
+
+/// The same barkd process accepts a new wallet after a delete, even when a
+/// create fails in between.
+///
+/// A delete leaves no config.toml, so a create that carries no configuration
+/// fails. Such a failure must keep the running barkd's lock and auth token:
+/// without them, barkd cannot serve the datadir until it restarts.
+#[tokio::test]
+async fn wallet_create_after_delete_needs_no_restart() {
+	let ctx = TestContext::new("barkd/wallet_create_after_delete_needs_no_restart").await;
+
+	let srv = ctx.captaind("server").create().await;
+	// The daemon writes to the wallet db once per interval. A short one makes
+	// a task that outlives the delete write into the wiped datadir.
+	let barkd = ctx.barkd("barkd1", &srv)
+		.cfg(|cfg| cfg.daemon_sync_interval_secs = 1)
+		.create().await;
+
+	let datadir = barkd.datadir();
+	let config = barkd.client_config();
+	let fingerprint = wallet_api::wallet_exists(&config).await.unwrap()
+		.fingerprint.expect("a wallet should be loaded");
+	wallet_api::wallet_delete(&config, WalletDeleteRequest {
+		dangerous: true,
+		fingerprint: fingerprint.clone(),
+	}).await.expect("wallet delete should succeed");
+
+	// No daemon task may bring the wallet db back after the wipe.
+	tokio::time::sleep(Duration::from_secs(3)).await;
+	assert!(!datadir.join("db.sqlite").exists(), "the wallet db must stay gone");
+
+	// The delete took config.toml with the wallet, so a create without
+	// configuration fails.
+	barkd.create_wallet().await
+		.expect_err("a create without configuration should fail");
+
+	assert!(datadir.join("barkd.lock").exists(), "a failed create must keep the datadir lock");
+	assert!(datadir.join("auth_token").exists(), "a failed create must keep the auth token");
+	barkd.ping().await;
+
+	barkd.create_wallet_from_args().await
+		.expect("barkd should accept a new wallet without a restart");
+
+	let new_fingerprint = wallet_api::wallet_exists(&config).await
+		.expect("the new wallet should be queryable")
+		.fingerprint.expect("the new wallet should be loaded");
+	assert_ne!(new_fingerprint, fingerprint, "the new wallet must have its own seed");
+
+	// The new wallet reaches both its database and the Ark server.
+	barkd.ark_address().await;
+	assert!(barkd.connected().await.connected, "the new wallet should reach the Ark server");
+}

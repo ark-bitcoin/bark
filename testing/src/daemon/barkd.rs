@@ -18,9 +18,10 @@ use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_json::notifications::WalletNotification;
 use bark_json::primitives::{UtxoInfo, WalletTxInfo, WalletVtxoInfo};
 use bark_json::web::{
-	BarkNetwork, Bip321UriRequest, Bip321UriResponse, ConnectedResponse, CreateWalletRequest,
-	EncodedVtxoResponse, ExitStartResponse, FeeEstimateResponse, MailboxSyncResponse,
-	OnchainFeeRatesResponse, PendingRoundInfo, TipResponse,
+	BarkNetwork, Bip321UriRequest, Bip321UriResponse, BitcoindAuth, ChainSourceConfig,
+	ConnectedResponse, CreateWalletRequest, EncodedVtxoResponse, ExitStartResponse,
+	FeeEstimateResponse, MailboxSyncResponse, OnchainFeeRatesResponse, PendingRoundInfo,
+	TipResponse,
 };
 use bark_rest::auth::AuthToken;
 use bark_rest_client::apis::configuration::Configuration;
@@ -53,9 +54,7 @@ pub enum BarkdChainSource {
 pub struct BarkdHelper {
 	name: String,
 	datadir: PathBuf,
-	#[allow(dead_code)]
 	ark_server_url: String,
-	#[allow(dead_code)]
 	chain_source: BarkdChainSource,
 	/// Optional dedicated bitcoind kept alive for the duration of the test.
 	_bitcoind: Option<Bitcoind>,
@@ -171,6 +170,37 @@ impl Barkd {
 			mnemonic,
 			network: BarkNetwork::Regtest,
 			birthday_height,
+			force: false,
+		};
+
+		let config = self.client_config();
+		wallet_api::create_wallet(&config, req).await?;
+		Ok(())
+	}
+
+	/// Create the barkd wallet from explicit Ark server and chain source
+	/// arguments instead of the datadir config.toml.
+	///
+	/// Needed after a wallet delete, which wipes the config file.
+	pub async fn create_wallet_from_args(&self) -> anyhow::Result<()> {
+		let chain_source = match &self.inner.chain_source {
+			BarkdChainSource::Esplora(url) => ChainSourceConfig::Esplora { url: url.clone() },
+			BarkdChainSource::Bitcoind { url, cookie } => ChainSourceConfig::Bitcoind {
+				bitcoind: url.clone(),
+				bitcoind_auth: BitcoindAuth::Cookie {
+					cookie: cookie.to_str().expect("non-UTF-8 cookie path").to_string(),
+				},
+			},
+		};
+
+		#[allow(deprecated)]
+		let req = CreateWalletRequest {
+			ark_server: Some(self.inner.ark_server_url.clone()),
+			ark_server_access_token: None,
+			chain_source: Some(chain_source),
+			mnemonic: None,
+			network: BarkNetwork::Regtest,
+			birthday_height: None,
 			force: false,
 		};
 

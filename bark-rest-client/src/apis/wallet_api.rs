@@ -1278,6 +1278,7 @@ pub async fn vtxos(configuration: &configuration::Configuration, all: Option<boo
     }
 }
 
+/// Stops the wallet and removes every wallet file from the datadir; barkd's own files survive. Requires `dangerous: true` and, while a wallet is loaded, the wallet's fingerprint. With no wallet loaded, the call still removes any leftover wallet files. A retry completes an interrupted deletion.
 pub async fn wallet_delete(configuration: &configuration::Configuration, wallet_delete_request: models::WalletDeleteRequest) -> Result<models::WalletDeleteResponse, Error<WalletDeleteError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_wallet_delete_request = wallet_delete_request;

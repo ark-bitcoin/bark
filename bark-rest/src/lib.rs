@@ -151,6 +151,15 @@ impl ServerWallet {
 		self.notification_mngr.stop();
 		self.wallet.stop_daemon();
 	}
+
+	/// Stop the wallet's background tasks and wait until they have finished.
+	pub async fn stop_wait(&self) -> anyhow::Result<()> {
+		let notification_res = self.notification_mngr.stop_wait().await;
+		let wallet_res = self.wallet.stop_daemon_wait().await;
+
+		notification_res?;
+		wallet_res
+	}
 }
 
 impl std::ops::Deref for ServerWallet {
@@ -179,6 +188,14 @@ pub struct ServerState {
 	/// A hook to be called to retrieve the wallet's mnemonic phrase.
 	/// When `None`, the mnemonic endpoint responds with 404.
 	on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
+
+	/// Serializes wallet creation and deletion.
+	///
+	/// A delete takes the wallet out of [Self::wallet] before it stops the
+	/// background tasks and wipes the files. Without this lock a concurrent
+	/// create would see the empty state and build a wallet whose files the
+	/// wipe then removes.
+	wallet_lifecycle: Arc<tokio::sync::Mutex<()>>,
 
 	/// A map of websocket tickets to their expiration time
 	///
@@ -253,6 +270,7 @@ impl ServerStateBuilder {
 			on_wallet_create: self.on_wallet_create,
 			on_wallet_delete: self.on_wallet_delete,
 			on_get_mnemonic: self.on_get_mnemonic,
+			wallet_lifecycle: Arc::new(tokio::sync::Mutex::new(())),
 			websocket_tickets: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
 		}
 	}

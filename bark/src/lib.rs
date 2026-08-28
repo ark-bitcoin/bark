@@ -2295,6 +2295,16 @@ impl Wallet {
 		}
 	}
 
+	/// Stops the daemon for the wallet if it is running and waits until its
+	/// tasks have finished.
+	pub async fn stop_daemon_wait(&self) -> anyhow::Result<()> {
+		let handle = self.inner.daemon.lock().take();
+		if let Some(handle) = handle {
+			handle.stop_wait().await?;
+		}
+		Ok(())
+	}
+
 	/// Posts the IDs of all non-spent (spendable, locked and exited) VTXOs
 	/// to the server's recovery mailbox and re-registers their fully-signed
 	/// transaction chains, so a wallet recovering from seed can rebuild

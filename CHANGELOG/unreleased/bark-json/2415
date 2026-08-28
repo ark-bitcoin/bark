@@ -1,0 +1,4 @@
+- Add `fingerprint` to `WalletDeleteResponse`
+  Carries the fingerprint of the deleted wallet; `null` when no wallet was
+  loaded.
+  [#2415](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2415)
