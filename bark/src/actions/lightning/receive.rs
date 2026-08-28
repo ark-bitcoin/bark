@@ -25,7 +25,9 @@ use server_rpc::protos;
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 
 use crate::{Config, Wallet};
-use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId, park_with_backoff};
+use crate::actions::{
+	Advance, AdvanceError, BASE_RETRY_BACKOFF, WalletAction, WalletActionId, park_with_backoff,
+};
 use crate::arkoor::{DeliveryOutcome, post_arkoor_to_mailboxes};
 use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
@@ -141,7 +143,19 @@ impl WalletAction for LightningReceive {
 					Ok(Some(delivery)) => Progress::Delivering(delivery),
 					Err(e) => {
 						if preimage_revealed {
-							Progress::PreimageRevealed(htlcs)
+							// Preimage is out but a post-reveal step failed. Park
+							// past the point of no return (PreimageRevealed never
+							// abandons) and retry the idempotent claim later.
+							warn!("lightning receive {} failed after revealing preimage, \
+								retrying claim: {:#}", self.payment_hash, e);
+							return Ok(Advance::Park {
+								state: LightningReceive {
+									progress: Progress::PreimageRevealed(htlcs),
+									..self
+								},
+								wake_after: Some(BASE_RETRY_BACKOFF),
+								error: None,
+							});
 						} else {
 							return Err(e);
 						}
