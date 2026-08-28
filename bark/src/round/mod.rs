@@ -1444,7 +1444,9 @@ async fn persist_round_failure(
 	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
 	debug!("Attempting to persist the failure of a round with the movement ID {:?}", movement_id);
-	let unlock_result = wallet.unlock_vtxos(&participation.inputs).await;
+	let unlock_result = wallet.unlock_vtxos(
+		&participation.inputs, movement_id.map(|m| m.into()),
+	).await;
 	let finish_result = if let Some(movement_id) = movement_id {
 		wallet.inner.movements.finish_movement(movement_id, MovementStatus::Failed).await
 	} else {
@@ -1586,7 +1588,7 @@ impl Wallet {
 				Ok(state)
 			},
 			Err(e) => {
-				self.unlock_vtxos(&input_vtxos).await
+				self.unlock_vtxos(&input_vtxos, movement_id.map(|m| m.into())).await
 					.context("failed to unlock input VTXOs")?;
 				if let Some(mut m) = movement {
 					m.fail().await.context("failed to mark movement as failed")?;
@@ -1750,7 +1752,7 @@ impl Wallet {
 				Ok(state)
 			},
 			Err(e) => {
-				self.unlock_vtxos(&input_ids).await
+				self.unlock_vtxos(&input_ids, movement_id.map(|m| m.into())).await
 					.context("error unlocking input VTXOs")?;
 				if let Some(mut m) = movement {
 					m.fail().await.context("error marking movement as failed")?;

@@ -100,10 +100,10 @@ async fn unlock_returns_vtxo_to_spendable() {
 	let vtxo_id = vtxo.vtxo.id();
 
 	let holder = VtxoLockHolder::Movement { id: MovementId::new(1) };
-	wallet.lock_vtxos(vec![vtxo_id], Some(holder)).await
+	wallet.lock_vtxos(vec![vtxo_id], Some(holder.clone())).await
 		.expect("lock should succeed");
 
-	wallet.unlock_vtxos(vec![vtxo_id]).await
+	wallet.unlock_vtxos(vec![vtxo_id], Some(holder)).await
 		.expect("unlock should succeed");
 
 	let state = wallet.get_vtxo_by_id(vtxo_id).await.expect("get vtxo").state;
@@ -147,11 +147,12 @@ async fn can_only_lock_spendable_vtxo() {
 		.expect_err("locking a non-existent vtxo should fail");
 }
 
-/// `unlock_vtxos` must reject Spent — unlocking a consumed vtxo back
-/// to Spendable would let the wallet double-spend it.
+/// `unlock_vtxos` must never revive a Spent vtxo. Its holder-scoped
+/// release only touches a matching `Locked { holder }`, so a Spent vtxo
+/// is a silent no-op no matter what holder we pass.
 #[tokio::test]
-async fn cannot_unlock_spent_vtxo() {
-	let ctx = TestContext::new("bark_sdk/cannot_unlock_spent_vtxo").await;
+async fn unlock_leaves_spent_vtxo_alone() {
+	let ctx = TestContext::new("bark_sdk/unlock_leaves_spent_vtxo_alone").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
 	let wallet = ctx.bark_sdk("bark", &srv)
@@ -165,13 +166,14 @@ async fn cannot_unlock_spent_vtxo() {
 	wallet.mark_vtxos_as_spent(vec![vtxo_id]).await
 		.expect("marking the vtxo as spent should succeed");
 
-	wallet.unlock_vtxos(vec![vtxo_id]).await
-		.expect_err("unlocking a spent vtxo should fail");
+	let holder = VtxoLockHolder::Movement { id: MovementId::new(1) };
+	wallet.unlock_vtxos(vec![vtxo_id], Some(holder)).await
+		.expect("unlock is a no-op when the state doesn't match");
 
 	let state = wallet.get_vtxo_by_id(vtxo_id).await.expect("get vtxo").state;
 	assert!(
 		matches!(state, VtxoState::Spent),
-		"vtxo should remain Spent after the failed unlock, was {:?}", state,
+		"vtxo must remain Spent after the no-op unlock, was {:?}", state,
 	);
 }
 
