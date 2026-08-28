@@ -39,10 +39,9 @@ serde_json = { workspace = true, optional = true }
 
 js-sys = { version = "0.3.85", optional = true }
 
-# using PR branch for musig2 code
 [dependencies.secp256k1-musig]
 package = "secp256k1"
-version = "0.32.0-beta.2"
+version = "0.33.0"
 features = [ "serde" ]
 
 [dev-dependencies]

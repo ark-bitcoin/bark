@@ -290,11 +290,11 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			funding_taproot.tap_tweak().to_byte_array(),
 		);
 		//TODO(stevenroose) consider trying to move this to musig module
-		let (sec_nonce, pub_nonce) = agg.nonce_gen(
-			musig::SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
+		let (sec_nonce, pub_nonce) = agg.nonce_gen_with_uniform_randomness(
+			musig::SessionSecretRand::assume_uniformly_random(rand::random()),
 			musig::pubkey_to(self.user_pubkey),
 			&exit_sighash.to_byte_array(),
-			None,
+			rand::random(),
 		);
 
 		self.user_pub_nonce = Some(pub_nonce);

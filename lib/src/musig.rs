@@ -77,7 +77,7 @@ pub fn combine_keys(keys: impl IntoIterator<Item = PublicKey>) -> PublicKey {
 pub fn nonce_pair(key: &Keypair) -> (SecretNonce, PublicNonce) {
 	let kp = keypair_to(key);
 	secpm::musig::new_nonce_pair(
-		SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
+		SessionSecretRand::assume_unique_per_nonce_gen(rand::random(), &kp.secret_key()),
 		None,
 		Some(kp.secret_key()),
 		kp.public_key(),
@@ -89,7 +89,7 @@ pub fn nonce_pair(key: &Keypair) -> (SecretNonce, PublicNonce) {
 pub fn nonce_pair_with_msg(key: &Keypair, msg: &[u8; 32]) -> (SecretNonce, PublicNonce) {
 	let kp = keypair_to(key);
 	secpm::musig::new_nonce_pair(
-		SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
+		SessionSecretRand::assume_unique_per_nonce_gen(rand::random(), &kp.secret_key()),
 		None,
 		Some(kp.secret_key()),
 		kp.public_key(),
@@ -165,10 +165,11 @@ pub fn deterministic_partial_sign(
 		key_agg(their_pubkeys.into_iter().chain(Some(my_key.public_key())))
 	};
 
+	let my_sec_key = seckey_to(my_key.secret_key());
 	let (sec_nonce, pub_nonce) = secpm::musig::new_nonce_pair(
-		SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
+		SessionSecretRand::assume_unique_per_nonce_gen(rand::random(), &my_sec_key),
 		Some(&agg),
-		Some(seckey_to(my_key.secret_key())),
+		Some(my_sec_key),
 		pubkey_to(my_key.public_key()),
 		Some(&msg),
 		Some(rand::random()),
