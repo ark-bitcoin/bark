@@ -29,7 +29,7 @@ pub fn seckey_to(sk: SecretKey) -> secpm::SecretKey {
 }
 
 pub fn keypair_to(kp: &Keypair) -> secpm::Keypair {
-	secpm::Keypair::from_seckey_byte_array(kp.secret_bytes()).unwrap()
+	secpm::Keypair::from_secret_bytes(kp.secret_bytes()).unwrap()
 }
 
 pub fn keypair_from(kp: &secpm::Keypair) -> Keypair {
