@@ -40,7 +40,7 @@ use ark::{musig, ProtocolEncoding, VtxoPolicy, VtxoId, fees};
 use ark::arkoor::ArkoorDestination;
 use ark::attestations::OffboardRequestAttestation;
 use ark::fees::VtxoFeeInfo;
-use ark::offboard::{OffboardForfeitContext, OffboardRequest};
+use ark::offboard::{OffboardForfeitContext, OffboardForfeitError, OffboardRequest};
 use ark::vtxo::VtxoRef;
 use bitcoin_ext::{BlockHeight, TxStatus};
 use server_rpc::{protos, TryFromBytes};
@@ -698,7 +698,8 @@ async fn prepare_offboard(
 			prep_resp.offboard_tx.as_hex(),
 		))?;
 	let offboard_txid = unsigned_tx.compute_txid();
-	let ctx = OffboardForfeitContext::new(&vtxos, &unsigned_tx);
+	let ctx = OffboardForfeitContext::new(&vtxos, &unsigned_tx)
+		.context("no offboard inputs")?;
 	ctx.validate_offboard_tx(&req).context("received invalid offboard tx from server")?;
 	info!("Received unsigned offboard tx {} from server", offboard_txid);
 
@@ -708,6 +709,15 @@ async fn prepare_offboard(
 		musig::PublicNonce::from_bytes(&n)
 			.context("received invalid public cosign nonce from server")
 	}).collect::<anyhow::Result<Vec<_>>>()?;
+
+	// Signing needs one nonce per input, so a response carrying any other
+	// number is unusable. Reject it here, before the checkpoint below makes
+	// it durable: a persisted mismatch would fail this action on every
+	// re-drive, and taking the sync loop's offboard step down with it stops
+	// the steps that run after it from ever being reached.
+	OffboardForfeitError::check_count(
+		"forfeit cosign nonces", vtxos.len(), forfeit_cosign_nonces.len(),
+	).context("invalid prepare_offboard response from server")?;
 
 	// We can safely ignore the change in the movement because `SendOnchain` has already had a
 	// movement created for it.
@@ -753,8 +763,14 @@ async fn finish_offboard(
 	for v in &full_inputs {
 		vtxo_keys.push(wallet.get_vtxo_key(v).await?);
 	}
-	let ctx = OffboardForfeitContext::new(&full_inputs, &offboard_tx);
-	let sigs = ctx.user_sign_forfeits(&vtxo_keys, &server_forfeit_cosign_nonces);
+	let ctx = OffboardForfeitContext::new(&full_inputs, &offboard_tx)
+		.context("no offboard inputs")?;
+	// `prepare_offboard` refuses to checkpoint a mismatched nonce count, so
+	// only a checkpoint written by a bark that predates that check can land
+	// here. Fail the drive rather than panic: a panic would take down the
+	// sync task and every step queued behind this one.
+	let sigs = ctx.user_sign_forfeits(&vtxo_keys, &server_forfeit_cosign_nonces)
+		.context("stored offboard has an unusable set of forfeit cosign nonces")?;
 
 	let offboard_txid = offboard_tx.compute_txid();
 	let finish_resp = srv.client.finish_offboard(protos::FinishOffboardRequest {
