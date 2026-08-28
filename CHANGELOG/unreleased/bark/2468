@@ -1,0 +1,11 @@
+- Refuse to send to an Ark address bark cannot deliver to
+  An address whose only delivery mechanisms are ones this bark doesn't
+  support is now rejected up front. Such a send used to be cosigned and
+  registered, then retry delivery forever with the selected VTXOs locked;
+  it now fails immediately and leaves the funds spendable.
+  An address that lists no delivery mechanism at all is the receiver's
+  explicit choice: the send now succeeds without attempting any delivery,
+  where it used to be rejected.
+  [#2468](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2468)
+  - Removed `ArkoorAddressError::NoDeliveryMechanism`; an address without
+    delivery mechanisms is valid now.

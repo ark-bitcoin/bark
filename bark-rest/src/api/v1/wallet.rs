@@ -701,6 +701,8 @@ pub async fn send(
 		Ok(ArkAddressType::Bark(addr)) => {
 			let amount = amount.context("amount missing")?;
 
+			wallet.validate_arkoor_address(&addr).await
+				.badarg("invalid arkoor address")?;
 			log::info!("Sending arkoor payment of {} to address {}", amount, addr);
 			wallet.send_arkoor_payment(&addr, amount).await?;
 			return Ok(axum::Json(bark_json::web::SendResponse {

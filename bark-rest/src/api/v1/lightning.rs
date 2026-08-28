@@ -7,7 +7,6 @@ use bitcoin::Amount;
 use anyhow::Context;
 use utoipa::OpenApi;
 
-use ark::address::VtxoDelivery;
 use ark::lightning::Offer;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
@@ -104,12 +103,7 @@ pub async fn generate_invoice_for_address(
 	let address = ark::Address::from_str(&body.address)
 		.badarg("address is not a valid Ark address")?;
 	wallet.validate_arkoor_address(&address).await
-		.badarg("address is not valid for this wallet")?;
-	if !address.delivery().iter()
-		.any(|d| matches!(d, VtxoDelivery::ServerMailbox { .. }))
-	{
-		badarg!("Ark address has no supported mailbox delivery mechanism");
-	}
+		.badarg("invalid arkoor address")?;
 	let invoice = wallet.bolt11_invoice_for_address(amount, address, body.description, None).await
 		.context("Failed to create invoice for address")?;
 

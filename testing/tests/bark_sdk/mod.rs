@@ -8,6 +8,7 @@
 //! that link against the current `bark-wallet` crate, so running them in
 //! that mode would silently test the current code under a "compat" label.
 
+mod arkoor;
 mod lightning;
 mod mailbox;
 mod offboard;
