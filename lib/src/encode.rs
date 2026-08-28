@@ -474,9 +474,9 @@ pub struct OversizedVectorError {
 impl OversizedVectorError {
 	/// Check if allocating the requested number of items is allowed
 	pub fn check<T>(requested: usize) -> Result<(), Self> {
-		assert_ne!(mem::size_of::<T>(), 0, "cannot serialize vectors of empty types");
-		let max = MAX_VEC_SIZE.checked_div(mem::size_of::<T>())
-			.expect("size_of always > 0 for instantiable T");
+		// If the division fails we don't allow any items.
+		// This should only happen if `mem::size_of::<T>() == 0
+		let max = MAX_VEC_SIZE.checked_div(mem::size_of::<T>()).unwrap_or(0);
 		if requested > max {
 			Err(Self { requested, max })
 		} else {
@@ -720,6 +720,34 @@ mod test {
 	use crate::vtxo::Full;
 
 	use super::*;
+
+
+	// Regression: a zero-sized `ProtocolEncoding` used to trip an
+	// `assert_ne!(size_of::<T>(), 0, ...)` inside `OversizedVectorError::check`,
+	// turning any one-byte length-prefixed vector into a panic on decode.
+	#[test]
+	fn length_prefixed_vector_rejects_zero_sized_elements_without_panicking() {
+		#[derive(Clone)]
+		struct EmptyEncoding;
+
+		impl ProtocolEncoding for EmptyEncoding {
+			fn encode<W: io::Write + ?Sized>(&self, _writer: &mut W) -> Result<(), io::Error> {
+				Ok(())
+			}
+
+			fn decode<R: io::Read + ?Sized>(
+				_reader: &mut R,
+			) -> Result<Self, ProtocolDecodingError> {
+				Ok(EmptyEncoding)
+			}
+		}
+
+		let result = EmptyEncoding::deserialize(&[1]);
+		assert!(
+			result.is_err(),
+			"zero-size element encoding was accepted"
+		);
+	}
 
 
 	#[test]
