@@ -69,6 +69,19 @@ use crate::telemetry;
 
 use super::payment_handler::PaymentAttemptHandler;
 
+/// Benign outcomes of a pay-invoice attempt that reflect a race with another
+/// actor rather than an internal server fault. `pay_invoice` recognizes these
+/// via downcast so it can log at `warn!` while keeping other failures at
+/// `error!`.
+#[derive(Debug, thiserror::Error)]
+enum PayInvoiceRace {
+	#[error("invoice is already being paid (subscription status: {0})")]
+	AlreadyBeingPaid(LightningHtlcSubscriptionStatus),
+
+	#[error("invoice was canceled and can no longer be paid")]
+	Canceled,
+}
+
 /// Handle for the cln manager process.
 pub struct LightningManager {
 	db: database::Db,
@@ -243,7 +256,15 @@ impl LightningManager {
 			&htlc_vtxo_ids,
 			user_fee,
 		).await {
-			error!("Error sending bolt11 payment for invoice: {:#}", e);
+			// The attempt is already recorded as failed and the client sees the
+			// failure via CheckLightningPayment. Benign races (someone else paid
+			// or canceled the invoice first) surface as PayInvoiceRace and
+			// deserve a warn; anything else is a genuine server fault.
+			if e.downcast_ref::<PayInvoiceRace>().is_some() {
+				warn!("Bolt11 payment attempt superseded for invoice: {:#}", e);
+			} else {
+				error!("Error sending bolt11 payment for invoice: {:#}", e);
+			}
 		} else {
 			debug!("Bolt11 invoice sent for payment");
 		}
@@ -392,12 +413,14 @@ impl LightningManager {
 			},
 			LightningHtlcSubscriptionStatus::Accepted |
 			LightningHtlcSubscriptionStatus::HtlcsReady |
-			LightningHtlcSubscriptionStatus::Settled |
+			LightningHtlcSubscriptionStatus::Settled => {
+				// Someone already paid the invoice (external LN acceptance or a
+				// prior initiate). Not an internal fault; the attempt is failed
+				// so the client can revoke its HTLC VTXOs.
+				return Err(PayInvoiceRace::AlreadyBeingPaid(subscription.status).into());
+			}
 			LightningHtlcSubscriptionStatus::Canceled => {
-				bail!("invoice is not in a valid state to pay: {}. expected: {}",
-					subscription.status,
-					LightningHtlcSubscriptionStatus::Created,
-				);
+				return Err(PayInvoiceRace::Canceled.into());
 			}
 		};
 
