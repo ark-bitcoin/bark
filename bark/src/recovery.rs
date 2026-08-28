@@ -232,7 +232,13 @@ impl Wallet {
 	/// mailbox checkpoint), taking ids from `RecoveryVtxoIds` and `Arkoor`
 	/// messages and de-duplicating them into a `HashSet`. Fetching the VTXOs,
 	/// validating them, resolving ownership, and ordering are left to the caller.
-	async fn read_mailbox_recovery_vtxo_ids(&self) -> anyhow::Result<(HashSet<VtxoId>, u64)> {
+	///
+	/// The internal paging checkpoint is discarded: the server allocates
+	/// checkpoints globally across all mailboxes, so persisting this cursor
+	/// into the regular mailbox's checkpoint field would silently skip
+	/// unrelated events (e.g. incoming Lightning notifications) on the next
+	/// regular sync.
+	async fn read_mailbox_recovery_vtxo_ids(&self) -> anyhow::Result<HashSet<VtxoId>> {
 		let (mut srv, _) = self.require_server().await?;
 
 		// Drain the whole mailbox into a candidate set. The mailbox isn't
@@ -296,7 +302,7 @@ impl Wallet {
 			}
 		}
 
-		Ok((ids, checkpoint))
+		Ok(ids)
 	}
 
 	/// Fetch the full [`Vtxo<Full>`] for `id` from the server.
@@ -538,7 +544,7 @@ impl Wallet {
 		let mut report = RecoveryReport::default();
 
 		// Read all owned vtxos, de-duplicated
-		let (ids, checkpoint) = self.read_mailbox_recovery_vtxo_ids().await?;
+		let ids = self.read_mailbox_recovery_vtxo_ids().await?;
 		debug!("Found {} distinct vtxo ids in the recovery mailbox", ids.len());
 
 		self.inner_recover_vtxos(&mut report, ids).await?;
@@ -581,9 +587,6 @@ impl Wallet {
 				report.skipped.len(), report.failed,
 			);
 		}
-
-		// We store the last checkpoint we processed so we can resume from there next time.
-		self.inner.db.store_mailbox_checkpoint(checkpoint).await?;
 
 		Ok(report)
 	}

@@ -461,6 +461,7 @@ pub struct BarkSdkBuilder<'a> {
 	fund_amount: Option<Amount>,
 	board_amounts: Vec<Amount>,
 	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
+	mnemonic: Option<bip39::Mnemonic>,
 }
 
 impl<'a> BarkSdkBuilder<'a> {
@@ -476,7 +477,15 @@ impl<'a> BarkSdkBuilder<'a> {
 			fund_amount: None,
 			board_amounts: Vec::new(),
 			mod_cfg: None,
+			mnemonic: None,
 		}
+	}
+
+	/// Use the given BIP-39 mnemonic instead of generating a fresh one.
+	/// Lets a test recover into a new wallet from another wallet's seed.
+	pub fn mnemonic(mut self, mnemonic: bip39::Mnemonic) -> Self {
+		self.mnemonic = Some(mnemonic);
+		self
 	}
 
 	pub fn cfg(mut self, f: impl FnOnce(&mut bark::Config) + 'static) -> Self {
@@ -525,7 +534,11 @@ impl<'a> BarkSdkBuilder<'a> {
 			.with_context(|| format!("creating bark-sdk datadir at {}", datadir.display()))?;
 
 		let network = BarkNetwork::Regtest.as_bitcoin();
-		let mnemonic = bip39::Mnemonic::generate(12).context("mnemonic")?;
+		let mnemonic = if let Some(m) = self.mnemonic {
+			m
+		} else {
+			bip39::Mnemonic::generate(12).context("mnemonic")?
+		};
 		fs::write(datadir.join("mnemonic"), mnemonic.to_string()).await
 			.context("writing mnemonic file")?;
 		fs::write(
