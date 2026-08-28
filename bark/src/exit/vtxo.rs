@@ -172,7 +172,12 @@ impl ExitVtxo {
 				tx_manager,
 			};
 			// Attempt to move to the next state, which may or may not generate a new state
-			trace!("Progressing VTXO {} at height {}", self.id(), wallet.inner.chain.tip().await.unwrap());
+			if log::log_enabled!(log::Level::Trace) {
+				match wallet.inner.chain.tip().await {
+					Ok(h) => trace!("Progressing VTXO {} at height {}", self.id(), h),
+					Err(_) => trace!("Progressing VTXO {}", self.id()),
+				}
+			}
 			match self.state.clone().progress(&mut context).await {
 				Ok(new_state) => {
 					self.update_state_if_newer(new_state, &*wallet.inner.db).await?;
