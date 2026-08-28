@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -50,7 +51,7 @@ const NOTIFICATION_WAIT_REQUEST_TIMEOUT_SECONDS: u64 = 5;
 )]
 pub struct NotificationsApiDoc;
 
-pub fn router() -> Router<ServerState> {
+pub fn router() -> Router<Arc<ServerState>> {
 	Router::new()
 		.route("/ws/ticket", get(websocket_ticket))
 		.route("/ws", get(websocket_handshake))
@@ -73,12 +74,12 @@ pub fn router() -> Router<ServerState> {
 )]
 #[debug_handler]
 pub async fn websocket_ticket(
-	state: State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	req: Request<Body>,
 ) -> HandlerResult<Json<String>> {
-	authenticate_request(state.clone(), &req)?;
+	authenticate_request(&state, &req)?;
 
-	let mut write_lock = state.0.websocket_tickets.write().await;
+	let mut write_lock = state.websocket_tickets.write().await;
 
 	let req_time = Utc::now();
 
@@ -109,7 +110,7 @@ pub struct HandshakeParams {
 
 async fn websocket_handshake(
 	ws: WebSocketUpgrade,
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(params): Query<HandshakeParams>,
 ) -> HandlerResult<Response<Body>> {
 	if state.websocket_tickets.write().await.remove(&params.ticket).is_none() {
@@ -120,7 +121,7 @@ async fn websocket_handshake(
 }
 
 /// Handle a websocket connection and forward notifications
-async fn handle_socket(socket: WebSocket, state: ServerState) {
+async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
 	let (mut sender, mut receiver) = socket.split();
 
 	let wallet = match state.require_wallet() {
@@ -221,11 +222,11 @@ pub struct WaitNotificationResponse {
 )]
 #[debug_handler]
 pub async fn wait_notification(
-	state: State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<WaitNotificationQuery>,
 	req: Request<Body>,
 ) -> HandlerResult<Json<WaitNotificationResponse>> {
-	authenticate_request(state.clone(), &req)?;
+	authenticate_request(&state, &req)?;
 
 	let notif_mngr = state.require_notifications()?;
 

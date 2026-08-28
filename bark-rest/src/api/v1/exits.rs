@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
@@ -54,7 +55,7 @@ pub struct ExitsApiDoc;
 
 // The deprecated status routes stay registered until they're removed in a future release.
 #[allow(deprecated)]
-pub fn router() -> Router<ServerState> {
+pub fn router() -> Router<Arc<ServerState>> {
 	Router::new()
 		.route("/status", get(get_all_exit_status_deprecated))
 		.route("/status/all", get(get_all_exit_status))
@@ -112,7 +113,7 @@ async fn inner_vtxo_exit_status(
 )]
 #[debug_handler]
 pub async fn get_exit_status_by_vtxo_id(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Path(vtxo): Path<String>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<bark_json::cli::ExitTransactionStatus>> {
@@ -139,7 +140,7 @@ pub async fn get_exit_status_by_vtxo_id(
 #[debug_handler]
 #[deprecated = "use GET /exits/status/vtxo/{vtxo_id} instead"]
 pub async fn get_exit_status_by_vtxo_id_deprecated(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Path(vtxo): Path<String>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<bark_json::cli::ExitTransactionStatus>> {
@@ -164,7 +165,7 @@ pub async fn get_exit_status_by_vtxo_id_deprecated(
 )]
 #[debug_handler]
 pub async fn get_all_exit_status(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
 	let wallet = state.require_wallet()?;
@@ -211,7 +212,7 @@ pub async fn get_all_exit_status_deprecated() -> Redirect {
 )]
 #[debug_handler]
 pub async fn get_live_exit_status(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
 	let wallet = state.require_wallet()?;
@@ -246,7 +247,7 @@ pub async fn get_live_exit_status(
 )]
 #[debug_handler]
 pub async fn exit_start_vtxos(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Json(body): Json<bark_json::web::ExitStartRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
 	let wallet = state.require_wallet()?;
@@ -302,7 +303,7 @@ pub async fn exit_start_vtxos(
 )]
 #[debug_handler]
 pub async fn exit_start_all(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
 	let wallet = state.require_wallet()?;
 
@@ -334,7 +335,7 @@ pub async fn exit_start_all(
 )]
 #[debug_handler]
 pub async fn exit_progress(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Json(body): Json<bark_json::web::ExitProgressRequest>,
 ) -> HandlerResult<Json<bark_json::cli::ExitProgressResponse>> {
 	let wallet = state.require_wallet()?;
@@ -412,7 +413,7 @@ async fn inner_claim_vtxos(
 )]
 #[debug_handler]
 pub async fn exit_claim_vtxos(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Json(body): Json<bark_json::web::ExitClaimVtxosRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
 	let wallet = state.require_wallet()?;
@@ -467,7 +468,7 @@ pub async fn exit_claim_vtxos(
 )]
 #[debug_handler]
 pub async fn exit_claim_all(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Json(body): Json<bark_json::web::ExitClaimAllRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
 	let wallet = state.require_wallet()?;
@@ -513,7 +514,7 @@ pub async fn exit_claim_all(
 )]
 #[debug_handler]
 pub async fn exit_cancel(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Path(vtxo): Path<String>,
 ) -> HandlerResult<Json<bark_json::web::ExitCancelResponse>> {
 	let wallet = state.require_wallet()?;
@@ -562,7 +563,7 @@ pub async fn exit_cancel(
 )]
 #[debug_handler]
 pub async fn get_finished_exits(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
 	let wallet = state.require_wallet()?;
@@ -600,7 +601,7 @@ pub async fn get_finished_exits(
 )]
 #[debug_handler]
 pub async fn emergency_exit_fee(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::EmergencyExitFeeEstimateQuery>,
 ) -> HandlerResult<Json<bark_json::web::EmergencyExitFeeEstimateResponse>> {
 	let wallet = state.require_wallet()?;

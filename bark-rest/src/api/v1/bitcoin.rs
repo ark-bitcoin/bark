@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::extract::State;
 use axum::routing::get;
 use axum::{debug_handler, Json, Router};
@@ -18,7 +20,7 @@ use crate::ServerState;
 )]
 pub struct BitcoinApiDoc;
 
-pub fn router() -> Router<ServerState> {
+pub fn router() -> Router<Arc<ServerState>> {
 	Router::new()
 		.route("/tip", get(tip))
 }
@@ -36,7 +38,7 @@ pub fn router() -> Router<ServerState> {
 )]
 #[debug_handler]
 pub async fn tip(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 ) -> HandlerResult<Json<bark_json::web::TipResponse>> {
 	let wallet = state.require_wallet()?;
 

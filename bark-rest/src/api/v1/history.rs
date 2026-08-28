@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
@@ -25,7 +27,7 @@ use crate::ServerState;
 )]
 pub struct HistoryApiDoc;
 
-pub fn router() -> Router<ServerState> {
+pub fn router() -> Router<Arc<ServerState>> {
 	Router::new()
 		.route("/", get(list))
 		.route("/{id}/metadata", post(update_metadata))
@@ -60,7 +62,7 @@ pub fn router() -> Router<ServerState> {
 )]
 #[debug_handler]
 pub async fn list(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::HistoryQuery>,
 ) -> HandlerResult<Json<Vec<bark_json::movements::Movement>>> {
 	let wallet = state.require_wallet()?;
@@ -110,7 +112,7 @@ pub async fn list(
 )]
 #[debug_handler]
 pub async fn update_metadata(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Path(id): Path<u32>,
 	Json(patch): Json<serde_json::Value>,
 ) -> HandlerResult<()> {

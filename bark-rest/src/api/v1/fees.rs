@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::Arc;
 
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
@@ -33,7 +34,7 @@ use crate::error::{self, HandlerResult, ContextExt, badarg};
 )]
 pub struct FeesApiDoc;
 
-pub fn router() -> Router<ServerState> {
+pub fn router() -> Router<Arc<ServerState>> {
 	Router::new()
 		.route("/onchain", get(onchain_fee_rates))
 		.route("/board", get(board_fee))
@@ -59,7 +60,7 @@ pub fn router() -> Router<ServerState> {
 )]
 #[debug_handler]
 pub async fn onchain_fee_rates(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 ) -> HandlerResult<Json<bark_json::web::OnchainFeeRatesResponse>> {
 	let wallet = state.require_wallet()?;
 
@@ -91,7 +92,7 @@ pub async fn onchain_fee_rates(
 )]
 #[debug_handler]
 pub async fn board_fee(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::FeeEstimateQuery>,
 ) -> HandlerResult<Json<bark_json::web::FeeEstimateResponse>> {
 	let wallet = state.require_wallet()?;
@@ -124,7 +125,7 @@ pub async fn board_fee(
 )]
 #[debug_handler]
 pub async fn send_onchain_fee(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::SendOnchainFeeEstimateQuery>,
 ) -> HandlerResult<Json<bark_json::web::FeeEstimateResponse>> {
 	let wallet = state.require_wallet()?;
@@ -162,7 +163,7 @@ pub async fn send_onchain_fee(
 )]
 #[debug_handler]
 pub async fn offboard_all_fee(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::OffboardAllFeeEstimateQuery>,
 ) -> HandlerResult<Json<bark_json::web::FeeEstimateResponse>> {
 	let wallet = state.require_wallet()?;
@@ -199,7 +200,7 @@ pub async fn offboard_all_fee(
 )]
 #[debug_handler]
 pub async fn offboard_fee(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Json(body): Json<bark_json::web::OffboardFeeEstimateRequest>,
 ) -> HandlerResult<Json<bark_json::web::FeeEstimateResponse>> {
 	let wallet = state.require_wallet()?;
@@ -247,7 +248,7 @@ pub async fn offboard_fee(
 )]
 #[debug_handler]
 pub async fn lightning_send_fee(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::FeeEstimateQuery>,
 ) -> HandlerResult<Json<bark_json::web::FeeEstimateResponse>> {
 	let wallet = state.require_wallet()?;
@@ -278,7 +279,7 @@ pub async fn lightning_send_fee(
 )]
 #[debug_handler]
 pub async fn lightning_receive_fee(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Query(query): Query<bark_json::web::FeeEstimateQuery>,
 ) -> HandlerResult<Json<bark_json::web::FeeEstimateResponse>> {
 	let wallet = state.require_wallet()?;

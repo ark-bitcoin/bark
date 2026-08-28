@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
@@ -40,7 +41,7 @@ use crate::ServerState;
 )]
 pub struct LightningApiDoc;
 
-pub fn router() -> Router<ServerState> {
+pub fn router() -> Router<Arc<ServerState>> {
 	Router::new()
 		.route("/receives/invoice", post(generate_invoice))
 		.route("/receives/invoice/for-address", post(generate_invoice_for_address))
@@ -65,7 +66,7 @@ pub fn router() -> Router<ServerState> {
 )]
 #[debug_handler]
 pub async fn generate_invoice(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Json(body): Json<bark_json::web::LightningInvoiceRequest>,
 ) -> HandlerResult<Json<bark_json::cli::InvoiceInfo>> {
 	let wallet = state.require_wallet()?;
@@ -95,7 +96,7 @@ pub async fn generate_invoice(
 )]
 #[debug_handler]
 pub async fn generate_invoice_for_address(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Json(body): Json<bark_json::web::LightningInvoiceForAddressRequest>,
 ) -> HandlerResult<Json<bark_json::cli::InvoiceInfo>> {
 	let wallet = state.require_wallet()?;
@@ -140,7 +141,7 @@ pub async fn generate_invoice_for_address(
 )]
 #[debug_handler]
 pub async fn get_receive_status(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Path(identifier): Path<String>,
 ) -> HandlerResult<Json<bark_json::cli::LightningReceiveInfo>> {
 	let wallet = state.require_wallet()?;
@@ -182,7 +183,7 @@ pub async fn get_receive_status(
 )]
 #[debug_handler]
 pub async fn get_send_status(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Path(identifier): Path<String>,
 ) -> HandlerResult<Json<bark_json::cli::LightningSendInfo>> {
 	let wallet = state.require_wallet()?;
@@ -215,7 +216,7 @@ pub async fn get_send_status(
 )]
 #[debug_handler]
 pub async fn list_receive_statuses(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::LightningReceiveInfo>>> {
 	let wallet = state.require_wallet()?;
 
@@ -250,7 +251,7 @@ pub async fn list_receive_statuses(
 )]
 #[debug_handler]
 pub async fn cancel_receive(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Path(identifier): Path<String>,
 ) -> HandlerResult<()> {
 	let wallet = state.require_wallet()?;
@@ -289,7 +290,7 @@ pub async fn cancel_receive(
 )]
 #[debug_handler]
 pub async fn pay(
-	State(state): State<ServerState>,
+	State(state): State<Arc<ServerState>>,
 	Json(body): Json<bark_json::web::LightningPayRequest>,
 ) -> HandlerResult<Json<bark_json::web::LightningPayResponse>> {
 	let wallet = state.require_wallet()?;

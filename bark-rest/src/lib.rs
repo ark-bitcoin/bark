@@ -173,21 +173,23 @@ impl std::ops::Deref for ServerWallet {
 /// Shared state held by the REST server.
 ///
 /// Construct via [`ServerState::builder`].
-#[derive(Clone)]
+///
+/// The handlers share the state as an [Arc], so the fields themselves don't
+/// need to be individually shareable.
 pub struct ServerState {
-	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
+	wallet: parking_lot::RwLock<Option<ServerWallet>>,
 	shutdown: CancellationToken,
 	auth_token: Option<AuthToken>,
 
 	/// A hook to be called when a wallet is created, returning a
 	/// [Wallet] to be added to the server state
-	on_wallet_create: Option<Arc<OnWalletCreate>>,
+	on_wallet_create: Option<Box<OnWalletCreate>>,
 	/// A hook to be called when a wallet is deleted,
 	///in addition to removing the wallet from the server state
-	on_wallet_delete: Option<Arc<OnWalletDelete>>,
+	on_wallet_delete: Option<Box<OnWalletDelete>>,
 	/// A hook to be called to retrieve the wallet's mnemonic phrase.
 	/// When `None`, the mnemonic endpoint responds with 404.
-	on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
+	on_get_mnemonic: Option<Box<OnGetMnemonic>>,
 
 	/// Serializes wallet creation and deletion.
 	///
@@ -195,13 +197,13 @@ pub struct ServerState {
 	/// background tasks and wipes the files. Without this lock a concurrent
 	/// create would see the empty state and build a wallet whose files the
 	/// wipe then removes.
-	wallet_lifecycle: Arc<tokio::sync::Mutex<()>>,
+	wallet_lifecycle: tokio::sync::Mutex<()>,
 
 	/// A map of websocket tickets to their expiration time
 	///
 	/// Note: this map is only stored in memory and not persisted
 	/// to the database, any server restart will clear the map.
-	websocket_tickets: Arc<tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>>,
+	websocket_tickets: tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>,
 }
 
 /// Builder for [`ServerState`].
@@ -216,9 +218,9 @@ pub struct ServerState {
 pub struct ServerStateBuilder {
 	wallet: Option<Wallet>,
 	auth_token: Option<AuthToken>,
-	on_wallet_create: Option<Arc<OnWalletCreate>>,
-	on_wallet_delete: Option<Arc<OnWalletDelete>>,
-	on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
+	on_wallet_create: Option<Box<OnWalletCreate>>,
+	on_wallet_delete: Option<Box<OnWalletDelete>>,
+	on_get_mnemonic: Option<Box<OnGetMnemonic>>,
 }
 
 impl ServerStateBuilder {
@@ -242,17 +244,17 @@ impl ServerStateBuilder {
 		self
 	}
 
-	pub fn on_wallet_create(mut self, hook: impl Into<Option<Arc<OnWalletCreate>>>) -> Self {
+	pub fn on_wallet_create(mut self, hook: impl Into<Option<Box<OnWalletCreate>>>) -> Self {
 		self.on_wallet_create = hook.into();
 		self
 	}
 
-	pub fn on_wallet_delete(mut self, hook: impl Into<Option<Arc<OnWalletDelete>>>) -> Self {
+	pub fn on_wallet_delete(mut self, hook: impl Into<Option<Box<OnWalletDelete>>>) -> Self {
 		self.on_wallet_delete = hook.into();
 		self
 	}
 
-	pub fn on_get_mnemonic(mut self, hook: impl Into<Option<Arc<OnGetMnemonic>>>) -> Self {
+	pub fn on_get_mnemonic(mut self, hook: impl Into<Option<Box<OnGetMnemonic>>>) -> Self {
 		self.on_get_mnemonic = hook.into();
 		self
 	}
@@ -264,14 +266,14 @@ impl ServerStateBuilder {
 		};
 
 		ServerState {
-			wallet: Arc::new(parking_lot::RwLock::new(wallet_opt)),
+			wallet: parking_lot::RwLock::new(wallet_opt),
 			shutdown: shutdown,
 			auth_token: self.auth_token,
 			on_wallet_create: self.on_wallet_create,
 			on_wallet_delete: self.on_wallet_delete,
 			on_get_mnemonic: self.on_get_mnemonic,
-			wallet_lifecycle: Arc::new(tokio::sync::Mutex::new(())),
-			websocket_tickets: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+			wallet_lifecycle: tokio::sync::Mutex::new(()),
+			websocket_tickets: tokio::sync::RwLock::new(HashMap::new()),
 		}
 	}
 }
@@ -319,8 +321,14 @@ impl ServerState {
 impl RestServer {
 	/// Start a new [RestServer] with the given config and [ServerState].
 	///
-	/// Build the state via [`ServerState::builder`].
-	pub async fn start(config: &Config, state: ServerState, shutdown: CancellationToken) -> anyhow::Result<Self> {
+	/// Build the state via [`ServerState::builder`]. The state is shared with
+	/// the request handlers through the [Arc], so the caller can keep a handle
+	/// on it.
+	pub async fn start(
+		config: &Config,
+		state: Arc<ServerState>,
+		shutdown: CancellationToken,
+	) -> anyhow::Result<Self> {
 		let (router, _api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
 
