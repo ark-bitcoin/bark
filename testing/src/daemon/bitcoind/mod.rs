@@ -101,11 +101,21 @@ impl Bitcoind {
 	}
 
 	pub fn version() -> String {
-		let output = std::process::Command::new(Self::exec())
-			.arg("--version")
-			.output()
-			.expect("failed to run bitcoind --version");
-		String::from_utf8(output.stdout).expect("invalid utf8 in bitcoind --version")
+		// Cache the version: it is compared against the snapshot version file
+		// on every snapshot validity check, and a transient failure of the
+		// subprocess would read as a version mismatch and trigger a snapshot
+		// regeneration in the middle of a test run.
+		static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+		VERSION.get_or_init(|| {
+			let output = std::process::Command::new(Self::exec())
+				.arg("--version")
+				.output()
+				.expect("failed to run bitcoind --version");
+			assert!(output.status.success(), "bitcoind --version failed: {}",
+				String::from_utf8_lossy(&output.stderr),
+			);
+			String::from_utf8(output.stdout).expect("invalid utf8 in bitcoind --version")
+		}).clone()
 	}
 
 	pub fn new(name: String, config: BitcoindConfig, add_node: Option<String>) -> Self {
@@ -425,18 +435,7 @@ impl DaemonHelper for BitcoindHelper {
 		let regtest_dir = self.config.datadir.join("regtest");
 		if !regtest_dir.exists() {
 			if let Some(snapshot_dir) = &self.config.snapshot_dir {
-				debug!("Copying snapshot from {:?}", snapshot_dir);
-				// Take the snapshot lock shared while copying. A concurrent
-				// regeneration holds it exclusive, so it cannot delete the
-				// snapshot while we copy it.
-				let lock_file = snapshot::open_lock_file(snapshot_dir);
-				lock_file.lock_shared().expect("failed to lock snapshot for copying");
-				let status = Command::new("cp")
-					.arg("-a")
-					.arg(snapshot_dir.join("regtest"))
-					.arg(&self.config.datadir)
-					.status().await?;
-				anyhow::ensure!(status.success(), "failed to copy bitcoind snapshot");
+				snapshot::copy_snapshot(snapshot_dir, &self.config.datadir).await?;
 			}
 		}
 

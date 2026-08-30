@@ -100,6 +100,12 @@ pub struct TestContext {
 	pub datadir: PathBuf,
 
 	pub bitcoind: Option<Arc<Bitcoind>>,
+	/// The test's own copy of the bitcoind snapshot, made once when the
+	/// central bitcoind is started. All bitcoind nodes of this test copy
+	/// from here rather than from the shared snapshot, so that they are
+	/// guaranteed to start on the same chain even if the shared snapshot
+	/// gets regenerated while the test runs.
+	bitcoind_snapshot_dir: Option<PathBuf>,
 	/// the main captaind instance for the test
 	pub captainds: Mutex<Vec<Arc<Captaind>>>,
 
@@ -131,6 +137,7 @@ impl TestContext {
 			test_name,
 			datadir,
 			bitcoind: None,
+			bitcoind_snapshot_dir: None,
 			captainds: Mutex::new(Vec::new()),
 			secondary_bitcoinds: Mutex::new(Vec::new()),
 			electrs: None,
@@ -150,8 +157,13 @@ impl TestContext {
 
 	pub fn bitcoind_default_cfg(&self, name: impl AsRef<str>) -> BitcoindConfig {
 		let datadir = self.datadir.join(name.as_ref());
-		let snapshot_dir = std::env::var(constants::env::BITCOIND_SNAPSHOT_DIR)
-			.map(PathBuf::from).ok();
+		// Prefer the test's own snapshot copy so all nodes of this test
+		// start on the same chain; fall back to the shared snapshot for
+		// contexts that never started a central bitcoind.
+		let snapshot_dir = self.bitcoind_snapshot_dir.clone().or_else(|| {
+			std::env::var(constants::env::BITCOIND_SNAPSHOT_DIR)
+				.map(PathBuf::from).ok()
+		});
 		BitcoindConfig {
 			datadir,
 			wallet: false,
@@ -172,6 +184,15 @@ impl TestContext {
 
 		snapshot::ensure_snapshot(&snapshot_dir).await;
 
+		// Copy the snapshot once into the test's datadir; every bitcoind of
+		// this test copies from there. Copying from the shared snapshot per
+		// node would let a concurrent regeneration hand different chains to
+		// different nodes of the same test.
+		let local_snapshot = self.datadir.join("bitcoind_snapshot");
+		snapshot::copy_snapshot(&snapshot_dir, &local_snapshot).await
+			.expect("failed to copy bitcoind snapshot for test");
+		self.bitcoind_snapshot_dir = Some(local_snapshot.clone());
+
 		let bitcoind = Bitcoind::new(
 			"bitcoind".to_string(),
 			BitcoindConfig {
@@ -181,7 +202,7 @@ impl TestContext {
 				network: Network::Regtest,
 				fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
 				relay_fee: None,
-				snapshot_dir: Some(snapshot_dir),
+				snapshot_dir: Some(local_snapshot),
 			},
 			None,
 		);

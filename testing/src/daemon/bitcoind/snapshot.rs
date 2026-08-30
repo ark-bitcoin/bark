@@ -1,17 +1,39 @@
 use std::path::Path;
+use std::time::Duration;
 
 use bitcoin::{FeeRate, Network};
 use log::{debug, trace};
 
 use crate::{Bitcoind, BitcoindConfig};
 
+/// Snapshots older than this are regenerated. Bitcoin Core considers itself
+/// in IBD while its tip is more than 24h old (nMaxTipAge) and then tells its
+/// peers not to relay transactions to it, so nodes started from a stale
+/// snapshot never see each other's mempool transactions until a fresh block
+/// is mined. Keep a wide margin below the 24h threshold so the snapshot
+/// stays young for the whole test run.
+const MAX_SNAPSHOT_AGE: Duration = Duration::from_secs(12 * 60 * 60);
+
 fn is_snapshot_valid(snapshot_dir: &Path) -> bool {
 	let version_file = snapshot_dir.join("version");
 	if !version_file.exists() {
 		return false;
 	}
-	let stored = std::fs::read_to_string(&version_file).unwrap_or_default();
-	stored == Bitcoind::version()
+	// The version file is written last, so its mtime is the generation time.
+	match version_file.metadata().and_then(|m| m.modified()) {
+		Ok(m) if !m.elapsed().is_ok_and(|age| age < MAX_SNAPSHOT_AGE) => return false,
+		Ok(_) => {},
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+		Err(e) => panic!("failed to read snapshot version file mtime: {:?}", e),
+	}
+	// Fail loudly on read errors: silently treating them as "invalid" would
+	// delete and regenerate the snapshot while other tests are copying it,
+	// leaving different nodes of a single test on conflicting chains.
+	match std::fs::read_to_string(&version_file) {
+		Ok(stored) => stored == Bitcoind::version(),
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+		Err(e) => panic!("failed to read snapshot version file: {:?}", e),
+	}
 }
 
 /// Open the lock file for `snapshot_dir`, creating it if needed.
@@ -30,6 +52,24 @@ pub fn open_lock_file(snapshot_dir: &Path) -> std::fs::File {
 		.truncate(false)
 		.open(snapshot_dir.with_extension("lock"))
 		.expect("failed to open snapshot lock file")
+}
+
+/// Copy the snapshot's regtest dir into `dest_dir`.
+///
+/// Takes the snapshot lock shared while copying, so a concurrent
+/// regeneration cannot delete the snapshot mid-copy.
+pub async fn copy_snapshot(snapshot_dir: &Path, dest_dir: &Path) -> anyhow::Result<()> {
+	debug!("Copying snapshot from {:?}", snapshot_dir);
+	let lock_file = open_lock_file(snapshot_dir);
+	lock_file.lock_shared().expect("failed to lock snapshot for copying");
+	std::fs::create_dir_all(dest_dir)?;
+	let status = tokio::process::Command::new("cp")
+		.arg("-a")
+		.arg(snapshot_dir.join("regtest"))
+		.arg(dest_dir)
+		.status().await?;
+	anyhow::ensure!(status.success(), "failed to copy bitcoind snapshot");
+	Ok(())
 }
 
 /// Ensure a valid bitcoind snapshot exists at `snapshot_dir`.
