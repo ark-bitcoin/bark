@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use ark::VtxoId;
 use bark::movement::MovementStatus;
+use bark::vtxo::VtxoState;
 use bitcoin::hashes::Hash;
 use server_log::{NoRoundPayments, RoundFinished};
 use server_rpc::protos;
@@ -202,17 +203,17 @@ async fn manual_maintenance_refresh_drops_server_rejected_vtxo() {
 	assert_dropped_and_retried_movements(&wallet, bad_id, good_id).await;
 }
 
+async fn participation_status(srv: &Captaind, unlock_hash: Vec<u8>) -> i32 {
+	srv.get_public_rpc().await
+		.round_participation_status(protos::RoundParticipationStatusRequest { unlock_hash })
+		.await.expect("status request failed").into_inner().status
+}
+
 /// A delegated refresh scheduled at a future block height must sit out rounds
 /// until the chain tip reaches that height, and be included in the first round
 /// after it does.
 #[tokio::test]
 async fn scheduled_delegated_refresh_waits_for_height() {
-	async fn participation_status(srv: &Captaind, unlock_hash: Vec<u8>) -> i32 {
-		srv.get_public_rpc().await
-			.round_participation_status(protos::RoundParticipationStatusRequest { unlock_hash })
-			.await.expect("status request failed").into_inner().status
-	}
-
 	let ctx = TestContext::new("bark_sdk/scheduled_delegated_refresh_waits_for_height").await;
 	let srv = ctx.captaind("server").funded(btc(1)).create().await;
 
@@ -259,6 +260,173 @@ async fn scheduled_delegated_refresh_waits_for_height() {
 		participation_status(&srv, unlock_hash).await,
 		protos::RoundParticipationStatus::RoundPartPending as i32,
 		"participation should be processed once the scheduled height is reached",
+	);
+}
+
+/// A delegated refresh whose replacement VTXOs no longer leave room for a
+/// unilateral exit by the time we get to complete it must be refused: the
+/// server may already have swept the replacement tree through its expiry
+/// path, so sending our forfeits would trade the inputs for worthless
+/// replacements. The wallet must keep the round pending and, crucially, never
+/// release its forfeits.
+#[tokio::test]
+async fn scheduled_delegated_refresh_refuses_unexitable_replacements() {
+	// Pin the vtxo lifetime: the test walks the chain right up to the
+	// input's expiry, so its timeline shouldn't silently depend on the
+	// test context default.
+	const VTXO_LIFETIME: u16 = 432;
+
+	let ctx = TestContext::new("bark_sdk/scheduled_delegated_refresh_refuses_unexitable_replacements").await;
+	let srv = ctx.captaind("server").funded(btc(1))
+		.cfg(|cfg| cfg.vtxo_lifetime = VTXO_LIFETIME)
+		.create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(300_000))
+		.create().await;
+
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.len(), 1, "expected one boarded vtxo");
+	let vtxo_id = vtxos[0].id();
+	let input_expiry = vtxos[0].expiry_height();
+
+	let tip = srv.bitcoind().get_block_count().await as u32;
+	let round = wallet.refresh_vtxos_scheduled(vec![vtxo_id], tip + 1).await
+		.expect("submit delegated refresh")
+		.expect("a participation should have been submitted");
+	let unlock_hash = round.state().unlock_hash()
+		.expect("delegated participation carries an unlock hash")
+		.to_byte_array().to_vec();
+
+	// Let the server perform the round while the wallet is not looking.
+	ctx.generate_blocks(1).await;
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	log_round_finished.recv().wait(Duration::from_secs(60)).await
+		.expect("round at the scheduled height should include the refresh");
+
+	// Advance to the last block on which our input is still alive. The
+	// replacements were created a few blocks after the input, but far less
+	// than the required exit headroom (twice the exit margin plus the
+	// input's exit delta), so by now they no longer leave room for a
+	// unilateral exit while the input is still worth protecting.
+	//
+	// Stopping one block short of the input's expiry is what keeps this test
+	// meaningful: past it the input is worthless too, and the wallet then
+	// deliberately goes through with the swap. That is the case covered by
+	// [delegated_refresh_completes_with_expired_inputs].
+	let tip = srv.bitcoind().get_block_count().await as u32;
+	ctx.generate_blocks(input_expiry - 1 - tip).await;
+	let tip = srv.bitcoind().get_block_count().await as u32;
+	assert!(input_expiry > tip,
+		"the input must still be unexpired for the exit margin check to apply, \
+		expires at {input_expiry} (tip {tip})",
+	);
+	wallet.sync_pending_rounds().await.expect("sync pending rounds");
+
+	assert_ne!(
+		participation_status(&srv, unlock_hash).await,
+		protos::RoundParticipationStatus::RoundPartReleased as i32,
+		"the wallet must not have sent forfeits for unexitable replacements",
+	);
+	let pending = wallet.pending_round_states().await.expect("pending round states");
+	assert!(pending.iter().any(|s| s.id() == round.id()),
+		"the refused refresh must stay pending rather than be recorded as successful",
+	);
+}
+
+/// The mirror image of
+/// [scheduled_delegated_refresh_refuses_unexitable_replacements]: when the
+/// inputs have expired along with the replacements, there is nothing left to
+/// protect. The server can already claim those inputs through their own
+/// expiry path, so withholding the forfeits only strands the replacements as
+/// well. The wallet must complete the swap and record the refresh as
+/// successful.
+#[tokio::test]
+async fn delegated_refresh_completes_with_expired_inputs() {
+	// Pin the vtxo lifetime: the block math below expires both the input
+	// and the replacements, so it shouldn't silently depend on the test
+	// context default.
+	const VTXO_LIFETIME: u16 = 432;
+
+	let ctx = TestContext::new("bark_sdk/delegated_refresh_completes_with_expired_inputs").await;
+	let srv = ctx.captaind("server").funded(btc(1))
+		.cfg(|cfg| cfg.vtxo_lifetime = VTXO_LIFETIME)
+		.create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(300_000))
+		.create().await;
+
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.len(), 1, "expected one boarded vtxo");
+	let input_id = vtxos[0].id();
+	let input_expiry = vtxos[0].expiry_height();
+
+	let round = wallet.refresh_vtxos_delegated(vec![input_id]).await
+		.expect("submit delegated refresh")
+		.expect("a participation should have been submitted");
+	let unlock_hash = round.state().unlock_hash()
+		.expect("delegated participation carries an unlock hash")
+		.to_byte_array().to_vec();
+
+	// Let the server perform the round while the wallet is not looking.
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	log_round_finished.recv().wait(Duration::from_secs(60)).await
+		.expect("round should include the delegated refresh");
+
+	// Then stay away long enough for both the input and the replacements to
+	// pass their expiry height. The input was created before the round, so
+	// clearing the replacements' expiry clears the input's too.
+	ctx.generate_blocks(ROUND_CONFIRMATIONS + VTXO_LIFETIME as u32).await;
+	let tip = srv.bitcoind().get_block_count().await as u32;
+	assert!(input_expiry <= tip,
+		"the input should be expired by now, expires at {input_expiry} (tip {tip})",
+	);
+
+	let statuses = wallet.sync_pending_rounds().await.expect("sync pending rounds");
+	// A refusal surfaces as a missing entry: `sync_pending_rounds` swallows a
+	// sync error into a log warning, so check the wallet log if this trips.
+	let status = statuses.get(&round.id())
+		.expect("the pending round should have been synced without error");
+	assert!(status.is_success(),
+		"a refresh whose inputs expired must still complete, got {status:?}",
+	);
+
+	// The forfeits went out and the server released the preimage.
+	assert_eq!(
+		participation_status(&srv, unlock_hash).await,
+		protos::RoundParticipationStatus::RoundPartReleased as i32,
+		"the wallet should have sent its forfeits",
+	);
+	let pending = wallet.pending_round_states().await.expect("pending round states");
+	assert!(!pending.iter().any(|s| s.id() == round.id()),
+		"the completed refresh should no longer be pending",
+	);
+
+	// And the movement records the swap: input forfeited, replacement stored,
+	// even though the replacement is past its own expiry.
+	let refresh = wallet.history().await.expect("list movements").into_iter()
+		.filter(|m| m.subsystem.name == "bark.round" && m.subsystem.kind == "refresh")
+		.find(|m| m.input_vtxos.contains(&input_id))
+		.expect("expected a refresh movement for the boarded vtxo");
+	assert_eq!(refresh.status, MovementStatus::Successful,
+		"the refresh of expired inputs should be recorded as successful",
+	);
+	assert_eq!(
+		wallet.get_vtxo_by_id(input_id).await.expect("input vtxo").state,
+		VtxoState::Spent,
+		"the forfeited input should be marked spent",
+	);
+
+	let output_id = *refresh.output_vtxos.first().expect("the refresh produced a vtxo");
+	let output = wallet.get_vtxo_by_id(output_id).await.expect("output vtxo");
+	assert!(output.expiry_height() <= tip,
+		"the replacement should be expired too, expires at {} (tip {})",
+		output.expiry_height(), tip,
 	);
 }
 

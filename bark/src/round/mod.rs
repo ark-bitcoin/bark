@@ -403,6 +403,7 @@ impl RoundState {
 			RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height } => {
 				match progress_delegated(
 					wallet, &self.participation, unlock_hash, scheduled_height,
+					self.sent_forfeit_sigs,
 				).await {
 					Ok(HarkProgressResult::RoundPending) => Ok(RoundStatus::Pending),
 					// We don't lock inputs on delegated rounds, so if we don't find it,
@@ -476,6 +477,7 @@ impl RoundState {
 
 				match hark_vtxo_swap(
 					wallet, &self.participation, &mut self.new_vtxos, &funding_tx, unlock_hash,
+					self.sent_forfeit_sigs,
 				).await {
 					Ok(()) => {
 						persist_round_success(
@@ -789,6 +791,7 @@ async fn hark_vtxo_swap(
 	output_vtxos: &mut [Vtxo<Full>],
 	funding_tx: &Transaction,
 	unlock_hash: UnlockHash,
+	sent_forfeit_sigs: bool,
 ) -> Result<(), HarkForfeitError> {
 	let (mut srv, _) = wallet.require_server().await.map_err(HarkForfeitError::Err)?;
 
@@ -801,6 +804,25 @@ async fn hark_vtxo_swap(
 	for vtxo in output_vtxos.iter_mut() {
 		hark_cosign_leaf(wallet, &mut srv, funding_tx, vtxo).await
 			.map_err(HarkForfeitError::Err)?;
+	}
+
+	// Before we hand the server the forfeits of our inputs, check that the
+	// new VTXOs still leave us enough room for a unilateral exit.
+	if !sent_forfeit_sigs {
+		// If we are refreshing only expired inputs, we don't care.
+		// Our new VTXOs could have been prepared a long time ago as well.
+		let tip = wallet.inner.chain.tip().await
+			.context("chain source error")
+			.map_err(HarkForfeitError::Err)?;
+		if participation.inputs.iter().any(|v| v.expiry_height() > tip) {
+			let max_input_exit_delta = participation.inputs.iter().map(|v| v.exit_delta()).max()
+				.expect("minimum one input");
+			check_output_vtxos_exitable(
+				output_vtxos, tip, wallet.inner.config.vtxo_exit_margin, max_input_exit_delta,
+			)
+				.context("refusing to forfeit our input VTXOs")
+				.map_err(HarkForfeitError::Err)?;
+		}
 	}
 
 	// then do the forfeit dance
@@ -921,22 +943,69 @@ fn validate_vtxo_tree_params(
 	Ok(())
 }
 
+/// The minimum expiry height that leaves us enough room for a unilateral
+/// exit from the current chain tip.
+///
+/// The exit margin is counted twice: worst case the server withholds the
+/// unlock preimage after we forfeit, so we first have to exit the old VTXOs
+/// to force the preimage out through the forfeit claim (within exit_delta),
+/// and then still exit the new VTXOs before they expire.
+fn min_exitable_output_vtxo_expiry_height(
+	tip: BlockHeight,
+	exit_margin: BlockDelta,
+	exit_delta: BlockDelta,
+) -> BlockHeight {
+	tip.saturating_add(2 * exit_margin as BlockHeight)
+		.saturating_add(exit_delta as BlockHeight)
+}
+
+/// Check that each VTXO's expiry leaves us enough room for a unilateral
+/// exit from the current chain tip.
+///
+/// `input_exit_delta` is the exit delta of the input VTXOs
+fn check_output_vtxos_exitable(
+	vtxos: &[Vtxo<Full>],
+	tip: BlockHeight,
+	exit_margin: BlockDelta,
+	max_input_exit_delta: BlockDelta,
+) -> anyhow::Result<()> {
+	let min_expiry_height = min_exitable_output_vtxo_expiry_height(tip, exit_margin, max_input_exit_delta);
+	for vtxo in vtxos {
+		ensure!(vtxo.expiry_height() >= min_expiry_height,
+			"VTXO {} expires at height {}, which doesn't leave us room for a \
+			unilateral exit (tip {}, exit margin {})",
+			vtxo.id(), vtxo.expiry_height(), tip, exit_margin,
+		);
+	}
+	Ok(())
+}
+
 fn check_round_matches_participation(
 	part: &RoundParticipation,
 	new_vtxos: &[Vtxo<Full>],
 	funding_tx: &Transaction,
 	ark_info: &ArkInfo,
 	scheduled_height: Option<BlockHeight>,
+	tip: BlockHeight,
+	exit_margin: BlockDelta,
 ) -> anyhow::Result<()> {
 	ensure!(new_vtxos.len() == part.outputs.len(),
 		"unexpected number of VTXOs: got {}, expected {}", new_vtxos.len(), part.outputs.len(),
 	);
 
-	let min_expiry_height = match scheduled_height {
-		Some(h) => h.saturating_add(1),
-		None => part.inputs.iter()
-			.map(|v| v.expiry_height()).max().unwrap_or(1)
-			.saturating_add(1),
+	// We have two requirements on the outputs:
+	// - if we asked for a scheduled height, we want the server to respect it
+	// - if our inputs are not expired yet, we want the output VTXOs to be exitable
+	let expired_inputs = part.inputs.iter().all(|v| v.expiry_height() <= tip);
+	let max_input_exit_delta = part.inputs.iter().map(|v| v.exit_delta()).max()
+		.expect("min one input");
+	let min_exitable = min_exitable_output_vtxo_expiry_height(tip, exit_margin, max_input_exit_delta);
+	let min_scheduled = scheduled_height.map(|h| h.saturating_add(1));
+	let min_expiry_height = match (expired_inputs, min_scheduled) {
+		(false, Some(h)) => h.max(min_exitable),
+		(false, None) => min_exitable,
+		(true, Some(h)) => h,
+		(true, None) => 0,
 	};
 
 	for (vtxo, req) in new_vtxos.iter().zip(&part.outputs) {
@@ -1026,6 +1095,7 @@ async fn progress_delegated(
 	participation: &RoundParticipation,
 	unlock_hash: UnlockHash,
 	scheduled_height: Option<BlockHeight>,
+	sent_forfeit_sigs: bool,
 ) -> Result<HarkProgressResult, HarkForfeitError> {
 	let (mut srv, ark_info) = wallet.require_server().await.map_err(HarkForfeitError::Err)?;
 
@@ -1088,15 +1158,27 @@ async fn progress_delegated(
 
 	// Check that the vtxos match our participation in the exact order, and that
 	// the server-chosen tree parameters are safe, before we forfeit our inputs.
+	let tip = wallet.inner.chain.tip().await
+		.context("chain source error")
+		.map_err(HarkForfeitError::Err)?;
 	check_round_matches_participation(
 		participation, &new_vtxos, &funding_tx, &ark_info, scheduled_height,
+		tip, wallet.inner.config.vtxo_exit_margin,
 	)
 		.context("new VTXOs received from server don't match our participation")
 		.map_err(HarkForfeitError::Err)?;
 
-	hark_vtxo_swap(wallet, participation, &mut new_vtxos, &funding_tx, unlock_hash).await
-		.context("error forfeiting hArk VTXOs")
-		.map_err(HarkForfeitError::SentForfeits)?;
+	// NB keep the error kinds intact: marking a pre-forfeit failure as
+	// SentForfeits would set the round's forfeit flag, which disables the
+	// exitability check above on the next attempt.
+	hark_vtxo_swap(
+		wallet, participation, &mut new_vtxos, &funding_tx, unlock_hash, sent_forfeit_sigs,
+	).await.map_err(|e| match e {
+		HarkForfeitError::Err(e) =>
+			HarkForfeitError::Err(e.context("error forfeiting hArk VTXOs")),
+		HarkForfeitError::SentForfeits(e) =>
+			HarkForfeitError::SentForfeits(e.context("error forfeiting hArk VTXOs")),
+	})?;
 
 	Ok(HarkProgressResult::Ok { funding_tx, new_vtxos })
 }
@@ -2144,6 +2226,38 @@ mod test {
 		assert!(validate_vtxo_tree_params(
 			server, exit_delta, min_expiry - 1, server, exit_delta, min_expiry,
 		).is_err(), "expiry one block below the minimum must be rejected");
+	}
+
+	#[test]
+	fn refuses_vtxos_without_room_for_unilateral_exit() {
+		let secp = Secp256k1::new();
+		let mut rng = rand::thread_rng();
+		let user_key = Keypair::new(&secp, &mut rng);
+		let user_cosign_key = Keypair::new(&secp, &mut rng);
+		let server_key = Keypair::new(&secp, &mut rng);
+		let server_cosign_key = Keypair::new(&secp, &mut rng);
+
+		let preimage: UnlockPreimage = rand::random();
+		let unlock_hash = UnlockHash::hash(&preimage);
+
+		let outputs = (0..2u64).map(|i| VtxoRequest {
+			amount: Amount::from_sat(10_000 + i),
+			policy: VtxoPolicy::new_pubkey(user_key.public_key()),
+		}).collect::<Vec<_>>();
+
+		let (tree, _funding_tx) = ark::test_util::build_signed_tree(
+			HashlockVersion::V1, outputs,
+			&user_cosign_key, &server_key, &server_cosign_key, unlock_hash,
+		);
+		let vtxos = tree.into_cached_tree().output_vtxos().collect::<Vec<_>>();
+
+		// The tree expires at height 101_000, so with an exit margin of 12
+		// (counted twice, for the old and the new exit) plus the input exit
+		// delta of 6, the last acceptable tip is 100_970.
+		check_output_vtxos_exitable(&vtxos, 100_970, 12, 6)
+			.expect("vtxos with room for a unilateral exit should be accepted");
+		assert!(check_output_vtxos_exitable(&vtxos, 100_971, 12, 6).is_err(),
+			"vtxos without room for a unilateral exit must be rejected");
 	}
 
 	#[test]
