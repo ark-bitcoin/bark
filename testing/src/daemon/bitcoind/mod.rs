@@ -114,6 +114,7 @@ impl Bitcoind {
 		static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 		VERSION.get_or_init(|| {
 			let output = std::process::Command::new(Self::exec())
+				.arg("-nosettings")
 				.arg("--version")
 				.output()
 				.expect("failed to run bitcoind --version");
