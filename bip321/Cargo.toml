@@ -11,11 +11,15 @@ categories = ["cryptography", "parsing"]
 name = "bip321"
 path = "src/lib.rs"
 
+[features]
+default = ["lightning"]
+lightning = ["dep:lightning", "dep:lightning-invoice"]
+
 [dependencies]
 bitcoin = "0.32"
 bark-bitcoin-ext = { version = "0.6.0", path = "../bitcoin-ext", default-features = false }
-lightning-invoice = { version = "0.34.0", default-features = false }
-lightning = { version = "0.2.0", default-features = false }
+lightning-invoice = { version = "0.34.0", default-features = false, optional = true }
+lightning = { version = "0.2.0", default-features = false, optional = true }
 
 percent-encoding = "2.3"
 thiserror = "2"
