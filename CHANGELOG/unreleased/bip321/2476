@@ -1,0 +1,2 @@
+- add `lightning` compilation feature to make lightning dependencies optional
+  [#2476](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2476)

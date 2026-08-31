@@ -21,6 +21,11 @@
 //! Silent Payments), `pay` (BIP 351), and `bc`/`tb` (segwit address
 //! HRPs). All of these may appear multiple times.
 //!
+//! Parsing `lightning` and `lno` into their proper invoice and offer
+//! types requires the `lightning` compile feature (enabled by default).
+//! Without it, these parameters are treated like any other unknown
+//! parameter.
+//!
 //! # Required parameters
 //!
 //! Parameters prefixed with `req-` signal that a wallet **must** understand
@@ -46,7 +51,9 @@ use std::str::FromStr;
 use bitcoin::address::{NetworkChecked, NetworkUnchecked};
 use bitcoin::{Address, Amount, Denomination, Network, NetworkKind};
 use bitcoin_ext::AddressExt;
+#[cfg(feature = "lightning")]
 use lightning::offers::offer::Offer;
+#[cfg(feature = "lightning")]
 use lightning_invoice::Bolt11Invoice;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 
@@ -178,7 +185,9 @@ pub struct Bip321Uri<E: ExtensionHandler = NoExtensions> {
 	pop: Option<PopConfig>,
 
 	/// Core additional payment instructions.
+	#[cfg(feature = "lightning")]
 	lightning: Vec<FieldWithAttributes<Bolt11Invoice>>,
+	#[cfg(feature = "lightning")]
 	lno: Vec<FieldWithAttributes<Offer>>,
 	sp: Vec<FieldWithAttributes<String>>,
 	pay: Vec<FieldWithAttributes<String>>,
@@ -204,7 +213,9 @@ impl<E: ExtensionHandler> Bip321Uri<E> {
 
 			pop: None,
 
+			#[cfg(feature = "lightning")]
 			lightning: Vec::new(),
+			#[cfg(feature = "lightning")]
 			lno: Vec::new(),
 			sp: Vec::new(),
 			pay: Vec::new(),
@@ -275,31 +286,37 @@ impl<E: ExtensionHandler> Bip321Uri<E> {
 	}
 
 	/// Get the Lightning invoices set in the URI.
+	#[cfg(feature = "lightning")]
 	pub fn lightning(&self) -> &[FieldWithAttributes<Bolt11Invoice>] {
 		&self.lightning
 	}
 
 	/// Push a Lightning invoice to the URI.
+	#[cfg(feature = "lightning")]
 	pub fn push_lightning(&mut self, invoice: Bolt11Invoice, required: bool) {
 		self.lightning.push(FieldWithAttributes::new(invoice, required));
 	}
 
 	/// Clear the Lightning invoices from the URI.
+	#[cfg(feature = "lightning")]
 	pub fn clear_lightning(&mut self) {
 		self.lightning.clear();
 	}
 
 	/// Get the LNO offers set in the URI.
+	#[cfg(feature = "lightning")]
 	pub fn lno(&self) -> &[FieldWithAttributes<Offer>] {
 		&self.lno
 	}
 
 	/// Push a Lightning offer to the URI.
+	#[cfg(feature = "lightning")]
 	pub fn push_lno(&mut self, offer: Offer, required: bool) {
 		self.lno.push(FieldWithAttributes::new(offer, required));
 	}
 
 	/// Clear the Lightning offers from the URI.
+	#[cfg(feature = "lightning")]
 	pub fn clear_lno(&mut self) {
 		self.lno.clear();
 	}
@@ -389,9 +406,12 @@ impl<E: ExtensionHandler> Bip321Uri<E> {
 
 	/// Whether any standard payment instruction is present.
 	pub fn has_payment_instruction(&self) -> bool {
-		!self.lightning.is_empty()
-			|| !self.lno.is_empty()
-			|| !self.sp.is_empty()
+		#[cfg(feature = "lightning")]
+		if !self.lightning.is_empty() || !self.lno.is_empty() {
+			return true;
+		}
+
+		!self.sp.is_empty()
 			|| !self.pay.is_empty()
 			|| !self.bc.is_empty()
 			|| !self.tb.is_empty()
@@ -540,6 +560,7 @@ impl<E: ExtensionHandler> FromStr for Bip321Uri<E> {
 							uri.pop = Some(pop);
 						}
 						// Standard payment instructions (may appear multiple times)
+						#[cfg(feature = "lightning")]
 						key if key == "lightning" => {
 							let invoice = Bolt11Invoice::from_str(&raw_value)
 								.map_err(|e| Bip321Error::PaymentInstructionParseError {
@@ -547,6 +568,7 @@ impl<E: ExtensionHandler> FromStr for Bip321Uri<E> {
 								})?;
 							uri.lightning.push(FieldWithAttributes::new(invoice, required));
 						}
+						#[cfg(feature = "lightning")]
 						key if key == "lno" => {
 							let offer = Offer::from_str(&raw_value)
 								.map_err(|e| Bip321Error::PaymentInstructionParseError {
@@ -700,9 +722,11 @@ impl<E: ExtensionHandler> fmt::Display for Bip321Uri<E> {
 		}
 
 		// standard payment instructions
+		#[cfg(feature = "lightning")]
 		for field in &self.lightning {
 			write_query_param(&mut query_buf, "lightning", &field.inner().to_string(), field.required())?;
 		}
+		#[cfg(feature = "lightning")]
 		for field in &self.lno {
 			write_query_param(&mut query_buf, "lno", &field.inner().to_string(), field.required())?;
 		}
@@ -1117,6 +1141,7 @@ mod tests {
 
 	// ── Payment instruction tests ───────────────────────────────────
 
+	#[cfg(feature = "lightning")]
 	#[test]
 	fn lightning_with_fallback() {
 		let input = "bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc";
@@ -1141,6 +1166,7 @@ mod tests {
 		assert_eq!(uri.tb().len(), 1);
 	}
 
+	#[cfg(feature = "lightning")]
 	#[test]
 	fn lno_only() {
 		let input = "bitcoin:?lno=lno1pqpzwyq2qe3k7enxv4j3pjgrrwzv24nmzfjypx2a8m264ws9vht3uxp5vpypnluuzl67n4waq78syn2tdngnvypje2da9t4emyq25n29m84dszkfggehf3z35uj56pmxqgp5vfme44926w23gc282xn3pp0j7y8pc7je8e8qxrhmtwrjrnj4kzcqyqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqjnrlnqdqf52q7jwgcnxgnuseav37nvs0zn06dyfs79hk7uk8lrxuqzqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
@@ -1165,6 +1191,7 @@ mod tests {
 		assert_eq!(uri.pay()[0].inner(), "paynym1abc");
 	}
 
+	#[cfg(feature = "lightning")]
 	#[test]
 	fn required_lightning_accepted() {
 		let input = "bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?req-lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc";
@@ -1173,6 +1200,7 @@ mod tests {
 		assert!(uri.lightning()[0].required());
 	}
 
+	#[cfg(feature = "lightning")]
 	#[test]
 	fn lightning_roundtrip() {
 		let input = "bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc&lno=lno1pqpzwyq2qe3k7enxv4j3pjgrrwzv24nmzfjypx2a8m264ws9vht3uxp5vpypnluuzl67n4waq78syn2tdngnvypje2da9t4emyq25n29m84dszkfggehf3z35uj56pmxqgp5vfme44926w23gc282xn3pp0j7y8pc7je8e8qxrhmtwrjrnj4kzcqyqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqjnrlnqdqf52q7jwgcnxgnuseav37nvs0zn06dyfs79hk7uk8lrxuqzqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
@@ -1200,12 +1228,14 @@ mod tests {
 		assert_eq!(err, Bip321Error::NetworkKindMismatch { expected: NetworkKind::Main });
 	}
 
+	#[cfg(feature = "lightning")]
 	#[test]
 	fn reject_malformed_lightning_invoice() {
 		let err = parse("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?lightning=notaninvoice").unwrap_err();
 		assert!(matches!(err, Bip321Error::PaymentInstructionParseError { .. }));
 	}
 
+	#[cfg(feature = "lightning")]
 	#[test]
 	fn reject_malformed_lno_offer() {
 		let err = parse("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?lno=notanoffer").unwrap_err();
@@ -1254,6 +1284,7 @@ mod tests {
 		assert!(uri.checked_uppercase().is_none());
 	}
 
+	#[cfg(feature = "lightning")]
 	#[test]
 	fn uppercase_lightning_roundtrips() {
 		let input = "bitcoin:?lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc";
