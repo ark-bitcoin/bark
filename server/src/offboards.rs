@@ -16,6 +16,7 @@ use bitcoin_ext::P2TR_DUST;
 use crate::{Server, SECP};
 use crate::bitcoind as bcd;
 use crate::error::ContextExt;
+use crate::fee_estimator::OffboardFeeRateError;
 use crate::flux::OwnedVtxoFluxGuard;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxosGuard};
 
@@ -197,11 +198,16 @@ impl Server {
 		}
 
 		let valid_fee_duration = self.config.offboard_acceptable_fee_rate_duration;
-		if !self.fee_estimator.is_historical_regular_rate(request.fee_rate, valid_fee_duration) {
-			return badarg!(
+		match self.fee_estimator.check_offboard_fee_rate(request.fee_rate, valid_fee_duration) {
+			Ok(()) => {},
+			Err(OffboardFeeRateError::TooHigh) => return badarg!(
 				"fee rate is no longer valid: provided = {}, expected = {}",
 				request.fee_rate, self.offboard_feerate(),
-			);
+			),
+			Err(OffboardFeeRateError::TooLow) => return badarg!(
+				"fee rate too low: provided = {}, minimum = {}",
+				request.fee_rate, self.fee_estimator.slow(),
+			),
 		}
 
 		// Validate the request parameters

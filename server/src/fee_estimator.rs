@@ -45,6 +45,16 @@ impl OnchainFeeRates {
 	}
 }
 
+/// Why a client-supplied offboard fee rate was rejected by
+/// [FeeEstimator::check_offboard_fee_rate].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OffboardFeeRateError {
+	/// Above every regular rate seen within the history window.
+	TooHigh,
+	/// Below the slow target, so the offboard tx could not confirm.
+	TooLow,
+}
+
 /// Configuration for the fee estimator process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -149,6 +159,28 @@ impl FeeEstimator {
 	/// restart.
 	pub fn is_historical_slow_rate(&self, fee_rate: FeeRate, duration: Duration) -> bool {
 		self.is_historical_rate(fee_rate, duration, |rates| rates.slow)
+	}
+
+	/// Validate a client-supplied offboard fee rate.
+	///
+	/// The client picks the rate the offboard tx is built at and the
+	/// server can't RBF it (the forfeit commits to the txid), so the
+	/// rate must be recent (at or below a regular rate seen within
+	/// `duration`) and at least the current slow target so the tx can
+	/// still confirm. The slow floor tracks the network, so honest
+	/// clients on a quiet mempool still pass.
+	pub fn check_offboard_fee_rate(
+		&self,
+		fee_rate: FeeRate,
+		duration: Duration,
+	) -> Result<(), OffboardFeeRateError> {
+		if !self.is_historical_regular_rate(fee_rate, duration) {
+			return Err(OffboardFeeRateError::TooHigh);
+		}
+		if fee_rate < self.slow() {
+			return Err(OffboardFeeRateError::TooLow);
+		}
+		Ok(())
 	}
 
 	fn get_current_rates(&self) -> OnchainFeeRates {
@@ -308,4 +340,53 @@ pub fn start(
 	tokio::spawn(process.run(rtmgr));
 
 	fee_estimator
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	fn rate(sat_per_vb: u64) -> FeeRate {
+		FeeRate::from_sat_per_vb(sat_per_vb).unwrap()
+	}
+
+	fn estimator(fast: u64, regular: u64, slow: u64) -> FeeEstimator {
+		FeeEstimator::new(
+			OnchainFeeRates { fast: rate(fast), regular: rate(regular), slow: rate(slow) },
+			Duration::from_secs(3600),
+			None,
+		)
+	}
+
+	#[test]
+	fn offboard_fee_rate_bounds() {
+		let est = estimator(10, 5, 2);
+		let d = Duration::from_secs(3600);
+
+		// Below the slow target is rejected: this is the drain vector.
+		assert_eq!(est.check_offboard_fee_rate(rate(1), d), Err(OffboardFeeRateError::TooLow));
+
+		// The slow target itself, and anything up to the regular rate, pass.
+		assert_eq!(est.check_offboard_fee_rate(rate(2), d), Ok(()));
+		assert_eq!(est.check_offboard_fee_rate(rate(3), d), Ok(()));
+		assert_eq!(est.check_offboard_fee_rate(rate(5), d), Ok(()));
+
+		// Above the regular rate is still rejected as too high.
+		assert_eq!(est.check_offboard_fee_rate(rate(6), d), Err(OffboardFeeRateError::TooHigh));
+	}
+
+	#[test]
+	fn offboard_floor_tracks_current_slow() {
+		// The floor is the current slow rate, not a historically low one:
+		// a rate that cleared yesterday's floor is rejected once the
+		// network moves up.
+		let est = estimator(10, 5, 2);
+		est.update(OnchainFeeRates { fast: rate(20), regular: rate(10), slow: rate(4) });
+		let d = Duration::from_secs(3600);
+
+		// 3 was >= the old slow (2) but is below the new slow (4).
+		assert_eq!(est.check_offboard_fee_rate(rate(3), d), Err(OffboardFeeRateError::TooLow));
+		// 4 meets the new floor and stays within a regular rate in history.
+		assert_eq!(est.check_offboard_fee_rate(rate(4), d), Ok(()));
+	}
 }
