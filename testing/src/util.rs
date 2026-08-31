@@ -58,6 +58,13 @@ pub fn init_logging() {
 		.filter_module("h2", log::LevelFilter::Off)
 		.filter_module("tower", log::LevelFilter::Off)
 		.filter_module("hyper_util", log::LevelFilter::Off)
+		// Span enter/exit/drop from #[instrument] and trace_span! forward through
+		// the `tracing::span` / `tracing::span::active` targets rather than the
+		// module they were declared in, so the h2/tower module mutes above don't
+		// catch them. This is the flood that shows up as "[TRACE h2::… ] -> foo;"
+		// in nextest's stdout dumps: the module_path is h2's but the log target
+		// is `tracing::span::active`.
+		.filter_module("tracing::span", log::LevelFilter::Off)
 		.parse_env(env_logger::Env::new().filter("TEST_LOG"))
 		.format(|out, rec| {
 			let now = chrono::Local::now();
