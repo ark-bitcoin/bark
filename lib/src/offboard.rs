@@ -104,6 +104,54 @@ pub struct InvalidUserPartialSignatureError {
 	pub vtxo: VtxoId,
 }
 
+/// Something is wrong with what was handed to an [OffboardForfeitContext].
+///
+/// Every variant is a condition the counterparty can cause: a server picks
+/// how many cosign nonces it sends and what offboard tx it builds, a client
+/// picks how many nonces and partial signatures it sends. None of them may
+/// panic, because the side rejecting a malformed message would be the side
+/// that goes down.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+pub enum OffboardForfeitError {
+	/// There is nothing to forfeit. Every offboard spends at least one VTXO.
+	#[error("offboard has no input VTXOs")]
+	NoInputs,
+	/// A vector holding one entry per input VTXO has a different length.
+	#[error("wrong number of {vector}: expected {expected}, received {received}")]
+	WrongCount {
+		/// Names the vector that was the wrong length.
+		vector: &'static str,
+		/// How many entries were needed: one per input VTXO.
+		expected: usize,
+		/// How many entries were actually supplied.
+		received: usize,
+	},
+	/// The offboard tx has no connector output for the forfeits to spend.
+	/// [OffboardForfeitContext::validate_offboard_tx] reports this in more
+	/// detail; it shows up here only if that check was skipped.
+	#[error("offboard tx has no connector output")]
+	MissingConnectorOutput,
+	#[error(transparent)]
+	InvalidUserPartialSignature(#[from] InvalidUserPartialSignatureError),
+}
+
+impl OffboardForfeitError {
+	/// Returns [Self::WrongCount] unless `received` is exactly `expected`.
+	///
+	/// `vector` names what was counted, for the error message.
+	pub fn check_count(
+		vector: &'static str,
+		expected: usize,
+		received: usize,
+	) -> Result<(), OffboardForfeitError> {
+		if expected == received {
+			Ok(())
+		} else {
+			Err(OffboardForfeitError::WrongCount { vector, expected, received })
+		}
+	}
+}
+
 pub struct OffboardForfeitSignatures {
 	pub public_nonces: Vec<musig::PublicNonce>,
 	pub partial_signatures: Vec<musig::PartialSignature>,
@@ -151,10 +199,17 @@ pub struct OffboardForfeitContext<'a, V> {
 impl<'a, V> OffboardForfeitContext<'a, V> {
 	/// Create a new [OffboardForfeitContext] with given input VTXOs and offboard tx
 	///
-	/// Number of input VTXOs must not be zero.
-	pub fn new(input_vtxos: &'a [V], offboard_tx: &'a Transaction) -> Self {
-		assert_ne!(input_vtxos.len(), 0, "no input VTXOs");
-		Self { input_vtxos, offboard_tx }
+	/// Fails with [OffboardForfeitError::NoInputs] if there are no input
+	/// VTXOs. Every other method relies on that, so this is the only place
+	/// it has to be checked.
+	pub fn new(
+		input_vtxos: &'a [V],
+		offboard_tx: &'a Transaction,
+	) -> Result<Self, OffboardForfeitError> {
+		if input_vtxos.is_empty() {
+			return Err(OffboardForfeitError::NoInputs);
+		}
+		Ok(Self { input_vtxos, offboard_tx })
 	}
 
 	/// Validate offboard tx matches offboard request
@@ -203,23 +258,28 @@ where
 	///
 	/// Provide the keys for the VTXO pubkeys in order of the input VTXOs.
 	///
-	/// Panics if wrong number of keys or nonces, or if [Self::validate_offboard_tx]
-	/// would have returned an error. The caller should call that method first.
+	/// `server_nonces` comes from the server, so a wrong count is an error and
+	/// not a panic: the caller can't keep a peer from sending a malformed
+	/// response, only reject it.
+	///
+	/// Call [Self::validate_offboard_tx] first; it reports a malformed
+	/// offboard tx in full detail, where this only names what it needed.
 	pub fn user_sign_forfeits(
 		&self,
 		keys: &[impl Borrow<Keypair>],
 		server_nonces: &[musig::PublicNonce],
-	) -> OffboardForfeitSignatures {
-		assert_eq!(self.input_vtxos.len(), keys.len(), "wrong number of keys");
-		assert_eq!(self.input_vtxos.len(), server_nonces.len(), "wrong number of nonces");
-		assert_ne!(self.input_vtxos.len(), 0, "no inputs");
+	) -> Result<OffboardForfeitSignatures, OffboardForfeitError> {
+		OffboardForfeitError::check_count("keys", self.input_vtxos.len(), keys.len())?;
+		OffboardForfeitError::check_count(
+			"forfeit cosign nonces", self.input_vtxos.len(), server_nonces.len(),
+		)?;
 
 		let mut pub_nonces = Vec::with_capacity(self.input_vtxos.len());
 		let mut part_sigs = Vec::with_capacity(self.input_vtxos.len());
 		let offboard_txid = self.offboard_tx.compute_txid();
 		let connector_fanout_prev = OutPoint::new(offboard_txid, OFFBOARD_TX_CONNECTOR_VOUT as u32);
 		let connector_fanout_txout = self.offboard_tx.output.get(OFFBOARD_TX_CONNECTOR_VOUT)
-			.expect("invalid offboard tx");
+			.ok_or(OffboardForfeitError::MissingConnectorOutput)?;
 
 		if self.input_vtxos.len() == 1 {
 			let (nonce, sig) = user_sign_vtxo_forfeit_input(
@@ -261,16 +321,20 @@ where
 			}
 		}
 
-		OffboardForfeitSignatures {
+		Ok(OffboardForfeitSignatures {
 			public_nonces: pub_nonces,
 			partial_signatures: part_sigs,
-		}
+		})
 	}
 
 	/// Check the user's partial signatures and finalize the forfeit txs
 	///
-	/// Panics if wrong number of secret nonces or partial signatures, or if [Self::validate_offboard_tx]
-	/// would have returned an error. The caller should call that method first.
+	/// `user_pub_nonces` and `user_partial_sigs` come from the user, so wrong
+	/// counts are errors and not panics: the server has to be able to reject a
+	/// malformed request without going down.
+	///
+	/// Call [Self::validate_offboard_tx] first; it reports a malformed
+	/// offboard tx in full detail, where this only names what it needed.
 	pub fn finish(
 		&self,
 		server_key: &Keypair,
@@ -278,17 +342,17 @@ where
 		server_sec_nonces: Vec<musig::SecretNonce>,
 		user_pub_nonces: &[musig::PublicNonce],
 		user_partial_sigs: &[musig::PartialSignature],
-	) -> Result<OffboardForfeitResult, InvalidUserPartialSignatureError> {
-		assert_eq!(self.input_vtxos.len(), server_pub_nonces.len());
-		assert_eq!(self.input_vtxos.len(), server_sec_nonces.len());
-		assert_eq!(self.input_vtxos.len(), user_pub_nonces.len());
-		assert_eq!(self.input_vtxos.len(), user_partial_sigs.len());
-		assert_ne!(self.input_vtxos.len(), 0, "no inputs");
+	) -> Result<OffboardForfeitResult, OffboardForfeitError> {
+		let inputs = self.input_vtxos.len();
+		OffboardForfeitError::check_count("server public nonces", inputs, server_pub_nonces.len())?;
+		OffboardForfeitError::check_count("server secret nonces", inputs, server_sec_nonces.len())?;
+		OffboardForfeitError::check_count("user public nonces", inputs, user_pub_nonces.len())?;
+		OffboardForfeitError::check_count("user partial signatures", inputs, user_partial_sigs.len())?;
 
 		let offboard_txid = self.offboard_tx.compute_txid();
 		let connector_fanout_prev = OutPoint::new(offboard_txid, OFFBOARD_TX_CONNECTOR_VOUT as u32);
 		let connector_fanout_txout = self.offboard_tx.output.get(OFFBOARD_TX_CONNECTOR_VOUT)
-			.expect("invalid offboard tx");
+			.ok_or(OffboardForfeitError::MissingConnectorOutput)?;
 		let tweaked_connector_key = server_key.for_keyspend_only(&*SECP);
 
 		let mut ret = OffboardForfeitResult {
@@ -708,14 +772,56 @@ mod test {
 		};
 
 		let inputs = [&input1, &input2];
-		let ctx = OffboardForfeitContext::new(&inputs, &offboard_tx);
+		let ctx = OffboardForfeitContext::new(&inputs, &offboard_tx).unwrap();
 		ctx.validate_offboard_tx(&req).unwrap();
+
+		// An offboard with nothing to forfeit is refused at construction, so
+		// no other method has to cope with it.
+		assert_eq!(
+			OffboardForfeitContext::new(&[] as &[&Vtxo<Full>], &offboard_tx).err(),
+			Some(OffboardForfeitError::NoInputs),
+		);
 
 		let (server_sec_nonces, server_pub_nonces) = (0..2).map(|_| {
 			musig::nonce_pair(&server_key)
 		}).collect::<(Vec<_>, Vec<_>)>();
 
-		let user_sigs = ctx.user_sign_forfeits(&[&input1_key, &input2_key], &server_pub_nonces);
+		let keys = [&input1_key, &input2_key];
+
+		// A server that sends the wrong number of nonces is rejected, not
+		// signed for: the caller must be able to survive a malformed response.
+		assert_eq!(
+			ctx.user_sign_forfeits(&keys, &server_pub_nonces[..1]).err(),
+			Some(OffboardForfeitError::WrongCount {
+				vector: "forfeit cosign nonces", expected: 2, received: 1,
+			}),
+		);
+		assert_eq!(
+			ctx.user_sign_forfeits(&keys, &[]).err(),
+			Some(OffboardForfeitError::WrongCount {
+				vector: "forfeit cosign nonces", expected: 2, received: 0,
+			}),
+		);
+
+		let user_sigs = ctx.user_sign_forfeits(&keys, &server_pub_nonces).unwrap();
+
+		// Same in the other direction: a user sending the wrong number of
+		// partial signatures must not be able to take the server down.
+		let (spare_sec_nonces, spare_pub_nonces) = (0..2).map(|_| {
+			musig::nonce_pair(&server_key)
+		}).collect::<(Vec<_>, Vec<_>)>();
+		assert_eq!(
+			ctx.finish(
+				&server_key,
+				&spare_pub_nonces,
+				spare_sec_nonces,
+				&user_sigs.public_nonces,
+				&user_sigs.partial_signatures[..1],
+			).err(),
+			Some(OffboardForfeitError::WrongCount {
+				vector: "user partial signatures", expected: 2, received: 1,
+			}),
+		);
 
 		let result = ctx.finish(
 			&server_key,

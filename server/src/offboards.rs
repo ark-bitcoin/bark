@@ -432,7 +432,8 @@ impl Server {
 		}
 
 		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(input_vtxos).await).await?;
-		let forfeit_ctx = OffboardForfeitContext::new(&vtxos, &state.offboard_tx.unsigned_tx);
+		let forfeit_ctx = OffboardForfeitContext::new(&vtxos, &state.offboard_tx.unsigned_tx)
+			.context("offboard session has no input vtxos")?;
 
 		let forfeit_txs = forfeit_ctx.finish(
 			self.server_key.leak_ref(),
