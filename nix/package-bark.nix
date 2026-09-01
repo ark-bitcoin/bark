@@ -15,6 +15,17 @@ let
 		cargoToml = ./../bark-cli/Cargo.toml;
 	};
 
+	# The version stamped into the binaries. Mirrors bark-cli/build.rs: only
+	# a build of the commit carrying the bark-X.Y.Z release tag gets the
+	# clean release version, anything else keeps the crate version as a
+	# readable base with a -dev suffix. The nix sandbox has no .git to
+	# inspect the tag, so release builds pass the version in through the
+	# BARK_VERSION env var (visible only under `nix build --impure`); the
+	# justfile bark release recipes do this automatically when HEAD carries
+	# the tag. In pure evaluation getEnv returns "", i.e. dev.
+	envVersion = builtins.getEnv "BARK_VERSION";
+	barkVersion = if envVersion != "" then envVersion else "${crateInfo.version}-dev";
+
 	src = lib.fileset.toSource {
 		root = ./..;
 		fileset = lib.fileset.unions [
@@ -25,6 +36,8 @@ let
 	};
 
 	cargoVendorDir = craneLib.vendorCargoDeps { inherit src; };
+
+	swaggerUi = import ./swagger-ui.nix { inherit pkgs; };
 
 	commonSettings = {
 		pname = "bark";
@@ -48,8 +61,12 @@ let
 		];
 
 		GIT_HASH = gitHash;
-		BARK_VERSION = crateInfo.version;
+		BARK_VERSION = barkVersion;
 		LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
+		# Points the utoipa-swagger-ui build script at a store-pinned copy of
+		# the swagger-ui distribution; without it the script tries to download
+		# from GitHub, which the sandbox forbids.
+		SWAGGER_UI_DOWNLOAD_URL = "file://${swaggerUi}";
 	};
 
 	# The glibc floor for the gnu targets. Zig links against glibc version
@@ -162,7 +179,7 @@ let
 				# system libraries, which is required when cross-compiling.
 				buildPhaseCargoCommand = ''
 					cargoBuildLog=$(mktemp cargoBuildLogXXXX.json)
-					cargo zigbuild --release --locked -p bark-cli --no-default-features --features tls-webpki-roots,sqlite-bundled --target ${zigbuildTarget target} --message-format json-render-diagnostics >"$cargoBuildLog"
+					cargo zigbuild --release --locked -p bark-cli --no-default-features --features tls-webpki-roots,sqlite-bundled,barkd-swagger-ui --target ${zigbuildTarget target} --message-format json-render-diagnostics >"$cargoBuildLog"
 				'';
 			}
 			// lib.optionalAttrs isDarwin {

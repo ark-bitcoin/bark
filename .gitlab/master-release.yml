@@ -45,7 +45,7 @@ generate-rustdocs:
     - datastore
   extends: .master-release-rules
   script:
-    - nix develop .#ci --command bash -c "just rustdocs"
+    - bash contrib/ci-env/ci.sh bash -c "just rustdocs"
     - sudo cp -r rustdocs/doc/ /host/data/rustdocs/doc/
     - bash contrib/generate-index.sh /host/data/rustdocs/doc
     - echo "rustdocs -> https://rustdocs.2nd.dev/master/"
@@ -65,12 +65,14 @@ build-server-githash:
   stage: build
   extends: .master-and-mr-release-rules
   needs:
+    - job: prechecks
+      optional: true
     - parse-server-githash
   script:
     - cat VERSION
-    - just release-server
-    - cp ./target/x86_64-unknown-linux-gnu/release/captaind  captaind-linux-x86_64
-    - cp ./target/x86_64-unknown-linux-gnu/release/watchmand watchmand-linux-x86_64
+    - bash contrib/ci-env/ci.sh bash -c "just _nix-build-collect bark-server x86_64-unknown-linux-gnu"
+    - cp ./build/captaind-x86_64-unknown-linux-gnu  captaind-linux-x86_64
+    - cp ./build/watchmand-x86_64-unknown-linux-gnu watchmand-linux-x86_64
   artifacts:
     paths:
       - captaind-linux-x86_64

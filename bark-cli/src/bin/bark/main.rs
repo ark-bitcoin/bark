@@ -14,7 +14,7 @@ use std::str::FromStr;
 use anyhow::Context;
 use bark::movement::PaymentMethod;
 use bark::secret::Secret;
-use bark_cli::VERSION_DIRTY;
+use bark_cli::VERSION_DEV_MARKER;
 use bitcoin::{Amount};
 use bitcoin::secp256k1;
 use clap::builder::BoolishValueParser;
@@ -403,7 +403,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	info!("Starting bark version {} with datadir {}", FULL_VERSION, datadir.display());
 
-	if env!("BARK_VERSION") == VERSION_DIRTY {
+	if env!("BARK_VERSION").contains(VERSION_DEV_MARKER) {
 		warn!("You're running a custom build of bark, which might cause unexpected issues. \
 			Consider building at one of the tagged versions or using the release builds.");
 	}

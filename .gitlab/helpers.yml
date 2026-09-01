@@ -16,8 +16,17 @@ prechecks:
     - echo "Cleaning up..."
     - rm -rf "/host/data/test/${CI_COMMIT_SHA}/" || true
     - rm -rf "/host/data/codecov/${CI_COMMIT_SHA}/" || true
+    # Generate the devShell env payloads once; every other job receives
+    # them as artifacts and enters the shells by sourcing them instead of
+    # paying a flake evaluation (see contrib/ci-env/_run.sh).
+    - echo "Generating devShell env payloads..."
+    - bash contrib/generate-ci-env.sh
     - echo "Running prechecks..."
-    - nix develop .#ci --command bash -c "just prechecks"
+    - bash contrib/ci-env/ci.sh bash -c "just prechecks"
+  artifacts:
+    paths:
+      - contrib/ci-env/*.env
+    expire_in: 1 day
 
 check-versions:
   interruptible: true

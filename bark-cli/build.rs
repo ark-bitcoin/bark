@@ -17,7 +17,7 @@ fn main() {
 		println!("cargo:rustc-env=GIT_HASH={}", git_hash);
 	}
 
-	// Determine version from git tag or dirty
+	// Determine version from git tag or dev
 	if env::var("BARK_VERSION").is_err() {
 		// Try to get tags pointing to current commit
 		let output = Command::new("git")
@@ -27,12 +27,17 @@ fn main() {
 
 		let tags = String::from_utf8_lossy(&output.stdout);
 
-		// Look for a tag matching bark-X.Y.Z pattern
+		// Look for a tag matching bark-X.Y.Z pattern. Builds not made from
+		// a release tag keep the crate version as a readable base but get
+		// a -dev suffix.
 		let version = tags.lines()
 			.find(|line| line.starts_with("bark-"))
 			.and_then(|tag| tag.strip_prefix("bark-"))
-			.map(|v| v)
-			.unwrap_or_else(|| "DIRTY");
+			.map(|v| v.to_string())
+			.unwrap_or_else(|| {
+				let base = env::var("CARGO_PKG_VERSION").expect("cargo sets CARGO_PKG_VERSION");
+				format!("{}-dev", base)
+			});
 
 		println!("cargo:rustc-env=BARK_VERSION={}", version);
 	}

@@ -263,31 +263,6 @@ test-bark-wasm-indexed-db:
 codecov-report:
 	cargo llvm-cov report --html --output-dir "./target/debug/codecov/"
 
-release-server:
-	RUSTFLAGS="-C debuginfo=2" cargo build --release --locked \
-		--manifest-path server/Cargo.toml --target x86_64-unknown-linux-gnu
-
-release-bark-linux:
-	cargo build --release --target x86_64-unknown-linux-gnu                        \
-		--locked --manifest-path bark-cli/Cargo.toml
-	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-unknown-linux-gnu     \
-		--locked --manifest-path bark-cli/Cargo.toml \
-		--no-default-features --features tls-webpki-roots
-	RUSTC_WRAPPER= cargo zigbuild --release --target armv7-unknown-linux-gnueabihf \
-		--locked --manifest-path bark-cli/Cargo.toml \
-		--no-default-features --features tls-webpki-roots
-
-release-bark: release-bark-linux
-	cargo build --release --target x86_64-pc-windows-gnu                  \
-		--locked --manifest-path bark-cli/Cargo.toml
-	RUSTC_WRAPPER= cargo zigbuild --release --target x86_64-apple-darwin  \
-		--locked --manifest-path bark-cli/Cargo.toml \
-		--no-default-features --features tls-webpki-roots
-	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-apple-darwin \
-		--locked --manifest-path bark-cli/Cargo.toml \
-		--no-default-features --features tls-webpki-roots
-
-
 RUSTDOCSDIR := justfile_directory() / "rustdocs"
 # This is opinionated, but doesn't matter. Any page has full search.
 DEFAULT_DOCS_PATH := "bark/struct.Wallet.html"
@@ -475,9 +450,6 @@ release-new-version NEW_VERSION: (bump-workspace-versions NEW_VERSION) generate-
 	echo "       git tag bark-{{NEW_VERSION}} <merge-commit>"
 	echo "       git push origin bark-{{NEW_VERSION}}"
 
-install-zigbuild:
-	cargo install cargo-zigbuild@0.21.8 --locked
-
 # `build-msrv-lib` is invoked separately from the Dockerfile because it needs
 # the .#msrv-lib nix shell rather than .#default.
 [doc("pre-run every CI recipe so the CI base image ships with a warm build cache")]
@@ -486,9 +458,11 @@ ci-warmup: check build check-fuzz check-release check-bark-as-libs test-doc test
 cachix-push:
 	nix develop .#default  --profile /tmp/bark-shell-dev      -c true
 	nix develop .#build    --profile /tmp/bark-shell-build    -c true
+	nix develop .#ci       --profile /tmp/bark-shell-ci       -c true
 	nix develop .#msrv-lib --profile /tmp/bark-shell-msrv-lib -c true
 	cachix push bark /tmp/bark-shell-dev
 	cachix push bark /tmp/bark-shell-build
+	cachix push bark /tmp/bark-shell-ci
 	cachix push bark /tmp/bark-shell-msrv-lib
 
 [doc("build a single nix release package and copy its binaries into build/ suffixed with the target triple")]
@@ -496,7 +470,7 @@ _nix-build-collect package target:
 	#!/usr/bin/env bash
 	set -euo pipefail
 	mkdir -p build
-	out=$(nix build --no-link --print-out-paths ".#{{package}}-{{target}}")
+	out=$(nix build --no-link --print-out-paths ${NIX_BUILD_FLAGS:-} ".#{{package}}-{{target}}")
 	for bin in "$out"/bin/*
 	do
 		name=$(basename "$bin")
@@ -508,6 +482,28 @@ _nix-build-collect package target:
 		install -m 755 "$bin" "$dest"
 		echo "$dest"
 	done
+
+# Builds the bark flake package with the right version stamp, mirroring
+# bark-cli/build.rs: only a build of the commit carrying the bark-X.Y.Z
+# release tag gets the clean release version, anything else gets the crate
+# version with a -dev suffix (the package-bark.nix default). The nix
+# sandbox can't see .git, so when the tag is present the version is passed
+# in through the BARK_VERSION env var, which requires an impure build.
+_nix-build-collect-bark target:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	tag=$(git tag --points-at HEAD | grep '^bark-' | head -n1 || true)
+	if [ -z "$tag" ]; then
+		just _nix-build-collect bark {{target}}
+	else
+		tag_version=${tag#bark-}
+		crate_version=$(grep '^version = ' bark-cli/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/')
+		if [ "$tag_version" != "$crate_version" ]; then
+			echo "warning: tag version $tag_version differs from bark-cli/Cargo.toml version $crate_version, using the tag version" >&2
+		fi
+		BARK_VERSION="$tag_version" NIX_BUILD_FLAGS=--impure \
+			just _nix-build-collect bark {{target}}
+	fi
 
 nix-build-bark-all:
 	#!/usr/bin/env bash
@@ -521,7 +517,7 @@ nix-build-bark-all:
 		aarch64-apple-darwin \
 		x86_64-pc-windows-gnu
 	do
-		just _nix-build-collect bark "$target"
+		just _nix-build-collect-bark "$target"
 	done
 	just _nix-build-checksums
 
@@ -535,9 +531,27 @@ nix-build-bark-linux:
 		aarch64-unknown-linux-musl \
 		armv7-unknown-linux-musleabihf
 	do
-		just _nix-build-collect bark "$target"
+		just _nix-build-collect-bark "$target"
 	done
 	just _nix-build-checksums
+
+# Same as _nix-build-collect-bark but for the server package, keyed on the
+# server-X.Y.Z release tag and the SERVER_VERSION env var.
+_nix-build-collect-server target:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	tag=$(git tag --points-at HEAD | grep '^server-' | head -n1 || true)
+	if [ -z "$tag" ]; then
+		just _nix-build-collect bark-server {{target}}
+	else
+		tag_version=${tag#server-}
+		crate_version=$(grep '^version = ' server/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/')
+		if [ "$tag_version" != "$crate_version" ]; then
+			echo "warning: tag version $tag_version differs from server/Cargo.toml version $crate_version, using the tag version" >&2
+		fi
+		SERVER_VERSION="$tag_version" NIX_BUILD_FLAGS=--impure \
+			just _nix-build-collect bark-server {{target}}
+	fi
 
 nix-build-server-all:
 	#!/usr/bin/env bash
@@ -546,7 +560,7 @@ nix-build-server-all:
 		x86_64-unknown-linux-gnu \
 		x86_64-unknown-linux-musl
 	do
-		just _nix-build-collect bark-server "$target"
+		just _nix-build-collect-server "$target"
 	done
 	just _nix-build-checksums
 

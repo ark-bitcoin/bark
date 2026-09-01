@@ -20,7 +20,7 @@ check_version() {
 	cd "$PROJECT_DIR" || exit 1
 
     REF_VERSION="${TAG_NAME#"${prefix}"}"
-    PROJECT_VERSION=$(nix develop .#default --command bash -c "cargo pkgid | cut -d '@' -f2 | cut -d ' ' -f1")
+    PROJECT_VERSION=$(bash "$SCRIPT_DIR/ci-env/default.sh" bash -c "cargo pkgid | cut -d '@' -f2 | cut -d ' ' -f1")
 
     if [ "$REF_VERSION" = "$PROJECT_VERSION" ] || printf '%s\n' "$REF_VERSION" | grep -q "^$PROJECT_VERSION"; then
         log_info "Version check passed: COMMIT matches ${project} ($REF_VERSION)"

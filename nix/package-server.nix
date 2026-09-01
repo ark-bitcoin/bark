@@ -9,6 +9,17 @@ let
 		cargoToml = ./../server/Cargo.toml;
 	};
 
+	# The version stamped into the binaries. Mirrors server/build.rs: only
+	# a build of the commit carrying the server-X.Y.Z release tag gets the
+	# clean release version, anything else keeps the crate version as a
+	# readable base with a -dev suffix. The nix sandbox has no .git to
+	# inspect the tag, so release builds pass the version in through the
+	# SERVER_VERSION env var (visible only under `nix build --impure`); the
+	# justfile server release recipes do this automatically when HEAD carries
+	# the tag. In pure evaluation getEnv returns "", i.e. dev.
+	envVersion = builtins.getEnv "SERVER_VERSION";
+	serverVersion = if envVersion != "" then envVersion else "${crateInfo.version}-dev";
+
 	src = lib.fileset.toSource {
 		root = ./..;
 		fileset = lib.fileset.unions [
@@ -44,7 +55,7 @@ let
 		];
 
 		GIT_HASH = gitHash;
-		BARK_VERSION = crateInfo.version;
+		SERVER_VERSION = serverVersion;
 		LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 	};
 

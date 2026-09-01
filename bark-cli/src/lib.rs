@@ -4,6 +4,6 @@ pub mod wallet;
 
 pub mod util;
 
-/// The value for the `BARK_VERSION` env variable if not built from
-/// a tagged version
-pub const VERSION_DIRTY: &str = "DIRTY";
+/// The marker included in the `BARK_VERSION` env variable when not built
+/// from a tagged version, e.g. "0.6.0-dev".
+pub const VERSION_DEV_MARKER: &str = "-dev";

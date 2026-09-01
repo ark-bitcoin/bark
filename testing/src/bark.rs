@@ -69,7 +69,7 @@ impl Bark {
 
 	/// Extract the version from the BARK_EXEC binary.
 	///
-	/// Returns the version string, e.g. "0.1.0-beta.8" or "DIRTY".
+	/// Returns the version string, e.g. "0.1.0-beta.8" or "0.6.0-dev".
 	pub async fn version() -> String {
 		let output = Self::cmd()
 			.arg("--version")

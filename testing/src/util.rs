@@ -310,27 +310,29 @@ impl<T: Send> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
 	}
 }
 
-/// A bark version that is either a semver version or DIRTY (an unreleased build).
+/// A bark version that is either a semver version or a dev (unreleased) build.
 ///
-/// DIRTY is considered greater than any semver version, so that version
-/// checks like `require_version >= "0.1.0-beta.8"` pass on dev builds.
+/// Dev builds report either "DIRTY" (older builds) or a version containing
+/// a "-dev" marker, e.g. "0.6.0-dev". Dev is considered greater than any
+/// semver version, so that version checks like
+/// `require_version >= "0.1.0-beta.8"` pass on dev builds.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum BarkVersion {
 	Release(Version),
-	Dirty,
+	Dev,
 }
 
 impl BarkVersion {
 	pub fn parse(s: &str) -> BarkVersion {
-		if s == "DIRTY" {
-			BarkVersion::Dirty
+		if s == "DIRTY" || s.contains("-dev") {
+			BarkVersion::Dev
 		} else {
 			BarkVersion::Release(Version::parse(s).expect("invalid semver version"))
 		}
 	}
 
-	pub fn is_dirty(&self) -> bool {
-		matches!(self, BarkVersion::Dirty)
+	pub fn is_dev(&self) -> bool {
+		matches!(self, BarkVersion::Dev)
 	}
 
 	pub fn is_release(&self) -> bool {
@@ -341,7 +343,7 @@ impl BarkVersion {
 impl fmt::Display for BarkVersion {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			BarkVersion::Dirty => write!(f, "DIRTY"),
+			BarkVersion::Dev => write!(f, "DEV"),
 			BarkVersion::Release(v) => write!(f, "{}", v),
 		}
 	}
@@ -350,9 +352,9 @@ impl fmt::Display for BarkVersion {
 impl Ord for BarkVersion {
 	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
 		match (self, other) {
-			(BarkVersion::Dirty, BarkVersion::Dirty) => std::cmp::Ordering::Equal,
-			(BarkVersion::Dirty, _) => std::cmp::Ordering::Greater,
-			(_, BarkVersion::Dirty) => std::cmp::Ordering::Less,
+			(BarkVersion::Dev, BarkVersion::Dev) => std::cmp::Ordering::Equal,
+			(BarkVersion::Dev, _) => std::cmp::Ordering::Greater,
+			(_, BarkVersion::Dev) => std::cmp::Ordering::Less,
 			(BarkVersion::Release(a), BarkVersion::Release(b)) => a.cmp(b),
 		}
 	}

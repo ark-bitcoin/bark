@@ -36,7 +36,7 @@ trap 'copy' EXIT INT TERM
 WATCHDOG_PID=$!
 
 echo "Starting test for version: $TEST_VERSION"
-nix develop .#default --command bash -c "just '${TEST_VERSION}'"
+bash ./contrib/ci-env/default.sh bash -c "just '${TEST_VERSION}'"
 TASK_EXIT_CODE=$?
 
 if kill "$WATCHDOG_PID" 2>/dev/null; then

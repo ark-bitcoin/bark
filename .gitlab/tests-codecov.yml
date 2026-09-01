@@ -9,24 +9,28 @@ test-unit-codecov:
   stage: test
   extends: .codecov-rules
   needs:
+    - job: prechecks
+      optional: true
     - check-commits
   variables:
     NEXTEST_TEST_THREADS: "1"
   script:
     - git log --oneline -1
-    - nix develop .#ci --command bash -c "just test-unit-codecov"
+    - bash contrib/ci-env/ci.sh bash -c "just test-unit-codecov"
 
 build-codecov:
   interruptible: true
   stage: build
   extends: .codecov-rules
   needs:
+    - job: prechecks
+      optional: true
     - check-commits
   variables:
     NEXTEST_TEST_THREADS: "1"
   script:
     - git log --oneline -1
-    - nix develop .#ci --command bash -c "just build-codecov"
+    - bash contrib/ci-env/ci.sh bash -c "just build-codecov"
 
 test-integration-btc30-codecov:
   interruptible: true
@@ -36,6 +40,8 @@ test-integration-btc30-codecov:
     - datastore
   extends: .codecov-rules
   needs:
+    - job: prechecks
+      optional: true
     - build-codecov
     - check-commits
   variables:
@@ -57,9 +63,11 @@ code-coverage:
     - datastore
   extends: .codecov-rules
   needs:
+    - job: prechecks
+      optional: true
     - test-integration-btc30-codecov
   script:
-    - nix develop .#ci --command bash -c "just codecov-report"
+    - bash contrib/ci-env/ci.sh bash -c "just codecov-report"
     - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
     - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
     - echo "Coverage -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"

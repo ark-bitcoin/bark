@@ -18,7 +18,7 @@ use bark_rest::auth::AuthToken;
 
 use bark::fs_perms;
 
-use bark_cli::VERSION_DIRTY;
+use bark_cli::VERSION_DEV_MARKER;
 use bark_cli::connection;
 use bark_cli::log::init_logging;
 use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, read_mnemonic, AUTH_TOKEN_FILE};
@@ -389,7 +389,7 @@ async fn main() -> anyhow::Result<()>{
 
 	info!("Starting barkd version {} with datadir {}", FULL_VERSION, datadir.display());
 
-	if env!("BARK_VERSION") == VERSION_DIRTY {
+	if env!("BARK_VERSION").contains(VERSION_DEV_MARKER) {
 		warn!("You're running a custom build of barkd, which might cause unexpected issues. \
 			Consider building at one of the tagged versions or using the release builds.");
 	}
