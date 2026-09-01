@@ -268,6 +268,9 @@ enum DataCommand {
 	/// Fix offboard connector and forfeit VTXOs stored with an empty vtxo blob
 	#[command()]
 	FixOffboardVtxos,
+	/// Backfill the htlc_vtxos table from existing HTLC vtxos
+	#[command()]
+	BackfillHtlcVtxos,
 }
 
 #[derive(clap::Subcommand)]
@@ -423,6 +426,10 @@ async fn inner_main() -> anyhow::Result<()> {
 				DataCommand::FixOffboardVtxos => {
 					let count = server::database::data_migrations::fix_offboard_vtxos::run(&db).await?;
 					println!("Fixed {} offboard vtxos", count);
+				}
+				DataCommand::BackfillHtlcVtxos => {
+					let count = server::database::data_migrations::backfill_htlc_vtxos::run(&db).await?;
+					println!("Backfilled {} htlc vtxos", count);
 				}
 			}
 		}
