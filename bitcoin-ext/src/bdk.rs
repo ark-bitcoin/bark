@@ -3,7 +3,7 @@ use std::borrow::BorrowMut;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use bdk_wallet::{AddressInfo, TxBuilder, Wallet, WeightedUtxo};
+use bdk_wallet::{AddressInfo, TxBuilder, Utxo, Wallet, WeightedUtxo};
 use bdk_wallet::chain::{BlockId, CanonicalizationParams, ChainPosition, ConfirmationBlockTime};
 use bdk_wallet::coin_selection::{
 	decide_change, CoinSelectionAlgorithm, CoinSelectionResult, DefaultCoinSelectionAlgorithm,
@@ -206,6 +206,48 @@ impl<A: CoinSelectionAlgorithm> CoinSelectionAlgorithm for WithGuaranteedChange<
 		};
 		result.excess = decide_change(leftover + raise, fee_rate, drain_script);
 		Ok(result)
+	}
+}
+
+/// Coin selection wrapper that favours confirmed inputs: the inner algorithm first runs over the
+/// confirmed candidates only. When confirmed funds don't suffice, all of them become required
+/// inputs and the unconfirmed ones (foreign utxos included) are offered to top up the difference.
+///
+/// A tx spending only confirmed inputs relays at exactly the feerate it pays and can't be
+/// dragged down by a low-fee parent. When unconfirmed inputs can't be avoided, spending every
+/// confirmed coin first keeps the unconfirmed share as small as possible.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PreferConfirmedCoinSelection<A>(pub A);
+
+impl<A: CoinSelectionAlgorithm> CoinSelectionAlgorithm for PreferConfirmedCoinSelection<A> {
+	fn coin_select<R: RngCore>(
+		&self,
+		required_utxos: Vec<WeightedUtxo>,
+		optional_utxos: Vec<WeightedUtxo>,
+		fee_rate: FeeRate,
+		target_amount: Amount,
+		drain_script: &Script,
+		rand: &mut R,
+	) -> Result<CoinSelectionResult, InsufficientFunds> {
+		let (confirmed, unconfirmed) = optional_utxos.into_iter()
+			.partition::<Vec<_>, _>(|wu| match wu.utxo {
+				Utxo::Local(ref o) => o.chain_position.is_confirmed(),
+				Utxo::Foreign { .. } => false,
+			});
+
+		let attempt = self.0.coin_select(
+			required_utxos.clone(), confirmed.clone(), fee_rate, target_amount,
+			drain_script, rand,
+		);
+		match attempt {
+			Ok(result) => Ok(result),
+			Err(InsufficientFunds { .. }) => {
+				let required = required_utxos.into_iter().chain(confirmed).collect();
+				self.0.coin_select(
+					required, unconfirmed, fee_rate, target_amount, drain_script, rand,
+				)
+			},
+		}
 	}
 }
 
@@ -456,7 +498,10 @@ mod test {
 
 	use bdk_wallet::KeychainKind;
 	use bdk_wallet::chain::BlockId;
-	use bdk_wallet::test_utils::{get_test_wpkh, insert_checkpoint, receive_output_in_latest_block};
+	use bdk_wallet::test_utils::{
+		get_test_wpkh, insert_checkpoint, receive_output, receive_output_in_latest_block,
+		ReceiveTo,
+	};
 	use bitcoin::Network;
 	use bitcoin::hashes::Hash;
 
@@ -550,6 +595,66 @@ mod test {
 		assert_eq!(tx.input.len(), 1, "1000-sat input alone leaves non-dust change");
 		assert_eq!(tx.output[0].value, Amount::from_sat(500));
 		assert_eq!(psbt.fee().unwrap(), fee);
+	}
+
+	/// A wallet with two confirmed UTXOs (10k and 4k sats) and an unconfirmed 50k-sat one.
+	fn mixed_confirmation_wallet() -> (Wallet, Vec<OutPoint>, OutPoint) {
+		let mut wallet = Wallet::create_single(get_test_wpkh())
+			.network(Network::Regtest)
+			.create_wallet_no_persist()
+			.unwrap();
+		insert_checkpoint(&mut wallet, BlockId { height: 1_000, hash: BlockHash::all_zeros() });
+		let confirmed = vec![
+			receive_output_in_latest_block(&mut wallet, Amount::from_sat(10_000)),
+			receive_output_in_latest_block(&mut wallet, Amount::from_sat(4_000)),
+		];
+		let unconfirmed = receive_output(&mut wallet, Amount::from_sat(50_000), ReceiveTo::Mempool(1));
+		(wallet, confirmed, unconfirmed)
+	}
+
+	/// While confirmed funds cover the payment, the bigger unconfirmed
+	/// UTXO must not be selected.
+	#[test]
+	fn prefer_confirmed_selection_ignores_unconfirmed_when_possible() {
+		let (mut wallet, confirmed, unconfirmed) = mixed_confirmation_wallet();
+		let recipient = wallet.reveal_next_address(KeychainKind::External)
+			.address.script_pubkey();
+
+		let mut b = wallet.build_tx()
+			.coin_selection(PreferConfirmedCoinSelection(DefaultCoinSelectionAlgorithm::default()));
+		b.add_recipient(recipient, Amount::from_sat(5_000));
+		b.fee_rate(FeeRate::from_sat_per_vb(2).unwrap());
+		let psbt = b.finish().expect("confirmed funds suffice");
+
+		let inputs = psbt.unsigned_tx.input.iter()
+			.map(|i| i.previous_output)
+			.collect::<Vec<_>>();
+		assert!(!inputs.is_empty());
+		assert!(inputs.iter().all(|i| confirmed.contains(i)));
+		assert!(!inputs.contains(&unconfirmed));
+	}
+
+	/// Once confirmed funds fall short, every confirmed UTXO is spent and
+	/// the unconfirmed one tops up the difference.
+	#[test]
+	fn prefer_confirmed_selection_falls_back_to_unconfirmed() {
+		let (mut wallet, confirmed, unconfirmed) = mixed_confirmation_wallet();
+		let recipient = wallet.reveal_next_address(KeychainKind::External)
+			.address.script_pubkey();
+
+		let mut b = wallet.build_tx()
+			.coin_selection(PreferConfirmedCoinSelection(DefaultCoinSelectionAlgorithm::default()));
+		b.add_recipient(recipient, Amount::from_sat(30_000));
+		b.fee_rate(FeeRate::from_sat_per_vb(2).unwrap());
+		let psbt = b.finish().expect("all funds together suffice");
+
+		let inputs = psbt.unsigned_tx.input.iter()
+			.map(|i| i.previous_output)
+			.collect::<Vec<_>>();
+		for op in &confirmed {
+			assert!(inputs.contains(op), "every confirmed UTXO must be spent");
+		}
+		assert!(inputs.contains(&unconfirmed), "unconfirmed UTXO must be pulled in");
 	}
 }
 
