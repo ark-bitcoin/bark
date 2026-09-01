@@ -4,6 +4,7 @@ use std::sync::atomic::{self, AtomicUsize};
 use std::time::Duration;
 
 use bitcoin::{Amount, FeeRate, Transaction, Witness};
+use bitcoin_ext::BlockDelta;
 use bitcoin_ext::rpc::RpcApi;
 
 use bark::actions::offboard::Progress;
@@ -150,7 +151,7 @@ async fn offboard_replays_identical_prepare_request() {
 	let proxy = srv.start_proxy_no_mailbox(ReplayPrepareOffboardProxy).await;
 
 	let wallet = ctx.bark_sdk("bark", &proxy)
-		.cfg(|c| c.offboard_required_confirmations = OFFBOARD_CONFIRMATIONS)
+		.cfg(|c| c.offboard_required_confirmations = OFFBOARD_CONFIRMATIONS.try_into().unwrap())
 		.boarded(sat(800_000))
 		.create().await;
 
@@ -190,7 +191,7 @@ async fn offboard_rejects_unsigned_finish_response() {
 	// Manual sync only, so the test controls the finish retry.
 	let wallet = ctx.bark_sdk("bark", &proxy)
 		.cfg(|c| {
-			c.offboard_required_confirmations = 1;
+			c.offboard_required_confirmations = BlockDelta::new(1);
 			c.daemon_manual_sync = true;
 		})
 		.boarded(sat(800_000))
@@ -237,7 +238,7 @@ async fn offboard_recovers_expired_session_by_repreparing() {
 	// before the session expires, sidestepping the recovery under test.
 	let wallet = ctx.bark_sdk("bark", &proxy)
 		.cfg(|c| {
-			c.offboard_required_confirmations = 1;
+			c.offboard_required_confirmations = BlockDelta::new(1);
 			c.daemon_manual_sync = true;
 		})
 		.boarded(sat(800_000))
@@ -311,7 +312,7 @@ async fn offboard_rebroadcasts_evicted_tx_within_grace_period() {
 			c.bitcoind_cookiefile = None;
 			c.bitcoind_user = Some(constants::bitcoind::BITCOINRPC_TEST_USER.into());
 			c.bitcoind_pass = Some(String::from(constants::bitcoind::BITCOINRPC_TEST_PASSWORD).into());
-			c.offboard_required_confirmations = 1;
+			c.offboard_required_confirmations = BlockDelta::new(1);
 			c.daemon_manual_sync = true;
 		})
 		.boarded(sat(800_000))
@@ -369,7 +370,7 @@ async fn offboard_reports_lost_tx_after_grace_period() {
 			c.bitcoind_cookiefile = None;
 			c.bitcoind_user = Some(constants::bitcoind::BITCOINRPC_TEST_USER.into());
 			c.bitcoind_pass = Some(String::from(constants::bitcoind::BITCOINRPC_TEST_PASSWORD).into());
-			c.offboard_required_confirmations = 1;
+			c.offboard_required_confirmations = BlockDelta::new(1);
 			// Any tx missing from chain and mempool is immediately lost.
 			c.offboard_lost_tx_grace_period_secs = 0;
 			c.daemon_manual_sync = true;
@@ -424,7 +425,7 @@ async fn offboard_recovers_lost_finish_by_adopting_chain_tx() {
 	// before the session expires, sidestepping the recovery under test.
 	let wallet = ctx.bark_sdk("bark", &proxy)
 		.cfg(|c| {
-			c.offboard_required_confirmations = 1;
+			c.offboard_required_confirmations = BlockDelta::new(1);
 			c.daemon_manual_sync = true;
 		})
 		.boarded(sat(800_000))

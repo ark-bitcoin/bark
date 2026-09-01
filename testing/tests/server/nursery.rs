@@ -8,7 +8,7 @@ use bitcoin::absolute::LockTime;
 use log::info;
 use serde_json::json;
 
-use bitcoin_ext::FeeRateExt;
+use bitcoin_ext::{BlockDelta, FeeRateExt};
 use bitcoin_ext::rpc::RpcApi;
 use server::bitcoind::MempoolEntry;
 use server::vtxopool::VtxoTarget;
@@ -64,7 +64,7 @@ async fn nursery_warns_until_tx_is_abandoned() {
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		// warn quickly after the round tx fails to confirm
-		cfg.nursery_confirm_target_blocks = 2;
+		cfg.nursery_confirm_target_blocks = BlockDelta::new(2);
 	}).create().await;
 
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;

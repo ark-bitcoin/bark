@@ -522,6 +522,8 @@ impl<'a> From<SerdeRoundState<'a>> for RoundState {
 
 #[cfg(test)]
 mod test {
+	use bitcoin_ext::BlockHeight;
+
 	use crate::exit::{ExitState, ExitTxOrigin};
 	use crate::vtxo::VtxoState;
 	use super::SerdeAttemptState;
@@ -654,11 +656,11 @@ mod test {
 		// Current shape round-trips a stored schedule height.
 		let current = rmp_serde::to_vec(&SerdeRoundFlowState::NonInteractivePending {
 			unlock_hash,
-			scheduled_height: Some(123_456),
+			scheduled_height: Some(BlockHeight::new(123_456)),
 		}).unwrap();
 		match rmp_serde::from_slice::<SerdeRoundFlowState>(&current).unwrap() {
 			SerdeRoundFlowState::NonInteractivePending { scheduled_height, .. } => {
-				assert_eq!(scheduled_height, Some(123_456));
+				assert_eq!(scheduled_height, Some(BlockHeight::new(123_456)));
 			},
 			_ => panic!("wrong variant"),
 		}

@@ -7,7 +7,7 @@ use tracing::{trace, debug, info, warn};
 
 use bitcoind_async_client::Client as BitcoindClient;
 use bitcoind_async_client::traits::Reader;
-use bitcoin_ext::BlockRef;
+use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef};
 
 use crate::bitcoind as bcd;
 use crate::database::{BlockTable, Db};
@@ -133,7 +133,8 @@ impl BlockIndex {
 		let common = self.common_ancestor().await?;
 
 		// Log if a reorg occurred
-		let reorg_depth = self.sync_tip().height - common.height;
+		let reorg_depth = self.sync_tip().height.checked_blocks_since(common.height)
+			.expect("common ancestor is below the sync tip");
 		if reorg_depth > 6 {
 			warn!("Reorg detected with depth {}", reorg_depth);
 		} else if reorg_depth > 0 {
@@ -146,8 +147,9 @@ impl BlockIndex {
 
 
 		// Add new blocks to the index
-		for height in common.height+1..=bitcoind_tip.height {
-			let hash = self.bitcoind.get_block_hash(height as u64).await?;
+		for height in common.height.to_u32()+1..=bitcoind_tip.height.to_u32() {
+			let height = BlockHeight::new(height);
+			let hash = self.bitcoind.get_block_hash(height.into()).await?;
 			let block = self.bitcoind.get_block(&hash).await?;
 
 			debug!("Adding block {} - {} - {} to the index", height, hash, block.block_hash());
@@ -268,7 +270,7 @@ impl BlockIndex {
 		// Keep walking down the chain until we find a match
 		while bitcoind_block != local_block {
 			trace!("Checking if height {} is a common ancestor", height);
-			height -= 1;
+			height = height.saturating_sub(BlockDelta::new(1));
 			bitcoind_block = bcd::get_block_by_height(&self.bitcoind, height).await
 				.context("Failed to get bitcoind block by height")?;
 			local_block = self.db.read(async |t| t.get_block_by_height(self.block_table, height).await).await

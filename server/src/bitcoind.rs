@@ -77,20 +77,20 @@ pub fn json_arg<T: serde::Serialize>(v: T) -> Result<Value, ClientError> {
 pub async fn tip(client: &Client) -> Result<BlockRef, ClientError> {
 	let height = client.get_block_count().await?;
 	let hash = client.get_block_hash(height).await?;
-	Ok(BlockRef { height: height as BlockHeight, hash })
+	Ok(BlockRef { height: BlockHeight::new(height as u32), hash })
 }
 
 pub async fn deep_tip(client: &Client) -> Result<BlockRef, ClientError> {
 	let count = client.get_block_count().await?;
-	let height = count.saturating_sub(DEEPLY_CONFIRMED as u64);
+	let height = count.saturating_sub(DEEPLY_CONFIRMED.into());
 	let hash = client.get_block_hash(height).await?;
-	Ok(BlockRef { height: height as BlockHeight, hash })
+	Ok(BlockRef { height: BlockHeight::new(height as u32), hash })
 }
 
 pub async fn get_block_by_height(
 	client: &Client, height: BlockHeight,
 ) -> Result<BlockRef, ClientError> {
-	let hash = client.get_block_hash(height as u64).await?;
+	let hash = client.get_block_hash(height.into()).await?;
 	Ok(BlockRef { height, hash })
 }
 
@@ -110,7 +110,7 @@ pub async fn tx_status(client: &Client, txid: Txid) -> Result<TxStatus, ClientEr
 				).await?;
 				if block.confirmations > 0 {
 					Ok(TxStatus::Confirmed(BlockRef {
-						height: block.height as BlockHeight,
+						height: BlockHeight::new(block.height as u32),
 						hash: block.hash,
 					}))
 				} else {

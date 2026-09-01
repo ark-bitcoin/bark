@@ -43,7 +43,7 @@ impl<'t> Tx<'t> {
 		);
 		let stmt = self.prepare(&query).await?;
 
-		self.execute(&stmt, &[&(block.height as i64), &block.hash.to_string()]).await?;
+		self.execute(&stmt, &[&i64::from(block.height), &block.hash.to_string()]).await?;
 
 		Ok(())
 	}
@@ -59,7 +59,7 @@ impl<'t> Tx<'t> {
 		);
 		let stmt = self.prepare(&query).await?;
 
-		self.execute(&stmt, &[&(height as i64)]).await?;
+		self.execute(&stmt, &[&i64::from(height)]).await?;
 		Ok(())
 	}
 
@@ -71,7 +71,7 @@ impl<'t> Tx<'t> {
 		);
 		let stmt = self.prepare(&query).await?;
 
-		match self.query_opt(&stmt, &[&(height as i64)]).await? {
+		match self.query_opt(&stmt, &[&i64::from(height)]).await? {
 			Some(row) => {
 				let hash: &str = row.get::<_, &str>("hash");
 
@@ -91,7 +91,8 @@ impl<'t> Tx<'t> {
 
 		match self.query_opt(&stmt, &[]).await? {
 			Some(row) => {
-				let height = row.get::<_, i64>("height") as BlockHeight;
+				let height = BlockHeight::try_from(row.get::<_, i64>("height"))
+					.context("invalid block height in db")?;
 				let hash= row.get::<_, &str>("hash");
 
 				let hash = hash.parse().context("invalid block hash")?;
@@ -111,7 +112,8 @@ impl<'t> Tx<'t> {
 
 		match self.query_opt(&stmt, &[]).await? {
 			Some(row) => {
-				let height = row.get::<_, i64>("height") as BlockHeight;
+				let height = BlockHeight::try_from(row.get::<_, i64>("height"))
+					.context("invalid block height in db")?;
 				let hash = row.get::<_, &str>("hash");
 				let hash = hash.parse().context("invalid block hash")?;
 				Ok(Some(BlockRef { height, hash }))

@@ -63,7 +63,7 @@ pub struct DelayedSignClause {
 impl DelayedSignClause {
 	/// Returns the input sequence value for this clause.
 	pub fn sequence(&self) -> Sequence {
-		Sequence::from_height(self.block_delta)
+		self.block_delta.into()
 	}
 }
 
@@ -120,7 +120,7 @@ pub struct TimelockSignClause {
 impl TimelockSignClause {
 	/// Returns the absolute locktime for this clause.
 	pub fn locktime(&self) -> LockTime {
-		LockTime::from_height(self.timelock_height).expect("timelock height is valid")
+		self.timelock_height.to_locktime().expect("timelock height is valid")
 	}
 }
 
@@ -177,12 +177,12 @@ pub struct DelayedTimelockSignClause {
 impl DelayedTimelockSignClause {
 	/// Returns the input sequence for this clause.
 	pub fn sequence(&self) -> Sequence {
-		Sequence::from_height(self.block_delta)
+		self.block_delta.into()
 	}
 
 	/// Returns the absolute locktime for this clause.
 	pub fn locktime(&self) -> LockTime {
-		LockTime::from_height(self.timelock_height).expect("timelock height is valid")
+		self.timelock_height.to_locktime().expect("timelock height is valid")
 	}
 }
 
@@ -243,7 +243,7 @@ pub struct HashDelaySignClause {
 impl HashDelaySignClause {
 	/// Returns the input sequence for this clause.
 	pub fn sequence(&self) -> Sequence {
-		Sequence::from_height(self.block_delta)
+		self.block_delta.into()
 	}
 
 	/// Try to extract the preimage from a witness that spends this clause.
@@ -329,7 +329,7 @@ pub struct HashDelaySignClause_v0 {
 impl HashDelaySignClause_v0 {
 	/// Returns the input sequence for this clause.
 	pub fn sequence(&self) -> Sequence {
-		Sequence::from_height(self.block_delta)
+		self.block_delta.into()
 	}
 
 	/// Try to extract the preimage from a witness that spends this clause.
@@ -680,7 +680,7 @@ mod tests {
 	fn test_delayed_sign_clause() {
 		let clause = DelayedSignClause {
 			pubkey: USER_KEYPAIR.public_key(),
-			block_delta: 100,
+			block_delta: BlockDelta::new(100),
 		};
 
 		// We compute taproot material for the clause
@@ -711,7 +711,7 @@ mod tests {
 	fn test_timelock_sign_clause() {
 		let clause = TimelockSignClause {
 			pubkey: USER_KEYPAIR.public_key(),
-			timelock_height: 100,
+			timelock_height: BlockHeight::new(100),
 		};
 
 		// We compute taproot material for the clause
@@ -743,8 +743,8 @@ mod tests {
 	fn test_delayed_timelock_clause() {
 		let clause = DelayedTimelockSignClause {
 			pubkey: USER_KEYPAIR.public_key(),
-			timelock_height: 100,
-			block_delta: 24,
+			timelock_height: BlockHeight::new(100),
+			block_delta: BlockDelta::new(24),
 		};
 
 		// We compute taproot material for the clause
@@ -779,7 +779,7 @@ mod tests {
 		let clause = HashDelaySignClause_v0 {
 			pubkey: USER_KEYPAIR.public_key(),
 			hash: sha256::Hash::hash(&preimage),
-			block_delta: 24,
+			block_delta: BlockDelta::new(24),
 		};
 
 		// We compute taproot material for the clause
@@ -814,7 +814,7 @@ mod tests {
 		let clause = HashDelaySignClause_v0 {
 			pubkey: USER_KEYPAIR.public_key(),
 			hash: payment_hash,
-			block_delta: 24,
+			block_delta: BlockDelta::new(24),
 		};
 
 		// Build a valid witness via the clause
@@ -935,7 +935,7 @@ mod tests {
 		let clause = HashDelaySignClause {
 			pubkey: USER_KEYPAIR.public_key(),
 			hash: payment_hash,
-			block_delta: 24,
+			block_delta: BlockDelta::new(24),
 		};
 		let witness = annexed_hash_delay_spend(
 			clause.tapscript(), clause.sequence(), preimage_bytes,
@@ -949,7 +949,7 @@ mod tests {
 		let clause_v0 = HashDelaySignClause_v0 {
 			pubkey: USER_KEYPAIR.public_key(),
 			hash: payment_hash,
-			block_delta: 24,
+			block_delta: BlockDelta::new(24),
 		};
 		let witness = annexed_hash_delay_spend(
 			clause_v0.tapscript(), clause_v0.sequence(), preimage_bytes,

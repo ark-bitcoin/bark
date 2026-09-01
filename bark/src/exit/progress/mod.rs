@@ -164,7 +164,7 @@ impl<'a> ProgressContext<'a> {
 		)
 	}
 
-	pub async fn tip_height(&self) -> anyhow::Result<u32, ExitError> {
+	pub async fn tip_height(&self) -> anyhow::Result<BlockHeight, ExitError> {
 		self.wallet.inner.chain.tip().await
 			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })
 	}

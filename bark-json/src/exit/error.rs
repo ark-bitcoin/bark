@@ -21,7 +21,11 @@ pub enum ExitError {
 	},
 
 	#[error("Block Retrieval Failure: Unable to retrieve a block at height {height}: {error}")]
-	BlockRetrievalFailure { height: BlockHeight, error: String },
+	BlockRetrievalFailure {
+		#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
+		height: BlockHeight,
+		error: String
+	},
 
 	#[error("Cannot Cancel Exit: The exit for VTXO {vtxo} can no longer be canceled (state: {state})")]
 	CannotCancelExit {
@@ -124,7 +128,11 @@ pub enum ExitError {
 	},
 
 	#[error("Invalid LockTime ({tip}): {error}")]
-	InvalidLocktime { tip: BlockHeight, error: String },
+	InvalidLocktime {
+		#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
+		tip: BlockHeight,
+		error: String
+	},
 
 	#[error("Invalid Wallet State: {error}")]
 	InvalidWalletState { error: String },

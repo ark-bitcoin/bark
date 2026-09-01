@@ -7,6 +7,8 @@ use futures::StreamExt as _;
 use bark_json::exit::ExitState;
 use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
 
+use bitcoin_ext::BlockHeight;
+
 use ark_testing::TestContext;
 use ark_testing::constants::ROUND_CONFIRMATIONS;
 use ark_testing::daemon::barkd::Barkd;
@@ -152,7 +154,7 @@ pub async fn wait_for_exits_claimable(ctx: &TestContext, barkd: &Barkd) {
 
 		let tip = ctx.bitcoind().tip_watcher().tip().height;
 		let blocks_to_mine = match claimable_height {
-			Some(target) if target > tip => target - tip,
+			Some(target) if target > tip => target.to_u32() - tip.to_u32(),
 			// An exit tx still has to confirm; mine a block so it can.
 			_ if any_processing => 1,
 			_ => 0,
@@ -164,7 +166,7 @@ pub async fn wait_for_exits_claimable(ctx: &TestContext, barkd: &Barkd) {
 			} else {
 				ctx.generate_blocks_unsynced(blocks_to_mine).await;
 				// Confirm the tip actually moved before re-polling statuses.
-				ctx.bitcoind().wait_for_blockheight(tip + blocks_to_mine).await;
+				ctx.bitcoind().wait_for_blockheight(BlockHeight::new(tip.to_u32() + blocks_to_mine)).await;
 			}
 			continue;
 		}

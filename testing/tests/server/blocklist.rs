@@ -6,6 +6,7 @@ use bitcoincore_rpc::RpcApi;
 use bitcoincore_rpc::json::CreateRawTransactionInput;
 
 use ark::{ProtocolEncoding, SECP};
+use bitcoin_ext::BlockHeight;
 use ark_testing::{btc, sat, Captaind, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::util::ToAltString;
@@ -78,7 +79,7 @@ async fn blocklist_board_cosign_rejected() {
 
 	let ark_info = srv.ark_info().await;
 	let tip_height = ctx.bitcoind().get_block_count().await as u32;
-	let expiry_height = tip_height + ark_info.vtxo_lifetime as u32;
+	let expiry_height = BlockHeight::new(tip_height) + ark_info.vtxo_lifetime;
 
 	let user_key = Keypair::new(&SECP, &mut thread_rng());
 	let board_amount = btc(1) - sat(2_000);
@@ -105,7 +106,7 @@ async fn blocklist_board_cosign_rejected() {
 	let err = rpc.request_board_cosign(protos::BoardCosignRequest {
 		amount: board_amount.to_sat(),
 		utxo: board_utxo.serialize(),
-		expiry_height,
+		expiry_height: expiry_height.into(),
 		user_pubkey: user_key.public_key().serialize().to_vec(),
 		pub_nonce: board_builder.user_pub_nonce().serialize().to_vec(),
 		funding_tx: bitcoin::consensus::serialize(&funding_tx),
@@ -147,7 +148,7 @@ async fn blocklist_board_register_rejected() {
 
 	let ark_info = srv.ark_info().await;
 	let tip_height = ctx.bitcoind().get_block_count().await as u32;
-	let expiry_height = tip_height + ark_info.vtxo_lifetime as u32;
+	let expiry_height = BlockHeight::new(tip_height) + ark_info.vtxo_lifetime;
 
 	let user_key = Keypair::new(&SECP, &mut thread_rng());
 	let board_amount = btc(1) - sat(2_000);
@@ -172,7 +173,7 @@ async fn blocklist_board_register_rejected() {
 	let cosign_response = rpc.request_board_cosign(protos::BoardCosignRequest {
 		amount: board_amount.to_sat(),
 		utxo: board_utxo.serialize(),
-		expiry_height,
+		expiry_height: expiry_height.into(),
 		user_pubkey: user_key.public_key().serialize().to_vec(),
 		pub_nonce: board_builder.user_pub_nonce().serialize().to_vec(),
 		funding_tx: vec![],

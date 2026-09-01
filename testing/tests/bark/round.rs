@@ -246,7 +246,7 @@ async fn delegated_maintenance_refresh() {
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	// Let vtxo almost expire so it needs refresh
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
 
 	// Call delegated maintenance - should return immediately
 	bark.maintain_delegated().await;
@@ -324,7 +324,7 @@ async fn delegated_refresh_from_legacy_hashlock_round() {
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	// Let vtxo almost expire so it needs refresh
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
 
 	// Register the delegated refresh, then let the server run the round
 	// without us
@@ -686,7 +686,7 @@ async fn stepwise_round() {
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	// let vtxo almost expire
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32 - BOARD_CONFIRMATIONS).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32() - BOARD_CONFIRMATIONS).await;
 
 	let bark = bark.client().await; // explicitly override name to avoid cli usage
 

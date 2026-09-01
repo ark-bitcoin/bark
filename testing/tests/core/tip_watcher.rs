@@ -4,7 +4,7 @@ use std::time::Duration;
 use bitcoincore_rpc::RpcApi;
 
 use bark::tip_watcher::{TipSource, TipWatcher};
-use bitcoin_ext::BlockRef;
+use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef};
 
 use ark_testing::TestContext;
 use ark_testing::util::FutureExt;
@@ -17,7 +17,7 @@ impl TipSource for RpcTipSource {
 	async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
 		let height = self.rpc.get_block_count()? as u32;
 		let hash = self.rpc.get_block_hash(height as u64)?;
-		Ok(BlockRef { height, hash })
+		Ok(BlockRef { height: BlockHeight::new(height), hash })
 	}
 }
 
@@ -36,7 +36,7 @@ async fn polling_watcher_detects_new_blocks() {
 		.await
 		.expect("start polling watcher");
 
-	let target_height = watcher.tip().height + 5;
+	let target_height = watcher.tip().height + BlockDelta::new(5);
 
 	bitcoind.generate(5).await;
 
@@ -57,7 +57,7 @@ async fn zmq_watcher_detects_new_blocks() {
 	let source = Arc::new(RpcTipSource {
 		rpc: bitcoind.sync_client(),
 	});
-	let target_height = source.tip_ref().await.expect("fetch initial tip").height + 5;
+	let target_height = source.tip_ref().await.expect("fetch initial tip").height + BlockDelta::new(5);
 
 	// A reconcile interval longer than any test run makes sure the ZMQ
 	// notifications drive the updates, not the reconcile timer.

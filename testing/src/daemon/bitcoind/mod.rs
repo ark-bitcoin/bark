@@ -32,7 +32,7 @@ impl TipSource for BitcoindRpcTipSource {
 	async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
 		let height = self.rpc.get_block_count()? as u32;
 		let hash = self.rpc.get_block_hash(height as u64)?;
-		Ok(BlockRef { height, hash })
+		Ok(BlockRef { height: BlockHeight::new(height), hash })
 	}
 }
 

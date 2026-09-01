@@ -38,7 +38,7 @@ use tracing::{debug, error, info, warn};
 
 use ark::lightning::PaymentHash;
 use ark::vtxo::policy::{check_block_delta, check_block_height};
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::BlockDelta;
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 
@@ -348,8 +348,8 @@ impl ClnHoldProcess {
 		let min_final_cltv_expiry_delta = check_block_delta(invoice.min_final_cltv_expiry_delta())
 			.context("invoice min_final_cltv_expiry_delta out of range")?;
 		let required_min_htlc_expiry = tip
-			.checked_add(BlockHeight::from(min_final_cltv_expiry_delta))
-			.and_then(|h| h.checked_sub(1))
+			.checked_add(min_final_cltv_expiry_delta)
+			.map(|h| h.saturating_sub(BlockDelta::new(1)))
 			.context("required_min_htlc_expiry overflows BlockHeight")?;
 
 		let (status, expiry) = if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {

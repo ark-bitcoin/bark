@@ -343,18 +343,18 @@ pub trait BitcoinRpcExt: RpcApi {
 	fn tip(&self) -> Result<BlockRef, Error> {
 		let height = self.get_block_count()?;
 		let hash = self.get_block_hash(height)?;
-		Ok(BlockRef { height: height as BlockHeight, hash })
+		Ok(BlockRef { height: BlockHeight::new(height as u32), hash })
 	}
 
 	fn deep_tip(&self) -> Result<BlockRef, Error> {
 		let tip = self.get_block_count()?;
-		let height = tip.saturating_sub(DEEPLY_CONFIRMED as u64);
+		let height = tip.saturating_sub(DEEPLY_CONFIRMED.into());
 		let hash = self.get_block_hash(height)?;
-		Ok(BlockRef { height: height as BlockHeight, hash })
+		Ok(BlockRef { height: BlockHeight::new(height as u32), hash })
 	}
 
 	fn get_block_by_height(&self, height: BlockHeight) -> Result<BlockRef, Error> {
-		let hash = self.get_block_hash(height as u64)?;
+		let hash = self.get_block_hash(height.into())?;
 		Ok(BlockRef { height, hash })
 	}
 
@@ -364,7 +364,7 @@ pub trait BitcoinRpcExt: RpcApi {
 				Some(hash) => {
 					let block = self.get_block_header_info(&hash)?;
 					if block.confirmations > 0 {
-						Ok(TxStatus::Confirmed(BlockRef { height: block.height as BlockHeight, hash: block.hash }))
+						Ok(TxStatus::Confirmed(BlockRef { height: BlockHeight::new(block.height as u32), hash: block.hash }))
 					} else {
 						Ok(TxStatus::Mempool)
 					}

@@ -45,13 +45,17 @@ pub struct ArkInfo {
 	/// Number of nonces per round
 	pub nb_round_nonces: usize,
 	/// Delta between exit confirmation and coins becoming spendable
+	#[cfg_attr(feature = "utoipa", schema(value_type = u16))]
 	pub vtxo_exit_delta: BlockDelta,
 	/// The number of blocks a VTXO lives before it expires
 	#[serde(default)]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u16))]
 	pub vtxo_lifetime: BlockDelta,
 	/// The number of blocks after which an HTLC-send VTXO expires once granted.
+	#[cfg_attr(feature = "utoipa", schema(value_type = u16))]
 	pub htlc_send_expiry_delta: BlockDelta,
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries
+	#[cfg_attr(feature = "utoipa", schema(value_type = u16))]
 	pub htlc_expiry_delta: BlockDelta,
 	/// Maximum amount of a VTXO
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
@@ -60,7 +64,8 @@ pub struct ArkInfo {
 	pub required_board_confirmations: usize,
 	/// Maximum CLTV delta server will allow clients to request an
 	/// invoice generation with.
-	pub max_user_invoice_cltv_delta: u16,
+	#[cfg_attr(feature = "utoipa", schema(value_type = u16))]
+	pub max_user_invoice_cltv_delta: BlockDelta,
 	/// Minimum amount for a board the server will cosign
 	#[serde(rename = "min_board_amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
@@ -90,7 +95,7 @@ pub struct ArkInfo {
 	/// be removed in a future release.
 	#[deprecated(note = "renamed to `vtxo_lifetime`")]
 	#[serde(default)]
-	#[cfg_attr(feature = "utoipa", schema(required = true))]
+	#[cfg_attr(feature = "utoipa", schema(required = true, value_type = u16))]
 	pub vtxo_expiry_delta: BlockDelta,
 }
 
@@ -112,7 +117,7 @@ impl<'de> serde::Deserialize<'de> for ArkInfo {
 			htlc_expiry_delta: BlockDelta,
 			max_vtxo_amount: Option<Amount>,
 			required_board_confirmations: usize,
-			max_user_invoice_cltv_delta: u16,
+			max_user_invoice_cltv_delta: BlockDelta,
 			#[serde(rename = "min_board_amount_sat", with = "bitcoin::amount::serde::as_sat")]
 			min_board_amount: Amount,
 			offboard_feerate_sat_per_kvb: u64,
@@ -128,8 +133,8 @@ impl<'de> serde::Deserialize<'de> for ArkInfo {
 		let v = ArkInfoStub::deserialize(d)?;
 
 		let vtxo_lifetime = match (v.vtxo_lifetime, v.vtxo_expiry_delta) {
-			(0, expiry) => expiry,
-			(lifetime, 0) => lifetime,
+			(BlockDelta::ZERO, expiry) => expiry,
+			(lifetime, BlockDelta::ZERO) => lifetime,
 			(lifetime, expiry) if lifetime == expiry => lifetime,
 			(lifetime, expiry) => return Err(serde::de::Error::custom(format!(
 				"vtxo_lifetime ({}) and vtxo_expiry_delta ({}) don't match", lifetime, expiry,
@@ -654,14 +659,14 @@ mod test {
 			mailbox_pubkey: pubkey,
 			round_interval: Duration::from_secs(60),
 			nb_round_nonces: 1,
-			vtxo_exit_delta: 12,
-			vtxo_lifetime: 100,
-			vtxo_expiry_delta: 100,
-			htlc_send_expiry_delta: 100,
-			htlc_expiry_delta: 6,
+			vtxo_exit_delta: BlockDelta::new(12),
+			vtxo_lifetime: BlockDelta::new(100),
+			vtxo_expiry_delta: BlockDelta::new(100),
+			htlc_send_expiry_delta: BlockDelta::new(100),
+			htlc_expiry_delta: BlockDelta::new(6),
 			max_vtxo_amount: None,
 			required_board_confirmations: 3,
-			max_user_invoice_cltv_delta: 100,
+			max_user_invoice_cltv_delta: BlockDelta::new(100),
 			min_board_amount: Amount::from_sat(1000),
 			offboard_feerate_sat_per_kvb: 1000,
 			ln_receive_anti_dos_required: false,
@@ -681,8 +686,8 @@ mod test {
 		json["vtxo_expiry_delta"] = serde_json::json!(42);
 
 		let info = serde_json::from_value::<ArkInfo>(json).unwrap();
-		assert_eq!(info.vtxo_lifetime, 42);
-		assert_eq!(info.vtxo_expiry_delta, 42);
+		assert_eq!(info.vtxo_lifetime, BlockDelta::new(42));
+		assert_eq!(info.vtxo_expiry_delta, BlockDelta::new(42));
 	}
 
 	#[test]
@@ -693,8 +698,8 @@ mod test {
 		json["vtxo_expiry_delta"] = serde_json::json!(42);
 
 		let info = serde_json::from_value::<ArkInfo>(json).unwrap();
-		assert_eq!(info.vtxo_lifetime, 42);
-		assert_eq!(info.vtxo_expiry_delta, 42);
+		assert_eq!(info.vtxo_lifetime, BlockDelta::new(42));
+		assert_eq!(info.vtxo_expiry_delta, BlockDelta::new(42));
 
 		// and both fields are populated again on the way out
 		let json = serde_json::to_value(&info).unwrap();

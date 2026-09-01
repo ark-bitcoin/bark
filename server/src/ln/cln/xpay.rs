@@ -473,7 +473,7 @@ async fn call_xpay(
 	slog!(XpayRpcCalled,
 		payment_hash, payment_amount, max_routing_fee,
 		invoice: invoice.to_string(),
-		max_delay: max_cltv_expiry_delta as u32,
+		max_delay: max_cltv_expiry_delta.to_u32(),
 	);
 
 	let pay_result = rpc.xpay(cln_rpc::XpayRequest {
@@ -484,7 +484,7 @@ async fn call_xpay(
 		} else {
 			None
 		},
-		maxdelay: Some(max_cltv_expiry_delta as u32),
+		maxdelay: Some(max_cltv_expiry_delta.to_u32()),
 		maxfee: Some(max_routing_fee.into()),
 		retry_for: Some(retry_for.as_secs() as u32),
 		partial_msat: None,

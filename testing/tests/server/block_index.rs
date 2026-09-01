@@ -6,7 +6,7 @@ use anyhow::bail;
 use bitcoin::{Address, address::NetworkUnchecked};
 
 
-use bitcoin_ext::BlockRef;
+use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef};
 use bitcoin_ext::rpc::{BitcoinRpcExt, BitcoinRpcClient, RpcApi};
 
 use server::sync::{ChainEventListener, RawMempool, BlockData};
@@ -21,9 +21,9 @@ async fn check_block_index_is_consistent(db: &Db, block_table: BlockTable, bitco
 	let lowest_block = db.read(async |t| t.get_lowest_block(block_table).await).await.unwrap().unwrap();
 	let highest_block = db.read(async |t| t.get_highest_block(block_table).await).await.unwrap().unwrap();
 
-	for height in lowest_block.height..=highest_block.height {
-		let bitcoind_block = bitcoind.get_block_by_height(height).unwrap();
-		let db_block = db.read(async |t| t.get_block_by_height(block_table, height).await).await.unwrap().unwrap();
+	for height in lowest_block.height.to_u32()..=highest_block.height.to_u32() {
+		let bitcoind_block = bitcoind.get_block_by_height(BlockHeight::new(height)).unwrap();
+		let db_block = db.read(async |t| t.get_block_by_height(block_table, BlockHeight::new(height)).await).await.unwrap().unwrap();
 
 		assert_eq!(bitcoind_block.hash, db_block.hash);
 	}
@@ -54,7 +54,7 @@ impl ChainEventListener for BlockIndexListener {
 				*tip = Some(block.block_ref);
 			},
 			Some(prev) => {
-				if block.block_ref.height == prev.height + 1 {
+				if block.block_ref.height == prev.height + BlockDelta::new(1) {
 					*tip = Some(block.block_ref);
 				} else if block.block_ref.height == prev.height && block.block_ref.hash == prev.hash {
 					// Already at this tip, do nothing
@@ -114,8 +114,8 @@ async fn test_block_index_basic_sync() {
 	// However, we are only synced up-to the deep tip
 	let chain_tip = block_index.chain_tip();
 	let sync_height = block_index.sync_tip();
-	assert_eq!(chain_tip.height, 104);
-	assert_eq!(sync_height.height, 4);
+	assert_eq!(chain_tip.height, BlockHeight::new(104));
+	assert_eq!(sync_height.height, BlockHeight::new(4));
 
 	// Generate 20 blocks and validate that the index processes them correctly
 	let addrs = Address::<NetworkUnchecked>::from_str("bcrt1p28cpcjynxvz3pyvd99wu7f5uxxkflttec6t4sxndxdsgtxksnp7q90rfcv").unwrap().assume_checked();
@@ -131,7 +131,7 @@ async fn test_block_index_basic_sync() {
 		let bitcoind_tip = bitcoind.tip().expect("Got bitcoind tip");
 		assert_eq!(chain_tip.height, bitcoind_tip.height);
 		assert_eq!(chain_tip.hash, bitcoind_tip.hash);
-		assert_eq!(chain_tip.height, 124);
+		assert_eq!(chain_tip.height, BlockHeight::new(124));
 
 		// After sync, sync_tip should equal chain_tip
 		assert_eq!(sync_tip.height, chain_tip.height);
@@ -140,11 +140,11 @@ async fn test_block_index_basic_sync() {
 
 	// Let's retrieve the details about the block at heigh 120
 	let block_120 = {
-		let local_block = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 120).await).await.unwrap().unwrap();
-		let bitcoin_block = bitcoind.get_block_by_height(120).unwrap();
+		let local_block = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(120)).await).await.unwrap().unwrap();
+		let bitcoin_block = bitcoind.get_block_by_height(BlockHeight::new(120)).unwrap();
 		assert_eq!(local_block.hash, bitcoin_block.hash);
-		assert_eq!(local_block.height, 120);
-		assert_eq!(bitcoin_block.height, 120);
+		assert_eq!(local_block.height, BlockHeight::new(120));
+		assert_eq!(bitcoin_block.height, BlockHeight::new(120));
 		local_block
 	};
 
@@ -165,9 +165,9 @@ async fn test_block_index_basic_sync() {
 
 		assert_eq!(chain_tip.height, bitcoind_tip.height);
 		assert_eq!(chain_tip.hash, bitcoind_tip.hash);
-		assert_eq!(bitcoind_tip.height, 139);
-		assert_eq!(chain_tip.height, 139);
-		assert_eq!(db_tip.height, 139);
+		assert_eq!(bitcoind_tip.height, BlockHeight::new(139));
+		assert_eq!(chain_tip.height, BlockHeight::new(139));
+		assert_eq!(db_tip.height, BlockHeight::new(139));
 
 		// After sync, sync_tip should equal chain_tip
 		assert_eq!(sync_tip.height, chain_tip.height);
@@ -236,7 +236,7 @@ async fn test_block_index_reorg_retry() {
 	block_index.sync().await.expect("BlockIndex sync");
 
 	// Invalidate a block and mine replacements, causing a reorg.
-	let block_120 = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 120).await).await.unwrap().unwrap();
+	let block_120 = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(120)).await).await.unwrap().unwrap();
 	let addrs2 = Address::<NetworkUnchecked>::from_str("bcrt1pnvttf55269k90h8r4xcwewqr9nvlyngge06srk4gmddu6sjjk9gq82vrkf").unwrap().assume_checked();
 	bitcoind.invalidate_block(&block_120.hash).expect("Invalidated block");
 	bitcoind.generate_to_address(20, &addrs2).expect("Generated replacement blocks");

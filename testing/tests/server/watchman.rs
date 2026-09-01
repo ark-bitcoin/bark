@@ -13,7 +13,7 @@ use bark::exit::ExitState;
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin::Amount;
 use bitcoin_ext::rpc::BitcoinRpcExt;
-use bitcoin_ext::TxStatus;
+use bitcoin_ext::{BlockDelta, TxStatus};
 use server::database::Db;
 use server::vtxopool::VtxoTarget;
 use server_log::{
@@ -67,7 +67,7 @@ async fn watchman_sweeps_boards() {
 
 	let ctx = TestContext::new("server/watchman_sweeps_boards").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.vtxopool.vtxo_targets = vec![];
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
@@ -88,9 +88,9 @@ async fn watchman_sweeps_boards() {
 
 	// expire only the board, not the refresh
 	let tip = ctx.generate_blocks(
-		srv.config().vtxo_lifetime as u32 - 2 * BOARD_CONFIRMATIONS + 2,
+		srv.config().vtxo_lifetime.to_u32() - 2 * BOARD_CONFIRMATIONS + 2,
 	).await;
-	wm.wait_for_sync_height(tip as u32).await;
+	wm.wait_for_sync_height(tip).await;
 
 	wm.trigger_sweep().await;
 	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
@@ -153,7 +153,7 @@ async fn watchman_sweeps_round_vtxos() {
 
 	let ctx = TestContext::new("server/watchman_sweeps_round_vtxos").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.vtxopool.vtxo_targets = vec![];
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
@@ -197,7 +197,7 @@ async fn watchman_sweeps_round_vtxos() {
 async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 	let ctx = TestContext::new("server/watchman_sweeps_arkoor_vtxos_sender_exit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
@@ -241,7 +241,7 @@ async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 	let ctx = TestContext::new("server/watchman_sweeps_arkoor_vtxos_receiver_exit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
@@ -289,8 +289,8 @@ async fn watchman_sweeps_lightning_vtxos() {
 	let ctx = TestContext::new("server/watchman_sweeps_lightning_vtxos").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
-		cfg.vtxopool.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
+		cfg.vtxopool.vtxo_lifetime = BlockDelta::new(144);
 		cfg.vtxopool.vtxo_targets = vec![
 			VtxoTarget { count: 10, amount: sat(10_000) },
 		];
@@ -343,7 +343,7 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 
 	let ctx = TestContext::new("server/watchman_sweeps_round_leftovers_after_exits").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.vtxopool.vtxo_targets = vec![];
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
@@ -429,14 +429,14 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	let ctx = TestContext::new("server/watchman_sweeps_vtxopool_with_exit").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").funded(btc(10)).lightningd(&ln.internal).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.vtxopool.vtxo_targets = vec![
 			// total: 300_099_000
 			VtxoTarget { count: 9, amount: sat(1_000) },
 			VtxoTarget { count: 9, amount: sat(10_000) },
 			VtxoTarget { count: 3, amount: btc(1) },
 		];
-		cfg.vtxopool.vtxo_lifetime = 144;
+		cfg.vtxopool.vtxo_lifetime = BlockDelta::new(144);
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
@@ -504,7 +504,7 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 async fn watchman_sweeps_offboard_connectors() {
 	let ctx = TestContext::new("server/watchman_sweeps_offboard_connectors").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.vtxopool.vtxo_targets = vec![];
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
@@ -540,7 +540,7 @@ async fn watchman_sweeps_offboard_connectors() {
 
 	// Let the input vtxos expire plus half the connector expiry delta:
 	// the board outputs get swept, but the connector must be left alone.
-	let tip = ctx.generate_blocks(max_expiry + 72 - tip).await;
+	let tip = ctx.generate_blocks(max_expiry.to_u32() + 72 - tip.to_u32()).await;
 	wm.wait_for_sync_height(tip).await;
 	let rounds_balance = srv.wallet_status().await.rounds.total_balance;
 
@@ -610,7 +610,7 @@ async fn watchman_sweeps_offboard_connectors() {
 async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 	let ctx = TestContext::new("server/watchman_sweeps_offboard_forfeit_after_confiscation").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.vtxopool.vtxo_targets = vec![];
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
@@ -642,7 +642,7 @@ async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 	progress_exit_until_awaiting_delta(&ctx, &evil).await;
 
 	// drive the watchman until it confiscates the exit output
-	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period.to_u32()).await;
 	wm.wait_for_sync_height(tip).await;
 	let client = ctx.bitcoind().sync_client();
 	for _ in 0..25 {
@@ -726,7 +726,7 @@ async fn watchman_sweeps_exit_after_forfeit() {
 	progress_exit_until_awaiting_delta(&ctx, &bark1_old).await;
 
 	// Advance past watchman's progress grace period
-	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period.to_u32()).await;
 	wm.wait_for_sync_height(tip).await;
 
 	// first sweep: the watchman broadcasts the forfeit (progress) transaction via CPFP.
@@ -840,7 +840,7 @@ async fn watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table() {
 
 	// Advance past watchman's progress grace period
 	let tip = ctx
-		.generate_blocks(wm.config().watchman.progress_grace_period as u32)
+		.generate_blocks(wm.config().watchman.progress_grace_period.to_u32())
 		.await;
 	wm.wait_for_sync_height(tip).await;
 
@@ -928,7 +928,7 @@ async fn watchman_sweeps_exit_after_oor_then_forfeit() {
 	progress_exit_until_awaiting_delta(&ctx, &bark1_old).await;
 
 	// Advance past watchman's progress grace period
-	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period.to_u32()).await;
 	wm.wait_for_sync_height(tip).await;
 
 	// The watchman should broadcast the checkpoint transaction as a progress step, spending
@@ -941,7 +941,7 @@ async fn watchman_sweeps_exit_after_oor_then_forfeit() {
 	// now let's expire the vtxo and claim the checkpoint
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
 	let tip = ctx.generate_blocks(
-		srv.config().vtxo_lifetime as u32 - 2 * ROUND_CONFIRMATIONS + 3,
+		srv.config().vtxo_lifetime.to_u32() - 2 * ROUND_CONFIRMATIONS + 3,
 	).await;
 	wm.wait_for_sync_height(tip).await;
 	wm.trigger_sweep().await;
@@ -1008,7 +1008,7 @@ async fn offboard_exit_attack(test_name: &str, n_vtxos: usize) -> bitcoin::Amoun
 	// re-CPFPs the shared fanout tx, so only the LAST cpfp txid in a cycle is live
 	// (earlier ones get RBF-replaced); we await that one so the package has
 	// propagated to the node we mine on before mining.
-	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period.to_u32()).await;
 	wm.wait_for_sync_height(tip).await;
 	let client = ctx.bitcoind().sync_client();
 	// Give the watchman ample, repeated opportunity to run its confiscation. Each
@@ -1060,10 +1060,10 @@ async fn watchman_doesnt_broadcast_htlc_recv_chain() {
 	let ctx = TestContext::new("server/watchman_doesnt_broadcast_htlc_recv_chain").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		// The pool never issues a single vtxo at a time, so ask for the minimum of two.
 		cfg.vtxopool.vtxo_targets = vec![VtxoTarget { count: 2, amount: sat(100_000) }];
-		cfg.vtxopool.vtxo_lifetime = 144;
+		cfg.vtxopool.vtxo_lifetime = BlockDelta::new(144);
 		// Keep the change in the pool so all the receives share one allocation chain.
 		cfg.vtxopool.max_vtxo_exit_depth = 100;
 	}).watchmand_cfg(|cfg| {
@@ -1197,7 +1197,7 @@ async fn watchman_force_exit_checkpointed_arkoor_stays_spendable() {
 	// Drive the watchman. It will broadcast the checkpoint tx (progressing P), but must
 	// stop there - a checkpoint is expiry-claimed, never progressed to bark2's leaf.
 	let mut log_progress = wm.subscribe_log::<ProgressBroadcast>();
-	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period.to_u32()).await;
 	wm.wait_for_sync_height(tip).await;
 
 	let mut forced = false;
@@ -1371,7 +1371,7 @@ async fn offboard_after_exit(test_name: &str, depth: ExitDepth) -> OffboardAfter
 		client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_some()
 	};
 	if payout_received > sat(0) && exit_output_live() {
-		let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+		let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period.to_u32()).await;
 		wm.wait_for_sync_height(tip).await;
 		for _ in 0..25 {
 			wm.trigger_sweep().await;

@@ -112,8 +112,8 @@ impl rpc::server::NurseryAdminService for Server {
 				kind: r.tx.kind.name().into(),
 				in_mempool: r.in_mempool,
 				chunk_fee_rate_kwu: r.chunk_fee_rate.map(|f| f.to_sat_per_kwu()),
-				confirm_target_height: r.tx.confirm_target_height,
-				confirmed_at_height: r.tx.confirmed_at_height,
+				confirm_target_height: r.tx.confirm_target_height.into(),
+				confirmed_at_height: r.tx.confirmed_at_height.map(Into::into),
 				created_at: r.tx.created_at.timestamp() as u64,
 				abandoned_at: r.tx.abandoned_at.map(|t| t.timestamp() as u64),
 			}).collect(),
@@ -147,7 +147,9 @@ impl rpc::server::BanAdminService for Server {
 		let vtxo_id = VtxoId::from_slice(&req.vtxo_id)
 			.badarg("invalid vtxo id")?;
 		let chain_tip = self.chain_tip().height;
-		let until_height = chain_tip.saturating_add(req.ban_blocks);
+		let until_height = bitcoin_ext::BlockHeight::new(
+			chain_tip.to_u32().saturating_add(req.ban_blocks),
+		);
 		self.db.write(async |t| t.ban_vtxo(vtxo_id, until_height).await).await.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
@@ -174,7 +176,7 @@ impl rpc::server::BanAdminService for Server {
 		let banned_vtxos = banned.into_iter().map(|v| {
 			protos::BannedVtxo {
 				vtxo_id: v.vtxo_id.to_bytes().to_vec(),
-				banned_until_height: v.banned_until_height,
+				banned_until_height: v.banned_until_height.into(),
 			}
 		}).collect();
 		Ok(tonic::Response::new(protos::ListBannedVtxosResponse { banned_vtxos }))

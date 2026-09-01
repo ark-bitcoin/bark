@@ -6,6 +6,7 @@ use tokio::fs;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 use bark::BarkNetwork;
+use bitcoin_ext::BlockHeight;
 use server::database::Db;
 use server_rpc::protos;
 
@@ -87,7 +88,7 @@ async fn recover_mnemonic() {
 		cfg,
 		bitcoind,
 		Some(mnemonic.to_string()),
-		Some(0),
+		Some(BlockHeight::new(0)),
 		true,
 	).await.expect("mnemonic + birthday should work");
 	assert_eq!(onchain, recovered.onchain_balance().await);

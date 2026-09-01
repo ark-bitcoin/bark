@@ -81,8 +81,8 @@ impl Default for Config {
 		Self {
 			vtxo_targets: Vec::new(),
 			vtxo_target_issue_threshold: 80,
-			vtxo_lifetime: 144 * 3,
-			vtxo_pre_expiry: 144,
+			vtxo_lifetime: BlockDelta::new(144 * 3),
+			vtxo_pre_expiry: BlockDelta::new(144),
 			// The server refuses to cosign arkoors past `max_vtxo_exit_depth`
 			// in the top-level config, which is higher. This field here is
 			// only for the pool of VTXO.
@@ -97,7 +97,7 @@ impl Config {
 	/// We take double the created VTXO lifetime.
 	fn vtxo_key_lifetime(&self) -> Duration {
 		// take double as a buffer
-		Duration::from_secs(60 * 10 * self.vtxo_lifetime as u64 * 2)
+		Duration::from_secs(60 * 10 * u64::from(self.vtxo_lifetime) * 2)
 	}
 }
 
@@ -532,7 +532,7 @@ impl Process {
 			(requests, leaf_keys)
 		};
 
-		let expiry = self.srv.chain_tip().height + self.config.vtxo_lifetime as BlockHeight;
+		let expiry = self.srv.chain_tip().height + self.config.vtxo_lifetime;
 
 		let cosign_key = Keypair::new(&*SECP, &mut rand::thread_rng());
 		let server_cosign_key = self.srv.generate_ephemeral_cosign_key(
@@ -684,7 +684,7 @@ impl Process {
 	)]
 	async fn check_maybe_issue_vtxos(&self) -> anyhow::Result<()> {
 		let tip = self.srv.chain_tip().height;
-		let threshold = tip + self.config.vtxo_pre_expiry as BlockHeight;
+		let threshold = tip + self.config.vtxo_pre_expiry;
 
 		// NB this needs to be a different method because otherwise borrowck complains
 		// about the mutex not being send even if we add a manual `drop()`
@@ -744,6 +744,10 @@ mod test {
 		Amount::from_sat(v)
 	}
 
+	fn h(v: u32) -> BlockHeight {
+		BlockHeight::new(v)
+	}
+
 	/// assert a given selection
 	#[track_caller]
 	fn assert_sel(
@@ -768,20 +772,20 @@ mod test {
 	#[test]
 	fn test_vtxo_selection() {
 		let vtxos = [
-			(id(1), 100, sat(1000)),
-			(id(2), 100, sat(1000)),
-			(id(3), 100, sat(2000)),
-			(id(4), 100, sat(2000)),
-			(id(5), 100, sat(3000)),
-			(id(6), 100, sat(3000)),
-			(id(11), 110, sat(1000)),
-			(id(12), 110, sat(1000)),
-			(id(13), 110, sat(2000)),
-			(id(14), 110, sat(2000)),
-			(id(15), 110, sat(3000)),
-			(id(16), 110, sat(3000)),
-			(id(17), 120, sat(1000)),
-			(id(18), 120, sat(1000)),
+			(id(1), h(100), sat(1000)),
+			(id(2), h(100), sat(1000)),
+			(id(3), h(100), sat(2000)),
+			(id(4), h(100), sat(2000)),
+			(id(5), h(100), sat(3000)),
+			(id(6), h(100), sat(3000)),
+			(id(11), h(110), sat(1000)),
+			(id(12), h(110), sat(1000)),
+			(id(13), h(110), sat(2000)),
+			(id(14), h(110), sat(2000)),
+			(id(15), h(110), sat(3000)),
+			(id(16), h(110), sat(3000)),
+			(id(17), h(120), sat(1000)),
+			(id(18), h(120), sat(1000)),
 		];
 		let len = vtxos.len();
 
@@ -792,21 +796,21 @@ mod test {
 		assert_eq!(data.len(), len);
 
 		let sel = data.take_inputs(sat(500));
-		assert_sel(&sel, &[(100, sat(1000))]);
+		assert_sel(&sel, &[(h(100), sat(1000))]);
 
 		let sel = data.take_inputs(sat(2500));
-		assert_sel(&sel, &[(100, sat(3000))]);
+		assert_sel(&sel, &[(h(100), sat(3000))]);
 
 		let sel = data.take_inputs(sat(1000));
-		assert_sel(&sel, &[(100, sat(1000))]);
+		assert_sel(&sel, &[(h(100), sat(1000))]);
 
 		// the 2x 1000 at height 100 are already used
 		let sel = data.take_inputs(sat(900));
-		assert_sel(&sel, &[(100, sat(2000))]);
+		assert_sel(&sel, &[(h(100), sat(2000))]);
 
 		// left at 100: 3000, 2000
 		let sel = data.take_inputs(sat(5500));
-		assert_sel(&sel, &[(100, sat(2000)), (100, sat(3000)), (110, sat(1000))]);
+		assert_sel(&sel, &[(h(100), sat(2000)), (h(100), sat(3000)), (h(110), sat(1000))]);
 
 		let len = data.len();
 		let sel = data.take_inputs(Amount::MAX_MONEY);

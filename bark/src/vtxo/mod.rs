@@ -358,14 +358,14 @@ mod test {
 		let server = Keypair::new(&secp, &mut rng).public_key();
 		let other = Keypair::new(&secp, &mut rng).public_key();
 
-		let exit_delta: BlockDelta = 144;
-		let min_expiry: BlockHeight = 100_000;
+		let exit_delta = BlockDelta::new(144);
+		let min_expiry = BlockHeight::new(100_000);
 
 		// Expiry at or above the minimum, with matching pubkey and delta, passes.
 		validate_vtxo_tree_params(server, exit_delta, min_expiry, server, exit_delta, min_expiry)
 			.expect("expiry exactly at the minimum should validate");
 		validate_vtxo_tree_params(
-			server, exit_delta, min_expiry + 5_000, server, exit_delta, min_expiry,
+			server, exit_delta, min_expiry + BlockDelta::new(5_000), server, exit_delta, min_expiry,
 		).expect("expiry above the minimum should validate");
 
 		// A wrong server pubkey is rejected.
@@ -381,7 +381,7 @@ mod test {
 		// An expiry below the minimum (e.g. the short-expiry sweep attack) is
 		// rejected, right down to a single block short.
 		assert!(validate_vtxo_tree_params(
-			server, exit_delta, min_expiry - 1, server, exit_delta, min_expiry,
+			server, exit_delta, min_expiry.saturating_sub(BlockDelta::new(1)), server, exit_delta, min_expiry,
 		).is_err(), "expiry one block below the minimum must be rejected");
 	}
 }

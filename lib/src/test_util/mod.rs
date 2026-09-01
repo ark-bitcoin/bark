@@ -11,6 +11,8 @@ use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
 
+use bitcoin_ext::{BlockDelta, BlockHeight};
+
 use crate::{musig, ProtocolEncoding, Vtxo, VtxoRequest};
 use crate::tree::signed::{
 	HashlockVersion, SignedVtxoTreeSpec, UnlockHash, VtxoLeafSpec, VtxoTreeSpec,
@@ -59,8 +61,8 @@ pub fn build_signed_tree(
 	let mut spec = VtxoTreeSpec::new(
 		reqs,
 		server_key.public_key(),
-		101_000,
-		24,
+		BlockHeight::new(101_000),
+		BlockDelta::new(24),
 		vec![user_cosign_key.public_key(), server_cosign_key.public_key()],
 	);
 	spec.hashlock_version = version;

@@ -410,7 +410,7 @@ async fn update_vtxo_state_checked<S: StorageAdaptor>(
 
 	if let StateTransition::Apply = transition {
 		let sk = sort::vtxo_sort_key(
-			new_state.kind(), serde_vtxo.vtxo.expiry_height(), serde_vtxo.vtxo.amount()
+			new_state.kind(), serde_vtxo.vtxo.expiry_height().to_u32(), serde_vtxo.vtxo.amount()
 		);
 
 		serde_vtxo.states.push(new_state.clone());
@@ -690,7 +690,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			};
 
 			let sk = sort::vtxo_sort_key(
-				state.kind(), vtxo.expiry_height(), vtxo.amount(),
+				state.kind(), vtxo.expiry_height().to_u32(), vtxo.amount(),
 			);
 			let record = Record::from_data(
 				partition::VTXO,
@@ -847,7 +847,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		}
 		let new_state = VtxoState::Spendable;
 		let sk = sort::vtxo_sort_key(
-			new_state.kind(), serde_vtxo.vtxo.expiry_height(), serde_vtxo.vtxo.amount(),
+			new_state.kind(), serde_vtxo.vtxo.expiry_height().to_u32(), serde_vtxo.vtxo.amount(),
 		);
 		serde_vtxo.states.push(new_state);
 		let updated_record = Record::from_data(
@@ -895,7 +895,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			// current state, which this update doesn't touch.
 			let state = serde_vtxo.current_state().context("vtxo has no state")?;
 			let sk = sort::vtxo_sort_key(
-				state.kind(), serde_vtxo.vtxo.expiry_height(), serde_vtxo.vtxo.amount(),
+				state.kind(), serde_vtxo.vtxo.expiry_height().to_u32(), serde_vtxo.vtxo.amount(),
 			);
 			let record = Record::from_data(
 				partition::VTXO,

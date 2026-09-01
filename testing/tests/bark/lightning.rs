@@ -426,7 +426,7 @@ async fn bark_refresh_payment_revocation() {
 	bark_1.pay_lightning_wait(invoice, None).await;
 
 	ctx.refresh_all(&srv, &[&bark_1]).await;
-	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
+	ctx.generate_blocks(srv.config().htlc_send_expiry_delta.to_u32() + 6).await;
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh {:?}", vtxos);
 	assert_eq!(vtxos[0].amount, btc(2));
@@ -1037,7 +1037,7 @@ async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 	// 3. Mine past the HTLC-send expiry and have the payer attempt the revoke.
 	// The server sees the payment as still pending (preimage withheld) and the
 	// tip is past expiry, so without the fix the revoke would be accepted.
-	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
+	ctx.generate_blocks(srv.config().htlc_send_expiry_delta.to_u32() + 6).await;
 	let _ = bark_payer.try_run(["maintain"]).await;
 
 	// 4. Release the parked claim; the payee still gets paid.
@@ -1224,7 +1224,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	bark_1.pay_lightning(invoice, None).await;
 
 	// htlc expiry is 6 ahead of current block
-	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
+	ctx.generate_blocks(srv.config().htlc_send_expiry_delta.to_u32() + 6).await;
 
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
@@ -1542,9 +1542,9 @@ async fn bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta() {
 	let ctx = TestContext::new("lightningd/bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta").await;
 
 	/// What the server actually puts in the granted policy.
-	const GRANTED_HTLC_EXPIRY_DELTA: BlockDelta = 30;
+	const GRANTED_HTLC_EXPIRY_DELTA: BlockDelta = BlockDelta::new(30);
 	/// What the proxy advertises, and what the client budgets against.
-	const ADVERTISED_HTLC_EXPIRY_DELTA: BlockDelta = 6;
+	const ADVERTISED_HTLC_EXPIRY_DELTA: BlockDelta = BlockDelta::new(6);
 
 	#[derive(Clone)]
 	struct UnderAdvertisedDeltaProxy;
@@ -1555,7 +1555,7 @@ async fn bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta() {
 			&self, upstream: &mut ArkClient, req: protos::Empty,
 		) -> Result<protos::ArkInfo, tonic::Status> {
 			let mut info = upstream.get_ark_info(req).await?.into_inner();
-			info.htlc_expiry_delta = ADVERTISED_HTLC_EXPIRY_DELTA as u32;
+			info.htlc_expiry_delta = ADVERTISED_HTLC_EXPIRY_DELTA.to_u32();
 			Ok(info)
 		}
 	}
@@ -1626,8 +1626,8 @@ async fn bark_rejects_htlc_recv_vtxo_from_short_lived_tree() {
 	// `vtxo_pre_expiry` has to come down too, or the pool discards its leaves
 	// before serving any.
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
-		cfg.vtxopool.vtxo_lifetime = 8;
-		cfg.vtxopool.vtxo_pre_expiry = 2;
+		cfg.vtxopool.vtxo_lifetime = BlockDelta::new(8);
+		cfg.vtxopool.vtxo_pre_expiry = BlockDelta::new(2);
 	}).funded(btc(10)).create().await;
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -1674,7 +1674,7 @@ async fn bark_rejects_htlc_recv_vtxo_with_unexpected_exit_delta() {
 
 	/// What the proxy advertises; the server builds its trees with the
 	/// test default of 12.
-	const ADVERTISED_EXIT_DELTA: BlockDelta = 13;
+	const ADVERTISED_EXIT_DELTA: BlockDelta = BlockDelta::new(13);
 
 	#[derive(Clone)]
 	struct MismatchedExitDeltaProxy;
@@ -1685,7 +1685,7 @@ async fn bark_rejects_htlc_recv_vtxo_with_unexpected_exit_delta() {
 			&self, upstream: &mut ArkClient, req: protos::Empty,
 		) -> Result<protos::ArkInfo, tonic::Status> {
 			let mut info = upstream.get_ark_info(req).await?.into_inner();
-			info.vtxo_exit_delta = ADVERTISED_EXIT_DELTA as u32;
+			info.vtxo_exit_delta = ADVERTISED_EXIT_DELTA.into();
 			Ok(info)
 		}
 	}

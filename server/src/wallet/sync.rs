@@ -26,7 +26,7 @@ use crate::wallet::PersistedWallet;
 /// is caught up.
 #[async_trait]
 impl ChainEventListener for InstrumentedLock<PersistedWallet> {
-	#[tracing::instrument(skip_all, fields(wallet = self.name(), height = block.block_ref.height))]
+	#[tracing::instrument(skip_all, fields(wallet = self.name(), height = block.block_ref.height.to_u32()))]
 	async fn on_block_added(&self, block: &BlockData) -> anyhow::Result<()> {
 		let wallet = self.lock_owned().await;
 		let started = Instant::now();
@@ -47,13 +47,13 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 
 		// BDK requires the BlockId of the parent block to verify the chain connection
 		let connected_to = bdk_wallet::chain::BlockId {
-			height: height.saturating_sub(1),
+			height: height.to_u32().saturating_sub(1),
 			hash: block.block.header.prev_blockhash,
 		};
 
 		let block_to_apply = block.block.clone();
 		let (mut wallet, apply_result) = tokio::task::spawn_blocking(move || {
-			let res = wallet.wallet.apply_block_connected_to(&block_to_apply, height, connected_to);
+			let res = wallet.wallet.apply_block_connected_to(&block_to_apply, height.to_u32(), connected_to);
 			(wallet, res)
 		}).await.context("apply block task panicked")?;
 		apply_result.with_context(|| format!(
@@ -152,7 +152,7 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 		Ok(())
 	}
 
-	#[tracing::instrument(skip_all, fields(wallet = self.name(), height = _reorg_to.height))]
+	#[tracing::instrument(skip_all, fields(wallet = self.name(), height = _reorg_to.height.to_u32()))]
 	async fn on_reorg(&self, _reorg_to: BlockRef) -> anyhow::Result<()> {
 		// No action needed on reorg notification.
 		//

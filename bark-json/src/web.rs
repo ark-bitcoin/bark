@@ -793,7 +793,7 @@ impl PendingRoundInfo {
 			state: state.state().flow_kind().into(),
 			participation: state.state().participation().into(),
 			unlock_hash: state.state().unlock_hash(),
-			scheduled_height: state.state().scheduled_height(),
+			scheduled_height: state.state().scheduled_height().map(Into::into),
 			funding_txid: funding_tx.map(|t| t.compute_txid()),
 			funding_tx_hex: funding_tx.map(|t| serialize_hex(t)),
 		}

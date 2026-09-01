@@ -349,7 +349,7 @@ impl Captaind {
 
 	pub async fn trigger_round(&self) {
 		self.bitcoind().generate(1).await;
-		let height = self.bitcoind().get_block_count().await as BlockHeight;
+		let height = BlockHeight::new(self.bitcoind().get_block_count().await as u32);
 		self.wait_for_sync_height(height).await;
 		self.get_round_rpc().await.trigger_round(protos::Empty {}).await.unwrap();
 	}

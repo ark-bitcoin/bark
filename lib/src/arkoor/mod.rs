@@ -1713,6 +1713,8 @@ mod test {
 	use bitcoin::secp256k1::rand;
 	use bitcoin::secp256k1::rand::{Rng, SeedableRng};
 
+	use bitcoin_ext::{BlockDelta, BlockHeight};
+
 	use crate::SECP;
 	use crate::test_util::dummy::DummyTestVtxoSpec;
 	use crate::vtxo::VtxoId;
@@ -1805,8 +1807,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(100_330),
 			fee: Amount::from_sat(330),
-			expiry_height: 1000,
-			exit_delta : 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -1879,8 +1881,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(100_330),
 			fee: Amount::from_sat(330),
-			expiry_height: 1000,
-			exit_delta : 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -1975,8 +1977,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(100_330),
 			fee: Amount::from_sat(330),
-			expiry_height: 1000,
-			exit_delta : 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2049,8 +2051,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(100_330),
 			fee: Amount::from_sat(330),
-			expiry_height: 1000,
-			exit_delta : 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2142,8 +2144,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(1_330),
 			fee: Amount::from_sat(330),
-			expiry_height: 1000,
-			exit_delta : 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2232,8 +2234,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(200),
 			fee: Amount::ZERO,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2323,8 +2325,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(500),
 			fee: Amount::ZERO,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2413,8 +2415,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(1000),
 			fee: Amount::ZERO,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2454,8 +2456,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(400),
 			fee: Amount::ZERO,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2495,8 +2497,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(1000),
 			fee: Amount::ZERO,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2542,8 +2544,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(1000),
 			fee: Amount::ZERO,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2594,8 +2596,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(600),
 			fee: Amount::ZERO,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2640,8 +2642,8 @@ mod test {
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(1000),
 			fee: Amount::ZERO,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
@@ -2692,8 +2694,8 @@ mod test {
 		let (_funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(10_330),
 			fee: Amount::from_sat(330),
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair,
 			server_keypair,
 		}.build();
@@ -2729,8 +2731,8 @@ mod test {
 		let (_funding_tx, vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(total.max(1)),
 			fee: Amount::ZERO,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: user_keypair.clone(),
 			server_keypair,
 		}.build();
@@ -2812,8 +2814,8 @@ mod test {
 				let (_funding_tx, vtxo) = DummyTestVtxoSpec {
 					amount: Amount::from_sat(amounts.iter().sum()),
 					fee: Amount::ZERO,
-					expiry_height: 1000,
-					exit_delta: 128,
+					expiry_height: BlockHeight::new(1000),
+					exit_delta: BlockDelta::new(128),
 					user_keypair: user_keypair.clone(),
 					server_keypair: server_keypair.clone(),
 				}.build();

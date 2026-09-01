@@ -3,6 +3,7 @@ use std::time::Duration;
 use futures::StreamExt;
 
 use ark::lightning::{PaymentHash, Preimage};
+use bitcoin_ext::BlockDelta;
 use ark_testing::{TestContext, btc, util::{FutureExt, poll_interval}};
 
 use bark::actions::lightning::pay::LightningSendState;
@@ -131,7 +132,7 @@ async fn pay_hold_with_near_expiry_inputs_succeeds() {
 	// Short vtxo lifetime keeps the block-advance cheap; absurdly long
 	// round interval keeps any background refresh out of the picture.
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
-		cfg.vtxo_lifetime = 100;
+		cfg.vtxo_lifetime = BlockDelta::new(100);
 		cfg.round_interval = Duration::from_secs(86400);
 	}).funded(btc(10)).create().await;
 

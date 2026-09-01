@@ -176,7 +176,7 @@ pub async fn store_round_participation(
 	let part_row = tx.query_one(&part_stmt, &[
 		&unlock_hash.to_string(),
 		&unlock_preimage.to_lower_hex_string(),
-		&scheduled_height.map(|h| h as i32),
+		&scheduled_height.map(|h| h.to_u32() as i32),
 	]).await?;
 
 	let part_id = part_row.get::<_, i64>("id");
@@ -305,7 +305,7 @@ pub async fn complete_round_participation(
 
 	let forfeited_at = part_row.get::<_, Option<chrono::DateTime<chrono::Local>>>("forfeited_at");
 	let scheduled_height = part_row.get::<_, Option<i32>>("scheduled_height")
-		.map(|h| h as BlockHeight);
+		.map(|h| BlockHeight::try_from(h).expect("invalid block height in db"));
 
 	Ok(StoredRoundParticipation {
 		unlock_preimage: Secret::new(unlock_preimage),

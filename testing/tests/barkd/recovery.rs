@@ -7,6 +7,7 @@ use ark_testing::daemon::captaind::{self, ArkClient, MailboxClient};
 use ark_testing::util::FutureExt;
 use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
 use bitcoin::Amount;
+use bitcoin_ext::BlockDelta;
 use server_rpc::protos;
 
 use crate::helpers::wait_for_boards_synced;
@@ -84,8 +85,9 @@ async fn recovered_wallet_finds_scheduled_delegated_refresh_output() {
 
 	// Schedule a delegated refresh a few blocks in the future.
 	let tip = ctx.bitcoind().tip_watcher().tip().height;
-	let scheduled_height = tip + 6;
-	barkd.refresh_delegated(vec![board_id.to_string()], Some(scheduled_height)).await;
+	let delay = BlockDelta::new(6);
+	let scheduled_height = tip + delay;
+	barkd.refresh_delegated(vec![board_id.to_string()], Some(scheduled_height.to_u32())).await;
 
 	// Delete the wallet. From here on the server acts alone.
 	barkd.stop().await.expect("failed to stop barkd");
@@ -93,7 +95,7 @@ async fn recovered_wallet_finds_scheduled_delegated_refresh_output() {
 	// Mine to the scheduled height; the server completes the participation in
 	// the next round.
 	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
-	ctx.generate_blocks(scheduled_height - tip).await;
+	ctx.generate_blocks(delay.to_u32()).await;
 	srv.wait_for_sync_height(scheduled_height).await;
 	srv.trigger_round().await;
 	let finished = log_round_finished.recv().wait(secs(60)).await
@@ -135,8 +137,9 @@ async fn recovered_wallet_finds_delegated_refresh_output_expired_output() {
 
 	// Schedule a delegated refresh a few blocks in the future.
 	let tip = ctx.bitcoind().tip_watcher().tip().height;
-	let scheduled_height = tip + 6;
-	barkd.refresh_delegated(vec![board_id.to_string()], Some(scheduled_height)).await;
+	let delay = BlockDelta::new(6);
+	let scheduled_height = tip + delay;
+	barkd.refresh_delegated(vec![board_id.to_string()], Some(scheduled_height.to_u32())).await;
 
 	// Delete the wallet. From here on the server acts alone.
 	barkd.stop().await.expect("failed to stop barkd");
@@ -144,7 +147,7 @@ async fn recovered_wallet_finds_delegated_refresh_output_expired_output() {
 	// Mine to the scheduled height; the server completes the participation in
 	// the next round.
 	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
-	ctx.generate_blocks(scheduled_height - tip).await;
+	ctx.generate_blocks(delay.to_u32()).await;
 	srv.wait_for_sync_height(scheduled_height).await;
 	srv.trigger_round().await;
 	let finished = log_round_finished.recv().wait(secs(60)).await
@@ -153,7 +156,7 @@ async fn recovered_wallet_finds_delegated_refresh_output_expired_output() {
 		"the delegated refresh should forfeit the board VTXO");
 
 	// Mine past the round-output VTXO's expiry before recovering.
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
 
 	// Recover from the seed.
 	let recovered = ctx.barkd("bark_recovered", &srv)

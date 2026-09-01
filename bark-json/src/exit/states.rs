@@ -105,12 +105,14 @@ impl From<bark::exit::ExitTxOrigin> for ExitTxOrigin {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitStartState {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub tip_height: BlockHeight,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitProcessingState {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub tip_height: BlockHeight,
 	pub transactions: Vec<ExitTx>,
 }
@@ -118,14 +120,17 @@ pub struct ExitProcessingState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitAwaitingDeltaState {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub tip_height: BlockHeight,
 	pub confirmed_block: BlockRef,
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub claimable_height: BlockHeight,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitClaimableState {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub tip_height: BlockHeight,
 	pub claimable_since: BlockRef,
 	pub last_scanned_block: Option<BlockRef>,
@@ -134,6 +139,7 @@ pub struct ExitClaimableState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitClaimInProgressState {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub tip_height: BlockHeight,
 	pub claimable_since: BlockRef,
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
@@ -143,6 +149,7 @@ pub struct ExitClaimInProgressState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitClaimedState {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub tip_height: BlockHeight,
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub txid: Txid,
@@ -153,6 +160,7 @@ pub struct ExitClaimedState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitVtxoAlreadySpentState {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub tip_height: BlockHeight,
 }
 
@@ -160,5 +168,6 @@ pub struct ExitVtxoAlreadySpentState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitCanceledState {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub tip_height: BlockHeight,
 }

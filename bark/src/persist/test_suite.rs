@@ -11,7 +11,7 @@ use bitcoin::secp256k1::{Keypair, Secp256k1, SecretKey};
 use bitcoin::{Amount, Network, ScriptBuf, Transaction};
 use bitcoin::hashes::Hash;
 
-use bitcoin_ext::BlockRef;
+use bitcoin_ext::{BlockHeight, BlockRef};
 use lightning_invoice::Bolt11Invoice;
 
 use ark::lightning::{Invoice, PaymentHash, Preimage};
@@ -201,7 +201,7 @@ fn send_at_start() -> LightningSend {
 		fee: Amount::from_sat(10),
 		change_pieces: Some(vec![Amount::from_sat(500), Amount::from_sat(500)]),
 		htlc_key: test_pubkey(),
-		htlc_expiry: 100,
+		htlc_expiry: BlockHeight::new(100),
 		movement_id: Some(MovementId::new(1)),
 		revocation_key: Some(test_pubkey()),
 		progress: Progress::Start,
@@ -907,7 +907,7 @@ pub async fn test_exit_vtxo_entry_roundtrip(db: &impl BarkPersister) {
 	let vtxo_id = test_exit_vtxo_id();
 	let entry = StoredExit {
 		vtxo_id,
-		state: ExitState::Start(crate::exit::ExitStartState { tip_height: 100 }),
+		state: ExitState::Start(crate::exit::ExitStartState { tip_height: BlockHeight::new(100) }),
 		history: vec![],
 		movement_id: None,
 	};
@@ -944,12 +944,12 @@ pub async fn test_exit_processing_state_roundtrip(db: &impl BarkPersister) {
 	let child_a = txid(0xa1);
 	let child_b = txid(0xb1);
 	let block = BlockRef {
-		height: 12_345,
+		height: BlockHeight::new(12_345),
 		hash: bitcoin::BlockHash::from_slice(&[0xcc; 32]).unwrap(),
 	};
 
 	let processing = ExitProcessingState {
-		tip_height: 200,
+		tip_height: BlockHeight::new(200),
 		transactions: vec![
 			ExitTx { txid: txid(0x01), status: ExitTxStatus::VerifyInputs },
 			ExitTx {
@@ -979,7 +979,7 @@ pub async fn test_exit_processing_state_roundtrip(db: &impl BarkPersister) {
 	let entry = StoredExit {
 		vtxo_id,
 		state: ExitState::Processing(processing),
-		history: vec![ExitState::Start(crate::exit::ExitStartState { tip_height: 100 })],
+		history: vec![ExitState::Start(crate::exit::ExitStartState { tip_height: BlockHeight::new(100) })],
 		movement_id: None,
 	};
 
@@ -995,14 +995,14 @@ pub async fn test_exit_entries_with_states(db: &impl BarkPersister) {
 	let entries = [
 		StoredExit {
 			vtxo_id: start_id,
-			state: ExitState::Start(crate::exit::ExitStartState { tip_height: 100 }),
+			state: ExitState::Start(crate::exit::ExitStartState { tip_height: BlockHeight::new(100) }),
 			history: vec![],
 			movement_id: None,
 		},
 		StoredExit {
 			vtxo_id: canceled_id,
-			state: ExitState::new_canceled(150),
-			history: vec![ExitState::Start(crate::exit::ExitStartState { tip_height: 100 })],
+			state: ExitState::new_canceled(BlockHeight::new(150)),
+			history: vec![ExitState::Start(crate::exit::ExitStartState { tip_height: BlockHeight::new(100) })],
 			movement_id: None,
 		},
 	];
@@ -1043,7 +1043,7 @@ pub async fn test_exit_child_tx_roundtrip(db: &impl BarkPersister) {
 	// relies on this to persist confirmation transitions.
 	let confirmed_origin = ExitTxOrigin::Wallet {
 		confirmed_in: Some(BlockRef {
-			height: 54_321,
+			height: BlockHeight::new(54_321),
 			hash: bitcoin::BlockHash::from_slice(&[0xabu8; 32]).unwrap(),
 		}),
 	};

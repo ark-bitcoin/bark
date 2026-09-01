@@ -50,7 +50,7 @@ impl<'t> Tx<'t> {
 				&funding_txid.to_string(),
 				&serialize(&unsigned_funding_tx),
 				&signed_tree.spec.serialize(),
-				&(signed_tree.spec.spec.expiry_height as i32)
+				&(signed_tree.spec.spec.expiry_height.to_u32() as i32)
 			]
 		).await?;
 		let round_id = row.get::<_, i64>("id");
@@ -176,7 +176,7 @@ impl<'t> Tx<'t> {
 			SELECT funding_txid FROM round WHERE expiry <= $1 AND swept_at IS NULL;
 		").await?;
 
-		let rows = self.query(&statement, &[&(height as i32)]).await?;
+		let rows = self.query(&statement, &[&(height.to_u32() as i32)]).await?;
 		Ok(rows
 			.into_iter()
 			.map(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
@@ -237,7 +237,7 @@ impl<'t> Tx<'t> {
 			FROM round_participation \
 			WHERE round_id IS NULL \
 				AND (scheduled_height IS NULL OR scheduled_height <= $1)",
-			&[&(chain_tip as i32)],
+			&[&(chain_tip.to_u32() as i32)],
 		).await?;
 
 		let mut ret = Vec::with_capacity(parts.len());
@@ -254,7 +254,7 @@ impl<'t> Tx<'t> {
 	#[tracing::instrument(
 		skip(self, unlock_preimage, outputs),
 		fields(
-			chain_tip = chain_tip,
+			chain_tip = chain_tip.to_u32(),
 			nb_inputs = inputs.len(),
 		)
 	)]

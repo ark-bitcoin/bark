@@ -299,7 +299,7 @@ pub fn store_vtxo_with_initial_state(
 	let mut statement = tx.prepare(q1)?;
 	let rows_inserted = statement.execute(named_params! {
 		":vtxo_id" : vtxo.id().to_string(),
-		":expiry_height": vtxo.expiry_height(),
+		":expiry_height": vtxo.expiry_height().to_u32(),
 		":amount_sat": vtxo.amount().to_sat(),
 		":raw_bare": raw_bare,
 		":raw_genesis": raw_genesis,

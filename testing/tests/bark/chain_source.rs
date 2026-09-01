@@ -6,7 +6,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::hashes::sha256::HashEngine;
 
 use bark::chain::{ChainSource, ChainSourceSpec};
-use bitcoin_ext::{BlockHeight, TxStatus};
+use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
 
 use ark_testing::{sat, Bitcoind, BitcoindConfig, TestContext};
 use ark_testing::util::{get_bark_chain_source_from_env, TestContextChainSource};
@@ -64,30 +64,30 @@ async fn chain_source_tip() {
 	// to observe a fresh fetch (new height, or backend errors); the cache
 	// behaviour itself is exercised by the unchanged loop below.
 	let (ctx, chain_source) = setup_chain_source("chain_source/tip").await;
-	let start_height = ctx.bitcoind().get_block_count().await as BlockHeight;
+	let start_height = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
 	assert_eq!(chain_source.tip().await.unwrap(), start_height);
 
 	// The tip should be updated when blocks are generated.
 	ctx.generate_blocks(10).await;
 	chain_source.invalidate_caches().await;
-	assert_eq!(chain_source.tip().await.unwrap(), start_height + 10);
+	assert_eq!(chain_source.tip().await.unwrap(), start_height + BlockDelta::new(10));
 
 	// The tip should stay the same when blocks are not generated. With the
 	// cache primed by the assertion above, this loop also exercises that
 	// repeated reads return the cached value consistently.
 	for _ in 0..10 {
-		assert_eq!(chain_source.tip().await.unwrap(), start_height + 10);
+		assert_eq!(chain_source.tip().await.unwrap(), start_height + BlockDelta::new(10));
 		tokio::time::sleep(Duration::from_millis(10)).await;
 	}
 
 	// The tip should continue to be updated when new blocks are generated.
 	ctx.generate_blocks(37).await;
 	chain_source.invalidate_caches().await;
-	assert_eq!(chain_source.tip().await.unwrap(), start_height + 47);
+	assert_eq!(chain_source.tip().await.unwrap(), start_height + BlockDelta::new(47));
 
 	ctx.generate_blocks(1234).await;
 	chain_source.invalidate_caches().await;
-	assert_eq!(chain_source.tip().await.unwrap(), start_height + 1281);
+	assert_eq!(chain_source.tip().await.unwrap(), start_height + BlockDelta::new(1281));
 
 	// Ensure network problems result in errors once the cache is cleared.
 	drop(ctx);
@@ -99,9 +99,9 @@ async fn chain_source_tip() {
 #[tokio::test]
 async fn chain_source_block_ref() {
 	let (ctx, chain_source) = setup_chain_source("chain_source/block_ref").await;
-	let start_height = ctx.bitcoind().get_block_count().await as BlockHeight;
+	let start_height = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
 
-	chain_source.block_ref(1000).await
+	chain_source.block_ref(BlockHeight::new(1000)).await
 		.expect_err("Invalid block heights should error");
 
 	// Generating blocks shouldn't change results
@@ -110,18 +110,18 @@ async fn chain_source_block_ref() {
 	assert_eq!(chain_source.block_ref(start_height).await.unwrap(), start_block_ref);
 
 	// Ensure each block hash is unique
-	let mut hash_set = HashSet::with_capacity((start_height + 10) as usize);
-	for i in 0..start_height + 10 {
-		let block_ref = chain_source.block_ref(i).await.unwrap();
+	let mut hash_set = HashSet::with_capacity(start_height.to_u32() as usize + 10);
+	for i in 0..start_height.to_u32() + 10 {
+		let block_ref = chain_source.block_ref(BlockHeight::new(i)).await.unwrap();
 		assert!(hash_set.insert(block_ref.hash));
 	}
 
 	// Ensure block IDs can be queried as new blocks are produced
-	chain_source.block_ref(start_height + 11).await
+	chain_source.block_ref(start_height + BlockDelta::new(11)).await
 		.expect_err("Block Ref should not be valid");
 	for i in 0..10 {
 		ctx.generate_blocks(1).await;
-		chain_source.block_ref(start_height + 10 + i).await
+		chain_source.block_ref(start_height + BlockDelta::new(10 + i)).await
 			.expect("Block Ref should be valid");
 	}
 
@@ -134,7 +134,7 @@ async fn chain_source_block_ref() {
 #[tokio::test]
 async fn chain_source_block() {
 	let (ctx, chain_source) = setup_chain_source("chain_source/block").await;
-	let start_height = ctx.bitcoind().get_block_count().await as BlockHeight;
+	let start_height = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
 	let start_hash = chain_source.block_ref(start_height).await.unwrap().hash;
 
 	// Ensure we can retrieve blocks by hash
@@ -147,10 +147,10 @@ async fn chain_source_block() {
 	assert!(matches!(empty_result, None));
 
 	// Generating blocks shouldn't change results
-	let mut headers = HashSet::with_capacity(start_height as usize);
+	let mut headers = HashSet::with_capacity(start_height.to_u32() as usize);
 	for i in 0..10 {
 		ctx.generate_blocks(1).await;
-		let block_ref = chain_source.block_ref(i).await.expect("Block Ref should be valid");
+		let block_ref = chain_source.block_ref(BlockHeight::new(i)).await.expect("Block Ref should be valid");
 		match chain_source.block(block_ref.hash).await.expect("Hash should be valid") {
 			None => panic!("Hash should not return an empty result"),
 			Some(block) => assert!(headers.insert(block.header)),
@@ -166,7 +166,7 @@ async fn chain_source_block() {
 #[tokio::test]
 async fn chain_source_txs_spending_inputs() {
 	let (ctx, chain_source) = setup_chain_source("chain_source/txs_spending_inputs").await;
-	let h = ctx.bitcoind().get_block_count().await as BlockHeight;
+	let h = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
 
 	// Generate 5 out-points to track in 5 different bitcoind instances
 	let mut bitcoinds = Vec::with_capacity(5);
@@ -220,7 +220,7 @@ async fn chain_source_txs_spending_inputs() {
 		bitcoinds[1].fund_addr(&ctx_address, sat(900_000)).await,
 	]);
 	ctx.generate_blocks(1).await;
-	let start_height = ctx.bitcoind().get_block_count().await as BlockHeight;
+	let start_height = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
 	let mut unconfirmed_txids = HashSet::from([
 		bitcoinds[2].fund_addr(&ctx_address, sat(900_000)).await,
 		bitcoinds[3].fund_addr(&ctx_address, sat(900_000)).await,
@@ -254,7 +254,7 @@ async fn chain_source_txs_spending_inputs() {
 
 	// Ensure network problems result in errors
 	drop(ctx);
-	chain_source.txs_spending_inputs(outpoints, 0).await
+	chain_source.txs_spending_inputs(outpoints, BlockHeight::new(0)).await
 		.expect_err("We shouldn't be able to retrieve data");
 }
 
@@ -317,7 +317,7 @@ async fn chain_source_tx_confirmed() {
 	let confirmed_result = chain_source.tx_confirmed(pending).await
 		.expect("Confirmed transactions are valid");
 	match confirmed_result {
-		Some(h) => assert_eq!(h, ctx.bitcoind().get_block_count().await as BlockHeight),
+		Some(h) => assert_eq!(h, BlockHeight::new(ctx.bitcoind().get_block_count().await as u32)),
 		None => panic!("Transaction should be confirmed"),
 	}
 
@@ -351,7 +351,7 @@ async fn chain_source_tx_status() {
 		.expect("Confirmed transactions are valid");
 	match confirmed_result {
 		TxStatus::Confirmed(block) => {
-			assert_eq!(block.height, ctx.bitcoind().get_block_count().await as BlockHeight)
+			assert_eq!(block.height, BlockHeight::new(ctx.bitcoind().get_block_count().await as u32))
 		},
 		_ => panic!("Transaction should be confirmed"),
 	}

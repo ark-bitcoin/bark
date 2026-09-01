@@ -16,7 +16,7 @@ use bitcoin::{
 use log::{debug, error, info, trace, warn};
 
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, DEEPLY_CONFIRMED, TransactionExt};
+use bitcoin_ext::{BlockDelta, BlockHeight, DEEPLY_CONFIRMED, TransactionExt};
 use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
 
@@ -32,7 +32,7 @@ use crate::psbtext::PsbtInputExt;
 
 const STOP_GAP: usize = 50;
 const PARALLEL_REQS: usize = 4;
-const GENESIS_HEIGHT: u32 = 0;
+const GENESIS_HEIGHT: BlockHeight = BlockHeight::ZERO;
 /// Minimum age (by `last_seen`) a locally-unconfirmed tx must reach before a
 /// sync is allowed to evict it for being absent from the node's mempool.
 ///
@@ -51,7 +51,8 @@ impl From<LocalOutput> for LocalUtxo {
 		LocalUtxo {
 			outpoint: value.outpoint,
 			amount: value.txout.value,
-			confirmation_height: value.chain_position.confirmation_height_upper_bound(),
+			confirmation_height: value.chain_position.confirmation_height_upper_bound()
+				.map(BlockHeight::new),
 		}
 	}
 }
@@ -411,7 +412,7 @@ impl OnchainWallet {
 				// anything deeply confirmed.
 				let min_height = self.inner.latest_checkpoint()
 					.height()
-					.checked_sub(DEEPLY_CONFIRMED)
+					.checked_sub(DEEPLY_CONFIRMED.to_u32())
 					.unwrap_or(0);
 
 				let request = self.inner.start_sync_with_revealed_spks_at(bark_runtime::timestamp_secs())
@@ -706,9 +707,9 @@ impl OnchainWallet {
 			ChainSourceClient::Bitcoind { rpc, sync } => {
 				use bitcoind_async_client::traits::Reader;
 				// Make sure we include the given start_height in the scan
-				let height = start_height.unwrap_or(GENESIS_HEIGHT).saturating_sub(1);
-				let block_hash = rpc.get_block_hash(height as u64).await?;
-				self.inner.set_checkpoint(height, block_hash);
+				let height = start_height.unwrap_or(GENESIS_HEIGHT).saturating_sub(BlockDelta::new(1));
+				let block_hash = rpc.get_block_hash(height.into()).await?;
+				self.inner.set_checkpoint(height.into(), block_hash);
 				self.inner_sync_bitcoind(sync, self.inner.latest_checkpoint()).await?;
 			},
 			// Esplora can't do a full scan from a given block height, so we can ignore start_height

@@ -5,6 +5,7 @@ use ark::VtxoId;
 use bark_json::movements::MovementStatus;
 use server_log::RoundFinished;
 use server_rpc::protos;
+use bitcoin_ext::BlockDelta;
 
 use ark_testing::{btc, require_bark_version, sat, Captaind, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
@@ -100,7 +101,7 @@ async fn maintenance_refresh_auto_barkd() {
 	// Short vtxo lifetime so the test doesn't have to mine 432 blocks
 	// to age vtxos into the maintenance refresh window.
 	let srv = ctx.captaind("server").funded(btc(1))
-		.cfg(|cfg| cfg.vtxo_lifetime = 32)
+		.cfg(|cfg| cfg.vtxo_lifetime = BlockDelta::new(32))
 		.create().await;
 	let barkd = ctx.barkd("barkd1", &srv).funded(sat(100_000)).create().await;
 
@@ -115,7 +116,7 @@ async fn maintenance_refresh_auto_barkd() {
 
 	// Push the vtxo within the refresh expiry threshold so the daemon
 	// considers it due for maintenance.
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
 
 	// Subscribe before triggering so we can't miss the log.
 	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
@@ -174,13 +175,13 @@ async fn maintenance_refresh_skips_rejected_vtxo_barkd() {
 	// Short vtxo lifetime so the test doesn't have to mine 432 blocks
 	// to age vtxos into the maintenance refresh window.
 	let srv = ctx.captaind("server").funded(btc(1))
-		.cfg(|cfg| cfg.vtxo_lifetime = 32)
+		.cfg(|cfg| cfg.vtxo_lifetime = BlockDelta::new(32))
 		.create().await;
 
 	let (barkd, _proxy, bad_id, good_id) = setup_barkd_with_rejected_vtxo(&ctx, &srv).await;
 
 	// Age both so the daemon's auto-maintenance considers them due for refresh.
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
 
 	// A SINGLE round must refresh the healthy vtxo: the daemon submits
 	// [bad, good], the server rejects `bad`, and the daemon re-submits just

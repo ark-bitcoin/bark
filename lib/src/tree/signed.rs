@@ -1741,9 +1741,9 @@ const VTXO_TREE_SPEC_VERSION: u8 = 0x02;
 impl ProtocolEncoding for VtxoTreeSpec {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		w.emit_u8(VTXO_TREE_SPEC_VERSION)?;
-		w.emit_u32(self.expiry_height)?;
+		w.emit_u32(self.expiry_height.to_u32())?;
 		self.server_pubkey.encode(w)?;
-		w.emit_u16(self.exit_delta)?;
+		w.emit_u16(self.exit_delta.to_u16())?;
 		LengthPrefixedVector::new(&self.global_cosign_pubkeys).encode(w)?;
 		LengthPrefixedVector::new(&self.vtxos).encode(w)?;
 		Ok(())
@@ -1910,8 +1910,8 @@ mod test {
 		let spec = VtxoTreeSpec::new(
 			reqs.iter().map(|r| r.to_vtxo()).collect(),
 			server_key.public_key(),
-			101_000,
-			2016,
+			BlockHeight::new(101_000),
+			BlockDelta::new(2016),
 			vec![server_cosign_key.public_key()],
 		);
 		assert_eq!(spec.nb_leaves(), nb_leaves);
@@ -1963,8 +1963,8 @@ mod test {
 
 	#[test]
 	fn test_tree_builder() {
-		let expiry = 100_000;
-		let exit_delta = 24;
+		let expiry = BlockHeight::new(100_000);
+		let exit_delta = BlockDelta::new(24);
 
 		let vtxo_key = Keypair::from_str("985247fb0ef008f8043b6be28add87710d42d482433ef287235bfe041ee6cc11").unwrap();
 		let policy = VtxoPolicy::new_pubkey(vtxo_key.public_key());
@@ -2225,7 +2225,7 @@ mod test {
 		// another participation's leaf with an identical request first,
 		// then two identical leaves of the same participation
 		let spec = VtxoTreeSpec::new(
-			vec![leaf(hash2), leaf(hash1), leaf(hash1)], pk, 100_000, 2016, vec![],
+			vec![leaf(hash2), leaf(hash1), leaf(hash1)], pk, BlockHeight::new(100_000), BlockDelta::new(2016), vec![],
 		);
 
 		// identical requests are bound to the distinct leaves of their
@@ -2262,7 +2262,7 @@ mod test {
 			cosign_pubkey: Some(pk2),
 			unlock_hash: hash,
 		};
-		let spec = VtxoTreeSpec::new(vec![leaf], pk1, 100_000, 2016, vec![]);
+		let spec = VtxoTreeSpec::new(vec![leaf], pk1, BlockHeight::new(100_000), BlockDelta::new(2016), vec![]);
 		encoding_roundtrip(&spec);
 
 		// Empty the vtxos and verify decode rejects it.

@@ -82,8 +82,8 @@ impl VtxoInserts {
 		self.vtxo_ids.push(vtxo.id().to_string());
 		self.vtxo_txids.push(vtxo.point().txid.to_string());
 		self.data.push(vtxo.serialize());
-		self.expiry.push(vtxo.expiry_height() as i32);
-		self.exit_deltas.push(vtxo.exit_delta() as i32);
+		self.expiry.push(vtxo.expiry_height().to_u32() as i32);
+		self.exit_deltas.push(vtxo.exit_delta().to_u16() as i32);
 		self.policy_types.push(vtxo.policy_type().to_string());
 		self.policies.push(vtxo.policy().serialize());
 		self.server_pubkeys.push(vtxo.server_pubkey().to_string());
@@ -99,8 +99,8 @@ impl VtxoInserts {
 		// Bare vtxos encode as a full vtxo with an empty genesis, so readers
 		// of the vtxo column (e.g. the watchman frontier) can decode them.
 		self.data.push(vtxo.serialize());
-		self.expiry.push(vtxo.expiry_height() as i32);
-		self.exit_deltas.push(vtxo.exit_delta() as i32);
+		self.expiry.push(vtxo.expiry_height().to_u32() as i32);
+		self.exit_deltas.push(vtxo.exit_delta().to_u16() as i32);
 		self.policy_types.push(vtxo.policy_type().to_string());
 		self.policies.push(vtxo.policy().serialize());
 		self.server_pubkeys.push(vtxo.server_pubkey().to_string());

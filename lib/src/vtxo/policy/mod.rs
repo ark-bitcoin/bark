@@ -4,8 +4,8 @@
 //!
 //! # Block height and block delta invariants
 //!
-//! Policy heights and deltas are raw `BlockHeight` (u32) and `BlockDelta`
-//! (u16), but every value crossing a deserialization boundary (protocol
+//! Policy heights and deltas are `BlockHeight` (u32) and `BlockDelta`
+//! (u16 range), but every value crossing a deserialization boundary (protocol
 //! decode, gRPC ingress, JSON, postgres) must be validated through
 //! [check_block_height] / [check_block_delta]. The `arithmetic_side_effects`
 //! clippy lint enforces that interior arithmetic on these values goes through
@@ -61,21 +61,22 @@ impl PolicyError {
 /// The maximum value of a block delta accepted in policies.
 ///
 /// Equals `u16::MAX / 4 = 16383` blocks, or roughly 114 days (~3.8 months).
-pub const MAX_BLOCK_DELTA: BlockDelta = u16::MAX / 4;
+pub const MAX_BLOCK_DELTA: BlockDelta = BlockDelta::new(u16::MAX / 4);
 
 /// The maximum value of a block height accepted in policies.
 ///
 /// Reserves enough headroom below [bitcoin::absolute::LOCK_TIME_THRESHOLD]
 /// for any accepted height plus up to `4 * MAX_BLOCK_DELTA` of additional
 /// blocks to still produce a valid absolute locktime height.
-pub const MAX_BLOCK_HEIGHT: BlockHeight =
-	bitcoin::absolute::LOCK_TIME_THRESHOLD - 1 - 4 * MAX_BLOCK_DELTA as BlockHeight;
+pub const MAX_BLOCK_HEIGHT: BlockHeight = BlockHeight::new(
+	bitcoin::absolute::LOCK_TIME_THRESHOLD - 1 - 4 * MAX_BLOCK_DELTA.to_u32(),
+);
 
 const _: () = {
 	// Up to four policy deltas fit in BlockDelta (u16).
-	assert!(4 * (MAX_BLOCK_DELTA as u32) <= u16::MAX as u32);
+	assert!(4 * MAX_BLOCK_DELTA.to_u32() <= u16::MAX as u32);
 	// Any accepted height plus up to 4 deltas stays below LOCK_TIME_THRESHOLD.
-	assert!((MAX_BLOCK_HEIGHT as u64) + 4 * (MAX_BLOCK_DELTA as u64)
+	assert!((MAX_BLOCK_HEIGHT.to_u32() as u64) + 4 * (MAX_BLOCK_DELTA.to_u32() as u64)
 		< (bitcoin::absolute::LOCK_TIME_THRESHOLD as u64));
 };
 
@@ -137,7 +138,7 @@ pub trait Policy: Clone + Send + Sync + 'static {
 
 	fn clauses(
 		&self,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 		expiry_height: BlockHeight,
 		server_pubkey: PublicKey,
 	) -> Vec<VtxoClause>;
@@ -554,8 +555,7 @@ impl ServerHtlcSend_v0_VtxoPolicy {
 		DelayedTimelockSignClause {
 			pubkey: self.user_pubkey,
 			timelock_height: self.htlc_expiry,
-			block_delta: exit_delta.checked_mul(2)
-				.expect("2*exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant"),
+			block_delta: exit_delta * 2,
 		}
 	}
 
@@ -631,8 +631,7 @@ impl ServerHtlcSendVtxoPolicy {
 		DelayedTimelockSignClause {
 			pubkey: self.user_pubkey,
 			timelock_height: self.htlc_expiry,
-			block_delta: exit_delta.checked_mul(2)
-				.expect("2*exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant"),
+			block_delta: exit_delta * 2,
 		}
 	}
 
@@ -697,8 +696,7 @@ impl ServerHtlcRecv_v0_VtxoPolicy {
 		HashDelaySignClause_v0 {
 			pubkey: self.user_pubkey,
 			hash: self.payment_hash.to_sha256_hash(),
-			block_delta: self.htlc_expiry_delta.checked_add(exit_delta)
-				.expect("htlc_expiry_delta+exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant"),
+			block_delta: self.htlc_expiry_delta + exit_delta,
 		}
 	}
 
@@ -776,8 +774,7 @@ impl ServerHtlcRecvVtxoPolicy {
 		HashDelaySignClause {
 			pubkey: self.user_pubkey,
 			hash: self.payment_hash.to_sha256_hash(),
-			block_delta: self.htlc_expiry_delta.checked_add(exit_delta)
-				.expect("htlc_expiry_delta+exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant"),
+			block_delta: self.htlc_expiry_delta + exit_delta,
 		}
 	}
 
@@ -1116,7 +1113,7 @@ impl VtxoPolicy {
 
 	pub fn clauses(
 		&self,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 		_expiry_height: BlockHeight,
 		server_pubkey: PublicKey,
 	) -> Vec<VtxoClause> {
@@ -1273,7 +1270,7 @@ impl ServerVtxoPolicy {
 
 	pub fn clauses(
 		&self,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 		expiry_height: BlockHeight,
 		server_pubkey: PublicKey,
 	) -> Vec<VtxoClause> {
@@ -1319,7 +1316,7 @@ impl Policy for VtxoPolicy {
 
 	fn clauses(
 		&self,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 		expiry_height: BlockHeight,
 		server_pubkey: PublicKey,
 	) -> Vec<VtxoClause> {
@@ -1343,7 +1340,7 @@ impl Policy for ServerVtxoPolicy {
 
 	fn clauses(
 		&self,
-		exit_delta: u16,
+		exit_delta: BlockDelta,
 		expiry_height: BlockHeight,
 		server_pubkey: PublicKey,
 	) -> Vec<VtxoClause> {
@@ -1398,7 +1395,7 @@ mod tests {
 			unlock_hash,
 		};
 
-		let expiry_height = 100_000;
+		let expiry_height = BlockHeight::new(100_000);
 
 		// Build the taproot spend info using the policy
 		let taproot = policy.taproot(SERVER_KEYPAIR.public_key(), expiry_height);
@@ -1471,7 +1468,7 @@ mod tests {
 			unlock_hash,
 		};
 
-		let expiry_height = 100;
+		let expiry_height = BlockHeight::new(100);
 
 		// Build the taproot spend info using the policy
 		let taproot = policy.taproot(SERVER_KEYPAIR.public_key(), expiry_height);

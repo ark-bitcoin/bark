@@ -485,7 +485,7 @@ mod test {
 	use bitcoin::{Transaction, Txid};
 	use bitcoin::secp256k1::Keypair;
 
-	use bitcoin_ext::P2TR_DUST;
+	use bitcoin_ext::{BlockDelta, BlockHeight, P2TR_DUST};
 
 	use super::*;
 	use crate::test_util::dummy::DummyTestVtxoSpec;
@@ -516,8 +516,8 @@ mod test {
 		DummyTestVtxoSpec {
 			amount: amt + P2TR_DUST,
 			fee: P2TR_DUST,
-			expiry_height: 1000,
-			exit_delta: 128,
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(128),
 			user_keypair: alice_keypair(),
 			server_keypair: server_keypair()
 		}.build()

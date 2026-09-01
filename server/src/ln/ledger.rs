@@ -227,11 +227,11 @@ impl<I: Copy + Eq + Hash + fmt::Debug> Ledger<I> {
 				Direction::Outgoing => outgoing += htlc.amount,
 			}
 			if let Some(end) = htlc.coverage_end(self.expiry_delta) {
-				drops.push((end.saturating_add(1), htlc.direction, htlc.amount));
+				drops.push((end + BlockDelta::new(1), htlc.direction, htlc.amount));
 			}
 		}
 		if incoming < outgoing {
-			return Err(Error::CoverageInvariant { height: 0, incoming, outgoing });
+			return Err(Error::CoverageInvariant { height: BlockHeight::ZERO, incoming, outgoing });
 		}
 
 		drops.sort_unstable_by_key(|&(height, ..)| height);
@@ -304,7 +304,7 @@ impl<I> Htlc<I> {
 		}
 		match self.direction {
 			Direction::Incoming => {
-				Some(self.expiry.saturating_sub(BlockHeight::from(expiry_delta)))
+				Some(self.expiry.saturating_sub(expiry_delta))
 			},
 			Direction::Outgoing => Some(self.expiry),
 		}
@@ -315,7 +315,7 @@ impl<I> Htlc<I> {
 mod tests {
 	use super::*;
 
-	const DELTA: BlockDelta = 10;
+	const DELTA: BlockDelta = BlockDelta::new(10);
 
 	#[test]
 	fn empty_ledger_is_valid() {
@@ -326,17 +326,17 @@ mod tests {
 	#[test]
 	fn incoming_covers_outgoing() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
-		ledger.add_outgoing("out", Amount::from_sat(500), 90).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
+		ledger.add_outgoing("out", Amount::from_sat(500), BlockHeight::new(90)).unwrap();
 		ledger.check_invariants().unwrap();
 	}
 
 	#[test]
 	fn outgoing_without_coverage_fails() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
 		let err = ledger
-			.add_outgoing("out", Amount::from_sat(1500), 90)
+			.add_outgoing("out", Amount::from_sat(1500), BlockHeight::new(90))
 			.expect_err("should violate coverage");
 		assert!(matches!(err, Error::CoverageInvariant { .. }));
 	}
@@ -344,20 +344,20 @@ mod tests {
 	#[test]
 	fn outgoing_expiring_exactly_delta_before_incoming_is_allowed() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
 		// Gap of exactly DELTA blocks (100 - 90 = 10) is allowed.
-		ledger.add_outgoing("out", Amount::from_sat(500), 90).unwrap();
+		ledger.add_outgoing("out", Amount::from_sat(500), BlockHeight::new(90)).unwrap();
 		ledger.check_invariants().unwrap();
 	}
 
 	#[test]
 	fn outgoing_expiring_less_than_delta_before_incoming_fails() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
 		// Gap of only 9 blocks (100 - 91 < 10) leaves too little time to
 		// claim the incoming HTLC after an on-chain claim of the outgoing.
 		let err = ledger
-			.add_outgoing("out", Amount::from_sat(500), 91)
+			.add_outgoing("out", Amount::from_sat(500), BlockHeight::new(91))
 			.expect_err("gap below expiry delta should fail");
 		assert!(matches!(err, Error::CoverageInvariant { .. }));
 	}
@@ -365,8 +365,8 @@ mod tests {
 	#[test]
 	fn fulfillment_invariant_requires_claimed_incoming() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
-		ledger.add_outgoing("out", Amount::from_sat(500), 90).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
+		ledger.add_outgoing("out", Amount::from_sat(500), BlockHeight::new(90)).unwrap();
 		// Coverage OK, but fulfillment fails because outgoing would be claimed
 		// before incoming.
 		let err = ledger.fulfill("out").expect_err("should violate fulfillment");
@@ -381,21 +381,21 @@ mod tests {
 	fn fulfill_outgoing_can_break_coverage_while_fulfillment_holds() {
 		let mut ledger = Ledger::new(DELTA);
 		// A fulfilled incoming of 1000 covers every height.
-		ledger.add_incoming("in-a", Amount::from_sat(1000), 200).unwrap();
+		ledger.add_incoming("in-a", Amount::from_sat(1000), BlockHeight::new(200)).unwrap();
 		ledger.fulfill("in-a").unwrap();
 		// An outgoing at expiry 150 leans on that fulfilled incoming.
-		ledger.add_outgoing("out-e", Amount::from_sat(1000), 150).unwrap();
+		ledger.add_outgoing("out-e", Amount::from_sat(1000), BlockHeight::new(150)).unwrap();
 		// A second pair: unclaimed incoming covering up to height 90,
 		// outgoing at expiry 90.
-		ledger.add_incoming("in-b", Amount::from_sat(1000), 100).unwrap();
-		ledger.add_outgoing("out-c", Amount::from_sat(1000), 90).unwrap();
+		ledger.add_incoming("in-b", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
+		ledger.add_outgoing("out-c", Amount::from_sat(1000), BlockHeight::new(90)).unwrap();
 
 		// Fulfilling out-c keeps the fulfillment invariant (1000 vs 1000) but
 		// extends its demand past height 90, where only in-a's 1000 remains
 		// against out-c plus out-e. First uncovered height is 91.
 		let err = ledger.fulfill("out-c").expect_err("should violate coverage");
 		match err {
-			Error::CoverageInvariant { height, .. } => assert_eq!(height, 91),
+			Error::CoverageInvariant { height, .. } => assert_eq!(height, BlockHeight::new(91)),
 			_ => panic!("expected coverage invariant at height 91, got {err:?}"),
 		}
 
@@ -407,7 +407,7 @@ mod tests {
 	#[test]
 	fn revoke_removes_htlc() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
 		ledger.revoke("in").unwrap();
 		assert!(ledger.get("in").is_none());
 		ledger.check_invariants().unwrap();
@@ -416,17 +416,17 @@ mod tests {
 	#[test]
 	fn revoke_incoming_that_covers_outgoing_fails() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
-		ledger.add_outgoing("out", Amount::from_sat(500), 90).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
+		ledger.add_outgoing("out", Amount::from_sat(500), BlockHeight::new(90)).unwrap();
 		ledger.revoke("in").expect_err("should violate coverage");
 	}
 
 	#[test]
 	fn add_rejects_same_id_with_different_parameters() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
 		let err = ledger
-			.add_incoming("in", Amount::from_sat(500), 100)
+			.add_incoming("in", Amount::from_sat(500), BlockHeight::new(100))
 			.expect_err("different parameters should fail");
 		assert!(matches!(err, Error::DuplicateHtlcId("in")));
 	}
@@ -434,15 +434,15 @@ mod tests {
 	#[test]
 	fn add_twice_with_same_parameters_is_noop() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
 		assert_eq!(ledger.htlcs().count(), 1);
 	}
 
 	#[test]
 	fn fulfill_twice_is_noop() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
 		ledger.fulfill("in").unwrap();
 		ledger.fulfill("in").unwrap();
 		assert_eq!(ledger.incoming_fulfilled(), Amount::from_sat(1000));
@@ -451,7 +451,7 @@ mod tests {
 	#[test]
 	fn revoke_twice_is_noop() {
 		let mut ledger = Ledger::new(DELTA);
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
 		ledger.revoke("in").unwrap();
 		ledger.revoke("in").unwrap();
 		assert!(ledger.get("in").is_none());
@@ -461,10 +461,10 @@ mod tests {
 	fn force_htlc_allows_inconsistent_state() {
 		let mut ledger = Ledger::new(DELTA);
 		ledger
-			.force_htlc("in", Amount::from_sat(100), 100, false, Direction::Incoming)
+			.force_htlc("in", Amount::from_sat(100), BlockHeight::new(100), false, Direction::Incoming)
 			.unwrap();
 		ledger
-			.force_htlc("out", Amount::from_sat(200), 90, false, Direction::Outgoing)
+			.force_htlc("out", Amount::from_sat(200), BlockHeight::new(90), false, Direction::Outgoing)
 			.unwrap();
 		let err = ledger.check_invariants().expect_err("should be inconsistent");
 		assert!(matches!(err, Error::CoverageInvariant { .. }));
@@ -474,10 +474,10 @@ mod tests {
 	fn force_htlc_preserves_id_uniqueness() {
 		let mut ledger = Ledger::new(DELTA);
 		ledger
-			.force_htlc("in", Amount::from_sat(100), 100, false, Direction::Incoming)
+			.force_htlc("in", Amount::from_sat(100), BlockHeight::new(100), false, Direction::Incoming)
 			.unwrap();
 		ledger
-			.force_htlc("in", Amount::from_sat(100), 100, false, Direction::Incoming)
+			.force_htlc("in", Amount::from_sat(100), BlockHeight::new(100), false, Direction::Incoming)
 			.expect("Force overrides the existing value")
 
 	}
@@ -486,11 +486,11 @@ mod tests {
 	fn safe_actions_succeed_on_inconsistent_ledger() {
 		let mut ledger = Ledger::new(DELTA);
 		ledger
-			.force_htlc("bad-out", Amount::from_sat(200), 90, true, Direction::Outgoing)
+			.force_htlc("bad-out", Amount::from_sat(200), BlockHeight::new(90), true, Direction::Outgoing)
 			.unwrap();
 		ledger.check_invariants().expect_err("should be inconsistent");
 		// Safe actions never check invariants, so they succeed regardless.
-		ledger.add_incoming("in", Amount::from_sat(50), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(50), BlockHeight::new(100)).unwrap();
 		ledger.fulfill("in").unwrap();
 		ledger.revoke("bad-out").unwrap();
 	}
@@ -500,12 +500,12 @@ mod tests {
 		let mut ledger = Ledger::new(DELTA);
 		// Incoming at expiry 100 covers up to height 90, so an outgoing
 		// expiring at 91 is uncovered from height 91 onward.
-		ledger.add_incoming("in", Amount::from_sat(1000), 100).unwrap();
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
 		let err = ledger
-			.add_outgoing("out", Amount::from_sat(500), 91)
+			.add_outgoing("out", Amount::from_sat(500), BlockHeight::new(91))
 			.expect_err("should violate coverage past the incoming window");
 		match err {
-			Error::CoverageInvariant { height, .. } => assert_eq!(height, 91),
+			Error::CoverageInvariant { height, .. } => assert_eq!(height, BlockHeight::new(91)),
 			_ => panic!("expected coverage invariant at height 91, got {err:?}"),
 		}
 	}

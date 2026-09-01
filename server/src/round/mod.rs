@@ -833,11 +833,11 @@ impl CollectingPayments {
 	)]
 	async fn progress(mut self, srv: &Server) -> Result<SigningVtxoTree, RoundError> {
 		let tip = srv.chain_tip().height;
-		let expiry_height = tip + srv.config.vtxo_lifetime as BlockHeight;
+		let expiry_height = tip + srv.config.vtxo_lifetime;
 
 		let current_span = tracing::Span::current();
-		current_span.record("expiry_height", expiry_height);
-		current_span.record("block_height", tip);
+		current_span.record("expiry_height", expiry_height.to_u32());
+		current_span.record("block_height", tip.to_u32());
 
 		let round_step = self.next_step(RoundStep::ConstructVtxoTree);
 
@@ -1988,6 +1988,7 @@ impl Server {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use bitcoin_ext::BlockDelta;
 
 	use std::collections::HashSet;
 
@@ -2066,7 +2067,7 @@ mod tests {
 				},
 			],
 		};
-		let fee = fees.calculate(inputs.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, 1_000)));
+		let fee = fees.calculate(inputs.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, BlockHeight::new(1_000))));
 		assert_eq!(fee.unwrap(), Amount::from_sat(110));
 		let output_amount = inputs[0].amount() - fee.unwrap();
 		let outputs = vec![create_signed_req(output_amount.to_sat(), &state.round_data)];
@@ -2074,7 +2075,7 @@ mod tests {
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
 		validate_payment_amounts(&inputs, &outputs).unwrap();
 		validate_refresh_fee(
-			&inputs, &outputs, &fees, 1000,
+			&inputs, &outputs, &fees, BlockHeight::new(1000),
 		).unwrap();
 
 		let flux = VtxosInFlux::new();
@@ -2155,7 +2156,7 @@ mod tests {
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
 		validate_payment_amounts(&inputs, &outputs).unwrap();
 		validate_refresh_fee(
-			&inputs, &outputs, &fees, 1_000,
+			&inputs, &outputs, &fees, BlockHeight::new(1_000),
 		).unwrap_err();
 	}
 
@@ -2174,7 +2175,7 @@ mod tests {
 			],
 		};
 		let fee = fees.calculate(
-			inputs.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, 1_000)),
+			inputs.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, BlockHeight::new(1_000))),
 		).unwrap();
 
 		// Control: paying the exact fee is accepted.
@@ -2182,7 +2183,7 @@ mod tests {
 			(inputs[0].amount() - fee).to_sat(), &state.round_data,
 		)];
 		validate_refresh_fee(
-			&inputs, &outputs, &fees, 1_000,
+			&inputs, &outputs, &fees, BlockHeight::new(1_000),
 		).unwrap();
 
 		// Keeping one sat more for the output underpays the fee and is rejected.
@@ -2190,7 +2191,7 @@ mod tests {
 			(inputs[0].amount() - fee).to_sat() + 1, &state.round_data,
 		)];
 		validate_refresh_fee(
-			&inputs, &outputs, &fees, 1_000,
+			&inputs, &outputs, &fees, BlockHeight::new(1_000),
 		).unwrap_err();
 	}
 
@@ -2213,9 +2214,9 @@ mod tests {
 			],
 		};
 
-		let current_height = 1_000;
+		let current_height = BlockHeight::new(1_000);
 		// close enough to expiry that only the base fee remains
-		let scheduled_height = inputs[0].expiry_height() - 25_000;
+		let scheduled_height = inputs[0].expiry_height().saturating_sub(BlockDelta::new(25_000));
 
 		let fee_at = |height: BlockHeight| fees.calculate(
 			inputs.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, height)),

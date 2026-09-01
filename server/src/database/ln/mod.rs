@@ -272,7 +272,7 @@ impl<'t> Tx<'t> {
 
 		let requested_status = LightningPaymentStatus::Requested;
 		let mailbox_str = sender_mailbox_id.map(|id| id.to_string());
-		let block_height_i32 = i32::try_from(block_height)?;
+		let block_height_i32 = i32::try_from(block_height.to_u32())?;
 		let user_fee_sat_i64 = i64::try_from(user_fee.to_sat())?;
 		let row = self.query_one(
 			&stmt,
@@ -498,7 +498,7 @@ impl<'t> Tx<'t> {
 		lowest_incoming_htlc_expiry: Option<BlockHeight>,
 	) -> anyhow::Result<bool> {
 		let accepted = status == LightningHtlcSubscriptionStatus::Accepted;
-		let expiry = lowest_incoming_htlc_expiry.map(|e| e as i64);
+		let expiry = lowest_incoming_htlc_expiry.map(i64::from);
 
 		// `status != $2` makes a repeat of the status the row already has match
 		// no rows, so the update trigger never sees an `updated_at` that did
