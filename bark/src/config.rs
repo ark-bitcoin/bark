@@ -139,7 +139,7 @@ pub struct Config {
 	/// The number of blocks before expiration to refresh vtxos.
 	///
 	/// Default value: 144 (24h) for mainnet, 12 for testnets
-	pub vtxo_refresh_expiry_threshold: BlockHeight,
+	pub vtxo_refresh_expiry_threshold: BlockDelta,
 
 	/// An upper limit of the number of blocks we expect to need to
 	/// safely exit the vtxos.
