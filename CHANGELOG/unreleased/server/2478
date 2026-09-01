@@ -1,0 +1,18 @@
+- The TxNursery now guarantees follow-up on every tx it broadcasts
+  Round funding, offboard, vtxo pool issuance and internal wallet txs
+  are persisted before broadcast, rebroadcast until they confirm, and
+  follow-up survives restarts. Previously a tx was broadcast once and
+  a failure only logged, which could leave a round funding tx
+  unconfirmed forever.
+  [#2478](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2478)
+  - Once a tx misses its confirmation target
+    (`nursery_confirm_target_blocks`), the operator is warned on every
+    block until the tx confirms or they give up on it via the new
+    `Abandon` admin RPC.
+  - Txs already stuck before this upgrade are not backfilled;
+    rebroadcast those manually.
+  - **BREAKING:** config: `nursery_confirm_target_blocks` is required;
+    every deployment has to pick its own confirmation target.
+  - **BREAKING:** config: `transaction_rebroadcast_interval` and
+    `txindex_check_interval` were removed; follow-up is driven by
+    chain events now.
