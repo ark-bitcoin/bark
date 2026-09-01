@@ -77,7 +77,7 @@ impl rpc::server::LightningAdminService for Server {
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let req = req.into_inner();
 		let uri = http::Uri::from_str(req.uri.as_str()).unwrap();
-		let _ = self.cln.activate(uri);
+		let _ = self.lightning_manager.activate(uri);
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
 
@@ -88,7 +88,7 @@ impl rpc::server::LightningAdminService for Server {
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let req = req.into_inner();
 		let uri = http::Uri::from_str(req.uri.as_str()).unwrap();
-		let _ = self.cln.disable(uri);
+		let _ = self.lightning_manager.disable(uri);
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
 }

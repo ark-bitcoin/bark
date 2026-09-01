@@ -334,7 +334,7 @@ impl Server {
 
 		// Spawn a task that performs the payment, keep the difference between the payment amount
 		// and the VTXO sum as a fee.
-		self.cln.pay_invoice(
+		self.lightning_manager.pay_invoice(
 			&invoice,
 			payment_amount,
 			max_routing_fee,
@@ -354,9 +354,9 @@ impl Server {
 		wait: bool,
 	) -> anyhow::Result<lightning_payment_status::PaymentStatus> {
 		let status = if wait {
-			self.cln.wait_payment_status(payment_hash).await?
+			self.lightning_manager.wait_payment_status(payment_hash).await?
 		} else {
-			self.cln.get_payment_status(payment_hash).await?
+			self.lightning_manager.get_payment_status(payment_hash).await?
 		};
 
 		Ok(match status {
@@ -376,7 +376,7 @@ impl Server {
 
 	#[tracing::instrument(skip(self, offer))]
 	pub async fn fetch_bolt12_invoice(&self, offer: Offer, amount: Amount) -> anyhow::Result<Bolt12Invoice> {
-		let invoice = self.cln.fetch_bolt12_invoice(offer, amount).await?;
+		let invoice = self.lightning_manager.fetch_bolt12_invoice(offer, amount).await?;
 		Ok(invoice)
 	}
 
@@ -441,7 +441,7 @@ impl Server {
 				},
 				_ if tip > input_policy.htlc_expiry => {
 					// Check one last time to see if it completed
-					let res = self.cln.get_payment_status(payment_hash).await;
+					let res = self.lightning_manager.get_payment_status(payment_hash).await;
 					if let Ok(PaymentStatus::Success(preimage)) = res {
 						return badarg!("This lightning payment has completed. preimage: {}",
 							preimage.as_hex());
@@ -598,7 +598,7 @@ impl Server {
 		// between last lightning htlc and htlc-recv vtxo one
 		let ln_cltv_delta = min_cltv_delta + self.config.htlc_expiry_delta;
 
-		let invoice = self.cln.generate_invoice(
+		let invoice = self.lightning_manager.generate_invoice(
 			payment_hash, amount, ln_cltv_delta, description, mailbox_id,
 		).await?;
 		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}",
@@ -622,7 +622,7 @@ impl Server {
 		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<LightningHtlcSubscription> {
-		let mut update_rx = self.cln.subscribe_payment_updates();
+		let mut update_rx = self.lightning_manager.subscribe_payment_updates();
 		self.check_lightning_receive_with_rx(payment_hash, wait, &mut update_rx).await
 	}
 
@@ -753,7 +753,7 @@ impl Server {
 			vtxos.iter().map(|v| v.id()),
 		).await).await.context("failed to store htlcs for ln receive")?;
 		// Wake check_lightning_receive so the client sees HtlcsReady.
-		self.cln.notify_payment_update(payment_hash);
+		self.lightning_manager.notify_payment_update(payment_hash);
 
 		sub.status = LightningHtlcSubscriptionStatus::HtlcsReady;
 		sub.htlc_vtxos = vtxos.iter().map(|v| v.id()).collect();
@@ -930,7 +930,7 @@ impl Server {
 		// Settle the hold invoice before releasing the grant, so the inbound
 		// HTLC is collected while it is still live.
 		if !is_self_payment && matches!(sub.status, LightningHtlcSubscriptionStatus::HtlcsReady) {
-			self.cln.settle_invoice(sub.id, payment_preimage).await
+			self.lightning_manager.settle_invoice(sub.id, payment_preimage).await
 				.context("could not settle hold invoice, refusing to release the claim")?;
 		}
 
