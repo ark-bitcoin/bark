@@ -7,7 +7,7 @@ use bdk_wallet::{AddressInfo, TxBuilder, Wallet, WeightedUtxo};
 use bdk_wallet::chain::{BlockId, CanonicalizationParams, ChainPosition, ConfirmationBlockTime};
 use bdk_wallet::coin_selection::{
 	decide_change, CoinSelectionAlgorithm, CoinSelectionResult, DefaultCoinSelectionAlgorithm,
-	InsufficientFunds,
+	Excess, InsufficientFunds,
 };
 use bdk_wallet::error::CreateTxError;
 use bitcoin::consensus::encode::{serialize, serialize_hex};
@@ -156,23 +156,24 @@ impl TrustedBalance {
 pub const KEYCHAIN: bdk_wallet::KeychainKind = bdk_wallet::KeychainKind::External;
 
 
-/// Coin selection for transactions whose only output is the drain (change) output, like a CPFP
-/// child. Guarantees that this output ends up above the dust limit.
+/// Coin selection wrapper that guarantees the transaction keeps a change (drain) output, so
+/// there is always a wallet-owned output left to CPFP. The selection is made to cover a non-dust
+/// change value plus the fee that the extra output adds.
 ///
-/// BDK's default algorithm stops selecting coins as soon as the target amount is covered. If the
+/// BDK's algorithms stop selecting coins as soon as the target amount is covered. If the
 /// selected coins overshoot the target by less than the dust limit, the leftover is too small to
 /// be a valid output. Normally BDK would drop it and let it go to fees, but when the drain is the
 /// transaction's only output, dropping it leaves no outputs at all, so `TxBuilder::finish` fails
 /// with [InsufficientFunds] — even if the wallet has plenty of other coins available.
 ///
-/// This wrapper asks the default algorithm for slightly more: the dust limit, plus the fee the
+/// This wrapper asks the inner algorithm for slightly more: the dust limit, plus the fee the
 /// drain output itself adds. That makes it keep pulling in coins until the leftover is a valid
 /// output. The result is then adjusted so that the extra ends up in the drain output rather than
 /// being burned as fee.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct NonDustDrainCoinSelection;
+pub struct WithGuaranteedChange<A>(pub A);
 
-impl CoinSelectionAlgorithm for NonDustDrainCoinSelection {
+impl<A: CoinSelectionAlgorithm> CoinSelectionAlgorithm for WithGuaranteedChange<A> {
 	fn coin_select<R: RngCore>(
 		&self,
 		required_utxos: Vec<WeightedUtxo>,
@@ -191,18 +192,19 @@ impl CoinSelectionAlgorithm for NonDustDrainCoinSelection {
 			* Weight::from_vb(drain_output_len as u64).expect("script length fits in Weight");
 		let raise = drain_script.minimal_non_dust() + drain_output_fee;
 
-		let mut result = DefaultCoinSelectionAlgorithm::default().coin_select(
+		let mut result = self.0.coin_select(
 			required_utxos, optional_utxos, fee_rate, target_amount + raise, drain_script, rand,
 		)?;
 
-		// The inner algorithm measured its leftover against the raised target, so it considers
-		// the raise part of the fee. Recompute the leftover against the real target to hand the
-		// raise back to the drain output. It is at least `raise`, so `decide_change` always
-		// yields a non-dust `Excess::Change`.
-		let remaining = result.selected_amount()
-			.checked_sub(target_amount + result.fee_amount)
-			.expect("selection covers the raised target");
-		result.excess = decide_change(remaining, fee_rate, drain_script);
+		// The inner algorithm measured its leftover against the raised target, so the raise is
+		// missing from its excess. Add it back and decide the change against the real target:
+		// the leftover is then at least `raise`, so this always yields a non-dust
+		// `Excess::Change`.
+		let leftover = match result.excess {
+			Excess::Change { amount, fee } => amount + fee,
+			Excess::NoChange { remaining_amount, .. } => remaining_amount,
+		};
+		result.excess = decide_change(leftover + raise, fee_rate, drain_script);
 		Ok(result)
 	}
 }
@@ -370,7 +372,8 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		for i in 0..100 {
 			// The change is this transaction's only output, so use a coin selection that
 			// guarantees it stays above the dust limit.
-			let mut b = wallet.build_tx().coin_selection(NonDustDrainCoinSelection);
+			let mut b = wallet.build_tx()
+				.coin_selection(WithGuaranteedChange(DefaultCoinSelectionAlgorithm::default()));
 			b.only_witness_utxo();
 			b.exclude_unconfirmed();
 			b.version(3); // for 1p1c package relay, all inputs must be confirmed
@@ -474,14 +477,15 @@ mod test {
 	/// leaves 100 sats: below the change script's dust limit, so default coin selection fails
 	/// (`InsufficientFunds`) instead of pulling in the second UTXO.
 	#[test]
-	fn non_dust_drain_selection_rescues_sub_dust_change() {
+	fn guaranteed_change_selection_rescues_sub_dust_change() {
 		let (mut wallet, op1) = two_utxo_wallet();
 		let change_spk = wallet.reveal_next_address(KeychainKind::External)
 			.address.script_pubkey();
 		let fee = Amount::from_sat(900);
 		assert!(Amount::from_sat(100) < change_spk.minimal_non_dust(), "premise");
 
-		let mut b = wallet.build_tx().coin_selection(NonDustDrainCoinSelection);
+		let mut b = wallet.build_tx()
+			.coin_selection(WithGuaranteedChange(DefaultCoinSelectionAlgorithm::default()));
 		b.add_utxo(op1).unwrap();
 		b.only_witness_utxo();
 		b.drain_to(change_spk.clone());
@@ -501,7 +505,7 @@ mod test {
 	/// When even the whole wallet can't leave a non-dust drain, selection must fail with
 	/// [InsufficientFunds] instead of producing a dust (non-standard) output.
 	#[test]
-	fn non_dust_drain_selection_fails_when_change_can_only_be_dust() {
+	fn guaranteed_change_selection_fails_when_change_can_only_be_dust() {
 		let (mut wallet, op1) = two_utxo_wallet();
 		let change_spk = wallet.reveal_next_address(KeychainKind::External)
 			.address.script_pubkey();
@@ -510,7 +514,8 @@ mod test {
 		let dust = change_spk.minimal_non_dust();
 		assert!(Amount::from_sat(101) < dust, "premise");
 
-		let mut b = wallet.build_tx().coin_selection(NonDustDrainCoinSelection);
+		let mut b = wallet.build_tx()
+			.coin_selection(WithGuaranteedChange(DefaultCoinSelectionAlgorithm::default()));
 		b.add_utxo(op1).unwrap();
 		b.only_witness_utxo();
 		b.drain_to(change_spk);
@@ -527,13 +532,14 @@ mod test {
 
 	/// When a single UTXO leaves non-dust change, no extra input should be pulled in.
 	#[test]
-	fn non_dust_drain_selection_no_extra_input_when_change_is_fine() {
+	fn guaranteed_change_selection_no_extra_input_when_change_is_fine() {
 		let (mut wallet, op1) = two_utxo_wallet();
 		let change_spk = wallet.reveal_next_address(KeychainKind::External)
 			.address.script_pubkey();
 		let fee = Amount::from_sat(500);
 
-		let mut b = wallet.build_tx().coin_selection(NonDustDrainCoinSelection);
+		let mut b = wallet.build_tx()
+			.coin_selection(WithGuaranteedChange(DefaultCoinSelectionAlgorithm::default()));
 		b.add_utxo(op1).unwrap();
 		b.only_witness_utxo();
 		b.drain_to(change_spk);
