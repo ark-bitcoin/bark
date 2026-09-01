@@ -409,11 +409,10 @@ impl Server {
 
 		let mut listeners: Vec<Box<dyn ChainEventListener>> = vec![];
 		listeners.push(Box::new(rounds_wallet.clone()));
+		// Captaind is the only process broadcasting via the nursery, so it
+		// also runs the follow-up.
+		listeners.push(Box::new(tx_nursery.clone()));
 		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
-			// The nursery follow-up runs wherever the watchman runs, so
-			// that only a single process is following up on nursery txs.
-			listeners.push(Box::new(tx_nursery.clone()));
-
 			let mut watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 				cfg.min_trusted_confs,

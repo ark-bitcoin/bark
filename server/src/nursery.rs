@@ -16,10 +16,8 @@
 //! The warnings only stop once the tx confirms or the operator
 //! explicitly abandons the tx via the admin RPC.
 //!
-//! Txs can be broadcast into the nursery from any process, but the
-//! follow-up is run only by the process that hosts the watchman
-//! (watchmand, or captaind when its embedded watchman is enabled), so
-//! that a single process owns the follow-up.
+//! The nursery runs entirely in captaind: it is the only process
+//! broadcasting txs, so it also runs the follow-up.
 //!
 
 use std::collections::HashSet;
