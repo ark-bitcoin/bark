@@ -28,7 +28,7 @@ use bark::persist::adaptor::StorageAdaptorWrapper;
 use bark::persist::adaptor::filestore::FileStorageAdaptor;
 use bark::persist::sqlite::SqliteClient;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
-use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
+use bark_json::primitives::{UtxoInfo, VtxoStateInfo, WalletVtxoInfo};
 use bitcoin_ext::{BlockHeight, FeeRateExt};
 
 use crate::{Bitcoind, TestContext};
@@ -506,6 +506,21 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
+	/// Assert a refused action left every vtxo spendable and the balance
+	/// unchanged. Checked without syncing, so a sync can't mask a stuck vtxo.
+	pub async fn assert_unchanged_after_refusal(&self, spendable_before: Amount) {
+		let vtxos = self.vtxos_no_sync().await;
+		let stuck = vtxos.iter()
+			.filter(|v| v.state != VtxoStateInfo::Spendable)
+			.collect::<Vec<_>>();
+		assert!(stuck.is_empty(),
+			"{}: a refused action left vtxos unspendable: {stuck:?}", self.name,
+		);
+		assert_eq!(self.spendable_balance_no_sync().await, spendable_before,
+			"{}: a refused action changed the spendable balance", self.name,
+		);
+	}
+
 	pub async fn raw_vtxo(&self, vtxo_id: VtxoId) -> Vtxo<Full> {
 		let hex = self.run(["raw-vtxo", &vtxo_id.to_string()]).await;
 		Vtxo::deserialize_hex(&hex).expect("invalid raw vtxo")
@@ -821,6 +836,14 @@ impl Bark {
 	/// the server completes the actual refresh in a later round.
 	pub async fn refresh_all_delegated_no_sync(&self) {
 		self.run(["refresh", "--all", "--delegated", "--no-sync"]).await;
+	}
+
+	/// Like [Bark::refresh_all_delegated_no_sync], but returns the command output
+	/// instead of panicking, so tests can assert that the server refused to
+	/// register the participation.
+	pub async fn try_refresh_all_delegated_no_sync(&self) -> anyhow::Result<String> {
+		self.try_run(["refresh", "--all", "--delegated", "--no-sync"]).await
+			.context("running refresh --all --delegated --no-sync command failed")
 	}
 
 	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<json::cli::OffboardResult> {

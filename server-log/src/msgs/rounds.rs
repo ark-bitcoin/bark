@@ -132,6 +132,19 @@ impl_slog!(RoundUserBadOutputAmount, TRACE,
 );
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundUserBadParticipationAmount {
+	pub round_seq: RoundSeq,
+	pub attempt_seq: usize,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount,
+	#[serde(with = "crate::serde_utils::duration_millis")]
+	pub client_duration: Duration,
+}
+impl_slog!(RoundUserBadParticipationAmount, TRACE,
+	"user requested a participation with a total output amount exceeding maximum round amount",
+);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundPaymentRegistered {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,

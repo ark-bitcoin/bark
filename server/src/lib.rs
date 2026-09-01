@@ -106,6 +106,21 @@ const MAILBOX_KEY_PATH: &str = "m/2'/1'";
 /// The HD keypath used to generate ephemeral keys
 const EPHEMERAL_KEY_PATH: &str = "m/30'";
 
+/// Check an amount against a per-feature maximum amount config.
+///
+/// Unset means no limit. Zero disables the feature.
+pub(crate) fn check_max_amount(
+	feature: &str,
+	amount: Amount,
+	max: Option<Amount>,
+) -> anyhow::Result<()> {
+	match max {
+		Some(max) if max == Amount::ZERO => badarg!("{feature} is temporarily disabled"),
+		Some(max) if amount > max => badarg!("{feature} amount exceeds limit of {max}"),
+		_ => Ok(()),
+	}
+}
+
 
 /// Return type for the round event RPC stream.
 ///
@@ -714,6 +729,8 @@ impl Server {
 		funding_tx: Option<&Transaction>,
 		user_pub_nonce: PublicNonce,
 	) -> anyhow::Result<ark::board::BoardCosignResponse> {
+		check_max_amount("board", amount, self.config.max_board_amount)?;
+
 		let min_amount = self.config.min_board_amount.max(P2TR_DUST);
 
 		if amount < min_amount {
@@ -722,7 +739,7 @@ impl Server {
 
 		if let Some(max) = self.config.max_vtxo_amount {
 			if amount > max {
-				return badarg!("board amount exceeds limit of {max}");
+				return badarg!("board amount exceeds maximum vtxo amount of {max}");
 			}
 		}
 

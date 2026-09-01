@@ -37,7 +37,7 @@ use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
 use crate::error::ContextExt;
-use crate::{Server, CAPTAIND_API_KEY};
+use crate::{check_max_amount, Server, CAPTAIND_API_KEY};
 
 
 
@@ -173,6 +173,9 @@ impl Server {
 
 		let payment_hash = requested_policy.payment_hash;
 
+		let htlc_amount = htlc_vtxos.iter().map(|v| v.total_amount).sum::<Amount>();
+		check_max_amount("lightning send", htlc_amount, self.config.max_ln_send_amount)?;
+
 		// Held for the whole call, so no other call decides on this payment
 		// while these HTLCs are validated and cosigned.
 		let _guard = self.payment_guards.lock(payment_hash).await;
@@ -245,6 +248,8 @@ impl Server {
 		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
+		check_max_amount("lightning send", payment_amount, self.config.max_ln_send_amount)?;
+
 		let payment_hash = invoice.payment_hash();
 
 		// Held for the whole call, so no other call decides on this payment
@@ -513,6 +518,8 @@ impl Server {
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
+		check_max_amount("lightning receive", amount, self.config.max_ln_receive_amount)?;
+
 		// Held for the whole call, so no other call decides on this payment
 		// while the existing subscriptions are read and the invoice is made.
 		let _guard = self.payment_guards.lock(payment_hash).await;
@@ -554,12 +561,6 @@ impl Server {
 		if let Some(max) = self.config.max_vtxo_amount {
 			if amount > max {
 				return badarg!("Requested amount exceeds limit of {}", max);
-			}
-		}
-
-		if let Some(max) = self.config.max_ln_receive_amount {
-			if amount > max {
-				return badarg!("Requested amount exceeds lightning receive limit of {}", max);
 			}
 		}
 

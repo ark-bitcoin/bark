@@ -306,6 +306,36 @@ pub struct Config {
 	/// Minimum amount required for board transactions.
 	#[serde(with = "utils::serde::string")]
 	pub min_board_amount: Amount,
+	/// Maximum amount for a board.
+	///
+	/// Unset means no limit. Zero disables boards.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_board_amount: Option<Amount>,
+	/// Maximum total input amount for an offboard or send-onchain.
+	///
+	/// Unset means no limit. Zero disables offboards.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_offboard_amount: Option<Amount>,
+	/// Maximum amount for a lightning send.
+	///
+	/// Unset means no limit. Zero disables lightning sends.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_ln_send_amount: Option<Amount>,
+	/// Maximum amount for which the server will issue lightning receive
+	/// invoices.
+	///
+	/// Unset means no limit. Zero disables lightning receives.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_ln_receive_amount: Option<Amount>,
+	/// Maximum total output amount for a single round participation.
+	///
+	/// Unset means no limit. Zero disables round participation.
+	///
+	/// NB this can strand a large balance: clients can't see the limit and
+	/// don't split a refresh to fit under it, and a vtxo above it can never be
+	/// refreshed, leaving a unilateral exit as the only way out.
+	#[serde(default, with = "utils::serde::string::opt")]
+	pub max_round_amount: Option<Amount>,
 	/// Maximum exit depth (genesis chain length) allowed for a VTXO.
 	/// Once a VTXO's exit depth reaches this value the server will refuse to
 	/// cosign further OOR transactions spending it. Clients should refresh
@@ -447,13 +477,6 @@ pub struct Config {
 	/// provide a VTXO ownership proof, or a lightning receive token
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
-
-	/// Maximum amount for which the server will issue lightning receive
-	/// invoices.
-	///
-	/// Unset means no limit.
-	#[serde(default, with = "utils::serde::string::opt")]
-	pub max_ln_receive_amount: Option<Amount>,
 
 	/// The fraction of the fee we charge that we allow CLN to claim at most
 	///

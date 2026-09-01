@@ -9,6 +9,7 @@ use bark::movement::MovementStatus;
 
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
+use ark_testing::util::ToAltString;
 
 /// The error [AbandonOffboardProxy] fails prepare_offboard with.
 const ABANDON_ERROR: &str = "proxy: abandoning the offboard session";
@@ -162,4 +163,45 @@ async fn finish_offboard_replays_for_identical_retry() {
 	// pays out.
 	ctx.generate_blocks(1).await;
 	assert_ne!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO);
+}
+
+#[tokio::test]
+async fn max_offboard_amount() {
+	let ctx = TestContext::new("server/max_offboard_amount").await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).cfg(|cfg| {
+		cfg.max_offboard_amount = Some(sat(100_000));
+	}).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+
+	// Confirm each board before the next: the second board's funding tx spends
+	// the first one's change, and the server refuses a funding tx whose input
+	// txs it doesn't know yet.
+	bark1.board_and_confirm_and_register(&ctx, sat(400_000)).await;
+	bark1.board_and_confirm_and_register(&ctx, sat(80_000)).await;
+
+	// total input amount exceeds the limit
+	let address = ctx.bitcoind().get_new_address();
+	let spendable = bark1.spendable_balance().await;
+	let err = bark1.try_offboard_all(address.clone()).await.unwrap_err().to_alt_string();
+	assert!(err.contains("offboard amount exceeds limit of 0.00100000 BTC"), "err: {err}");
+
+	// The refusal must release the vtxos the offboard selected.
+	bark1.assert_unchanged_after_refusal(spendable).await;
+
+	// an offboard within the limit still works
+	let small_vtxo = bark1.vtxos().await.into_iter()
+		.find(|v| v.vtxo.amount == sat(80_000)).expect("should have the small vtxo");
+	bark1.offboard_vtxo(small_vtxo.vtxo.id, address.clone()).await;
+
+	// zero disables offboards entirely
+	srv.stop().await.unwrap();
+	srv.config_mut().max_offboard_amount = Some(Amount::ZERO);
+	srv.start().await.unwrap();
+	// A restart reserves new ports, so bark has to be re-pointed at the server.
+	bark1.set_ark_url(&srv).await;
+
+	let spendable = bark1.spendable_balance().await;
+	let err = bark1.try_offboard_all(address).await.unwrap_err().to_alt_string();
+	assert!(err.contains("offboard is temporarily disabled"), "err: {err}");
+	bark1.assert_unchanged_after_refusal(spendable).await;
 }

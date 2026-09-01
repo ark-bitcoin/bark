@@ -37,7 +37,7 @@ use server_log::{LogMsg, RoundVtxoCreated};
 
 use crate::database::rounds::{StoredRoundOutput, StoredRoundParticipation};
 use crate::database::tree::VtxoTreeUpdate;
-use crate::{telemetry, Server, SECP};
+use crate::{check_max_amount, telemetry, Server, SECP};
 use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
 use crate::telemetry::{RoundStep, TimedRoundStep};
@@ -146,6 +146,7 @@ pub struct RoundData {
 	max_output_vtxos: usize,
 	nb_vtxo_nonces: usize,
 	max_vtxo_amount: Option<Amount>,
+	max_round_amount: Option<Amount>,
 }
 
 pub struct InteractiveParticipation {
@@ -335,10 +336,16 @@ impl CollectingPayments {
 	) -> anyhow::Result<()> {
 		let mut nb_outputs = 0;
 		let mut cosign_pubkeys = HashSet::new();
+		// Saturating so that absurd requested amounts fail the maximum round
+		// amount check instead of panicking the round coordinator.
+		let mut total_output_amount = Amount::ZERO;
 
 		for output in outputs {
 			let output = output.borrow();
 			nb_outputs += 1;
+			total_output_amount = total_output_amount
+				.checked_add(output.vtxo.amount)
+				.unwrap_or(Amount::MAX);
 
 			if output.nonces.len() != self.round_data.nb_vtxo_nonces {
 				client_rslog!(RoundUserBadNbNonces, self.round_step,
@@ -362,6 +369,15 @@ impl CollectingPayments {
 					return badarg!("output exceeds maximum vtxo amount of {max}");
 				}
 			}
+		}
+
+		if let Err(e) = check_max_amount(
+			"round participation", total_output_amount, self.round_data.max_round_amount,
+		) {
+			client_rslog!(RoundUserBadParticipationAmount, self.round_step,
+				amount: total_output_amount,
+			);
+			return Err(e);
 		}
 
 		if self.all_outputs.len() + nb_outputs > self.round_data.max_output_vtxos {
@@ -638,6 +654,21 @@ impl CollectingPayments {
 					));
 				}
 			}
+		}
+
+		// Saturating so that absurd requested amounts fail the maximum round
+		// amount check instead of panicking the round coordinator.
+		let total_output_amount = participation.outputs.iter()
+			.fold(Amount::ZERO, |acc, o| {
+				acc.checked_add(o.vtxo_request.amount).unwrap_or(Amount::MAX)
+			});
+		if let Err(e) = check_max_amount(
+			"round participation", total_output_amount, self.round_data.max_round_amount,
+		) {
+			client_rslog!(RoundUserBadParticipationAmount, self.round_step,
+				amount: total_output_amount,
+			);
+			return Err(ProcessHarkParticipationError::BadParticipation(e));
 		}
 
 		let nb_outputs = participation.outputs.len();
@@ -1449,6 +1480,7 @@ async fn perform_round(
 		max_output_vtxos: 4_usize.saturating_pow(srv.config.nb_round_nonces as u32),
 		nb_vtxo_nonces: srv.config.nb_round_nonces,
 		max_vtxo_amount: srv.config.max_vtxo_amount,
+		max_round_amount: srv.config.max_round_amount,
 	};
 
 	let mut round_state = RoundState::CollectingPayments(CollectingPayments::new(
@@ -1879,6 +1911,11 @@ impl Server {
 			&input_vtxos, outputs.iter(), &self.config.fees.refresh, refresh_height,
 		).badarg("refresh fee check failed")?;
 
+		// Sum can't overflow: validate_payment_amounts bounded it by the inputs.
+		// The round re-checks the limit, in case it was lowered after this.
+		let total_output_amount = outputs.iter().map(|o| o.vtxo_request.amount).sum::<Amount>();
+		check_max_amount("round participation", total_output_amount, self.config.max_round_amount)?;
+
 		// Validate inputs up-front so the client gets a structured error listing
 		// every unusable input (spent or exited) and can drop them and retry.
 		let mut unusable = Vec::new();
@@ -1955,6 +1992,7 @@ mod tests {
 			max_output_vtxos: max_output_vtxos,
 			nb_vtxo_nonces: max_output_vtxos / 3 + 1, // add 1 for rounding
 			max_vtxo_amount: None,
+			max_round_amount: None,
 		};
 		CollectingPayments::new(0.into(), 0, round_data, OwnedVtxoFluxGuard::dummy(), None, None)
 	}

@@ -20,6 +20,14 @@ vtxo_lifetime = 4320
 # Minimum amount required for board transactions
 min_board_amount = "20000 sat"
 
+# Maximum amount for a board
+# Unset means no limit. Zero disables boards.
+#max_board_amount = "1000000 sat"
+
+# Maximum total input amount for an offboard or send-onchain
+# Unset means no limit. Zero disables offboards.
+#max_offboard_amount = "1000000 sat"
+
 # The time between execution of each exit clause of the VTXO, in blocks
 vtxo_exit_delta = 144
 
@@ -95,6 +103,14 @@ nb_round_nonces = 8
 
 # The duration after which to drop forfeit nonces
 round_forfeit_nonces_timeout = "30s"
+
+# Maximum total output amount for a single round participation
+# Unset means no limit. Zero disables round participation.
+#
+# NB this can strand a large balance: clients can't see the limit and don't
+# split a refresh to fit under it, and a VTXO above it can never be refreshed,
+# leaving a unilateral exit as the only way out.
+#max_round_amount = "1000000 sat"
 
 
 #############
@@ -174,7 +190,12 @@ ln_receive_anti_dos_required = false
 
 # Maximum amount for which the server will issue lightning receive
 # invoices.
+# Unset means no limit. Zero disables lightning receives.
 #max_ln_receive_amount = "100000 sat"
+
+# Maximum amount for a lightning send
+# Unset means no limit. Zero disables lightning sends.
+#max_ln_send_amount = "100000 sat"
 
 # The fraction of the fee we charge that we allow CLN to claim at most
 #
