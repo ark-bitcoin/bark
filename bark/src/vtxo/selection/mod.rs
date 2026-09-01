@@ -421,7 +421,7 @@ impl<'a> RefreshStrategy<'a> {
 		}
 
 		// Check if the VTXO's expiry height is within the refresh threshold.
-		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
+		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold as BlockHeight;
 		if self.tip > vtxo.expiry_height() {
 			warn!("VTXO {} is expired, must be refreshed", vtxo.id());
 			return Ok(true)
@@ -453,8 +453,8 @@ impl<'a> RefreshStrategy<'a> {
 		}
 
 		// Check if the VTXO's expiry height is within the refresh threshold.
-		let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold
-			+ SOFT_REFRESH_EXPIRY_THRESHOLD as u32;
+		let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold as BlockHeight
+			+ SOFT_REFRESH_EXPIRY_THRESHOLD as BlockHeight;
 		if self.tip > vtxo.expiry_height().saturating_sub(soft_threshold) {
 			warn!("VTXO {} is about to expire, should be refreshed on next opportunity",
 				vtxo.id(),

@@ -2225,7 +2225,9 @@ impl Wallet {
 		&self,
 	) -> anyhow::Result<Option<BlockHeight>> {
 		let first_expiry = self.get_first_expiring_vtxo_blockheight().await?;
-		Ok(first_expiry.map(|h| h.saturating_sub(self.inner.config.vtxo_refresh_expiry_threshold)))
+		Ok(first_expiry.map(|h| {
+			h.saturating_sub(self.inner.config.vtxo_refresh_expiry_threshold as BlockHeight)
+		}))
 	}
 
 	/// Base [InputSelection] for spending VTXOs: skips VTXOs whose exit

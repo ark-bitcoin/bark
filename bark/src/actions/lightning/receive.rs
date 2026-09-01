@@ -764,7 +764,9 @@ pub(crate) async fn is_htlc_near_expiry(
 		other => bail!("HTLC receive vtxo has unexpected policy: {:?}", other),
 	};
 	let tip = wallet.inner.chain.tip().await?;
-	Ok(tip > expiry.saturating_sub(wallet.config().vtxo_refresh_expiry_threshold))
+	Ok(tip > expiry.saturating_sub(
+		wallet.config().vtxo_refresh_expiry_threshold as BlockHeight,
+	))
 }
 
 /// Whether an unpaid invoice has passed its bolt11 expiry plus a grace

@@ -16,7 +16,7 @@ use ark::vtxo::{VtxoId, VtxoPolicyKind};
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::exit::ExitState;
 use bark_json::primitives::VtxoStateInfo;
-use bitcoin_ext::TaprootSpendInfoExt;
+use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt};
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use server_rpc::protos::{self, lightning_payment_status};
 
@@ -961,7 +961,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 		let htlc = bark.vtxos().await.unwrap().into_iter().find(
 			|v| v.policy_type() == VtxoPolicyKind::ServerHtlcSend
 		).unwrap();
-		htlc.expiry_height() - bark.config().vtxo_refresh_expiry_threshold + 1
+		htlc.expiry_height() - bark.config().vtxo_refresh_expiry_threshold as BlockHeight + 1
 	};
 	ctx.generate_blocks(desired_height - tip.height).await;
 

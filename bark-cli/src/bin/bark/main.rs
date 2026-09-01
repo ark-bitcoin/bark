@@ -17,6 +17,7 @@ use bark::secret::Secret;
 use bark_cli::VERSION_DIRTY;
 use bitcoin::{Amount};
 use bitcoin::secp256k1;
+use bitcoin_ext::BlockHeight;
 use clap::builder::BoolishValueParser;
 use clap::Parser;
 use futures::StreamExt;
@@ -602,7 +603,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let vtxos = match (threshold_blocks, threshold_hours, counterparty, all, vtxos) {
-				(None, None, false, false, None) => wallet.get_expiring_vtxos(wallet.config().vtxo_refresh_expiry_threshold).await?,
+				(None, None, false, false, None) => wallet.get_expiring_vtxos(
+					wallet.config().vtxo_refresh_expiry_threshold as BlockHeight,
+				).await?,
 				(Some(b), None, false, false, None) => wallet.get_expiring_vtxos(b).await?,
 				(None, Some(h), false, false, None) => wallet.get_expiring_vtxos(h*6).await?,
 				(None, None, true, false, None) => {
