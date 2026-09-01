@@ -488,9 +488,12 @@ async fn offboard_cancels_when_fees_change_after_lost_session() {
 	// Drop the server's regular fee rate. The restart wipes the fee
 	// estimator's history (so the committed rate is no longer a recent
 	// regular rate) and the pending offboard session (so the finish
-	// retry cannot be replayed).
+	// retry cannot be replayed). The slow rate comes down with it: it is
+	// the floor the server holds offboards to, and a 6-block target
+	// never sits above the 3-block one.
 	srv.stop().await.expect("server stops");
 	srv.config_mut().fee_estimator.fallback_fee_rate_regular = FeeRate::from_sat_per_vb_u32(2);
+	srv.config_mut().fee_estimator.fallback_fee_rate_slow = FeeRate::from_sat_per_vb_u32(2);
 	srv.start().await.expect("server starts");
 	// The restart moved the server to fresh ports; repoint the proxy.
 	proxy.set_ark_upstream(srv.get_public_rpc().await);
