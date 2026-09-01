@@ -201,7 +201,7 @@ pub struct Server {
 	/// The payment hash locks. Each lightning call that decides on a payment
 	/// holds the lock of its payment hash for the whole call.
 	payment_guards: PaymentGuards,
-	cln: LightningManager,
+	lightning_manager: LightningManager,
 	htlc_settler: Arc<HtlcSettler>,
 	vtxopool: VtxoPool,
 	watchman_handle: Option<watchman::WatchmanHandle>,
@@ -302,7 +302,7 @@ impl Server {
 	/// LightningManager connects asynchronously, so this may return false right
 	/// after [`Self::start`] returns even if a node is configured.
 	pub fn has_hold_node(&self) -> bool {
-		self.cln.has_hold_active_node()
+		self.lightning_manager.has_hold_active_node()
 	}
 
 	/// Start the server.
@@ -521,7 +521,7 @@ impl Server {
 			sync_manager,
 			rtmgr,
 			tx_nursery: tx_nursery.clone(),
-			cln,
+			lightning_manager: cln,
 			htlc_settler,
 			vtxopool,
 			watchman_handle,
@@ -543,7 +543,7 @@ impl Server {
 				0
 			});
 		let settlement_stream = srv.htlc_settler.subscribe(resume_cp);
-		srv.cln.spawn_hold_settler(srv.clone(), settlement_stream);
+		srv.lightning_manager.spawn_hold_settler(srv.clone(), settlement_stream);
 
 		srv.clone().start_offboard_retry_task().await;
 

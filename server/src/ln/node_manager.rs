@@ -775,7 +775,7 @@ async fn try_settle_hold_invoice(
 		return true;
 	}
 
-	if let Err(e) = srv.cln.settle_invoice(sub.id, preimage).await {
+	if let Err(e) = srv.lightning_manager.settle_invoice(sub.id, preimage).await {
 		warn!("Hold invoice settlement failed for {}, will retry: {:#}", payment_hash, e);
 		return false;
 	}
