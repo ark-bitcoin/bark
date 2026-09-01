@@ -344,7 +344,9 @@ impl Wallet {
 			return Ok(());
 		}
 		debug!("releasing {} vtxo lock(s) held by action {}", vtxos.len(), action_id);
-		self.unlock_vtxos(vtxos).await
+		self.unlock_vtxos(
+			vtxos, Some(crate::vtxo::VtxoLockHolder::Action { id: action_id.clone() }),
+		).await
 	}
 
 	/// Finish a wallet action: release its vtxo locks and remove the

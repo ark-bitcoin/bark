@@ -26,7 +26,7 @@ use crate::persist::models::{
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::RoundState;
-use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
 
 /// Set read-only properties for the wallet
 ///
@@ -649,6 +649,39 @@ pub fn update_vtxo_state_checked(
 	}
 }
 
+/// Release `holder`'s lock on a vtxo, transitioning it to
+/// [VtxoState::Spendable]. `holder` must match the value used at lock
+/// time (including `None` for locks taken without a holder). Any other
+/// current state (already Spendable, Locked by a different holder, Spent,
+/// Exited) is a no-op, so calling this repeatedly is safe.
+pub fn release_vtxo_lock(
+	conn: &Connection,
+	vtxo_id: VtxoId,
+	holder: Option<&VtxoLockHolder>,
+) -> anyhow::Result<()> {
+	let query = r"
+		INSERT INTO bark_vtxo_state (vtxo_id, state_kind, state)
+		SELECT :vtxo_id, :spendable_kind, :spendable FROM most_recent_vtxo_state
+		WHERE
+			vtxo_id = :vtxo_id AND
+			state = :expected_state";
+
+	let expected = VtxoState::Locked { holder: holder.cloned() };
+	let expected_blob = serde_json::to_vec(&expected)?;
+	let spendable_blob = serde_json::to_vec(&VtxoState::Spendable)?;
+	let mut statement = conn.prepare(query)?;
+	let nb_inserted = statement.execute(named_params! {
+		":vtxo_id": vtxo_id.to_string(),
+		":spendable_kind": VtxoState::Spendable.kind().as_str(),
+		":spendable": &spendable_blob,
+		":expected_state": &expected_blob,
+	})?;
+	if nb_inserted > 1 {
+		bail!("Corrupted database: inserted {nb_inserted} state rows for a single vtxo");
+	}
+	Ok(())
+}
+
 /// Set the `registered` flag on the given vtxos, recording that their
 /// recovery state (mailbox ID post + signed transaction chain) has been
 /// asserted with the server. The flag only moves from unset to set.
@@ -1192,6 +1225,48 @@ mod test {
 		update_vtxo_state_checked(
 			&tx, vtxo.id(), VtxoState::Locked { holder: None }, &[VtxoStateKind::Spent],
 		).expect_err("transition from Spendable should fail when only Spent is allowed");
+	}
+
+	/// Releasing a lock is holder-scoped and idempotent: repeat calls are
+	/// no-ops, and another holder's lock is never touched. A `None` holder
+	/// is matched exactly like any other value.
+	#[test]
+	fn test_release_vtxo_lock() {
+		let (_, mut conn) = in_memory_db();
+		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
+
+		let tx = conn.transaction().unwrap();
+		let vtxo = &VTXO_VECTORS.board_vtxo;
+
+		let mine = VtxoLockHolder::Movement { id: MovementId::new(1) };
+		let theirs = VtxoLockHolder::Movement { id: MovementId::new(2) };
+
+		// Own lock: releases to Spendable.
+		store_vtxo_with_initial_state(&tx, vtxo, &VtxoState::Locked {
+			holder: Some(mine.clone()),
+		}).unwrap();
+		release_vtxo_lock(&tx, vtxo.id(), Some(&mine)).unwrap();
+		let wv = get_wallet_vtxo_by_id(&tx, vtxo.id()).unwrap().unwrap();
+		assert_eq!(wv.state, VtxoState::Spendable);
+
+		// Idempotent: already Spendable, still a no-op success.
+		release_vtxo_lock(&tx, vtxo.id(), Some(&mine)).unwrap();
+		let wv = get_wallet_vtxo_by_id(&tx, vtxo.id()).unwrap().unwrap();
+		assert_eq!(wv.state, VtxoState::Spendable);
+
+		// Another holder's lock: must not be released.
+		let theirs_state = VtxoState::Locked { holder: Some(theirs.clone()) };
+		update_vtxo_state_checked(
+			&tx, vtxo.id(), theirs_state.clone(), &[VtxoStateKind::Spendable],
+		).unwrap();
+		release_vtxo_lock(&tx, vtxo.id(), Some(&mine)).unwrap();
+		let wv = get_wallet_vtxo_by_id(&tx, vtxo.id()).unwrap().unwrap();
+		assert_eq!(wv.state, theirs_state, "other holder's lock must survive");
+
+		// Passing None must not release someone else's Some lock either.
+		release_vtxo_lock(&tx, vtxo.id(), None).unwrap();
+		let wv = get_wallet_vtxo_by_id(&tx, vtxo.id()).unwrap().unwrap();
+		assert_eq!(wv.state, theirs_state, "None holder must not release a Some lock");
 	}
 
 	#[test]

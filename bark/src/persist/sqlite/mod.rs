@@ -35,7 +35,7 @@ use crate::movement::update::MovementUpdate;
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
 use crate::persist::models::{PaidInvoice, SettledLightningReceive, StoredExit};
 use crate::round::RoundState;
-use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
 
 
 /// The default sqlite db file for when no file path was provided
@@ -423,6 +423,15 @@ impl BarkPersister for SqliteClient {
 	) -> anyhow::Result<WalletVtxo> {
 		let conn = self.connect()?;
 		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
+	}
+
+	async fn release_vtxo_lock(
+		&self,
+		vtxo_id: VtxoId,
+		holder: Option<&VtxoLockHolder>,
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::release_vtxo_lock(&conn, vtxo_id, holder)
 	}
 
 	async fn update_vtxo_states_checked(

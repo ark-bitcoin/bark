@@ -209,22 +209,21 @@ impl Wallet {
 		}
 	}
 
-	/// Attempts to unlock VTXOs with the given [VtxoId](ark::VtxoId) values. This will only work if the current
-	/// [VtxoState] is [VtxoStateKind::Locked] or [VtxoStateKind::Spendable].
-	///
-	/// This operation is idempotent: VTXOs already in [VtxoState::Spendable] will
-	/// remain spendable without inserting a redundant state entry.
-	///
-	/// # Errors
-	/// - If the VTXO is not currently locked or spendable.
-	/// - If the VTXO doesn't exist.
-	/// - If a database error occurs.
+	/// Release `holder`'s lock on the given VTXOs, transitioning each one
+	/// to [VtxoState::Spendable]. `holder` must match the value passed to
+	/// [Self::lock_vtxos] when the lock was taken; a mismatch (including
+	/// `None` vs `Some`) leaves the vtxo untouched. VTXOs not currently
+	/// locked by `holder` are silently skipped, so calling this
+	/// repeatedly is equivalent to calling it once and can safely be
+	/// retried after a crash mid-batch.
 	pub async fn unlock_vtxos(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
+		holder: Option<VtxoLockHolder>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(
-			vtxos, &VtxoState::Spendable, &[VtxoStateKind::Locked, VtxoStateKind::Spendable],
-		).await
+		for v in vtxos {
+			self.inner.db.release_vtxo_lock(v.vtxo_id(), holder.as_ref()).await?;
+		}
+		Ok(())
 	}
 }

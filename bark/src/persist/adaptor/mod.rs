@@ -76,7 +76,7 @@ use crate::persist::models::{
 	SettledLightningReceive, StoredExit, StoredRoundState, Unlocked, wallet_vtxo_from_full,
 };
 use crate::round::RoundState;
-use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
 use crate::{WalletProperties, WalletVtxo};
 
 
@@ -806,6 +806,36 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	) -> anyhow::Result<WalletVtxo> {
 		let mut lock = self.inner.write().await;
 		update_vtxo_state_checked(&mut *lock, vtxo_id, new_state, allowed_old_states).await
+	}
+
+	async fn release_vtxo_lock(
+		&self,
+		vtxo_id: VtxoId,
+		holder: Option<&VtxoLockHolder>,
+	) -> anyhow::Result<()> {
+		let mut lock = self.inner.write().await;
+		let Some(mut serde_vtxo) = get_vtxo(&*lock, vtxo_id).await? else {
+			return Ok(());
+		};
+		let expected = VtxoState::Locked { holder: holder.cloned() };
+		let current_state = serde_vtxo.current_state()
+			.context("vtxo has no state")?;
+		if current_state != &expected {
+			return Ok(());
+		}
+		let new_state = VtxoState::Spendable;
+		let sk = sort::vtxo_sort_key(
+			new_state.kind(), serde_vtxo.vtxo.expiry_height(), serde_vtxo.vtxo.amount(),
+		);
+		serde_vtxo.states.push(new_state);
+		let updated_record = Record::from_data(
+			partition::VTXO,
+			&vtxo_id.to_bytes(),
+			Some(sk),
+			&serde_vtxo,
+		)?;
+		lock.put(updated_record).await?;
+		Ok(())
 	}
 
 	async fn update_vtxo_states_checked(

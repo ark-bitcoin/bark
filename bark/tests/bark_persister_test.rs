@@ -34,7 +34,7 @@ use bark::persist::models::{
 	PaidInvoice, StoredExit, StoredRoundState, Unlocked, RoundStateId, SerdeRoundState,
 };
 use bark::round::RoundState;
-use bark::vtxo::{VtxoState, VtxoStateKind};
+use bark::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
 
 
 struct Dummy;
@@ -287,6 +287,14 @@ impl BarkPersister for Dummy {
 		_vtxo_ids: &[VtxoId],
 		_new_state: VtxoState,
 		_allowed_old_states: &[VtxoStateKind],
+	) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn release_vtxo_lock(
+		&self,
+		_vtxo_id: VtxoId,
+		_holder: Option<&VtxoLockHolder>,
 	) -> anyhow::Result<()> {
 		Ok(())
 	}

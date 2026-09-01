@@ -233,7 +233,7 @@ impl WalletAction for Offboard {
 				arkoor_split_offboard(wallet, &self).await?
 			}
 			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, change_vtxo_ids } => {
-				register_arkoor_split(wallet, offboard_vtxo_ids, change_vtxo_ids).await?
+				register_arkoor_split(wallet, &self, offboard_vtxo_ids, change_vtxo_ids).await?
 			},
 			Progress::ReadyForOffboard { offboard_vtxo_ids, .. } => {
 				prepare_offboard(wallet, &self, offboard_vtxo_ids).await?
@@ -617,6 +617,7 @@ async fn arkoor_split_offboard(
 /// vtxos stay locked until they are forfeited.
 async fn register_arkoor_split(
 	wallet: &Wallet,
+	action: &Offboard,
 	offboard_vtxo_ids: Vec<VtxoId>,
 	change_vtxo_ids: Vec<VtxoId>,
 ) -> Result<Progress, AdvanceError> {
@@ -628,8 +629,10 @@ async fn register_arkoor_split(
 		.context("failed to register arkoor split vtxo transactions with server")?;
 
 	// Registration succeeded, so the change is safe to spend now.
-	wallet.unlock_vtxos(&change_vtxo_ids).await
-		.context("failed to unlock change vtxos after registration")?;
+	wallet.unlock_vtxos(
+		&change_vtxo_ids,
+		Some(VtxoLockHolder::Action { id: action.id.clone() }),
+	).await.context("failed to unlock change vtxos after registration")?;
 
 	Ok(Progress::ReadyForOffboard { offboard_vtxo_ids, prior_txid: None })
 }

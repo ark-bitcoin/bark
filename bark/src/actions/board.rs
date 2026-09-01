@@ -24,7 +24,7 @@ use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId};
 use crate::chain::BroadcastError;
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
-use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
 
 /// Whether every input has a final witness or scriptSig.
 ///
@@ -369,8 +369,10 @@ async fn run_register(wallet: &Wallet, board: &Board) -> anyhow::Result<()> {
 		board_vtxo: vtxo.serialize(),
 	}).await.context("error registering board with the Ark server")?;
 
-	wallet.inner.db.update_vtxo_state_checked(
-		vtxo.id(), crate::vtxo::VtxoState::Spendable, VtxoStateKind::UNSPENT_STATES,
+	// Release only our own lock: an idempotent re-register must not steal a
+	// lock that another operation has since acquired.
+	wallet.unlock_vtxos(
+		[vtxo.id()], Some(VtxoLockHolder::Movement { id: board.movement_id }),
 	).await?;
 
 	// Post vtxo ID for recovery (non-critical, just log errors). Done here

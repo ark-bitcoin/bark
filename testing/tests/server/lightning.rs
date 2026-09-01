@@ -85,6 +85,24 @@ async fn htlc_send_vtxo_ids(
 	ids
 }
 
+/// Force-release the HTLC vtxos back to `Spendable`, whichever holder
+/// currently owns each lock, so a test can drive them through spend paths
+/// the client would normally refuse. Already-Spendable vtxos are left
+/// alone.
+async fn force_unlock_htlc_vtxos(client: &Wallet, vtxo_ids: &[ark::VtxoId]) {
+	let states: std::collections::HashMap<_, _> = client.all_vtxos().await.unwrap()
+		.into_iter().map(|wv| (wv.vtxo.id(), wv.state)).collect();
+	for id in vtxo_ids {
+		let holder = match states.get(id) {
+			Some(bark::vtxo::VtxoState::Locked { holder }) => holder.clone(),
+			Some(bark::vtxo::VtxoState::Spendable) => continue,
+			other => panic!("expected HTLC vtxo {id} to be Locked or Spendable, was {other:?}"),
+		};
+		client.unlock_vtxos([*id], holder).await
+			.expect("it should be able to unlock vtxos on the db");
+	}
+}
+
 /// Build a "claim all" revocation request from the HTLC-send vtxos `client`
 /// still holds for `payment_hash`, send it straight to the server, and return
 /// the error the server responds with (the caller asserts on it).
@@ -391,7 +409,7 @@ async fn refuse_generic_spends_of_htlc_send_vtxo_while_payment_in_flight() {
 	assert_eq!(open_attempts.len(), 1, "the payment should still be in flight");
 
 	// 1. Offboard: the server would co-sign a forfeit and pay out on-chain.
-	client.unlock_vtxos(&htlc_vtxo_ids).await.expect("it should be able to unlock vtxos on the db");
+	force_unlock_htlc_vtxos(&client, &htlc_vtxo_ids).await;
 	let address = ctx.bitcoind().get_new_address();
 	let err = client.offboard_vtxos(htlc_vtxo_ids.clone(), address.clone()).await
 		.expect_err("server must refuse to offboard an HTLC vtxo");
@@ -406,7 +424,7 @@ async fn refuse_generic_spends_of_htlc_send_vtxo_while_payment_in_flight() {
 
 	// 2. Round: forfeits the vtxo instead of offboarding it. Rounds only run on
 	// a long interval here, so kick one off alongside.
-	client.unlock_vtxos(&htlc_vtxo_ids).await.expect("it should be able to unlock vtxos on the db");
+	force_unlock_htlc_vtxos(&client, &htlc_vtxo_ids).await;
 	let (res, _) = tokio::join!(
 		client.refresh_vtxos(htlc_vtxo_ids.clone()),
 		srv.trigger_round(),
@@ -593,7 +611,7 @@ async fn refuse_generic_spends_of_htlc_send_vtxo_with_no_payment_in_flight() {
 	", &[&payment_hash.to_string()]).await?)).await.unwrap();
 	assert!(attempts.is_empty(), "the proxy should have swallowed the payment request");
 
-	client.unlock_vtxos(&htlc_vtxo_ids).await.expect("it should be able to unlock vtxos on the db");
+	force_unlock_htlc_vtxos(&client, &htlc_vtxo_ids).await;
 	let address = ctx.bitcoind().get_new_address();
 	let err = client.offboard_vtxos(htlc_vtxo_ids.clone(), address.clone()).await
 		.expect_err("server must refuse to offboard an HTLC vtxo");
@@ -603,7 +621,7 @@ async fn refuse_generic_spends_of_htlc_send_vtxo_with_no_payment_in_flight() {
 	assert_eq!(ctx.bitcoind().get_received_by_address(&address), Amount::ZERO,
 		"server paid out an HTLC vtxo");
 
-	client.unlock_vtxos(&htlc_vtxo_ids).await.expect("it should be able to unlock vtxos on the db");
+	force_unlock_htlc_vtxos(&client, &htlc_vtxo_ids).await;
 	let (res, _) = tokio::join!(
 		client.refresh_vtxos(htlc_vtxo_ids.clone()),
 		srv.trigger_round(),

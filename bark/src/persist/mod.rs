@@ -50,7 +50,7 @@ use crate::persist::models::{
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::movement::update::MovementUpdate;
 use crate::round::RoundState;
-use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
 
 /// Storage interface for Bark wallets.
 ///
@@ -634,6 +634,18 @@ pub trait BarkPersister: Send + Sync + 'static {
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<WalletVtxo>;
+
+	/// Release `holder`'s lock on the given vtxo, transitioning it to
+	/// [VtxoState::Spendable]. `holder` must match the value passed at
+	/// lock time (including `None` for locks taken without a holder).
+	/// Any other current state (already Spendable, Locked by a different
+	/// holder, Spent, Exited) is a no-op, so calling this repeatedly is
+	/// equivalent to calling it once.
+	async fn release_vtxo_lock(
+		&self,
+		vtxo_id: VtxoId,
+		holder: Option<&VtxoLockHolder>,
+	) -> anyhow::Result<()>;
 
 	/// Transition multiple VTXOs to `new_state` atomically: either every
 	/// vtxo's state changes or none does. A failure must not affect any
