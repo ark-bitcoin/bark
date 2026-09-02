@@ -1,3 +1,4 @@
+mod pool;
 mod tree;
 
 use std::str::FromStr;

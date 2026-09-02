@@ -242,6 +242,13 @@ impl Db {
 		Self::connect(config).await
 	}
 
+	/// Check out a raw pooled connection, below the [Db::read]/[Db::write]
+	/// transaction API. Only for tests that must manipulate session state.
+	#[doc(hidden)]
+	pub async fn raw_conn(&self) -> anyhow::Result<PooledConnection<'_, PostgresConnectionManager<NoTls>>> {
+		self.get_conn().await
+	}
+
 	async fn get_conn(&self) -> anyhow::Result<PooledConnection<'_, PostgresConnectionManager<NoTls>>> {
 		let before = self.pool.state();
 		telemetry::set_postgres_connection_pool_metrics(self.pool.state());
