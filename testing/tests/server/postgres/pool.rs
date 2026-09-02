@@ -7,7 +7,6 @@ use ark_testing::TestContext;
 /// transaction open: the abandoned work is rolled back on checkout instead
 /// of being committed by the next borrower.
 #[tokio::test]
-#[ignore = "fails until the pool clears inherited transactions on checkout"]
 async fn checkout_clears_abandoned_transaction() {
 	let mut ctx = TestContext::new_minimal("postgresd/pool/checkout_clears_abandoned_transaction").await;
 	ctx.init_central_postgres().await;
