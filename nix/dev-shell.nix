@@ -200,6 +200,7 @@ in {
 			# for development
 			hal
 			pkgs.jq
+			pkgs.just
 
 			# for all tests
 			pkgs.cargo-nextest
