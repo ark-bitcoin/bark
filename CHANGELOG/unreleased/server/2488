@@ -1,0 +1,5 @@
+- Fix a Postgres deadlock when registering vtxo transactions concurrently
+  Two simultaneous registrations of overlapping vtxo chains could deadlock
+  and fail one of the calls. The upsert now takes its row locks in canonical
+  txid order, so concurrent registrations serialize and both succeed.
+  [#2488](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2488)
