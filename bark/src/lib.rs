@@ -438,7 +438,7 @@ use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::rounds::{RoundAttempt, RoundEvent};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef, VTXO_DUST};
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, TxStatus};
+use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
 use server_rpc::{protos, ServerConnection};
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
@@ -483,6 +483,51 @@ const SUBSCRIBE_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
+}
+
+/// Cap on server-advertised round nonces; each requested output allocates
+/// this many musig nonce pairs, so a huge value would DoS the client.
+const MAX_NB_ROUND_NONCES: usize = 16;
+
+/// Minimum `vtxo_exit_delta` accepted on mainnet: roughly eight hours of
+/// blocks to notice the server-only timeout leaf and broadcast a unilateral
+/// exit. Non-production networks (regtest, signet, testnet) only require it
+/// to be non-zero so tests and integrator sessions can use short deltas.
+const MIN_MAINNET_VTXO_EXIT_DELTA: BlockDelta = 96;
+
+/// Refuse an [ArkInfo] whose parameters would make participation unsafe:
+/// `vtxo_lifetime` must leave room to board and broadcast a unilateral exit
+/// before the server-only timeout leaf activates; `vtxo_exit_delta` must keep
+/// its CSV window; `nb_round_nonces` must be non-zero and bounded.
+fn check_ark_info_safe(ark_info: &ArkInfo, vtxo_exit_margin: BlockDelta) -> anyhow::Result<()> {
+	let required = ark_info.required_board_confirmations;
+	let margin = vtxo_exit_margin as usize;
+	let min_safe = required.saturating_add(margin);
+	ensure!(ark_info.vtxo_exit_delta > 0,
+		"server-advertised vtxo_exit_delta is 0; refusing to connect",
+	);
+	ensure!(ark_info.nb_round_nonces > 0,
+		"server-advertised nb_round_nonces is 0; refusing to connect",
+	);
+	if ark_info.network == Network::Bitcoin {
+		// No upper bound: a long lifetime is safe because unilateral exit is
+		// always available before the server-only timeout leaf activates.
+		ensure!((ark_info.vtxo_lifetime as usize) > min_safe,
+			"server-advertised vtxo_lifetime {} is unsafe (minimum > {} = \
+			required_board_confirmations {} + vtxo_exit_margin {}); refusing to connect",
+			ark_info.vtxo_lifetime, min_safe, required, margin,
+		);
+		ensure!(ark_info.vtxo_exit_delta >= MIN_MAINNET_VTXO_EXIT_DELTA,
+			"server-advertised vtxo_exit_delta {} is below the mainnet minimum of {} \
+			 blocks; refusing to connect",
+			ark_info.vtxo_exit_delta, MIN_MAINNET_VTXO_EXIT_DELTA,
+		);
+		ensure!(ark_info.nb_round_nonces <= MAX_NB_ROUND_NONCES,
+			"server-advertised nb_round_nonces {} exceeds cap {}; refusing to connect",
+			ark_info.nb_round_nonces, MAX_NB_ROUND_NONCES,
+		);
+	}
+	Ok(())
 }
 
 /// Log that the server public key has changed.
@@ -1127,11 +1172,23 @@ impl Wallet {
 			bail!("cannot overwrite already existing config")
 		}
 
-		// Try to connect to the server and get its pubkey
+		// Try to connect to the server and get its pubkey. An unsafe ArkInfo
+		// is treated the same as an unreachable server: when
+		// `allow_unreachable_server` is set, both drop to `(None, None)` so
+		// we can still produce an offline wallet and revisit the server on
+		// the next open.
 		let (server_pubkey, mailbox_pubkey) = match Self::connect_to_server(&config, network).await {
 			Ok(conn) => {
 				let ark_info = conn.ark_info().await;
-				(Some(ark_info.server_pubkey), Some(ark_info.mailbox_pubkey))
+				match check_ark_info_safe(&ark_info, config.vtxo_exit_margin) {
+					Ok(()) => (Some(ark_info.server_pubkey), Some(ark_info.mailbox_pubkey)),
+					Err(err) if allow_unreachable_server => {
+						warn!("server-advertised ArkInfo is unsafe, \
+							treating as unavailable: {:#}", err);
+						(None, None)
+					},
+					Err(err) => return Err(err),
+				}
 			},
 			Err(_) if allow_unreachable_server => (None, None),
 			Err(err) => {
@@ -1352,6 +1409,7 @@ impl Wallet {
 		}).await?.clone();
 
 		let ark_info = conn.ark_info().await;
+		check_ark_info_safe(&ark_info, self.inner.config.vtxo_exit_margin)?;
 		self.check_and_store_server_keys(&ark_info).await?;
 
 		Ok((conn, ark_info))
@@ -1372,6 +1430,7 @@ impl Wallet {
 		srv.check_connection().await?;
 		let ark_info = srv.ark_info().await;
 		ark_info.fees.validate().context("invalid fee schedule")?;
+		check_ark_info_safe(&ark_info, self.inner.config.vtxo_exit_margin)?;
 		self.check_and_store_server_keys(&ark_info).await?;
 
 		Ok(())
@@ -2455,9 +2514,16 @@ impl std::ops::Drop for WalletInner {
 
 #[cfg(test)]
 mod tests {
+	use bitcoin::{Amount, FeeRate, Network};
+	use bitcoin::secp256k1::PublicKey;
+
+	use ark::ArkInfo;
 	use server_rpc::client::CreateEndpointError;
 
-	use super::{wrap_server_connect_error, MISSING_SERVER_TRANSPORT_HELP};
+	use super::{
+		check_ark_info_safe, wrap_server_connect_error,
+		MAX_NB_ROUND_NONCES, MIN_MAINNET_VTXO_EXIT_DELTA, MISSING_SERVER_TRANSPORT_HELP,
+	};
 
 	#[test]
 	fn no_transport_connect_error_is_reworded_for_wallet_users() {
@@ -2465,4 +2531,116 @@ mod tests {
 		assert!(err.to_string().contains(MISSING_SERVER_TRANSPORT_HELP));
 		assert!(err.to_string().contains("feature `bark-wallet/native` or `bark-wallet/wasm-web`"));
 	}
+
+	fn ark_info_with_lifetime(vtxo_lifetime: u16, required_board_confirmations: usize) -> ArkInfo {
+		use std::str::FromStr as _;
+		let pk = PublicKey::from_str(
+			"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+		).unwrap();
+		#[allow(deprecated)]
+		ArkInfo {
+			network: Network::Regtest,
+			server_pubkey: pk,
+			mailbox_pubkey: pk,
+			round_interval: std::time::Duration::from_secs(60),
+			nb_round_nonces: 8,
+			vtxo_exit_delta: 48,
+			vtxo_lifetime,
+			htlc_send_expiry_delta: 100,
+			htlc_expiry_delta: 100,
+			max_vtxo_amount: None,
+			required_board_confirmations,
+			max_user_invoice_cltv_delta: 100,
+			min_board_amount: Amount::from_sat(1000),
+			vtxo_expiry_delta: vtxo_lifetime,
+			offboard_feerate: FeeRate::ZERO,
+			max_offboard_inputs: 1,
+			ln_receive_anti_dos_required: false,
+			fees: Default::default(),
+			max_vtxo_exit_depth: 10,
+			tos_link: None,
+		}
+	}
+
+	#[test]
+	fn ark_info_with_zero_lifetime_is_rejected() {
+		let mut ai = ark_info_with_lifetime(0, 6);
+		ai.network = Network::Bitcoin;
+		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
+		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		assert!(err.contains("unsafe"), "unexpected error: {err}");
+	}
+
+	#[test]
+	fn ark_info_at_the_boundary_is_rejected() {
+		// vtxo_lifetime == required + margin: still not strictly greater than
+		// the minimum, so the strict check refuses it.
+		let mut ai = ark_info_with_lifetime(6 + 12, 6);
+		ai.network = Network::Bitcoin;
+		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
+		assert!(check_ark_info_safe(&ai, 12).is_err());
+	}
+
+	#[test]
+	fn ark_info_one_block_over_the_boundary_is_accepted() {
+		let ai = ark_info_with_lifetime(6 + 12 + 1, 6);
+		check_ark_info_safe(&ai, 12).unwrap();
+	}
+
+	#[test]
+	fn ark_info_generous_lifetime_is_accepted() {
+		let ai = ark_info_with_lifetime(4032, 6);
+		check_ark_info_safe(&ai, 12).unwrap();
+	}
+
+	#[test]
+	fn ark_info_with_zero_vtxo_exit_delta_is_rejected() {
+		let mut ai = ark_info_with_lifetime(4032, 6);
+		ai.vtxo_exit_delta = 0;
+		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		assert!(err.contains("vtxo_exit_delta"), "unexpected error: {err}");
+	}
+
+	#[test]
+	fn ark_info_below_mainnet_vtxo_exit_delta_is_rejected() {
+		let mut ai = ark_info_with_lifetime(4032, 6);
+		ai.network = Network::Bitcoin;
+		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA - 1;
+		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		assert!(err.contains("mainnet minimum"), "unexpected error: {err}");
+	}
+
+	#[test]
+	fn ark_info_at_mainnet_vtxo_exit_delta_is_accepted() {
+		let mut ai = ark_info_with_lifetime(4032, 6);
+		ai.network = Network::Bitcoin;
+		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
+		check_ark_info_safe(&ai, 12).unwrap();
+	}
+
+	#[test]
+	fn ark_info_with_zero_nb_round_nonces_is_rejected() {
+		let mut ai = ark_info_with_lifetime(4032, 6);
+		ai.nb_round_nonces = 0;
+		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		assert!(err.contains("nb_round_nonces"), "unexpected error: {err}");
+	}
+
+	#[test]
+	fn ark_info_at_nb_round_nonces_cap_is_accepted() {
+		let mut ai = ark_info_with_lifetime(4032, 6);
+		ai.nb_round_nonces = MAX_NB_ROUND_NONCES;
+		check_ark_info_safe(&ai, 12).unwrap();
+	}
+
+	#[test]
+	fn ark_info_over_nb_round_nonces_cap_is_rejected() {
+		let mut ai = ark_info_with_lifetime(4032, 6);
+		ai.network = Network::Bitcoin;
+		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
+		ai.nb_round_nonces = MAX_NB_ROUND_NONCES + 1;
+		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		assert!(err.contains("nb_round_nonces"), "unexpected error: {err}");
+	}
+
 }
