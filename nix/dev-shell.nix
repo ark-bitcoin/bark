@@ -189,18 +189,11 @@ in {
 				rustToolchain.rust-analyzer
 				rustTargetWasm
 			])
-			# compiler cache
-			pkgs.sccache
 
 			slog-tools
 
-			# for bark
-			pkgs.sqlite
-
 			# for development
 			hal
-			pkgs.jq
-			pkgs.just
 
 			# for all tests
 			pkgs.cargo-nextest
