@@ -1000,6 +1000,15 @@ fn check_round_matches_participation(
 		"unexpected number of VTXOs: got {}, expected {}", new_vtxos.len(), part.outputs.len(),
 	);
 
+	// Every output we forfeit inputs for must be a distinct VTXO: identical
+	// requests are distinct leaves in the tree, so a duplicate here means the
+	// server withheld one of our leaves.
+	for (idx, vtxo) in new_vtxos.iter().enumerate() {
+		ensure!(new_vtxos[idx + 1..].iter().all(|v| v.id() != vtxo.id()),
+			"server delivered duplicate VTXO {}", vtxo.id(),
+		);
+	}
+
 	// We have two requirements on the outputs:
 	// - if we asked for a scheduled height, we want the server to respect it
 	// - if our inputs are not expired yet, we want the output VTXOs to be exitable

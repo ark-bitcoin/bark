@@ -719,6 +719,8 @@ impl rpc::server::ArkService for Server {
 			// NB the round can predate the v1 hashlock clauses, so the tree's
 			// hashlock version has to be detected to build the correct vtxos
 			let tree = round.into_cached_tree().to_status()?;
+			// NB bind every output to its own leaf: identical requests within
+			// a participation correspond to distinct leaves in the tree
 			let leaf_idxs = tree.spec.spec.leaf_idxs_for_participation(
 				unlock_hash, part.outputs.iter().map(|o| &o.vtxo_request),
 			).with_context(|| format!("participation outputs not in round {}", round_id))?;
