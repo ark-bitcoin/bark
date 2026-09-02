@@ -127,6 +127,27 @@ impl rpc::server::SweepAdminService for crate::watchman::Daemon {
 #[async_trait]
 impl rpc::server::NurseryAdminService for Server {
 	#[tracing::instrument(skip(self, req))]
+	async fn list_nursery_txs(
+		&self,
+		req: tonic::Request<protos::ListNurseryTxsRequest>,
+	) -> Result<tonic::Response<protos::ListNurseryTxsResponse>, tonic::Status> {
+		let req = req.into_inner();
+		let txs = self.tx_nursery.list_txs(req.include_confirmed, req.include_abandoned).await
+			.to_status()?;
+		Ok(tonic::Response::new(protos::ListNurseryTxsResponse {
+			txs: txs.into_iter().map(|(tx, in_mempool)| protos::NurseryTxInfo {
+				txid: tx.txid.to_string(),
+				kind: tx.kind.name().into(),
+				in_mempool,
+				confirm_target_height: tx.confirm_target_height,
+				confirmed_at_height: tx.confirmed_at_height,
+				created_at: tx.created_at.timestamp() as u64,
+				abandoned_at: tx.abandoned_at.map(|t| t.timestamp() as u64),
+			}).collect(),
+		}))
+	}
+
+	#[tracing::instrument(skip(self, req))]
 	async fn abandon(
 		&self,
 		req: tonic::Request<protos::AbandonRequest>,

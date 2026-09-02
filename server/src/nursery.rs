@@ -26,12 +26,14 @@ use anyhow::Context;
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::encode::serialize;
 use bitcoind_async_client::Client as BitcoindClient;
+use bitcoind_async_client::traits::Reader;
 use tracing::warn;
 
 use bitcoin_ext::{BlockHeight, BlockRef, DEEPLY_CONFIRMED};
 
 use crate::bitcoind as bcd;
 use crate::database::Db;
+use crate::database::nursery::NurseryTx;
 use crate::sync::{BlockData, ChainEventListener, RawMempool};
 
 /// What a nursery tx is for; shown in the operator's report and later
@@ -116,6 +118,28 @@ impl TxNursery {
 		}
 
 		Ok(())
+	}
+
+	/// List nursery txs with their current mempool presence, for the
+	/// operator's report. By default only unconfirmed, non-abandoned
+	/// txs are returned.
+	pub async fn list_txs(
+		&self,
+		include_confirmed: bool,
+		include_abandoned: bool,
+	) -> anyhow::Result<Vec<(NurseryTx, bool)>> {
+		let txs = self.db.read(async |t| {
+			t.list_nursery_txs(include_confirmed, include_abandoned).await
+		}).await?;
+		let mempool = self.bitcoind.get_raw_mempool().await
+			.context("failed to fetch mempool")?
+			.0.into_iter().collect::<HashSet<_>>();
+		Ok(txs.into_iter()
+			.map(|tx| {
+				let in_mempool = mempool.contains(&tx.txid);
+				(tx, in_mempool)
+			})
+			.collect())
 	}
 
 	/// Abandon a nursery tx: stop following it up and stop warning the

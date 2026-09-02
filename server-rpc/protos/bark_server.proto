@@ -603,11 +603,37 @@ service BanAdminService {
 }
 
 service NurseryAdminService {
+	// Report of the txs the nursery is following up on. By default only
+	// unconfirmed, non-abandoned txs are returned; the request flags add
+	// the rest.
+	rpc ListNurseryTxs(ListNurseryTxsRequest) returns (ListNurseryTxsResponse) {}
 	// Abandon a nursery tx that can no longer make it onchain.
 	//
 	// The nursery stops following up on the tx and stops emitting the
 	// missed-target warning for it.
 	rpc Abandon(AbandonRequest) returns (core.Empty) {}
+}
+
+message ListNurseryTxsRequest {
+	bool include_confirmed = 1;
+	bool include_abandoned = 2;
+}
+
+message NurseryTxInfo {
+	string txid = 1;
+	// round | offboard | vtxopool | internal
+	string kind = 2;
+	// Whether the tx is currently in the node's mempool.
+	bool in_mempool = 3;
+	uint32 confirm_target_height = 4;
+	optional uint32 confirmed_at_height = 5;
+	// Unix timestamps in seconds.
+	uint64 created_at = 6;
+	optional uint64 abandoned_at = 7;
+}
+
+message ListNurseryTxsResponse {
+	repeated NurseryTxInfo txs = 1;
 }
 
 message AbandonRequest {
