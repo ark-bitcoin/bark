@@ -14,7 +14,7 @@ use bitcoin_ext::P2TR_DUST;
 
 use crate::database::tree::VtxoTreeUpdate;
 use crate::error::ContextExt;
-use crate::Server;
+use crate::{check_max_amount, Server};
 
 pub(crate) struct ArkoorCosignRequestValidationParams {
 	/// whether checkpoints should be used
@@ -165,6 +165,8 @@ impl Server {
 
 		let total_input_amount = input_vtxo_states.iter().map(|v| v.vtxo.amount()).sum();
 		let request = request.set_vtxos(input_vtxo_states.into_iter().map(|v| v.vtxo))?;
+
+		check_max_amount("arkoor send", total_input_amount, self.config.max_arkoor_amount)?;
 
 		let validation = ArkoorCosignRequestValidationParams {
 			use_checkpoints: true,

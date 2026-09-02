@@ -372,6 +372,7 @@ impl TestContext {
 			max_vtxo_amount: None,
 			max_board_amount: None,
 			max_offboard_amount: None,
+			max_arkoor_amount: None,
 			max_ln_send_amount: None,
 			max_round_amount: None,
 			max_ln_receive_amount: None,
