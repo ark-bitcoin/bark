@@ -335,7 +335,8 @@ async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, Ad
 	// the exit commits.
 	//
 	// I know this if is collapsible, but it reads better like this...
-	if vtxo.expiry_height() < current_height.saturating_add(required) {
+	let exit_margin = wallet.config().vtxo_exit_margin as BlockHeight;
+	if vtxo.expiry_height() <= current_height.saturating_add(exit_margin) {
 		if !wallet.exit_mgr().is_exiting(vtxo.id()).await {
 			warn!("Board {} expired before confirmation, marking VTXO for exit", board.id);
 			wallet.inner.exit.start_exit_for_vtxos(&[vtxo.vtxo.clone()]).await?;
