@@ -205,12 +205,27 @@ impl VtxoTreeSpec {
 		self.vtxos.iter().position(|e| e == leaf_spec)
 	}
 
-	/// Get the leaf index of the given vtxo request.
+	/// Get the leaf index of each of the given vtxo requests of the
+	/// participation with the given unlock hash.
 	///
-	/// Note that in the case of duplicate vtxo requests, this function can
-	/// return any of the indices of these requests.
-	pub fn leaf_idx_of_req(&self, vtxo_request: &VtxoRequest) -> Option<usize> {
-		self.vtxos.iter().position(|e| e.vtxo == *vtxo_request)
+	/// Each leaf is assigned to at most one request, so identical requests
+	/// within a participation are bound to distinct leaves. Leaves belonging
+	/// to other participations (different unlock hash) are ignored.
+	///
+	/// Returns [None] when a request can't be matched to an unused leaf.
+	pub fn leaf_idxs_for_participation<'a>(
+		&self,
+		unlock_hash: UnlockHash,
+		vtxo_requests: impl IntoIterator<Item = &'a VtxoRequest>,
+	) -> Option<Vec<usize>> {
+		let mut ret = Vec::new();
+		for req in vtxo_requests {
+			let (idx, _) = self.vtxos.iter().enumerate().find(|(i, e)| {
+				!ret.contains(i) && e.unlock_hash == unlock_hash && e.vtxo == *req
+			})?;
+			ret.push(idx);
+		}
+		Some(ret)
 	}
 
 	/// Calculate the total value needed in the tree.
@@ -2185,6 +2200,47 @@ mod test {
 			unlock_hash: hash,
 		};
 		encoding_roundtrip(&spec_without_cosign);
+	}
+
+	#[test]
+	fn leaf_idxs_for_participation_binds_duplicates_to_distinct_leaves() {
+		let pk: PublicKey = "020aceb65eed0ee5c512d3718e6f4bd868a7efb58ede7899ffd9bcba09555d4eb8"
+			.parse().unwrap();
+		let hash1 = sha256::Hash::from_str(
+			"4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+		).unwrap();
+		let hash2 = sha256::Hash::from_str(
+			"dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+		).unwrap();
+
+		let req = VtxoRequest {
+			amount: Amount::from_sat(50_000),
+			policy: VtxoPolicy::new_pubkey(pk),
+		};
+		let leaf = |unlock_hash| VtxoLeafSpec {
+			vtxo: req.clone(),
+			cosign_pubkey: None,
+			unlock_hash,
+		};
+		// another participation's leaf with an identical request first,
+		// then two identical leaves of the same participation
+		let spec = VtxoTreeSpec::new(
+			vec![leaf(hash2), leaf(hash1), leaf(hash1)], pk, 100_000, 2016, vec![],
+		);
+
+		// identical requests are bound to the distinct leaves of their
+		// own participation
+		assert_eq!(spec.leaf_idxs_for_participation(hash1, [&req, &req]), Some(vec![1, 2]));
+
+		// a third identical request has no leaf left to bind to
+		assert_eq!(spec.leaf_idxs_for_participation(hash1, [&req, &req, &req]), None);
+
+		// a request that isn't in the tree doesn't match
+		let other = VtxoRequest {
+			amount: Amount::from_sat(60_000),
+			policy: VtxoPolicy::new_pubkey(pk),
+		};
+		assert_eq!(spec.leaf_idxs_for_participation(hash1, [&other]), None);
 	}
 
 	#[test]
