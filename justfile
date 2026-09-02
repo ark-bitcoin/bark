@@ -297,14 +297,19 @@ clean:
 	cargo clean \
 		-p ark-lib \
 		-p ark-testing \
+		-p bark-bitcoin-ext \
+		-p bark-cli \
+		-p bark-common \
+		-p bark-json \
+		-p bark-rest \
+		-p bark-rest-client \
+		-p bark-runtime \
 		-p bark-server \
 		-p bark-server-log \
 		-p bark-server-rpc \
-		-p bark-bitcoin-ext \
 		-p bark-wallet \
-		-p bark-json \
-		-p bark-rest \
-		-p bark-cli
+		-p bip321 \
+		-p wasm-testing
 
 # run a single clippy lint
 clippy LINT:
