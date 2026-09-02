@@ -136,7 +136,7 @@ pub enum MailboxPayload {
 
 #[derive(Clone)]
 pub struct Db {
-	pool: Pool<PostgresConnectionManager<NoTls>>
+	pool: Pool<ConnectionManager>
 }
 
 impl Db {
@@ -186,7 +186,7 @@ impl Db {
 	async fn pool_connect(
 		database: &str,
 		postgres_config: &PostgresConfig,
-	) -> anyhow::Result<Pool<PostgresConnectionManager<NoTls>>> {
+	) -> anyhow::Result<Pool<ConnectionManager>> {
 		let config = Self::config(database, postgres_config);
 
 		let manager = PostgresConnectionManager::new(config, NoTls);
@@ -195,7 +195,7 @@ impl Db {
 			.connection_timeout(Duration::from_secs(postgres_config.connection_timeout_secs))
 			.idle_timeout(Some(Duration::from_secs(postgres_config.idle_timeout_secs)))
 			.error_sink(Box::new(PoolErrorSink))
-			.build(manager).await?)
+			.build(ConnectionManager(manager)).await?)
 	}
 
 	async fn check_database_emptiness(conn: &Client) -> anyhow::Result<()> {
@@ -242,7 +242,14 @@ impl Db {
 		Self::connect(config).await
 	}
 
-	async fn get_conn(&self) -> anyhow::Result<PooledConnection<'_, PostgresConnectionManager<NoTls>>> {
+	/// Check out a raw pooled connection, below the [Db::read]/[Db::write]
+	/// transaction API. Only for tests that must manipulate session state.
+	#[doc(hidden)]
+	pub async fn raw_conn(&self) -> anyhow::Result<PooledConnection<'_, ConnectionManager>> {
+		self.get_conn().await
+	}
+
+	async fn get_conn(&self) -> anyhow::Result<PooledConnection<'_, ConnectionManager>> {
 		let before = self.pool.state();
 		telemetry::set_postgres_connection_pool_metrics(self.pool.state());
 		let start = std::time::Instant::now();
@@ -1151,6 +1158,33 @@ impl bb8::ErrorSink<tokio_postgres::Error> for PoolErrorSink {
 
 	fn boxed_clone(&self) -> Box<dyn bb8::ErrorSink<tokio_postgres::Error>> {
 		Box::new(PoolErrorSink)
+	}
+}
+
+/// Pool manager that never grants a connection with an open transaction.
+///
+/// A dropped future (e.g. an rpc timeout) can return its connection to the
+/// pool with a transaction still open, and the next borrower would silently
+/// run inside it. The checkout check clears this: on a clean session
+/// `BEGIN; ROLLBACK` is a silent no-op, on a session with an open
+/// transaction the `BEGIN` warns and the `ROLLBACK` aborts it. The round
+/// trip doubles as the liveness check.
+pub struct ConnectionManager(PostgresConnectionManager<NoTls>);
+
+impl ManageConnection for ConnectionManager {
+	type Connection = Client;
+	type Error = tokio_postgres::Error;
+
+	async fn connect(&self) -> Result<Self::Connection, Self::Error> {
+		self.0.connect().await
+	}
+
+	async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+		conn.batch_execute("BEGIN; ROLLBACK").await
+	}
+
+	fn has_broken(&self, conn: &mut Self::Connection) -> bool {
+		self.0.has_broken(conn)
 	}
 }
 
