@@ -9,6 +9,7 @@ use ark::lightning::PaymentHash;
 use ark::offboard::OffboardRequest;
 use ark::tree::signed::UnlockHash;
 use ark::vtxo::VtxoPolicyKind;
+use bark::round::RoundFlowKind;
 
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
@@ -699,6 +700,38 @@ impl<'a> From<&'a bark::round::RoundParticipation> for RoundParticipationInfo {
 	}
 }
 
+/// Lifecycle phase of a round participation.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+#[serde(rename_all = "kebab-case")]
+pub enum RoundFlowState {
+	/// Delegated participation waiting for its round.
+	DelegatedPending,
+	/// Interactive participation waiting for its round.
+	Pending,
+	/// The interactive part is being played out with the server.
+	Ongoing,
+	/// The round finished and its funding tx is waiting for confirmations.
+	AwaitingConfirmations,
+	/// The participation failed.
+	Failed,
+	/// The user canceled the participation.
+	Canceled,
+}
+
+impl From<RoundFlowKind> for RoundFlowState {
+	fn from(kind: RoundFlowKind) -> Self {
+		match kind {
+			RoundFlowKind::DelegatedPending => Self::DelegatedPending,
+			RoundFlowKind::Pending => Self::Pending,
+			RoundFlowKind::Ongoing => Self::Ongoing,
+			RoundFlowKind::AwaitingConfirmations => Self::AwaitingConfirmations,
+			RoundFlowKind::Failed => Self::Failed,
+			RoundFlowKind::Canceled => Self::Canceled,
+		}
+	}
+}
+
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct PendingRoundInfo {
@@ -706,10 +739,15 @@ pub struct PendingRoundInfo {
 	pub id: u32,
 	/// the current status of the round
 	pub status: RoundStatus,
+	/// Lifecycle phase of the participation
+	pub state: RoundFlowState,
 	/// the round participation details
 	pub participation: RoundParticipationInfo,
 	#[cfg_attr(feature = "utoipa", schema(value_type = String, nullable = true))]
 	pub unlock_hash: Option<UnlockHash>,
+	/// The block height a delegated participation is scheduled for, if any
+	#[serde(default)]
+	pub scheduled_height: Option<u32>,
 	/// The round transaction id, if already assigned
 	#[cfg_attr(feature = "utoipa", schema(value_type = String, nullable = true))]
 	pub funding_txid: Option<Txid>,
@@ -730,11 +768,34 @@ impl PendingRoundInfo {
 					error: format!("{:#}", e),
 				},
 			},
+			state: state.state().flow_kind().into(),
 			participation: state.state().participation().into(),
 			unlock_hash: state.state().unlock_hash(),
+			scheduled_height: state.state().scheduled_height(),
 			funding_txid: funding_tx.map(|t| t.compute_txid()),
 			funding_tx_hex: funding_tx.map(|t| serialize_hex(t)),
 		}
+	}
+
+	/// Like [PendingRoundInfo::new], but without contacting the server: the
+	/// status is derived from the stored state alone.
+	pub fn from_state<G>(state: &bark::persist::models::StoredRoundState<G>) -> Self {
+		let status = match state.state().flow_kind() {
+			RoundFlowKind::AwaitingConfirmations => {
+				bark::round::RoundStatus::Unconfirmed {
+					funding_txid: state.state().funding_tx()
+						.expect("finished rounds have a funding tx")
+						.compute_txid(),
+				}
+			},
+			RoundFlowKind::Canceled => bark::round::RoundStatus::Canceled,
+			RoundFlowKind::DelegatedPending
+				| RoundFlowKind::Pending
+				| RoundFlowKind::Ongoing
+				| RoundFlowKind::Failed
+			=> bark::round::RoundStatus::Pending,
+		};
+		Self::new(state, Ok(status))
 	}
 }
 

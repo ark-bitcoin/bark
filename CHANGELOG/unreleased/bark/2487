@@ -1,0 +1,5 @@
+- Add the `round list` command
+  Lists the pending round participations an interrupted refresh leaves behind,
+  with the id to pass to `round cancel`. It reads the stored state and does not
+  contact the server.
+  [#2487](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2487)

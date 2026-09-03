@@ -255,6 +255,7 @@ Class | Method | HTTP request | Description
  - [PpmExpiryFeeEntry](docs/PpmExpiryFeeEntry.md)
  - [RefreshFees](docs/RefreshFees.md)
  - [RefreshRequest](docs/RefreshRequest.md)
+ - [RoundFlowState](docs/RoundFlowState.md)
  - [RoundParticipationInfo](docs/RoundParticipationInfo.md)
  - [RoundStatus](docs/RoundStatus.md)
  - [RoundStatusOneOf](docs/RoundStatusOneOf.md)
