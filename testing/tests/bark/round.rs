@@ -483,6 +483,85 @@ async fn delegated_refresh_must_not_leave_server_trace_on_failure() {
 }
 
 #[tokio::test]
+async fn delegated_round_duplicate_outputs_get_distinct_vtxos() {
+	//! A delegated participation with two identical outputs (an equal split)
+	//! must yield two distinct VTXOs.
+	//!
+	//! The server used to bind outputs to tree leaves by value, so identical
+	//! outputs aliased to the same leaf: the wallet was served the same VTXO
+	//! twice while it forfeited its full input, and the other leaf stranded
+	//! until the server swept it after expiry.
+
+	require_bark_version!(> "0.6.2");
+
+	let ctx = TestContext::new("bark/delegated_round_duplicate_outputs_get_distinct_vtxos").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	{
+		let wallet = bark.client().await;
+		let [vtxo] = wallet.spendable_vtxos().await.unwrap()
+			.try_into().expect("should have exactly one spendable vtxo");
+
+		// Build a regular refresh participation, then split its single
+		// output into two identical halves.
+		let mut participation = wallet.build_refresh_participation(vec![vtxo.vtxo.id()]).await
+			.unwrap().expect("should build participation");
+		let [output] = participation.outputs.try_into()
+			.expect("refresh participation should have exactly one output");
+		let half = output.amount / 2;
+		assert_eq!(half * 2, output.amount, "test needs an even output amount");
+		let req = VtxoRequest { policy: output.policy, amount: half };
+		participation.outputs = vec![req.clone(), req];
+
+		wallet.join_next_round_delegated(participation, Some(RoundMovement::Refresh)).await
+			.expect("delegated join should succeed");
+	}
+
+	// Let the server run the round without us.
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	log_round_finished.recv().wait(secs(30)).await.unwrap();
+
+	// Sync until the wallet finishes the forfeit dance and the refresh
+	// movement completes.
+	let movements = bark.history().await;
+	let movement_id = movements.iter().find(|m| {
+		m.subsystem.name == "bark.round" &&
+		m.subsystem.kind == "refresh" &&
+		m.status == bark_json::movements::MovementStatus::Pending
+	}).expect("should have pending refresh movement").id;
+
+	let mut success = false;
+	for i in 0..100 {
+		bark.sync().await;
+
+		let movements = bark.history().await;
+		if let Some(movement) = movements.iter().find(|m| m.id == movement_id) {
+			if movement.status == bark_json::movements::MovementStatus::Successful {
+				success = true;
+				break;
+			}
+		}
+
+		// Generate blocks to let the round funding tx confirm
+		if i % 5 == 0 {
+			ctx.generate_blocks(1).await;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+	assert!(success, "refresh movement should complete successfully");
+
+	// Both outputs must have been delivered as distinct VTXOs.
+	let vtxos = bark.vtxos().await;
+	assert_eq!(vtxos.len(), 2, "should have two vtxos after the split: {:?}", vtxos);
+	assert_ne!(vtxos[0].id, vtxos[1].id, "the split vtxos must be distinct");
+	assert_eq!(vtxos[0].amount, vtxos[1].amount);
+}
+
+#[tokio::test]
 async fn delegated_refresh_dropped_when_input_spent_before_round() {
 	require_bark_version!(> "0.5.0");
 

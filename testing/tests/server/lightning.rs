@@ -805,6 +805,40 @@ async fn server_generated_invoice_has_configured_expiry() {
 	assert_vtxopool_consistency(&srv).await;
 }
 
+/// A caller that asks to wait must still get an immediate answer once the
+/// subscription is canceled: no further status change can ever arrive, so
+/// waiting would only keep the request open.
+#[tokio::test]
+async fn check_lightning_receive_returns_on_canceled_subscription() {
+	let ctx = TestContext::new("server/check_lightning_receive_returns_on_canceled_subscription").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.external).funded(btc(10)).cfg(|cfg| {
+		// Short expiry so the invoice is swept and canceled quickly.
+		cfg.invoice_expiry = Duration::from_secs(1);
+		cfg.invoice_check_interval = Duration::from_secs(1);
+	}).create().await;
+
+	let payment_hash = ark::lightning::Preimage::random().compute_payment_hash();
+	let mut rpc = srv.get_public_rpc().await;
+	rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
+		payment_hash: payment_hash.as_ref().to_vec(),
+		amount_sat: btc(1).to_sat(),
+		min_cltv_delta: 6,
+		mailbox_id: None,
+		description: None,
+	}).await.unwrap();
+
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	wait_for_subscription_status(&db, payment_hash, "canceled").await;
+
+	let resp = rpc.check_lightning_receive(protos::CheckLightningReceiveRequest {
+		hash: payment_hash.as_ref().to_vec(),
+		wait: true,
+	}).ready().await.unwrap().into_inner();
+	assert_eq!(resp.status, protos::LightningReceiveStatus::Canceled as i32);
+}
+
 async fn server_claim_lightning_receive_is_idempotent(
 	ctx: &TestContext,
 	_lightning: &LightningPaymentSetup,

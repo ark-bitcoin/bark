@@ -183,11 +183,14 @@ impl Server {
 			// NB the round can predate the v1 hashlock clauses, so the tree's
 			// hashlock version has to be detected to build the correct vtxo ids
 			let tree = round.into_cached_tree()?;
-			let output_vtxo_ids = part.outputs.iter().map(|output| {
-				let idx = tree.spec.spec.leaf_idx_of_req(&output.vtxo_request)
-					.with_context(|| format!("output req not in round {}", round_id))?;
-				Ok(tree.build_vtxo(idx).id())
-			}).collect::<anyhow::Result<Vec<_>>>()?;
+			// NB bind every output to its own leaf: identical requests within
+			// a participation correspond to distinct leaves in the tree
+			let leaf_idxs = tree.spec.spec.leaf_idxs_for_participation(
+				unlock_hash, part.outputs.iter().map(|o| &o.vtxo_request),
+			).with_context(|| format!("participation outputs not in round {}", round_id))?;
+			let output_vtxo_ids = leaf_idxs.into_iter()
+				.map(|idx| tree.build_vtxo(idx).id())
+				.collect::<Vec<_>>();
 
 			let update = VtxoTreeUpdate::new()
 				.upsert_signed_tx(ff_txs)

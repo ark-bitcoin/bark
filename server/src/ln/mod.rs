@@ -612,7 +612,10 @@ impl Server {
 	}
 
 	/// Polls until the HTLC subscription for `payment_hash` reaches a
-	/// terminal or actionable status (Accepted / HtlcsReady).
+	/// terminal (Settled / Canceled) or actionable (Accepted / HtlcsReady)
+	/// status.  `wait` only applies while the sender hasn't paid yet: a
+	/// terminal subscription returns immediately, since no further status
+	/// change can arrive.
 	///
 	/// Woken by the `payment_update_tx` broadcast channel whenever the
 	/// subscription status changes.  A periodic fallback poll guards
@@ -647,12 +650,18 @@ impl Server {
 			).await?.not_found([payment_hash], "invoice not found")?;
 
 			match subscription.status {
+				// Actionable: the client can prepare a claim.
 				LightningHtlcSubscriptionStatus::Accepted |
 				LightningHtlcSubscriptionStatus::HtlcsReady => {
 					break subscription;
 				},
+				// Terminal: no further update will ever come, so waiting
+				// would just hold the request open until the client gives up.
 				LightningHtlcSubscriptionStatus::Settled |
-				LightningHtlcSubscriptionStatus::Canceled |
+				LightningHtlcSubscriptionStatus::Canceled => {
+					break subscription;
+				},
+				// The sender hasn't paid yet, this is what `wait` is for.
 				LightningHtlcSubscriptionStatus::Created => {
 					if !wait {
 						break subscription;

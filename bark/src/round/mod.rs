@@ -1051,6 +1051,15 @@ fn check_round_matches_participation(
 		"unexpected number of VTXOs: got {}, expected {}", new_vtxos.len(), part.outputs.len(),
 	);
 
+	// Every output we forfeit inputs for must be a distinct VTXO: identical
+	// requests are distinct leaves in the tree, so a duplicate here means the
+	// server withheld one of our leaves.
+	for (idx, vtxo) in new_vtxos.iter().enumerate() {
+		ensure!(new_vtxos[idx + 1..].iter().all(|v| v.id() != vtxo.id()),
+			"server delivered duplicate VTXO {}", vtxo.id(),
+		);
+	}
+
 	// We have two requirements on the outputs:
 	// - if we asked for a scheduled height, we want the server to respect it
 	// - if our inputs are not expired yet, we want the output VTXOs to be exitable
@@ -1280,6 +1289,7 @@ async fn progress_attempt(
 				&e.unsigned_round_tx,
 				&e.vtxos_spec,
 				&e.cosign_agg_nonces,
+				*unlock_hash,
 			).await {
 				Ok(()) => {
 					AttemptProgressResult::Updated {
@@ -1348,6 +1358,7 @@ async fn sign_vtxo_tree(
 	unsigned_round_tx: &Transaction,
 	vtxo_tree: &VtxoTreeSpec,
 	cosign_agg_nonces: &[musig::AggregatedNonce],
+	unlock_hash: UnlockHash,
 ) -> anyhow::Result<()> {
 	let (mut srv, ark_info) = wallet.require_server().await.context("server not available")?;
 
@@ -1379,12 +1390,14 @@ async fn sign_vtxo_tree(
 
 	let unsigned_vtxos = vtxo_tree.clone().into_unsigned_tree(vtxos_utxo);
 	trace!("Sending vtxo signatures to server...");
+	let leaf_idxs = unsigned_vtxos.spec.leaf_idxs_for_participation(
+		unlock_hash, participation.outputs.iter().map(|o| o),
+	).context("our outputs not part of tree")?;
 	// Sequential: SecretNonce is consume-once and not Clone, so we move
 	// one Vec<SecretNonce> into cosign_branch per output. Going parallel
 	// would require sharing the server connection across futures, which
 	// isn't worth the complexity for a per-output RPC.
-	for ((req, key), sec) in participation.outputs.iter().zip(cosign_keys).zip(secret_nonces) {
-		let leaf_idx = unsigned_vtxos.spec.leaf_idx_of_req(req).expect("req included");
+	for ((leaf_idx, key), sec) in leaf_idxs.into_iter().zip(cosign_keys).zip(secret_nonces) {
 		let part_sigs = unsigned_vtxos.cosign_branch(
 			&cosign_agg_nonces, leaf_idx, key, sec,
 		).context("failed to cosign branch: our request not part of tree")?;
