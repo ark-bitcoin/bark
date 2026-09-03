@@ -895,6 +895,13 @@ async fn hark_vtxo_swap(
 }
 
 fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo<Full>) -> anyhow::Result<()> {
+	// validate() below short-circuits at the terminal hash-locked transition
+	// before the point-vs-genesis checksum runs; call validate_unsigned first
+	// so a forged point is caught before forfeit signatures are sent.
+	vtxo.validate_unsigned(funding_tx).with_context(|| format!(
+		"new VTXO {} failed unsigned validation", vtxo.id(),
+	))?;
+
 	match vtxo.validate(funding_tx) {
 		// NB delegated participations from rounds that predate the v1
 		// hashlock clauses have leaves with the v0 transition, so both
@@ -2194,6 +2201,39 @@ mod test {
 				));
 			}
 		}
+	}
+
+	#[test]
+	fn rejects_locked_round_vtxo_with_tampered_point() {
+		let secp = Secp256k1::new();
+		let mut rng = rand::thread_rng();
+		let user_key = Keypair::new(&secp, &mut rng);
+		let user_cosign_key = Keypair::new(&secp, &mut rng);
+		let server_key = Keypair::new(&secp, &mut rng);
+		let server_cosign_key = Keypair::new(&secp, &mut rng);
+		let preimage: UnlockPreimage = rand::random();
+		let unlock_hash = UnlockHash::hash(&preimage);
+		let outputs = (0..2u64).map(|i| VtxoRequest {
+			amount: Amount::from_sat(10_000 + i),
+			policy: VtxoPolicy::new_pubkey(user_key.public_key()),
+		}).collect::<Vec<_>>();
+
+		let (tree, funding_tx) = ark::test_util::build_signed_tree(
+			HashlockVersion::V1, outputs,
+			&user_cosign_key, &server_key, &server_cosign_key, unlock_hash,
+		);
+		let vtxo = tree.into_cached_tree().output_vtxos().next().unwrap();
+
+		// Bump the point's vout (last 4 bytes of the encoding) without touching
+		// the genesis, so the leaf still validates up to the terminal transition.
+		let mut encoded = vtxo.serialize();
+		let vout_offset = encoded.len() - 4;
+		encoded[vout_offset] = 1;
+		let tampered = Vtxo::<Full>::deserialize(&encoded).unwrap();
+
+		assert!(tampered.validate_unsigned(&funding_tx).is_err());
+		assert!(check_vtxo_fails_hash_lock(&funding_tx, &tampered).is_err(),
+			"tampered point must be rejected before forfeits are sent");
 	}
 
 	#[test]
