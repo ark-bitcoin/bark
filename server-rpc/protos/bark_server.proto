@@ -689,7 +689,7 @@ service LightningAdminService {
 	rpc StopLightningNode(LightningNodeUri) returns (core.Empty) {}
 }
 
-service SweepAdminService {
+service WatchmanAdminService {
 	rpc TriggerSweep(core.Empty) returns (core.Empty) {}
 }
 

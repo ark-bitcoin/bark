@@ -85,7 +85,7 @@ impl rpc::server::LightningAdminService for Server {
 }
 
 #[async_trait]
-impl rpc::server::SweepAdminService for crate::watchman::Daemon {
+impl rpc::server::WatchmanAdminService for crate::watchman::Daemon {
 	#[tracing::instrument(skip(self, _req))]
 	async fn trigger_sweep(
 		&self,
@@ -249,7 +249,7 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	Ok(())
 }
 
-/// Run the watchmand admin gRPC server: `SweepAdminService` and `BlocklistAdminService`.
+/// Run the watchmand admin gRPC server
 pub async fn run_watchmand_admin_rpc_server(
 	addr: SocketAddr,
 	daemon: Arc<crate::watchman::Daemon>,
@@ -258,7 +258,7 @@ pub async fn run_watchmand_admin_rpc_server(
 	info!("Starting watchmand admin gRPC service on address {}", addr);
 
 	let routes = tonic::service::Routes::default()
-		.add_service(rpc::server::SweepAdminServiceServer::from_arc(daemon.clone()))
+		.add_service(rpc::server::WatchmanAdminServiceServer::from_arc(daemon.clone()))
 		.add_service(rpc::server::BlocklistAdminServiceServer::from_arc(daemon));
 
 	tonic::transport::Server::builder()
