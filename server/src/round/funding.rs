@@ -11,9 +11,11 @@
 //! [`FundingTx`] is dropped.
 
 use anyhow::Context;
+use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Transaction, TxOut, Txid};
 
 use ark::rounds::ROUND_TX_VTXO_TREE_VOUT;
+use bitcoin_ext::bdk::{PreferConfirmedCoinSelection, WithGuaranteedChange};
 
 use crate::utils::InstrumentedLock;
 use crate::wallet::{PersistedWallet, WalletUtxoGuard, WalletUtxosGuard};
@@ -61,7 +63,12 @@ impl FundingTxSpec {
 		let unavailable_outputs = wallet.unavailable_outputs(self.min_trusted_confs);
 
 		let psbt = {
-			let mut b = wallet.build_tx();
+			// Confirmed inputs first: a funding tx without unconfirmed
+			// ancestors can't be dragged down by a low-fee parent.
+			let selection = WithGuaranteedChange(
+				PreferConfirmedCoinSelection(DefaultCoinSelectionAlgorithm::default()),
+			);
+			let mut b = wallet.build_tx().coin_selection(selection);
 			// `Untouched` keeps insertion order: `tree_output` is added first, so
 			// it lands at vout `ROUND_TX_VTXO_TREE_VOUT` (0), as the round tx requires.
 			b.ordering(bdk_wallet::TxOrdering::Untouched);

@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bdk_wallet::Wallet;
+use bdk_wallet::coin_selection::SingleRandomDraw;
 use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf, Psbt, Transaction};
 use bitcoin::hex::DisplayHex;
@@ -16,7 +17,7 @@ use bitcoind_async_client::Client as BitcoindClient;
 use tracing::error;
 
 use bitcoin_ext::BlockRef;
-use bitcoin_ext::bdk::{TrustedBalance, WalletExt, KEYCHAIN};
+use bitcoin_ext::bdk::{TrustedBalance, WalletExt, WithGuaranteedChange, KEYCHAIN};
 
 use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::bitcoind as bcd;
@@ -209,6 +210,8 @@ impl PersistedWallet {
 
 
 	/// Send money to an address.
+	///
+	/// The tx keeps a change output, so a stuck send can be CPFP bumped.
 	#[tracing::instrument(skip(self, script_pubkey))]
 	pub async fn send(
 		&mut self,
@@ -217,7 +220,8 @@ impl PersistedWallet {
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Transaction> {
 		let unavailable = self.unavailable_outputs(0);
-		let mut b = self.build_tx();
+		let mut b = self.build_tx()
+			.coin_selection(WithGuaranteedChange(SingleRandomDraw));
 		b.unspendable(unavailable);
 		b.add_recipient(script_pubkey, amount);
 		b.fee_rate(fee_rate);

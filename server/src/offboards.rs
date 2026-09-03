@@ -4,6 +4,7 @@ use std::mem;
 use std::sync::Arc;
 
 use anyhow::Context;
+use bdk_wallet::coin_selection::SingleRandomDraw;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, ScriptBuf, SignedAmount, Transaction, Txid};
 use tracing::{error, warn};
 
@@ -12,6 +13,7 @@ use ark::attestations::OffboardRequestAttestation;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use bitcoin_ext::P2TR_DUST;
+use bitcoin_ext::bdk::WithGuaranteedChange;
 
 use crate::{check_max_amount, Server, SECP};
 use crate::bitcoind as bcd;
@@ -278,7 +280,8 @@ impl Server {
 		let mut wallet_guard = self.rounds_wallet.lock().await;
 		let offboard_tx = {
 			let unavailable = wallet_guard.unavailable_outputs(self.config.min_trusted_confs);
-			let mut b = wallet_guard.build_tx();
+			let mut b = wallet_guard.build_tx()
+				.coin_selection(WithGuaranteedChange(SingleRandomDraw));
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
 			b.current_height(tip);
 			b.unspendable(unavailable);

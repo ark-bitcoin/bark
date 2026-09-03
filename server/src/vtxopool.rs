@@ -6,6 +6,7 @@ use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
 use anyhow::Context;
+use bdk_wallet::coin_selection::SingleRandomDraw;
 use bitcoin::secp256k1::{rand, Keypair};
 use bitcoin::{Amount, OutPoint, Transaction};
 use futures::{stream, StreamExt, TryStreamExt};
@@ -18,6 +19,7 @@ use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef, P2TR_DUST};
+use bitcoin_ext::bdk::WithGuaranteedChange;
 
 use crate::database::vtxopool::PoolVtxo;
 use crate::database::tree::VtxoTreeUpdate;
@@ -534,7 +536,8 @@ impl Process {
 		let mut wallet = self.srv.rounds_wallet.lock().await;
 		let funding_psbt = {
 			let unavailable = wallet.unavailable_outputs(self.srv.config.min_trusted_confs);
-			let mut b = wallet.build_tx();
+			let mut b = wallet.build_tx()
+				.coin_selection(WithGuaranteedChange(SingleRandomDraw));
 			b.unspendable(unavailable);
 			b.add_recipient(funding_txout.script_pubkey.clone(), funding_txout.value);
 			b.fee_rate(fee_rate);
