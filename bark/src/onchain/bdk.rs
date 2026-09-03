@@ -425,7 +425,32 @@ impl OnchainWallet {
 						}
 					}));
 
-				let update = client.sync(request, PARALLEL_REQS).await?;
+				let mut update = client.sync(request, PARALLEL_REQS).await?;
+
+				// Esplora's indexer runs behind the mempool: a tx broadcast
+				// moments ago can still be absent from its response and BDK
+				// will report it as evicted. Drop such evictions here so we
+				// don't hand a freshly-spent UTXO back to coin selection
+				// before the tx actually confirms; see ONCHAIN_EVICTION_GRACE_SECS.
+				let now = bark_runtime::timestamp_secs();
+				let recently_seen: HashSet<Txid> = self.inner.transactions()
+					.filter_map(|tx| match tx.chain_position {
+						ChainPosition::Unconfirmed { last_seen: Some(seen), .. }
+							if now.saturating_sub(seen) < ONCHAIN_EVICTION_GRACE_SECS => {
+							Some(tx.tx_node.txid)
+						},
+						_ => None,
+					})
+					.collect();
+				update.tx_update.evicted_ats.retain(|(txid, _)| {
+					if recently_seen.contains(txid) {
+						debug!("Not evicting recently-seen tx {} still within grace period", txid);
+						false
+					} else {
+						true
+					}
+				});
+
 				self.inner.apply_update(update)?;
 				self.persist().await?;
 				debug!("Finished syncing with esplora");
