@@ -401,10 +401,24 @@ async fn receive_claim_after_hold_invoice_already_settled() {
 
 	let mut hold_client = lightning.internal.hold_client().await;
 
+	// Subscribe before the payment arrives.
+	let mut mailbox = wallet.subscribe_mailbox_messages(None).await
+		.expect("subscribing to mailbox stream");
+
 	let (pay_result, claim_result) = tokio::join!(
 		lightning.external.try_pay_bolt11(invoice.to_string()),
 		async {
-			wait_for_hold_invoice_accepted(&mut hold_client, payment_hash).await;
+			// The server posts the incoming-payment notification only after
+			// it has registered the acceptance, so settling after it keeps
+			// the server able to hand over the claim vtxos.
+			loop {
+				let msg = mailbox.next().wait_millis(10_000).await
+					.expect("mailbox stream ended before notification")
+					.expect("mailbox stream error");
+				if let Some(MailboxMsg::IncomingLightningPayment(_)) = msg.message {
+					break;
+				}
+			}
 
 			// Stand in for the hold settler getting there first.
 			hold_client.settle(hold::SettleRequest {
