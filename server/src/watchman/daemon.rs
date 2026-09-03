@@ -26,7 +26,6 @@ use crate::config::watchmand::Config;
 use crate::database::{self, BlockTable};
 use crate::sync::{ChainEventListener, SyncManager};
 use crate::system::RuntimeManager;
-use crate::nursery::TxNursery;
 use crate::utils::InstrumentedLock;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 use crate::ln::settler::HtlcSettler;
@@ -42,7 +41,6 @@ pub struct Daemon {
 	rtmgr: RuntimeManager,
 	#[allow(unused)]
 	sync_manager: SyncManager,
-	pub tx_nursery: TxNursery,
 	#[allow(unused)]
 	watchman_wallet: InstrumentedLock<PersistedWallet>,
 	#[allow(unused)]
@@ -153,8 +151,6 @@ impl Daemon {
 		let _startup_worker = rtmgr.spawn("Bootstrapping");
 		rtmgr.run_shutdown_signal_listener(Duration::from_secs(60));
 
-		let tx_nursery = TxNursery::new(db.clone(), bitcoind.clone());
-
 		let fee_estimator = fee_estimator::start(
 			rtmgr.clone(),
 			cfg.fee_estimator.clone(),
@@ -185,7 +181,6 @@ impl Daemon {
 		let listeners: Vec<Box<dyn ChainEventListener>> = vec![
 			Box::new(watchman_wallet.clone()),
 			Box::new(frontier.clone()),
-			Box::new(tx_nursery.clone()),
 		];
 
 		let sync_manager = SyncManager::start(
@@ -239,7 +234,7 @@ impl Daemon {
 		let watchman_handle = watchman.start(rtmgr.clone());
 
 		Ok(Self {
-			rtmgr, sync_manager, tx_nursery, watchman_wallet, frontier, watchman_handle,
+			rtmgr, sync_manager, watchman_wallet, frontier, watchman_handle,
 		})
 	}
 
