@@ -296,11 +296,13 @@ CREATE FUNCTION public.lightning_payment_attempt_update_trigger() RETURNS trigge
 BEGIN
 	INSERT INTO lightning_payment_attempt_history (
 		id, lightning_node_id, payment_hash, amount_msat, final_amount_msat,
-		sender_mailbox_id, lightning_htlc_subscription_id, status, error,
+		sender_mailbox_id, status, error,
+		block_height, user_fee_sat,
 		created_at, updated_at
 	) VALUES (
 		OLD.id, OLD.lightning_node_id, OLD.payment_hash, OLD.amount_msat, OLD.final_amount_msat,
-		OLD.sender_mailbox_id, OLD.lightning_htlc_subscription_id, OLD.status, OLD.error,
+		OLD.sender_mailbox_id, OLD.status, OLD.error,
+		OLD.block_height, OLD.user_fee_sat,
 		OLD.created_at, OLD.updated_at
 	);
 
@@ -936,7 +938,9 @@ CREATE TABLE public.lightning_payment_attempt (
     payment_hash text NOT NULL,
     final_amount_msat bigint,
     sender_mailbox_id text,
-    lightning_htlc_subscription_id bigint
+    lightning_htlc_subscription_id bigint,
+    block_height integer,
+    user_fee_sat bigint
 );
 
 
@@ -956,7 +960,9 @@ CREATE TABLE public.lightning_payment_attempt_history (
     payment_hash text,
     final_amount_msat bigint,
     sender_mailbox_id text,
-    lightning_htlc_subscription_id bigint
+    lightning_htlc_subscription_id bigint,
+    block_height integer,
+    user_fee_sat bigint
 );
 
 
@@ -1047,7 +1053,8 @@ CREATE TABLE public.offboards (
     txid text NOT NULL,
     signed_tx bytea NOT NULL,
     wallet_commit boolean NOT NULL,
-    created_at timestamp without time zone NOT NULL
+    created_at timestamp without time zone NOT NULL,
+    user_fee_sat bigint
 );
 
 

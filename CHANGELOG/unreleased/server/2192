@@ -1,0 +1,11 @@
+- Record ark protocol fees per op at success boundaries
+  New `ark_protocol_fee_sat` counter and `ArkFeeRecorded` slog, labeled by
+  `op_type` (board, offboard, refresh, lightning_send, lightning_receive).
+  Each op records once at its success edge; the slog carries `user_fee_sat`
+  and `net_fee_sat` (equal for ops without a routing component), plus
+  `routing_fee_sat` for lightning_send. Migration V57 adds `block_height`
+  and `user_fee_sat` to `lightning_payment_attempt`, and `user_fee_sat` to
+  `offboards`. Offboard fee telemetry is recorded from `commit_offboard`
+  gated on the `wallet_commit` FALSE->TRUE transition, so a crash between
+  registration and commit still records exactly once via the retry task.
+  [#2192](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2192)

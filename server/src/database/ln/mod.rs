@@ -130,8 +130,9 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.created_at, lpa.updated_at,
-				lpa.lightning_htlc_subscription_id
+				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
+				lpa.lightning_htlc_subscription_id,
+				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.status != $1 AND lpa.status != $2 AND lpa.lightning_node_id = $3
 			ORDER BY lpa.created_at DESC;
@@ -153,8 +154,9 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.created_at, lpa.updated_at,
-				lpa.lightning_htlc_subscription_id
+				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
+				lpa.lightning_htlc_subscription_id,
+				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1 AND
 				lpa.status != $2 AND lpa.status != $3
@@ -191,8 +193,9 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.created_at, lpa.updated_at,
-				lpa.lightning_htlc_subscription_id
+				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
+				lpa.lightning_htlc_subscription_id,
+				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.lightning_htlc_subscription_id = $1 AND
 				lpa.status != $2 AND lpa.status != $3
@@ -229,6 +232,8 @@ impl<'t> Tx<'t> {
 		sender_mailbox_id: Option<&MailboxIdentifier>,
 		htlc_vtxo_ids: &[VtxoId],
 		lightning_htlc_subscription_id: Option<i64>,
+		block_height: BlockHeight,
+		user_fee: Amount,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 
@@ -257,20 +262,26 @@ impl<'t> Tx<'t> {
 				amount_msat,
 				sender_mailbox_id,
 				status,
+				block_height,
+				user_fee_sat,
 				created_at,
 				updated_at,
 				lightning_htlc_subscription_id
-			) VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8)
 			RETURNING id, updated_at;
 		").await?;
 
 		let requested_status = LightningPaymentStatus::Requested;
 		let mailbox_str = sender_mailbox_id.map(|id| id.to_string());
+		let block_height_i32 = i32::try_from(block_height)?;
+		let user_fee_sat_i64 = i64::try_from(user_fee.to_sat())?;
 		let row = self.query_one(
 			&stmt,
 			&[
 				&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64),
-				&mailbox_str, &requested_status, &lightning_htlc_subscription_id,
+				&mailbox_str, &requested_status,
+				&block_height_i32, &user_fee_sat_i64,
+				&lightning_htlc_subscription_id,
 			],
 		).await?;
 
@@ -381,8 +392,9 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.created_at, lpa.updated_at,
-				lpa.lightning_htlc_subscription_id
+				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
+				lpa.lightning_htlc_subscription_id,
+				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1
 			ORDER BY lpa.created_at DESC

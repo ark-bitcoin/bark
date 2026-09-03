@@ -9,6 +9,7 @@ use ark::fees::{
 };
 use bark_json::movements::{MovementDestination, PaymentMethod};
 use bitcoin_ext::{FeeRateExt, P2TR_DUST};
+use server_log::ArkFeeRecorded;
 use ark_testing::{TestContext, btc, is_bark_version, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::exit::complete_exit;
@@ -20,6 +21,27 @@ fn assert_eq_unordered<T: Ord + Clone + std::fmt::Debug>(a: &[T], b: &[T]) {
 	a.sort();
 	b.sort();
 	assert_eq!(a, b, "unordered comparison failed");
+}
+
+/// Wait for the next `ArkFeeRecorded` event whose op_type matches, ignoring
+/// events for other ops (a single flow may span several op types). Panics on
+/// timeout or channel close so the failure diagnostic shows what op we were
+/// waiting for.
+async fn wait_for_fee_event(
+	logs: &mut tokio::sync::mpsc::UnboundedReceiver<server_log::ArkFeeRecorded>,
+	op_type: &str,
+	deadline: Duration,
+) -> server_log::ArkFeeRecorded {
+	let start = tokio::time::Instant::now();
+	loop {
+		let remaining = deadline.checked_sub(start.elapsed()).unwrap_or(Duration::ZERO);
+		match tokio::time::timeout(remaining, logs.recv()).await {
+			Ok(Some(log)) if log.op_type == op_type => return log,
+			Ok(Some(_)) => continue,
+			Ok(None) => panic!("ArkFeeRecorded channel closed before {} event arrived", op_type),
+			Err(_) => panic!("timed out waiting for {} ArkFeeRecorded event", op_type),
+		}
+	}
 }
 
 #[tokio::test]
@@ -135,11 +157,20 @@ async fn board_fee_base_and_ppm() {
 	// Estimate before performing the operation
 	let estimate = bark.estimate_board_offchain_fee(sat(100_000)).await;
 
+	let mut fee_logs = srv.subscribe_log::<ArkFeeRecorded>();
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
 	// Fee = base(100) + 100,000 * 10,000 / 1,000,000 = 100 + 1,000 = 1,100
 	let expected_fee = sat(1_100);
 	let expected_vtxo_amount = sat(100_000) - expected_fee;
+
+	// Board emits one ArkFeeRecorded at register_board (post-confirmation);
+	// board has no routing component so user == net and routing is None.
+	let fee_log = wait_for_fee_event(&mut fee_logs, "board", Duration::from_secs(15)).await;
+	assert_eq!(fee_log.net_fee_sat, expected_fee.to_sat());
+	assert_eq!(fee_log.user_fee_sat, expected_fee.to_sat());
+	assert_eq!(fee_log.routing_fee_sat, None);
+	assert_eq!(fee_log.round_seq, None);
 
 	let vtxos = bark.vtxos().await;
 	assert_eq!(vtxos.len(), 1);
@@ -297,9 +328,26 @@ async fn refresh_fee_with_ppm_expiry() {
 	// This exceeds the 50-block threshold, so 1% ppm applies.
 	// Fee = base(200) + 100,000 * 10,000 / 1,000,000 = 200 + 1,000 = 1,200
 	let expected_fee = sat(1_200);
+
+	// Subscribe before the refresh — the board above doesn't emit a refresh
+	// slog (it's an `ArkFeeOp::Board` event), but filtering by op_type below
+	// also covers any pool-issuance fee events captaind might emit.
+	let mut fee_logs = srv.subscribe_log::<ArkFeeRecorded>();
 	ctx.refresh_all(&srv, &[&bark]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	assert_eq!(bark.spendable_balance().await, sat(100_000) - expected_fee);
+
+	// Refresh emits one ArkFeeRecorded per participation at the round's
+	// success boundary. With a single-user refresh we expect exactly one
+	// event, carrying the total fee and the round_seq for downstream joins
+	// against RoundFinished / RoundFailed.
+	let event = wait_for_fee_event(&mut fee_logs, "refresh", Duration::from_secs(15)).await;
+	assert_eq!(event.net_fee_sat, expected_fee.to_sat(),
+		"refresh event fee must match the total fee");
+	assert_eq!(event.user_fee_sat, expected_fee.to_sat());
+	assert_eq!(event.routing_fee_sat, None);
+	assert!(event.round_seq.is_some(),
+		"refresh events must carry the round_seq; got {:?}", event);
 
 	let movements = bark.history().await;
 	let refresh_mvt = movements.last().unwrap();
@@ -635,7 +683,11 @@ async fn offboard_fee_with_ppm_expiry() {
 	// Estimate before offboard
 	let estimate = bark.estimate_offboard_all(&address).await;
 
-	bark.offboard_all(&address).await;
+	let mut fee_logs = srv.subscribe_log::<ArkFeeRecorded>();
+	tokio::join!(
+		srv.trigger_round(),
+		bark.offboard_all(&address),
+	);
 
 	let movements = bark.history().await;
 	let offb_mvt = movements.last().unwrap();
@@ -645,6 +697,16 @@ async fn offboard_fee_with_ppm_expiry() {
 	assert_eq!(offb_mvt.offchain_fee, sat(10_854),
 		"offchain fee should include ppm component, got {}", offb_mvt.offchain_fee,
 	);
+
+	// Offboard emits one ArkFeeRecorded at the wallet_commit FALSE->TRUE
+	// transition inside commit_offboard; user_fee_sat is the total user
+	// fee (offchain + onchain), matching movements.offchain_fee.
+	let event = wait_for_fee_event(&mut fee_logs, "offboard", Duration::from_secs(15)).await;
+	assert_eq!(event.net_fee_sat, offb_mvt.offchain_fee.to_sat(),
+		"offboard event fee must match the total offchain fee");
+	assert_eq!(event.user_fee_sat, offb_mvt.offchain_fee.to_sat());
+	assert_eq!(event.routing_fee_sat, None);
+	assert_eq!(event.round_seq, None);
 
 	ctx.generate_blocks(1).await;
 	let received = ctx.bitcoind().get_received_by_address(&address);
@@ -786,6 +848,7 @@ async fn lightning_receive_fee_deducted() {
 	});
 
 	srv.wait_for_vtxopool(&ctx).await;
+	let mut fee_logs = srv.subscribe_log::<ArkFeeRecorded>();
 	bark.lightning_receive(&invoice_info.invoice).wait_millis(30_000).await;
 	res.ready().await.unwrap();
 
@@ -794,6 +857,16 @@ async fn lightning_receive_fee_deducted() {
 
 	// Verify balance: board amount + (pay_amount - fee)
 	assert_eq!(bark.spendable_balance().await, board_amount + pay_amount - expected_fee);
+
+	// Lightning-receive records at the claim edge; user_fee_sat is the
+	// deducted fee. Idempotency is checked by the fact that a claim retry
+	// against a Settled subscription must not emit another event (see the
+	// `first_claim` gate in claim_lightning_receive).
+	let event = wait_for_fee_event(&mut fee_logs, "lightning_receive", Duration::from_secs(15)).await;
+	assert_eq!(event.net_fee_sat, expected_fee.to_sat());
+	assert_eq!(event.user_fee_sat, expected_fee.to_sat());
+	assert_eq!(event.routing_fee_sat, None);
+	assert_eq!(event.round_seq, None);
 
 	// Verify movement
 	let movements = bark.history().await;
@@ -983,12 +1056,27 @@ async fn lightning_send_fee_ppm_expiry_table() {
 	// (not 5%).
 	// Fee = base(1,000) + ppm_expiry(2 BTC × 1%) = 1,000 + 2,000,000 = 2,001,000
 	let invoice = lightning.external.invoice(Some(pay_amount), "test_ppm_expiry", "ppm expiry test").await;
+	let mut fee_logs = srv.subscribe_log::<ArkFeeRecorded>();
 	bark.pay_lightning_wait(invoice, None).await;
 
 	let expected_fee = sat(2_001_000);
 
 	// Balance should be: board(5 BTC) - payment(2 BTC) - fee(2,001,000 sats)
 	assert_eq!(bark.spendable_balance().await, board_amount - pay_amount - expected_fee);
+
+	// Lightning-send records at the Succeeded transition. The counter's
+	// `net_fee_sat` is the net margin (`user_fee - routing_fee`); the gross
+	// components stay on the slog. Against `lightning.external` there is no
+	// routing over the network (single-hop), so routing_fee stays at 0 and
+	// net_fee_sat == user_fee_sat.
+	let event = wait_for_fee_event(&mut fee_logs, "lightning_send", Duration::from_secs(30)).await;
+	assert_eq!(event.user_fee_sat, expected_fee.to_sat(),
+		"lightning_send slog must carry the user fee");
+	assert_eq!(event.routing_fee_sat, Some(0),
+		"single-hop payment against the external node has no routing cost");
+	assert_eq!(event.net_fee_sat, expected_fee.to_sat(),
+		"net margin equals user fee when routing cost is zero");
+	assert_eq!(event.round_seq, None);
 
 	// Verify movement
 	let movements = bark.history().await;

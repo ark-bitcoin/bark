@@ -75,10 +75,13 @@ enum AdvisoryLock {
 	HtlcSettlementWrite = 2,
 }
 
-/// A stored bitcoin tx with txid pre-calculated
-pub struct StoredBitcoinTx {
+/// An uncommitted offboard fetched for the retry-task commit path. Carries
+/// `user_fee_sat` so `commit_offboard` can record fee telemetry at the same
+/// site that flips `wallet_commit` from FALSE to TRUE.
+pub struct StoredUncommittedOffboard {
 	pub txid: Txid,
 	pub tx: Transaction,
+	pub user_fee_sat: Option<u64>,
 }
 
 /// A stored mailbox entry.
@@ -880,6 +883,7 @@ impl<'t> Tx<'t> {
 		input_vtxos: &[&'a Vtxo<Full, P>],
 		offboard_tx: &Transaction,
 		forfeit_result: &OffboardForfeitResult,
+		user_fee_sat: u64,
 	) -> anyhow::Result<()>
 	where
 		P: ark::vtxo::Policy,
@@ -887,12 +891,13 @@ impl<'t> Tx<'t> {
 		let offboard_txid = offboard_tx.compute_txid();
 		let offboard_txid_str = offboard_txid.to_string();
 		let offboard_tx_bytes = bitcoin::consensus::serialize(offboard_tx);
+		let user_fee_sat_i64 = i64::try_from(user_fee_sat)?;
 
 		let stmt = self.prepare_typed(
-			"INSERT INTO offboards (txid, signed_tx, wallet_commit, created_at)
-			VALUES ($1, $2, FALSE, NOW());",
-			&[Type::TEXT, Type::BYTEA]).await?;
-		self.execute(&stmt, &[&offboard_txid_str, &offboard_tx_bytes]).await?;
+			"INSERT INTO offboards (txid, signed_tx, wallet_commit, created_at, user_fee_sat)
+			VALUES ($1, $2, FALSE, NOW(), $3);",
+			&[Type::TEXT, Type::BYTEA, Type::INT8]).await?;
+		self.execute(&stmt, &[&offboard_txid_str, &offboard_tx_bytes, &user_fee_sat_i64]).await?;
 
 		// update the virtual tx tree
 		let connector_txs = forfeit_result.connector_tx.iter().cloned();
@@ -921,27 +926,42 @@ impl<'t> Tx<'t> {
 		Ok(())
 	}
 
-	pub async fn mark_offboard_committed(&self, offboard_txid: Txid) -> anyhow::Result<()> {
+	/// Flip `wallet_commit` from FALSE to TRUE for the given offboard.
+	/// Returns whether this call actually did the transition (`true`) or
+	/// found the row already committed (`false`). Errors if the row is
+	/// missing. The conditional UPDATE lets callers hang fee telemetry off
+	/// the returned bool for exactly-once recording under retry.
+	pub async fn mark_offboard_committed(&self, offboard_txid: Txid) -> anyhow::Result<bool> {
+		// `before` snapshots the pre-UPDATE `wallet_commit` in the same
+		// snapshot as the conditional UPDATE, so one round-trip
+		// distinguishes "not found" (no row) from "already committed"
+		// (row with was_committed = TRUE).
 		let stmt = self.prepare_typed(
-			"UPDATE offboards SET wallet_commit = TRUE WHERE txid = $1;",
+			"WITH before AS (SELECT wallet_commit FROM offboards WHERE txid = $1),
+			     upd AS (
+			         UPDATE offboards SET wallet_commit = TRUE
+			         WHERE txid = $1 AND wallet_commit = FALSE
+			     )
+			SELECT wallet_commit AS was_committed FROM before;",
 			&[Type::TEXT],
 		).await?;
-		ensure!(self.execute(&stmt, &[&offboard_txid.to_string()]).await? > 0,
-			"no offboard with txid {}", offboard_txid,
-		);
-		Ok(())
+		let row = self.query_opt(&stmt, &[&offboard_txid.to_string()]).await?;
+		ensure!(row.is_some(), "no offboard with txid {}", offboard_txid);
+		Ok(!row.unwrap().get::<_, bool>("was_committed"))
 	}
 
-	pub async fn get_uncommitted_offboards(&self) -> anyhow::Result<Vec<StoredBitcoinTx>> {
+	pub async fn get_uncommitted_offboards(&self) -> anyhow::Result<Vec<StoredUncommittedOffboard>> {
 		let stmt = self.prepare_typed(
-			"SELECT txid, signed_tx FROM offboards WHERE wallet_commit IS FALSE;", &[],
+			"SELECT txid, signed_tx, user_fee_sat FROM offboards WHERE wallet_commit IS FALSE;", &[],
 		).await?;
 		let rows = self.query(&stmt, &[]).await?;
 		let mut ret = Vec::with_capacity(rows.len());
 		for row in rows {
-			ret.push(StoredBitcoinTx {
+			ret.push(StoredUncommittedOffboard {
 				txid: row.get::<_, &str>("txid").parse().expect("corrupt db: invalid txid"),
 				tx: deserialize(row.get("signed_tx")).expect("corrupt db: invalid tx"),
+				user_fee_sat: row.get::<_, Option<i64>>("user_fee_sat")
+					.map(|v| u64::try_from(v).expect("negative user_fee_sat in offboards row")),
 			});
 		}
 		Ok(ret)

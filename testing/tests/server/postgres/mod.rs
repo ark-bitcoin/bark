@@ -618,7 +618,7 @@ async fn postgres_offboards() {
 		connector_tx: None,
 		connector_vtxos: vec![],
 	};
-	db.write(async |t| t.register_offboard(&[&vtxo], &offboard_tx, &forfeit_result).await).await.unwrap();
+	db.write(async |t| t.register_offboard(&[&vtxo], &offboard_tx, &forfeit_result, 0).await).await.unwrap();
 
 	let uncommitted = db.read(async |t| t.get_uncommitted_offboards().await).await.unwrap();
 	assert_eq!(uncommitted.len(), 1, "one uncommitted offboard");
@@ -632,7 +632,7 @@ async fn postgres_offboards() {
 		connector_tx: None,
 		connector_vtxos: vec![],
 	};
-	let result = db.write(async |t| t.register_offboard(&[&vtxo], &offboard_tx2, &forfeit_result2).await).await;
+	let result = db.write(async |t| t.register_offboard(&[&vtxo], &offboard_tx2, &forfeit_result2, 0).await).await;
 	assert!(result.is_err(), "double-offboard should fail");
 
 	// Commit the offboard
@@ -1564,7 +1564,9 @@ async fn lightning_payment_attempt_lifecycle() {
 	).await).await.unwrap().is_none());
 
 	// Start a payment
-	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(2), None, &[], None).await).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_start(
+		node_id, &invoice, sat(2), None, &[], None, 1, sat(1),
+	).await).await.unwrap();
 
 	// One open attempt
 	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
@@ -1610,7 +1612,9 @@ async fn lightning_payment_attempt_with_error() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11);
 
-	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(1), None, &[], None).await).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_start(
+		node_id, &invoice, sat(1), None, &[], None, 1, sat(1)
+	).await).await.unwrap();
 
 	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
 	assert_eq!(attempts.len(), 1);
@@ -1644,7 +1648,9 @@ async fn lightning_payment_attempt_result_update() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
-	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(1000), None, &[], None).await).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_start(
+		node_id, &invoice, sat(1000), None, &[], None, 1, sat(1),
+	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
 		(&bolt11).into()
@@ -1690,7 +1696,7 @@ async fn mark_htlc_send_vtxos_ln_spent_for_settled_attempt() {
 
 	// Open attempt linked to the HTLC-send vtxo.
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(2), None, &[vtxo.id()], None,
+		node_id, &invoice, sat(2), None, &[vtxo.id()], None, 1, sat(1),
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1713,6 +1719,51 @@ async fn mark_htlc_send_vtxos_ln_spent_for_settled_attempt() {
 	let spend_state: String = row.get("spend_state");
 	assert_eq!(spend_state, "ln-spent",
 		"HTLC-send vtxo should be ln-spent for a settled payment attempt");
+}
+
+/// `store_lightning_payment_start` must persist `block_height` and
+/// `user_fee`. If these break, the lightning-send fee counter stops
+/// recording.
+#[tokio::test]
+async fn lightning_payment_attempt_stores_protocol_fee() {
+	let mut ctx = TestContext::new_minimal("postgresd/lightning_payment_attempt_stores_protocol_fee").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+
+	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
+	let invoice = Invoice::Bolt11(bolt11.clone());
+
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.arkoor_htlc_out_vtxo.clone());
+	db.write(async |t| t.upsert_vtxos([vtxo.clone()]).await).await.unwrap();
+
+	let expected_block_height: u32 = 850_000;
+	let expected_user_fee = sat(1_234);
+	db.write(async |t| t.store_lightning_payment_start(
+		node_id, &invoice, sat(50_000), None, &[vtxo.id()],
+		None, expected_block_height, expected_user_fee,
+	).await).await.unwrap();
+
+	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
+		(&bolt11).into()
+	).await).await.unwrap().expect("attempt present");
+	assert_eq!(attempt.block_height, Some(expected_block_height),
+		"block_height must round-trip through the INSERT + SELECT");
+	assert_eq!(attempt.user_fee, Some(expected_user_fee),
+		"user_fee must round-trip through the INSERT + SELECT");
+
+	// `get_latest_payment_attempt_by_payment_hash` is the read path used by
+	// the success-recording site, so verify it carries the values too.
+	let latest = db.read(async |t| t.get_latest_payment_attempt_by_payment_hash(
+		(&bolt11).into()
+	).await).await.unwrap().expect("latest attempt present");
+	assert_eq!(latest.block_height, Some(expected_block_height));
+	assert_eq!(latest.user_fee, Some(expected_user_fee));
 }
 
 #[tokio::test]

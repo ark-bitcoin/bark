@@ -1,11 +1,14 @@
 use anyhow::Context;
 use tokio::sync::broadcast;
 use tracing::{trace, warn};
+
 use ark::lightning::{PaymentHash, Preimage};
 
 use crate::database;
 use crate::database::ln::{LightningPaymentAttempt, LightningPaymentStatus};
 use crate::ln::settler::HtlcSettler;
+use crate::telemetry;
+
 
 /// Borrows the DB, mailbox manager, and payment update broadcast channel
 /// so that every payment-attempt status change is consistently followed by
@@ -110,6 +113,17 @@ impl<'a> PaymentAttemptHandler<'a> {
 
 			if status.is_final() {
 				self.post_lightning_send_finished(attempt.payment_hash, preimage).await;
+			}
+
+			// Record the fee only on the caller that actually transitioned
+			// the row to Succeeded (idempotent via `updated`). Failed
+			// attempts revoke without paying, so no recording. Pre-V56
+			// rows have no stored fee and are silently skipped.
+			if status == LightningPaymentStatus::Succeeded {
+				if let Some(user_fee) = attempt.user_fee {
+					let routing_fee_sat = attempt.routing_fee_sat_from(final_amount_msat);
+					telemetry::record_ark_fee_lightning_send(user_fee.to_sat(), routing_fee_sat);
+				}
 			}
 		}
 

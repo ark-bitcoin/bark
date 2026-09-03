@@ -37,7 +37,7 @@ use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
 use crate::error::ContextExt;
-use crate::{check_max_amount, Server, CAPTAIND_API_KEY};
+use crate::{check_max_amount, telemetry, Server, CAPTAIND_API_KEY};
 
 
 
@@ -318,14 +318,14 @@ impl Server {
 		let tip = self.sync_manager.chain_tip();
 		let vtxo_fee_infos = vtxos.iter()
 			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip.height));
-		let fee = self.config.fees.lightning_send.calculate(payment_amount, vtxo_fee_infos)
+		let user_fee = self.config.fees.lightning_send.calculate(payment_amount, vtxo_fee_infos)
 			.context("fee overflowed")?;
-		let amount_with_fee = payment_amount.checked_add(fee).context("validation overflow")?;
+		let amount_with_fee = payment_amount.checked_add(user_fee).context("validation overflow")?;
 
 		// the max routing fee is the configured fraction of our own fee,
 		// plus whatever additional the user pays
 		let max_routing_fee = if let Some(extra) = htlc_vtxo_sum.checked_sub(amount_with_fee) {
-			fee.to_sat()
+			user_fee.to_sat()
 				.checked_mul(self.config.ln_max_fee_ppm as u64)
 				.map(|n| Amount::from_sat(n / 1_000_000))
 				.and_then(|f| f.checked_add(extra))
@@ -333,9 +333,13 @@ impl Server {
 		} else {
 			return badarg!(
 				"HTLC VTXO sum of {} is less than the payment amount of {} plus fees of {}",
-				htlc_vtxo_sum, payment_amount, fee,
+				htlc_vtxo_sum, payment_amount, user_fee,
 			);
 		};
+
+		// Chain tip + user fee are stored on the attempt so the Succeeded
+		// transition can record the fee without recomputing.
+		let attempt_block_height = tip.height;
 
 		// Spawn a task that performs the payment, keep the difference between the payment amount
 		// and the VTXO sum as a fee.
@@ -346,7 +350,8 @@ impl Server {
 			min_expiry_height,
 			mailbox_id,
 			htlc_vtxo_ids,
-			fee,
+			user_fee,
+			attempt_block_height,
 		).await?;
 
 		Ok(())
@@ -890,6 +895,8 @@ impl Server {
 			LightningHtlcSubscriptionStatus::Settled => {},
 			_ => return badarg!("payment status in incorrect state: {}", sub.status),
 		}
+		// Only the first claim records the fee; Settled-replay must not.
+		let first_claim = sub.status == LightningHtlcSubscriptionStatus::HtlcsReady;
 		if sub.htlc_vtxos.is_empty() {
 			error!("htlc subscription without htlcs: {}", payment_hash);
 			bail!("internal error: no HTLC VTXOs found");
@@ -949,8 +956,14 @@ impl Server {
 			amount: sub.amount(),
 			policy: vtxo_policy,
 		};
+
 		slog!(LightningReceiveClaimed, payment_hash, vtxo_request,
 			amount: sub.amount());
+		if first_claim {
+			let user_fee = self.config.fees.lightning_receive.calculate(sub.amount())
+				.context("fee overflowed")?;
+			telemetry::record_ark_fee(telemetry::ArkFeeOp::LightningReceive, user_fee.to_sat(), None);
+		}
 
 		Ok(builder.cosign_response())
 	}

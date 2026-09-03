@@ -7,15 +7,17 @@ use log::{error, warn};
 use parking_lot::Mutex;
 use bitcoincore_rpc::RpcApi;
 
+use ark::fees::{BoardFees, PpmFeeRate};
 use bark_json::primitives::VtxoStateInfo;
+use bitcoin::Amount;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoin_ext::TxStatus;
 use server::config::OptionalService;
 use server::database::Db;
 use server::vtxopool::VtxoTarget;
 use server_log::{
-	ClaimBroadcast, ClaimBroadcastFailure, ClaimChunkBroadcastFailure, ProgressBroadcast,
-	ProgressCpfpFailure,
+	ArkFeeRecorded, ClaimBroadcast, ClaimBroadcastFailure, ClaimChunkBroadcastFailure,
+	ProgressBroadcast, ProgressCpfpFailure,
 };
 
 use ark_testing::{TestContext, btc, require_bark_version, sat};
@@ -98,6 +100,53 @@ async fn watchman_sweeps_boards() {
 	// rounds didnt' expire yet
 	assert_eq!(100_000, msg.total_input_value.to_sat());
 	assert_eq!(99_093, msg.total_output_value.to_sat());
+}
+
+/// End-to-end check that `ArkFeeRecorded` fires from `record_ark_fee` on a
+/// real board flow. Configures non-zero board fees so the assertion
+/// exercises the recording wiring and not just `0 == 0`.
+///
+/// NB: the slog fires from `register_board` (post-confirmation), not from
+/// `cosign_board`, so the test must confirm + register the board.
+#[tokio::test]
+async fn ark_fee_recorded_slog_on_board() {
+	// Sized so that base + ppm are both non-trivial:
+	//   base_fee = 100 sat, ppm = 1000 (0.1%)
+	//   for amount = 100_000 sat -> 100 + 100 = 200 sat
+	let board_fees = BoardFees {
+		min_fee: Amount::ZERO,
+		base_fee: Amount::from_sat(100),
+		ppm: PpmFeeRate(1000),
+	};
+	let board_amount = sat(100_000);
+	let expected_fee = board_fees.calculate(board_amount)
+		.expect("BoardFees::calculate should not overflow on test inputs");
+
+	let ctx = TestContext::new("server/ark_fee_recorded_slog_on_board").await;
+	let cfg_board_fees = board_fees.clone();
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(move |cfg| {
+		cfg.watchman = OptionalService::Disabled;
+		cfg.vtxopool.vtxo_targets = vec![];
+		cfg.fees.board = cfg_board_fees.clone();
+	}).create().await;
+	let _wm = ctx.watchmand("watchman").create(&srv).await;
+
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	let mut fee_logs = srv.subscribe_log::<ArkFeeRecorded>();
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	let fee = fee_logs.recv().wait_millis(15_000).await
+		.expect("no ArkFeeRecorded slog received from board");
+	assert_eq!(fee.op_type, "board", "board should record op_type=board");
+	assert_eq!(fee.net_fee_sat, expected_fee.to_sat(),
+		"recorded board fee should match BoardFees::calculate for the boarded amount");
+	assert_eq!(fee.user_fee_sat, expected_fee.to_sat(),
+		"board has no routing component so user_fee == net_fee");
+	assert_eq!(fee.routing_fee_sat, None,
+		"board has no routing component");
+	assert_eq!(fee.round_seq, None,
+		"board does not run through a round");
 }
 
 #[tokio::test]

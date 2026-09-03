@@ -124,7 +124,7 @@ impl Server {
 					Ok(txs) => {
 						let mut guard = self.rounds_wallet.lock().await;
 						for tx in txs {
-							if let Err(e) = self.commit_offboard(&mut guard, &tx.tx, tx.txid).await {
+							if let Err(e) = self.commit_offboard(&mut guard, &tx.tx, tx.txid, tx.user_fee_sat).await {
 								warn!("Failed to commit pending offboard {}: {:#}", tx.txid, e);
 							}
 						}
@@ -379,20 +379,35 @@ impl Server {
 		Ok(Some(resp))
 	}
 
-	/// Commit the offboard with the wallet, broadcast it and mark committed in db.
+	/// Commit the offboard with the wallet, broadcast it and mark committed
+	/// in db. Records offboard volume and fee telemetry once, on the
+	/// `wallet_commit` FALSE→TRUE transition returned by
+	/// [`mark_offboard_committed`], so retries (finish-then-crash into
+	/// retry-task) don't double-count. `user_fee_sat` is `None` only for
+	/// pre-V58 offboards; those skip fee telemetry.
 	async fn commit_offboard(
 		&self,
 		wallet: &mut PersistedWallet,
 		offboard_tx: &Transaction,
 		offboard_txid: Txid,
+		user_fee_sat: Option<u64>,
 	) -> anyhow::Result<()> {
 		wallet.commit_tx(offboard_tx);
 		wallet.persist().await
 			.context("persisting wallet")?;
 		self.tx_nursery.broadcast_tx(offboard_tx.clone(), self.nursery_confirm_target()).await
 			.context("broadcasting tx")?;
-		self.db.write(async |t| t.mark_offboard_committed(offboard_txid).await).await
+		let newly_committed = self.db.write(async |t| t.mark_offboard_committed(offboard_txid).await).await
 			.context("marking offboard committed")?;
+		if newly_committed {
+			let offboard_volume = offboard_tx.output[0].value.to_sat();
+			crate::telemetry::add_offboard(offboard_volume);
+			if let Some(user_fee_sat) = user_fee_sat {
+				crate::telemetry::record_ark_fee(
+					crate::telemetry::ArkFeeOp::Offboard, user_fee_sat, None,
+				);
+			}
+		}
 		Ok(())
 	}
 
@@ -473,18 +488,20 @@ impl Server {
 		// now we will first persist this offboard in our db, then commit and
 		// broadcast the tx and then mark the offboard as committed
 
+		let user_fee = Amount::try_from(
+			state.server_fee
+				+ SignedAmount::try_from(onchain_fee).expect("onchain fee can't overflow")
+		).expect("always positive");
 		slog!(SignedOffboard, offboard_txid, input_vtxos: input_vtxos.to_vec(),
 			wallet_utxos: state.wallet_input_guard.utxos().to_vec(), onchain_fee,
 			amount: state.request.net_amount, fee: state.server_fee,
-			user_fee: Amount::try_from(
-				state.server_fee
-					+ SignedAmount::try_from(onchain_fee).expect("onchain fee can't overflow")
-			).expect("always positive"),
+			user_fee,
 		);
 
 		// nb catch the error and don't return it, as it might contain the signed offboard tx
 		let vtxo_refs = vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
-		if let Err(e) = self.db.write(async |t| t.register_offboard(&vtxo_refs, &signed_tx, &forfeit_txs).await).await {
+		let user_fee_sat = user_fee.to_sat();
+		if let Err(e) = self.db.write(async |t| t.register_offboard(&vtxo_refs, &signed_tx, &forfeit_txs, user_fee_sat).await).await {
 			error!("Failed to register offboard {} in db: {:#}", offboard_txid, e);
 			bail!("failed to register offboard in db, please start over");
 		}
@@ -506,14 +523,11 @@ impl Server {
 			}
 		}
 
-		// The on-chain payout is the first output (set in prepare_offboard via
-		// b.add_recipient(request.script_pubkey, net_amount)). Output 1 is the
-		// connector; later outputs are bdk-added change to the rounds wallet.
-		// Using inputs would also count forfeit fees and connector dust.
-		let offboard_volume = signed_tx.output[0].value.to_sat();
-		crate::telemetry::add_offboard(offboard_volume);
-
-		if let Err(e) = self.commit_offboard(&mut wallet_guard, &signed_tx, offboard_txid).await {
+		// Volume + fee telemetry live inside commit_offboard, gated on the
+		// wallet_commit FALSE->TRUE transition. If we crash between
+		// register_offboard and mark_offboard_committed here, the retry task
+		// picks it up and records exactly once via the same transition.
+		if let Err(e) = self.commit_offboard(&mut wallet_guard, &signed_tx, offboard_txid, Some(user_fee_sat)).await {
 			// we will later retry
 			slog!(CommitOffboardFailed, offboard_txid, error: format!("{:#}", e),
 				input_vtxos: input_vtxos.to_vec(),
