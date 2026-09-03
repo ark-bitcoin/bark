@@ -245,7 +245,12 @@ pub(crate) async fn start_arkoor_send(
 	wallet.inner.db.store_vtxo_key(change_key_index, change_keypair.public_key()).await
 		.context("failed to store arkoor change keypair")?;
 
-	let inputs = wallet.select_any_vtxos_to_cover(amount).await?;
+	// The server refuses expired vtxos as arkoor inputs; they have to wait
+	// for a refresh.
+	let tip = wallet.inner.chain.tip().await?;
+	let inputs = wallet.spend_input_selection().await?
+		.expires_after(tip)
+		.select(wallet.spendable_vtxos().await?, amount)?;
 	let input_vtxo_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 
 	let total_input = inputs.iter().map(|v| v.amount()).sum::<Amount>();
