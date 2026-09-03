@@ -14,6 +14,7 @@ pub mod data_migrations;
 pub mod watchman;
 pub mod intman;
 pub mod ln;
+pub mod nursery;
 pub mod rounds;
 pub mod tree;
 pub mod vtxopool;
@@ -984,54 +985,6 @@ impl<'t> Tx<'t> {
 		}
 
 		Ok(ret)
-	}
-
-	// ***********
-	// * TXINDEX *
-	// ***********
-
-	/// Adds a [bitcoin::Transaction] to the database
-	/// that can be queried by [bitcoin::Txid].
-	pub async fn upsert_bitcoin_transaction(
-		&self,
-		txid: Txid,
-		tx: &Transaction
-	) -> anyhow::Result<()> {
-		let statement = self.prepare_typed(
-			"INSERT INTO bitcoin_transaction
-				(txid, tx, created_at)
-			VALUES
-				($1, $2, NOW())
-			ON CONFLICT DO NOTHING"
-			, &[Type::TEXT, Type::BYTEA]).await?;
-
-		// Prepare the data
-
-		self.execute(
-			&statement,
-			&[&txid.to_string(), &serialize(&tx)]
-		).await?;
-
-		Ok(())
-	}
-
-	pub async fn get_bitcoin_transaction_by_id(
-		&self,
-		txid: Txid,
-	) -> anyhow::Result<Option<Transaction>> {
-		let statement = self.prepare(
-			"SELECT tx FROM bitcoin_transaction WHERE txid = $1",
-		).await?;
-
-		match self.query_opt(&statement, &[&txid.to_string()]).await? {
-			Some(row) => {
-				let tx_bytes: &[u8] = row.get("tx");
-				let tx = deserialize(tx_bytes)
-					.expect("Corrupt transaction in database");
-				Ok(Some(tx))
-			},
-			None => Ok(None)
-		}
 	}
 
 	// ********************

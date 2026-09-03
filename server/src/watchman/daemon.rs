@@ -26,8 +26,7 @@ use crate::config::watchmand::Config;
 use crate::database::{self, BlockTable};
 use crate::sync::{ChainEventListener, SyncManager};
 use crate::system::RuntimeManager;
-use crate::txindex::TxIndex;
-use crate::txindex::broadcast::TxNursery;
+use crate::nursery::TxNursery;
 use crate::utils::InstrumentedLock;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 use crate::ln::settler::HtlcSettler;
@@ -43,7 +42,6 @@ pub struct Daemon {
 	rtmgr: RuntimeManager,
 	#[allow(unused)]
 	sync_manager: SyncManager,
-	pub txindex: TxIndex,
 	pub tx_nursery: TxNursery,
 	#[allow(unused)]
 	watchman_wallet: InstrumentedLock<PersistedWallet>,
@@ -155,20 +153,7 @@ impl Daemon {
 		let _startup_worker = rtmgr.spawn("Bootstrapping");
 		rtmgr.run_shutdown_signal_listener(Duration::from_secs(60));
 
-		let txindex = TxIndex::start(
-			deep_tip,
-			rtmgr.clone(),
-			bitcoind.clone(),
-			cfg.txindex_check_interval,
-			db.clone(),
-		);
-
-		let tx_nursery = TxNursery::start(
-			rtmgr.clone(),
-			txindex.clone(),
-			bitcoind.clone(),
-			cfg.transaction_rebroadcast_interval,
-		);
+		let tx_nursery = TxNursery::new(db.clone(), bitcoind.clone());
 
 		let fee_estimator = fee_estimator::start(
 			rtmgr.clone(),
@@ -200,6 +185,7 @@ impl Daemon {
 		let listeners: Vec<Box<dyn ChainEventListener>> = vec![
 			Box::new(watchman_wallet.clone()),
 			Box::new(frontier.clone()),
+			Box::new(tx_nursery.clone()),
 		];
 
 		let sync_manager = SyncManager::start(
@@ -253,7 +239,7 @@ impl Daemon {
 		let watchman_handle = watchman.start(rtmgr.clone());
 
 		Ok(Self {
-			rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet, frontier, watchman_handle,
+			rtmgr, sync_manager, tx_nursery, watchman_wallet, frontier, watchman_handle,
 		})
 	}
 

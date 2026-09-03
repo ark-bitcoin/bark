@@ -379,7 +379,7 @@ impl TestContext {
 			max_vtxo_exit_depth: 50,
 			max_arkoor_fanout: 4,
 			rpc_rich_errors: true,
-			txindex_check_interval: Duration::from_millis(500),
+			nursery_confirm_target_blocks: 6,
 			sync_manager_block_poll_interval: Duration::from_millis(100),
 			handshake_psa: None,
 			tos_link: None,
@@ -418,7 +418,6 @@ impl TestContext {
 				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_u32(5),
 				max_fee_rate: None,
 			},
-			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			rpc: server::config::Rpc {
 				// these will be overwritten on start, but can't be empty
 				public_address: SocketAddr::from_str("127.0.0.1:3535").unwrap(),
@@ -511,7 +510,6 @@ impl TestContext {
 			data_dir: data_dir.clone(),
 			network: Network::Regtest,
 			min_trusted_confs: 1,
-			txindex_check_interval: Duration::from_millis(500),
 			sync_manager_block_poll_interval: Duration::from_millis(100),
 			otel_collector_endpoint: None,
 			otel_tracing_sampler: Some(1f64),
@@ -524,7 +522,6 @@ impl TestContext {
 				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_u32(5),
 				max_fee_rate: None,
 			},
-			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			bitcoind: server::config::Bitcoind {
 				url: bitcoind.rpc_url(),
 				cookie: Some(bitcoind.rpc_cookie()),

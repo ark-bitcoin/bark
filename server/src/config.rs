@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 
 use ark::fees::FeeSchedule;
-use bitcoin_ext::BlockDelta;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 use cln_rpc::node_client::NodeClient;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 
@@ -367,10 +367,6 @@ pub struct Config {
 	/// Whether or not to add full error information to RPC internal errors.
 	pub rpc_rich_errors: bool,
 
-	/// The interval at which the txindex checks tx statuses.
-	#[serde(with = "utils::serde::duration")]
-	pub txindex_check_interval: Duration,
-
 	/// The interval at which the SyncManager polls for new blocks.
 	#[serde(with = "utils::serde::duration")]
 	pub sync_manager_block_poll_interval: Duration,
@@ -402,9 +398,11 @@ pub struct Config {
 	/// Config for the FeeEstimator process.
 	pub fee_estimator: fee_estimator::Config,
 
-	// The interval used to rebroadcast transactions
-	#[serde(with = "utils::serde::duration")]
-	pub transaction_rebroadcast_interval: Duration,
+	/// The number of blocks within which a tx broadcast via the TxNursery
+	/// is expected to confirm. When the target passes without a
+	/// confirmation, the operator is warned on every new block until
+	/// they intervene.
+	pub nursery_confirm_target_blocks: BlockHeight,
 
 	pub rpc: Rpc,
 	pub postgres: Postgres,
@@ -654,10 +652,6 @@ pub mod watchmand {
 		pub data_dir: PathBuf,
 		pub network: bitcoin::Network,
 
-		/// The interval at which the txindex checks tx statuses.
-		#[serde(with = "utils::serde::duration")]
-		pub txindex_check_interval: Duration,
-
 		/// The interval at which the SyncManager polls for new blocks.
 		#[serde(with = "utils::serde::duration")]
 		pub sync_manager_block_poll_interval: Duration,
@@ -673,10 +667,6 @@ pub mod watchmand {
 		pub watchman: crate::watchman::Config,
 		/// Config for the FeeEstimator process.
 		pub fee_estimator: fee_estimator::Config,
-
-		// The interval used to rebroadcast transactions
-		#[serde(with = "utils::serde::duration")]
-		pub transaction_rebroadcast_interval: Duration,
 
 		/// The interval at which the HtlcSettler polls for cross-process settlements.
 		#[serde(with = "utils::serde::duration")]

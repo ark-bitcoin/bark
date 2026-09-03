@@ -602,6 +602,18 @@ service BanAdminService {
 	rpc ListBannedVtxos(core.Empty) returns (ListBannedVtxosResponse) {}
 }
 
+service NurseryAdminService {
+	// Abandon a nursery tx that can no longer make it onchain.
+	//
+	// The nursery stops following up on the tx and stops emitting the
+	// missed-target warning for it.
+	rpc Abandon(AbandonRequest) returns (core.Empty) {}
+}
+
+message AbandonRequest {
+	string txid = 1;
+}
+
 message BanVtxoRequest {
 	bytes vtxo_id = 1;
 	uint32 ban_blocks = 2;

@@ -389,7 +389,7 @@ impl Server {
 		wallet.commit_tx(offboard_tx);
 		wallet.persist().await
 			.context("persisting wallet")?;
-		self.tx_nursery.broadcast_tx(offboard_tx.clone()).await
+		self.tx_nursery.broadcast_tx(offboard_tx.clone(), self.nursery_confirm_target()).await
 			.context("broadcasting tx")?;
 		self.db.write(async |t| t.mark_offboard_committed(offboard_txid).await).await
 			.context("marking offboard committed")?;

@@ -1143,7 +1143,8 @@ impl SigningVtxoTree {
 		}
 
 		// Broadcast the transaction.
-		if let Err(e) = srv.tx_nursery.broadcast_tx(signed_round_tx.tx).await {
+		let confirm_target = srv.nursery_confirm_target();
+		if let Err(e) = srv.tx_nursery.broadcast_tx(signed_round_tx.tx, confirm_target).await {
 			warn!("Failed to broadcast round tx: {:?}", e);
 		}
 
