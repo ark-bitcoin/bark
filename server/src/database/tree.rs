@@ -523,12 +523,15 @@ async fn upsert_virtual_transactions(
 		signed_txs.push(vtx.signed_tx().map(bitcoin::consensus::serialize));
 		is_funding.push(vtx.is_funding);
 	}
+	// The ORDER BY makes concurrent upserts of overlapping txid sets take
+	// their row locks in the same order, so they can't deadlock.
 	tx.execute("
 		INSERT INTO virtual_transaction
 			(txid, signed_tx, is_funding, created_at, updated_at)
 		SELECT txid, signed_tx, is_funding, NOW(), NOW()
 		FROM UNNEST($1::text[], $2::bytea[], $3::bool[])
 			AS u(txid, signed_tx, is_funding)
+		ORDER BY txid
 		ON CONFLICT (txid) DO UPDATE SET
 			signed_tx = COALESCE(virtual_transaction.signed_tx, EXCLUDED.signed_tx),
 			updated_at = NOW()
