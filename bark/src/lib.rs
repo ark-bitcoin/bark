@@ -415,6 +415,7 @@ pub use self::config::{BarkNetwork, Config};
 pub use self::daemon::{tip_watcher, DaemonHandle};
 pub use self::fees::FeeEstimate;
 pub use self::notification::{WalletNotification, NotificationStream};
+pub use self::recovery::{RecoveryReport, RecoveryReportEntry, RecoveryStatus};
 pub use self::vtxo::WalletVtxo;
 
 use std::borrow::Cow;
@@ -453,7 +454,6 @@ use crate::persist::BarkPersister;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 #[cfg(feature = "socks5-proxy")]
 use crate::proxy::proxy_for_url;
-use crate::recovery::RecoveryReport;
 use crate::round::{RoundParticipation, RoundSecretNonces, RoundStatus};
 use crate::subsystem::RoundMovement;
 use crate::utils::rejected_vtxos_from_error;
@@ -781,10 +781,13 @@ pub struct OpenWalletArgs {
 	/// Default: false
 	pub skip_recovery: bool,
 
-	/// A callback function to be called when the recovery is finished
+	/// A callback function to be called with the outcome of the recovery scan.
+	///
+	/// Called exactly once per successful open, including when no scan ran, so
+	/// the absence of a call never has to be interpreted.
 	///
 	/// Default: none
-	pub on_recovery_finished: Option<Box<dyn FnOnce(RecoveryReport) + Send + Sync>>,
+	pub on_recovery_finished: Option<Box<dyn FnOnce(RecoveryStatus) + Send + Sync>>,
 }
 
 impl Default for OpenWalletArgs {
@@ -1323,31 +1326,34 @@ impl Wallet {
 		ret.inner.exit.load().await
 			.context("error loading exit system after opening wallet")?;
 
-		if created_now {
-			if !args.skip_recovery {
-				// Recover any VTXOs backed up to the seed-derived recovery mailbox.
-				// Best-effort so it can't abort wallet creation, but a failure means
-				// funds may be missing — surface it loudly. Partial failures are
-				// logged inside the recovery call.
-				match ret.recover_from_mailbox().await {
-					Ok(report) => {
-						if let Some(callback) = args.on_recovery_finished {
-							callback(report);
-						}
-					},
-					Err(e) => {
-						error!("VTXO recovery from the recovery mailbox failed; funds may be \
-							missing from this wallet until recovery succeeds: {:#}", e);
-					},
-				}
-			} else {
-				info!("Seed-based wallet recovery explicitly skipped");
+		let recovery = if !created_now {
+			RecoveryStatus::NotRun
+		} else if args.skip_recovery {
+			info!("Seed-based wallet recovery explicitly skipped");
+			RecoveryStatus::NotRun
+		} else {
+			// Recover any VTXOs backed up to the seed-derived recovery mailbox.
+			// Best-effort so it can't abort wallet creation, but a failure means
+			// funds may be missing — surface it loudly. Partial failures are
+			// logged inside the recovery call.
+			match ret.recover_from_mailbox().await {
+				Ok(report) => RecoveryStatus::Completed(report),
+				Err(e) => {
+					error!("VTXO recovery from the recovery mailbox failed; funds may be \
+						missing from this wallet until recovery succeeds: {:#}", e);
+					RecoveryStatus::Failed(e)
+				},
 			}
-		}
+		};
 
 		if args.run_daemon {
 			ret.start_daemon()
 				.context("failed to start daemon after opening wallet")?;
+		}
+
+		// Last, so the callback only ever fires for an open that returns a wallet.
+		if let Some(callback) = args.on_recovery_finished {
+			callback(recovery);
 		}
 
 		Ok(ret)

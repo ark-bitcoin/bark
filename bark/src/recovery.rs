@@ -140,6 +140,24 @@ impl RecoveryReport {
 	}
 }
 
+/// Outcome of the recovery scan on wallet open.
+///
+/// [`crate::OpenWalletArgs::on_recovery_finished`] is called exactly once per
+/// successful open, with one of these. A caller never has to read meaning into
+/// the callback staying silent: not running and failing are both stated.
+#[derive(Debug)]
+pub enum RecoveryStatus {
+	/// No scan was attempted: the wallet already existed, or the caller set
+	/// [`crate::OpenWalletArgs::skip_recovery`].
+	NotRun,
+	/// The scan errored before it could produce a report. Nothing is known about
+	/// the mailbox's VTXOs, so funds may be missing until a retry succeeds.
+	Failed(anyhow::Error),
+	/// The scan ran to the end. Check [`RecoveryReport::is_complete`]: a finished
+	/// scan can still leave individual VTXOs unaccounted for.
+	Completed(RecoveryReport),
+}
+
 /// A recovered VTXO paired with the key that proves we own it.
 ///
 /// The pairing invariant — `keypair` is `vtxo`'s owner key — is enforced by
