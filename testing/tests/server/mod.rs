@@ -945,6 +945,50 @@ async fn double_spend_arkoor() {
 	}
 }
 
+/// The server refuses to cosign an arkoor whose input vtxo has expired.
+///
+/// The request is built by hand: bark itself no longer selects expired vtxos
+/// as arkoor inputs, so `send_oor` cannot reach this server check.
+#[tokio::test]
+async fn reject_expired_arkoor_cosign() {
+	let ctx = TestContext::new("server/reject_expired_arkoor_cosign").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let bark = ctx.bark("bark".to_string(), &srv).funded(sat(1_000_000)).create().await;
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let bark_client = bark.client().await;
+	bark_client.maintenance().await.unwrap();
+
+	let bare_vtxo = bark_client.vtxos().await
+		.unwrap().into_iter().next().unwrap().vtxo;
+	let vtxo_keypair = bark_client.pubkey_keypair(&bare_vtxo.user_pubkey()).await
+		.unwrap().unwrap().1;
+	let vtxo = bark_client.get_full_vtxo(bare_vtxo.id()).await.unwrap();
+	let change_pk = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
+
+	let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		[vtxo.clone()],
+		ArkoorDestination {
+			total_amount: sat(100_000),
+			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
+		},
+		VtxoPolicy::new_pubkey(change_pk),
+	).unwrap();
+	let cosign_request = protos::ArkoorPackageCosignRequest::from(
+		builder.generate_user_nonces(&[vtxo_keypair]).unwrap().cosign_request(),
+	);
+
+	// Let the vtxo expire before the server sees the request.
+	let height = ctx.generate_blocks(srv.config().vtxo_lifetime as u32 + 1).await;
+	srv.bitcoind().wait_for_blockheight(height).await;
+
+	let mut rpc = srv.get_public_rpc().await;
+	let err = rpc.request_arkoor_cosign(cosign_request).await.unwrap_err();
+	assert!(err.message().contains("expired"), "unexpected error: {}", err.message());
+}
+
 #[tokio::test]
 async fn double_spend_round() {
 	require_bark_version!(> "0.5.0");
