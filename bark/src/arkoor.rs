@@ -47,8 +47,6 @@ pub enum ArkoorAddressError {
 	ServerMismatch,
 	#[error("VTXO policy in address cannot be used for arkoor payment: {0:?}")]
 	PolicyNotSupported(VtxoPolicy),
-	#[error("No VTXO delivery mechanism provided in address")]
-	NoDeliveryMechanism,
 	#[error("Unknown delivery mechanism: {0}")]
 	UnknownDeliveryMechanism(String),
 	#[error("Other error: {0}")]
@@ -146,6 +144,35 @@ pub(crate) async fn post_arkoor_to_mailboxes(
 	DeliveryOutcome::AllFailed { summary }
 }
 
+/// Checks that the address lists a useable delivery mechanism.
+///
+/// If the address doesn't specify a delivery mechanism that is clearly
+/// the receiver choice and this is allowed.
+///
+/// If all delivery methods are unknown we will error and not initiate
+/// a payment.
+fn check_delivery(delivery: &[VtxoDelivery]) -> Result<(), ArkoorAddressError> {
+	// The receiver explicitly wants no delivery. We should honour it
+	if delivery.is_empty() {
+		return Ok(());
+	}
+
+	if delivery.iter().any(|d| matches!(d, VtxoDelivery::ServerMailbox { .. })) {
+		return Ok(());
+	}
+
+	let listed = delivery.iter()
+		.map(|d| match d {
+			VtxoDelivery::Unknown { delivery_type, data } => {
+				format!("type={:#x}, data={}", delivery_type, data.as_hex())
+			},
+			other => format!("{:?}", other),
+		})
+		.collect::<Vec<_>>()
+		.join("; ");
+	Err(ArkoorAddressError::UnknownDeliveryMechanism(listed))
+}
+
 impl Wallet {
 	/// Validate if we can send arkoor payments to the given [ark::Address], for example an error
 	/// will be returned if the given [ark::Address] belongs to a different server (see
@@ -175,21 +202,7 @@ impl Wallet {
 			}
 		}
 
-		if address.delivery().is_empty() {
-			return Err(ArkoorAddressError::NoDeliveryMechanism);
-		}
-		// We first see if we know any of the deliveries, if not, we will log
-		// the unknown onces.
-		// We do this in two parts because we shouldn't log unknown ones if there is one known.
-		if !address.delivery().iter().any(|d| !d.is_unknown()) {
-			for d in address.delivery() {
-				if let VtxoDelivery::Unknown { delivery_type, data } = d {
-					info!("Unknown delivery in address: type={:#x}, data={}",
-						delivery_type, data.as_hex(),
-					);
-				}
-			}
-		}
+		check_delivery(address.delivery())?;
 
 		Ok(())
 	}
@@ -352,6 +365,31 @@ mod test {
 		// no stored pieces (pre-split checkpoint) rebuilds a single whole output
 		assert_eq!(resolve_change_pieces(None, change).unwrap(), vec![change]);
 		assert_eq!(resolve_change_pieces(None, Amount::ZERO).unwrap(), Vec::<Amount>::new());
+	}
+
+	#[test]
+	fn check_delivery_requires_a_mailbox() {
+		use std::str::FromStr;
+
+		let mailbox = VtxoDelivery::ServerMailbox {
+			blinded_id: ark::mailbox::BlindedMailboxIdentifier::from_str(
+				"024b0d4a4e8a29d2f36a83b4ff4a0e5c5e6f0f8b8d1f2a3b4c5d6e7f80912a3b4c",
+			).unwrap(),
+		};
+		let unknown = VtxoDelivery::Unknown { delivery_type: 0xff, data: vec![1, 2, 3] };
+
+		// an address without any delivery mechanism is the receiver's choice
+		assert_eq!(check_delivery(&[]), Ok(()));
+
+		// an address that only lists mechanisms we can't deliver to can't be paid
+		assert!(matches!(
+			check_delivery(&[unknown.clone()]),
+			Err(ArkoorAddressError::UnknownDeliveryMechanism(_)),
+		));
+
+		// one usable mechanism is enough, whatever else is listed
+		assert_eq!(check_delivery(&[mailbox.clone()]), Ok(()));
+		assert_eq!(check_delivery(&[unknown, mailbox]), Ok(()));
 	}
 
 	#[test]

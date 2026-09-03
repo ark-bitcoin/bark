@@ -316,7 +316,8 @@ pub(crate) async fn start_lightning_receive(
 	}
 
 	if let Some(destination) = claim_destination.as_ref() {
-		wallet.validate_arkoor_address(destination).await?;
+		wallet.validate_arkoor_address(destination).await
+			.context("invalid arkoor address")?;
 	}
 
 	let (mut srv, ark_info) = wallet.require_server().await?;

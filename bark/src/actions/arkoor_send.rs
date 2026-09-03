@@ -86,9 +86,9 @@ pub enum Progress {
 		movement_id: MovementId,
 		#[serde(with = "ark::encode::serde::vec")]
 		signed_change_vtxos: Vec<Vtxo<Full>>,
-		/// `true` if at least one delivery mechanism acked the message,
-		/// `false` if we are finalizing post-retry-exhaustion to salvage
-		/// the change.
+		/// `true` if at least one delivery mechanism acked the message or
+		/// the address requested no delivery at all, `false` if we are
+		/// finalizing post-retry-exhaustion to salvage the change.
 		delivery_succeeded: bool,
 	},
 }
@@ -129,6 +129,18 @@ impl WalletAction for ArkoorSend {
 				movement_id, signed_destination_vtxos, signed_change_vtxos,
 				last_park_error: _,
 			} => {
+				// The receiver explicitly wants no delivery. We should honour it
+				if self.destination.delivery().is_empty() {
+					return Ok(Advance::Next(ArkoorSend {
+						progress: Progress::Finalizing {
+							movement_id,
+							signed_change_vtxos,
+							delivery_succeeded: true,
+						},
+						..self
+					}));
+				}
+
 				let (mut srv, _) = wallet.require_server().await?;
 				match post_arkoor_to_mailboxes(
 					&mut srv, self.destination.delivery(), &signed_destination_vtxos,
@@ -235,7 +247,7 @@ pub(crate) async fn start_arkoor_send(
 ) -> anyhow::Result<ArkoorSend> {
 	let _ = wallet.require_server().await?;
 	wallet.validate_arkoor_address(&destination).await
-		.context("address validation failed")?;
+		.context("invalid arkoor address")?;
 
 	let (change_keypair, change_key_index) = wallet.peek_next_keypair().await
 		.context("failed to derive arkoor change keypair")?;
