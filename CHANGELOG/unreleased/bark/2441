@@ -1,0 +1,10 @@
+- Validate the backing tree of the HTLC-recv VTXOs granted for a lightning receive
+  bark only checked the HTLC leaf's own timelocks, so a grant could look safe
+  while the tree behind it expires first. Grants are now held to the advertised
+  tree parameters before the preimage is revealed.
+  [#2441](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2441)
+- bugfix: stop retried lightning receive claims from failing forever
+  The server hands back the VTXOs it granted on the first attempt, so comparing
+  the granted HTLC expiry against a freshly computed one failed on every retry
+  once a block was mined, and the receive could never be claimed.
+  [#2441](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2441)

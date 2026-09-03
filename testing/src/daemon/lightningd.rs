@@ -1,4 +1,3 @@
-
 use std::env;
 use std::collections::HashSet;
 use std::io::Write;
@@ -16,7 +15,9 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tonic::transport::{Certificate, Channel, channel::ClientTlsConfig, Identity, Uri};
 
+use ark::lightning::PaymentHash;
 use cln_rpc::node_client::NodeClient;
+use cln_rpc::plugins::hold;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 
 use crate::Bitcoind;
@@ -24,7 +25,7 @@ use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER}
 use crate::constants::env::{LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_PLUGIN_DIR};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
-use crate::util::{poll_interval, resolve_path};
+use crate::util::{poll_interval, resolve_path, FutureExt};
 
 pub type Lightningd = Daemon<LightningDHelper>;
 
@@ -440,6 +441,29 @@ impl Lightningd {
 
 	pub async fn hold_client(&self) -> HoldClient<Channel> {
 		self.try_hold_client().await.expect("failed to create hold rpc client")
+	}
+
+	/// Wait until this node's hold plugin holds the payment's HTLCs.
+	///
+	/// The invoice turns ACCEPTED only once every HTLC is irrevocably
+	/// committed and handed to the plugin, so it is the signal that the
+	/// receiving side has something to claim. Waiting for it beats sleeping:
+	/// a sleep also passes when the payment never arrived.
+	pub async fn wait_for_hold_invoice_accepted(&self, payment_hash: PaymentHash) {
+		let mut client = self.hold_client().await;
+		async {
+			loop {
+				let invoices = client.list(hold::ListRequest {
+					constraint: Some(hold::list_request::Constraint::PaymentHash(
+						payment_hash.as_ref().to_vec(),
+					)),
+				}).await.expect("list hold invoices").into_inner().invoices;
+				if invoices.first().is_some_and(|i| i.state() == hold::InvoiceState::Accepted) {
+					break;
+				}
+				tokio::time::sleep(poll_interval()).await;
+			}
+		}.wait_millis(30_000).await
 	}
 
 	pub async fn port(&self) -> Option<u16> {
