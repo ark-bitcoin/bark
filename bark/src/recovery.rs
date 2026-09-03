@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::Context;
 use bitcoin::Amount;
-use bitcoin::secp256k1::{Keypair, PublicKey};
+use bitcoin::secp256k1::Keypair;
 use log::{debug, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
@@ -426,60 +426,30 @@ impl Wallet {
 	/// Work out which of `vtxos` this wallet owns, pairing each with its owner
 	/// keypair and persisting the keys revealed along the way.
 	///
-	/// Order-independent: VTXOs whose key was already revealed match directly;
-	/// the rest are matched by walking the unrevealed key space once. Each match
-	/// reveals every key up to it and extends the [`STOP_GAP`] window, so a later
-	/// match can pull in an earlier VTXO a single forward pass would miss.
+	/// Order-independent: every user pubkey goes into one
+	/// [`Wallet::find_vtxo_keypairs`] call, which tolerates a run of [`STOP_GAP`]
+	/// unused indices and extends that window on every match.
 	///
-	/// Idempotent: only keys at or below a match are persisted, so an unmatched
-	/// probe leaves no trace and a retry can't ratchet the key index. Owned VTXOs
-	/// that fail validation go to `report.failed`; unmatched ones to `report.foreign`.
+	/// Owned VTXOs that fail validation go to `report.failed`; unmatched ones to
+	/// `report.foreign`.
 	async fn resolve_owned_vtxos(
 		&self,
 		vtxos: Vec<Vtxo<Full>>,
 		report: &mut RecoveryReport,
 	) -> anyhow::Result<Vec<OwnedVtxo>> {
-		// VTXOs we still need to match, indexed by owner pubkey. A pubkey can back
-		// more than one VTXO, so keep a list per key.
-		let mut pending = HashMap::<PublicKey, Vec<Vtxo<Full>>>::new();
+		// Collected before the await: a closure held across it is not general
+		// enough over lifetimes for the callers' Send bounds.
+		let user_pubkeys = vtxos.iter().map(|v| v.user_pubkey()).collect::<Vec<_>>();
+		let keypairs = self.find_vtxo_keypairs(user_pubkeys, STOP_GAP).await?;
+
+		// A pubkey can back more than one VTXO, so look each one up rather than
+		// walking the keys. Anything unmatched is not ours.
 		let mut matched = Vec::<(Vtxo<Full>, Keypair)>::new();
-
 		for vtxo in vtxos {
-			match self.pubkey_keypair(&vtxo.user_pubkey()).await? {
-				Some((_idx, keypair)) => matched.push((vtxo, keypair)),
-				None => pending.entry(vtxo.user_pubkey()).or_default().push(vtxo),
+			match keypairs.get(&vtxo.user_pubkey()) {
+				Some(keypair) => matched.push((vtxo, *keypair)),
+				None => report.push_foreign(&vtxo),
 			}
-		}
-
-		// Walk the unrevealed key space once, extending the window on every match.
-		let start_idx = self.inner.db.get_last_vtxo_key_index().await?.map(|i| i + 1).unwrap_or(0);
-		let mut frontier = start_idx.saturating_add(STOP_GAP);
-		let mut gap = Vec::<(u32, PublicKey)>::new();
-		let mut idx = start_idx;
-		while idx <= frontier && !pending.is_empty() {
-			let keypair = self.inner.seed.derive_vtxo_keypair(idx);
-			let pubkey = keypair.public_key();
-			if let Some(owned_vtxos) = pending.remove(&pubkey) {
-				// Reveal this key and the unmatched gap keys below it, mirroring the
-				// wallet's sequential key issuance.
-				for (i, pk) in gap.drain(..) {
-					self.inner.db.store_vtxo_key(i, pk).await?;
-				}
-				self.inner.db.store_vtxo_key(idx, pubkey).await?;
-				frontier = idx.saturating_add(STOP_GAP);
-				matched.extend(owned_vtxos.into_iter().map(|v| (v, keypair)));
-			} else {
-				gap.push((idx, pubkey));
-			}
-			// Stop at the end of the key space rather than overflowing; reaching it
-			// would mean scanning the entire u32 range, far beyond any real wallet.
-			let Some(next_idx) = idx.checked_add(1) else { break };
-			idx = next_idx;
-		}
-
-		// Anything still pending never matched within the gap limit, so it's not ours.
-		for vtxo in pending.into_values().flatten() {
-			report.push_foreign(&vtxo);
 		}
 
 		// Validate the matched VTXOs. A validation error (anchor not yet visible,

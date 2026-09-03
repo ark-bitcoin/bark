@@ -419,7 +419,7 @@ pub use self::recovery::{RecoveryReport, RecoveryReportEntry, RecoveryStatus};
 pub use self::vtxo::WalletVtxo;
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1031,6 +1031,63 @@ impl Wallet {
 		}
 	}
 
+	/// Map each key in `wanted` we can derive from our seed to its keypair.
+	///
+	/// Keys the wallet already revealed come from the database. The rest are
+	/// matched by one scan of the unrevealed key space, which tolerates a run of
+	/// `gap_limit` indices that do not match and extends that window on every
+	/// match. Only keys at or below a match are stored, so a scan that matches
+	/// nothing leaves the key index unchanged. Keys that never match are absent
+	/// from the result.
+	///
+	/// Returns the matched pubkeys paired with their keypair.
+	pub(crate) async fn find_vtxo_keypairs(
+		&self,
+		wanted: impl IntoIterator<Item = PublicKey>,
+		gap_limit: u32,
+	) -> anyhow::Result<HashMap<PublicKey, Keypair>> {
+		// A revealed key is already on record, so only scan for what is left.
+		let mut found = HashMap::new();
+		let mut unrevealed = HashSet::new();
+		for pubkey in wanted {
+			match self.pubkey_keypair(&pubkey).await? {
+				Some((_idx, keypair)) => { found.insert(pubkey, keypair); },
+				None => { unrevealed.insert(pubkey); },
+			}
+		}
+		if unrevealed.is_empty() {
+			return Ok(found);
+		}
+
+		// We should derive unrevealed keys, so we add one to the last key index.
+		let start_idx = self.inner.db.get_last_vtxo_key_index().await?.map(|i| i + 1).unwrap_or(0);
+		let mut frontier = start_idx.saturating_add(gap_limit);
+		let mut idx = start_idx;
+		let mut gap = Vec::<(u32, PublicKey)>::new();
+		while idx <= frontier && !unrevealed.is_empty() {
+			let keypair = self.inner.seed.derive_vtxo_keypair(idx);
+			let pubkey = keypair.public_key();
+			if unrevealed.remove(&pubkey) {
+				// Reveal this key and the unmatched keys below it, because the
+				// wallet issues keys in sequence.
+				for (i, pk) in gap.drain(..) {
+					self.inner.db.store_vtxo_key(i, pk).await?;
+				}
+				self.inner.db.store_vtxo_key(idx, pubkey).await?;
+				found.insert(pubkey, keypair);
+
+				// `frontier` is the last index the scan tests. This index matched,
+				// so the next run of unused indices starts at idx + 1.
+				frontier = idx.saturating_add(1).saturating_add(gap_limit);
+			} else {
+				gap.push((idx, pubkey));
+			}
+			let Some(next_idx) = idx.checked_add(1) else { break };
+			idx = next_idx;
+		}
+
+		Ok(found)
+	}
 
 	/// Retrieves the [Keypair] for a provided [PublicKey]
 	///
