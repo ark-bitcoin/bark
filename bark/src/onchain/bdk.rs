@@ -319,6 +319,11 @@ impl OnchainWalletTrait for OnchainWallet {
 		self.persist().await
 	}
 
+	async fn evict_tx(&mut self, txid: Txid) -> anyhow::Result<()> {
+		self.inner.apply_evicted_txs([(txid, bark_runtime::timestamp_secs())]);
+		self.persist().await
+	}
+
 	async fn prepare_tx(
 		&mut self,
 		destinations: &[(Address, Amount)],

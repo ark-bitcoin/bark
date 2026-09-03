@@ -178,6 +178,13 @@ async fn progress_exit_tx(
 					warn!("Exit CPFP tx {} for exit tx {} has been replaced by {}",
 						child_txid, exit.txid, c.txid,
 					);
+					// Evict our dead CPFP immediately.
+					// Unlike others we don't have to wait for the grace period
+					if let Some(onchain) = ctx.wallet.inner.onchain.as_ref() {
+						if let Err(e) = onchain.write().await.evict_tx(*child_txid).await {
+							warn!("Failed to evict replaced CPFP {}: {:#}", child_txid, e);
+						}
+					}
 					ctx.get_exit_tx_status(exit).await
 				},
 				Some(ref c) if c.status == TxStatus::NotFound => {
