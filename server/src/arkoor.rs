@@ -184,6 +184,14 @@ impl Server {
 		let spend_map: HashMap<VtxoId, Txid> = builder.spend_info().collect();
 		let input_vtxo_states = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
 		for v in &input_vtxo_states {
+			// An expired vtxo can only leave the Ark through a round or an
+			// offboard. Passing it on as an arkoor would hand the receiver
+			// a coin it cannot exit while the server can already sweep it.
+			if v.vtxo.expiry_height() <= chain_tip {
+				return badarg!("vtxo {} expired at height {} (tip = {})",
+					v.vtxo_id, v.vtxo.expiry_height(), chain_tip,
+				);
+			}
 			let spending_txid = spend_map.get(&v.vtxo_id)
 				.context("missing spend info for input vtxo")?;
 			v.check_spendable_for_oor(chain_tip, *spending_txid)?;
