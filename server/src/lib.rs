@@ -34,6 +34,7 @@ pub mod utils;
 
 use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::database::BlockTable;
+use crate::database::htlc_vtxo::{self, HtlcDirection};
 use crate::database::tree::VtxoTreeUpdate;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
@@ -57,7 +58,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::{info, trace, warn};
 
-use ark::{Vtxo, VtxoId, VtxoRequest};
+use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::vtxo::Full;
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
@@ -925,26 +926,43 @@ impl Server {
 		Ok(())
 	}
 
-	/// Validates and stores the signed transaction chains for the given VTXOs.
+	/// Registers the given VTXOs: validates and stores their signed
+	/// transaction chains and flips them from `unregistered` to `spendable`.
 	///
 	/// For each VTXO:
 	/// - Checks it exists in the database
 	/// - Checks it is fully signed
 	/// - Validates signatures against the chain anchor transaction
-	/// - Extracts transactions and updates virtual_transaction table
-	pub async fn store_vtxo_transactions(
+	/// - Extracts transactions for the virtual_transaction table
+	///
+	/// Registration is the moment an htlc-send vtxo starts to exist (the
+	/// server now holds a claim on the funds), so this also writes the
+	/// htlc_vtxo row for htlc-send vtxos, in the same transaction.
+	pub async fn register_vtxo_transactions(
 		&self,
 		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<Full>>>,
 	) -> anyhow::Result<()> {
-		let mut signed_txs: Vec<Transaction> = Vec::new();
-		let mut seen_txids: HashSet<Txid> = HashSet::new();
-		let mut registered_ids: Vec<VtxoId> = Vec::new();
-
 		let mut seen_ids: HashSet<VtxoId> = HashSet::new();
 		let vtxos = vtxos.into_iter()
 			.map(|v| v.as_ref().clone())
 			.filter(|v| seen_ids.insert(v.id()))
 			.collect::<Vec<_>>();
+
+		// An htlc-send vtxo only exists once its signed chain is
+		// registered: that is when the server holds a claim on the funds.
+		let htlc_sends = vtxos.iter()
+			.filter_map(|v| match v.policy() {
+				VtxoPolicy::ServerHtlcSend(p) =>
+					Some((v.id(), p.payment_hash, p.htlc_expiry)),
+				VtxoPolicy::ServerHtlcSend_v0(p) =>
+					Some((v.id(), p.payment_hash, p.htlc_expiry)),
+				_ => None,
+			})
+			.collect::<Vec<_>>();
+
+		let mut signed_txs: Vec<Transaction> = Vec::new();
+		let mut seen_txids: HashSet<Txid> = HashSet::new();
+		let mut registered_ids: Vec<VtxoId> = Vec::new();
 
 		for vtxo in &vtxos {
 			let vtxo_id = vtxo.id();
@@ -1000,7 +1018,11 @@ impl Server {
 			.upsert_signed_tx(signed_txs)
 			.provide_signatures(vtxos)
 			.mark_vtxos_registered(registered_ids);
-		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
+		self.db.write(async |t| {
+			t.execute_vtxo_tree_update(update).await?;
+			htlc_vtxo::create_htlc_vtxos(&t, &htlc_sends, HtlcDirection::Incoming).await?;
+			Ok(())
+		}).await?;
 		Ok(())
 	}
 
