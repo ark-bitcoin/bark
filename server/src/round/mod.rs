@@ -681,6 +681,9 @@ impl CollectingPayments {
 			return Err(ProcessHarkParticipationError::RoundFull);
 		}
 
+		// These two checks are what drop a delegated participation whose input
+		// an interactive one already took. The interactive path has no mirror
+		// of them, so this only holds while it runs first. See the caller.
 		let input_ids = participation.inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
 		let lock = match srv.vtxos_in_flux.try_lock(&input_ids) {
 			Ok(l) => l,
@@ -1557,6 +1560,9 @@ async fn receive_payments(
 	}
 
 	// after the interactive sign-ups, also add our delegated participations
+	//
+	// This order is load-bearing: it is what gives interactive participations
+	// priority on a contested input. See process_delegated_participation.
 	state.register_all_delegated_participations(srv)
 		.await;
 

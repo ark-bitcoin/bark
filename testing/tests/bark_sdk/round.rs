@@ -5,7 +5,7 @@ use ark::VtxoId;
 use bark::movement::MovementStatus;
 use bark::vtxo::VtxoState;
 use bitcoin::hashes::Hash;
-use server_log::{NoRoundPayments, RoundFinished};
+use server_log::{NoRoundPayments, RoundFinished, RoundParticipationRejected};
 use server_rpc::protos;
 
 use ark_testing::{btc, sat, TestContext};
@@ -207,6 +207,114 @@ async fn participation_status(srv: &Captaind, unlock_hash: Vec<u8>) -> i32 {
 	srv.get_public_rpc().await
 		.round_participation_status(protos::RoundParticipationStatusRequest { unlock_hash })
 		.await.expect("status request failed").into_inner().status
+}
+
+/// An interactive participation beats a delegated one on the same input: the
+/// server registers delegated participations only after the interactive sign-ups,
+/// so the delegated one finds the input taken and is dropped.
+#[tokio::test]
+async fn interactive_participation_wins_over_delegated() {
+	let ctx = TestContext::new("bark_sdk/interactive_participation_wins_over_delegated").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(800_000))
+		.create().await;
+
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.len(), 1, "expected one boarded vtxo");
+	let id = vtxos[0].id();
+
+	// A delegated participation waits on the server for a round to pick it up, and
+	// bark doesn't hold its inputs meanwhile, so the same vtxo can still be signed
+	// up interactively.
+	wallet.refresh_vtxos_delegated(vec![id]).await
+		.expect("submit the delegated participation");
+
+	let mut log_rejected = srv.subscribe_log::<RoundParticipationRejected>();
+	let mut log_finished = srv.subscribe_log::<RoundFinished>();
+
+	// `refresh_vtxos` blocks until the round it joins finishes, so trigger a round
+	// alongside it, after a short delay so it subscribes first.
+	let (res, _) = tokio::join!(
+		wallet.refresh_vtxos(vec![id]),
+		async {
+			tokio::time::sleep(Duration::from_secs(2)).await;
+			srv.trigger_round().await;
+		},
+	);
+	res.expect("the interactive refresh must succeed");
+
+	let rejected = log_rejected.recv().wait(Duration::from_secs(30)).await
+		.expect("the delegated participation must be rejected");
+	assert!(rejected.reason.contains(&id.to_string()),
+		"the rejection must name the contested input: {}", rejected.reason,
+	);
+	// The flux lock rejects it first; the already-registered check behind it
+	// would catch it otherwise.
+	assert!(
+		rejected.reason.contains("already in use by another process")
+			|| rejected.reason.contains("already registered"),
+		"unexpected rejection reason: {}", rejected.reason,
+	);
+
+	let finished = log_finished.recv().wait(Duration::from_secs(30)).await
+		.expect("the round must finish");
+	assert_eq!(finished.nb_input_vtxos, 1,
+		"only the interactive participation should have been included",
+	);
+}
+
+/// A round that finishes supersedes every pending participation over one of its
+/// inputs, deleting it along with its inputs and outputs. A participation
+/// scheduled beyond the tip is never offered to the round, so it is still pending
+/// when the round finishes and takes that path.
+///
+/// The delete has to take the whole participation: leaving the input and output
+/// rows behind trips their foreign key, which aborts the round transaction and
+/// takes the round coordinator down with it.
+#[tokio::test]
+async fn finished_round_supersedes_pending_delegated_participation() {
+	let ctx = TestContext::new("bark_sdk/finished_round_supersedes_pending_delegated_participation").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(800_000))
+		.create().await;
+
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.len(), 1, "expected one boarded vtxo");
+	let id = vtxos[0].id();
+
+	// Far enough ahead that the rounds below leave it pending, but well within the
+	// vtxo's lifetime, which the server checks against the scheduled height.
+	let scheduled_height = srv.bitcoind().get_block_count().await as u32 + 100;
+	wallet.refresh_vtxos_scheduled(vec![id], scheduled_height).await
+		.expect("submit the scheduled delegated participation");
+
+	let mut log_finished = srv.subscribe_log::<RoundFinished>();
+
+	// `refresh_vtxos` blocks until the round it joins finishes, so trigger a round
+	// alongside it, after a short delay so it subscribes first.
+	let (res, _) = tokio::join!(
+		wallet.refresh_vtxos(vec![id]),
+		async {
+			tokio::time::sleep(Duration::from_secs(2)).await;
+			srv.trigger_round().await;
+		},
+	);
+	res.expect("the interactive refresh must succeed");
+	log_finished.recv().wait(Duration::from_secs(30)).await
+		.expect("the round must finish, not abort on the superseded participation");
+
+	// A failed store is fatal to the round coordinator, so the surest sign it went
+	// through is that the server still produces rounds.
+	let mut log_no_payments = srv.subscribe_log::<NoRoundPayments>();
+	srv.trigger_round().await;
+	log_no_payments.recv().wait(Duration::from_secs(30)).await
+		.expect("the server must still produce rounds");
 }
 
 /// A delegated refresh scheduled at a future block height must sit out rounds
