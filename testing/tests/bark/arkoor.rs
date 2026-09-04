@@ -51,6 +51,29 @@ async fn send_simple_arkoor() {
 	assert!(movements.is_empty());
 }
 
+/// A payment received while offline is kept even if the VTXO expired before
+/// the receiver synced. The sender paid with a valid VTXO; the receiver only
+/// needs to refresh it.
+#[tokio::test]
+async fn receive_expired_arkoor_while_offline() {
+	require_bark_version!(> "0.6.2");
+
+	let ctx = TestContext::new("bark/receive_expired_arkoor_while_offline").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+
+	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+	bark1.send_oor(bark2.address().await, sat(100_000)).await;
+
+	// bark2 stays offline until the VTXO has expired.
+	ctx.generate_blocks(srv.config().vtxo_lifetime as u32 + 1).await;
+
+	bark2.sync().await;
+	assert_eq!(bark2.vtxos().await.len(), 1);
+	assert_eq!(bark2.spendable_balance().await, sat(100_000));
+}
+
 #[tokio::test]
 async fn send_full_arkoor() {
 	let ctx = TestContext::new("bark/send_full_arkoor").await;

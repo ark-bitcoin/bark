@@ -47,6 +47,8 @@ pub struct InputSelection<F = ()> {
 	pub exclude: HashSet<VtxoId>,
 	/// Never select vtxos with an exit depth at or above this value.
 	pub max_exit_depth: Option<u16>,
+	/// Never select vtxos with an expiry height at or below this height.
+	pub expires_after: Option<BlockHeight>,
 
 	fee_scheme: F,
 }
@@ -65,6 +67,15 @@ impl<F> InputSelection<F> {
 	/// refresh.
 	pub fn max_exit_depth(mut self, max_exit_depth: u16) -> Self {
 		self.max_exit_depth = Some(max_exit_depth);
+		self
+	}
+
+	/// Exclude vtxos with an expiry height at or below the given height.
+	///
+	/// Used to skip vtxos the server would reject as arkoor inputs for
+	/// being expired; such vtxos have to wait for a refresh.
+	pub fn expires_after(mut self, height: BlockHeight) -> Self {
+		self.expires_after = Some(height);
 		self
 	}
 
@@ -102,6 +113,7 @@ impl InputSelection {
 			max_inputs: self.max_inputs,
 			exclude: self.exclude,
 			max_exit_depth: self.max_exit_depth,
+			expires_after: self.expires_after,
 			fee_scheme: FeeScheme { tip, calc_fee },
 		}
 	}
@@ -223,6 +235,7 @@ impl InputScanner {
 		candidates.retain(|v| {
 			!selection.exclude.contains(&v.id())
 				&& selection.max_exit_depth.is_none_or(|max| v.exit_depth < max)
+				&& selection.expires_after.is_none_or(|h| v.expiry_height() > h)
 		});
 		candidates.sort_by_key(|v| (v.expiry_height(), cmp::Reverse(v.exit_depth)));
 
@@ -401,6 +414,27 @@ mod test {
 		let err = selection.select(vtxos, Amount::from_sat(60_001)).unwrap_err();
 		assert!(err.to_string().contains("Insufficient money"), "{}", err);
 		assert!(!err.to_string().contains("inputs"), "{}", err);
+	}
+
+	#[test]
+	fn skips_expired_candidates() {
+		let vtxos = vec![
+			dummy_wallet_vtxo(10_000, 100),
+			dummy_wallet_vtxo(20_000, 200),
+			dummy_wallet_vtxo(30_000, 300),
+		];
+
+		// A vtxo expiring at the given height counts as expired.
+		let selection = InputSelection::new().expires_after(200);
+		let selected = selection.select(vtxos.clone(), Amount::from_sat(5_000)).unwrap();
+		assert_eq!(amounts(&selected), [30_000]);
+
+		let err = selection.select(vtxos.clone(), Amount::from_sat(30_001)).unwrap_err();
+		assert!(err.to_string().contains("Insufficient money"), "{}", err);
+
+		// Without the filter the expired vtxos are selected first.
+		let selected = InputSelection::new().select(vtxos, Amount::from_sat(5_000)).unwrap();
+		assert_eq!(amounts(&selected), [10_000]);
 	}
 
 	#[test]
