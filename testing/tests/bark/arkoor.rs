@@ -1,6 +1,7 @@
-use ark_testing::{btc, require_bark_version, sat, signed_sat, TestContext};
+use ark_testing::{btc, is_bark_version, require_bark_version, sat, signed_sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::util::{FutureExt, ToAltString};
+use bitcoin::Amount;
 use bark::movement::{MovementDestination, PaymentMethod};
 use futures::StreamExt;
 
@@ -53,7 +54,7 @@ async fn send_simple_arkoor() {
 
 /// A payment received while offline is kept even if the VTXO expired before
 /// the receiver synced. The sender paid with a valid VTXO; the receiver only
-/// needs to refresh it.
+/// needs to refresh it, and the balance says so.
 #[tokio::test]
 async fn receive_expired_arkoor_while_offline() {
 	require_bark_version!(> "0.6.2");
@@ -71,7 +72,13 @@ async fn receive_expired_arkoor_while_offline() {
 
 	bark2.sync().await;
 	assert_eq!(bark2.vtxos().await.len(), 1);
-	assert_eq!(bark2.spendable_balance().await, sat(100_000));
+	let balance = bark2.offchain_balance().await;
+	if is_bark_version!(> "0.7.1") {
+		assert_eq!(balance.needs_refresh, sat(100_000), "{balance:?}");
+		assert_eq!(balance.spendable, Amount::ZERO, "{balance:?}");
+	} else {
+		assert_eq!(balance.spendable, sat(100_000), "{balance:?}");
+	}
 }
 
 #[tokio::test]

@@ -45,7 +45,7 @@ use server::secret::Secret;
 use server_log::{FullRound, RoundError, RoundFinished, RoundStarted, RoundUserVtxoAlreadyRegistered};
 use server_rpc::protos::{self};
 
-use ark_testing::{btc, require_bark_version, sat, secs, Captaind, TestContext};
+use ark_testing::{btc, is_bark_version, require_bark_version, sat, secs, Captaind, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::captaind::{self, ArkClient};
@@ -672,8 +672,18 @@ async fn change_split_avoids_exit_depth_limit() {
 		bark1.send_oor(&bark2.address().await, sat(10_000)).await;
 	}
 
-	assert_eq!(900_000, bark1.spendable_balance().await.to_sat());
-	assert_eq!(100_000, bark2.spendable_balance().await.to_sat());
+	// VTXOs that have reached the depth limit, change and received ones
+	// alike, need a refresh before they can be sent again.
+	let checks = [(&bark1, 900_000, 727_500, 172_500), (&bark2, 100_000, 60_000, 40_000)];
+	for (bark, total, spendable, needs_refresh) in checks {
+		let balance = bark.offchain_balance().await;
+		if is_bark_version!(> "0.7.1") {
+			assert_eq!(spendable, balance.spendable.to_sat(), "{balance:?}");
+			assert_eq!(needs_refresh, balance.needs_refresh.to_sat(), "{balance:?}");
+		} else {
+			assert_eq!(total, balance.spendable.to_sat(), "{balance:?}");
+		}
+	}
 }
 
 #[tokio::test]

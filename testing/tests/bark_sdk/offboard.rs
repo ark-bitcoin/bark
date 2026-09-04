@@ -12,6 +12,7 @@ use bark::movement::{Movement, MovementStatus, PaymentMethod};
 use server_rpc::protos;
 
 use ark_testing::{btc, constants, sat, TestContext};
+use ark_testing::balance::assert_balance_consistent;
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::action_drive_factor;
 
@@ -158,7 +159,7 @@ async fn offboard_replays_identical_prepare_request() {
 	let address = ctx.bitcoind().get_new_address();
 	wallet.offboard_all(address.clone()).await.expect("offboard should succeed");
 
-	assert_eq!(wallet.balance().await.expect("balance").spendable, Amount::ZERO);
+	assert_eq!(assert_balance_consistent(&wallet, false).await.spendable, Amount::ZERO);
 
 	// The offboard went through the replayed session; its movement stays
 	// pending until the offboard tx confirms.
@@ -401,7 +402,7 @@ async fn offboard_reports_lost_tx_after_grace_period() {
 	assert_eq!(pending.len(), 1);
 	assert!(matches!(pending[0].progress, Progress::AwaitingConfirmations { .. }));
 	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Pending);
-	assert_eq!(wallet.balance().await.expect("balance").spendable, Amount::ZERO,
+	assert_eq!(assert_balance_consistent(&wallet, false).await.spendable, Amount::ZERO,
 		"forfeited vtxos must never be released");
 }
 
@@ -516,7 +517,7 @@ async fn offboard_cancels_when_fees_change_after_lost_session() {
 	assert!(wallet.pending_offboards().await.expect("pending offboards").is_empty(),
 		"the offboard should have been cancelled");
 	assert_eq!(offboard_movement(&wallet).await.status, MovementStatus::Failed);
-	assert_eq!(wallet.balance().await.expect("balance").spendable, sat(800_000),
+	assert_eq!(assert_balance_consistent(&wallet, false).await.spendable, sat(800_000),
 		"the cancelled offboard should have released its vtxos");
 
 	// And the vtxos are actually spendable: offboard them again at the
@@ -525,5 +526,5 @@ async fn offboard_cancels_when_fees_change_after_lost_session() {
 		.expect("offboarding again at the new fee rate should succeed");
 	ctx.generate_blocks(1).await;
 	assert_eq!(ctx.bitcoind().get_received_by_address(&address), sat(799_756));
-	assert_eq!(wallet.balance().await.expect("balance").spendable, sat(0));
+	assert_eq!(assert_balance_consistent(&wallet, false).await.spendable, sat(0));
 }

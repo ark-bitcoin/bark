@@ -422,29 +422,80 @@ impl Bark {
 		serde_json::from_str::<Vec<bark_json::primitives::UtxoInfo>>(&output).unwrap()
 	}
 
+	/// Sync, then return the balance. Also checks the balance against the
+	/// wallet's VTXOs, see [Bark::assert_balance_matches_vtxos].
 	pub async fn offchain_balance(&self) -> json::cli::Balance {
-		let json = self.run(["balance"]).await;
-		serde_json::from_str::<json::cli::Balance>(&json).unwrap()
+		self.assert_balance_matches_vtxos(true).await
+	}
+
+	/// Return the balance without syncing. Also checks the balance against
+	/// the wallet's VTXOs, see [Bark::assert_balance_matches_vtxos].
+	pub async fn offchain_balance_no_sync(&self) -> json::cli::Balance {
+		self.assert_balance_matches_vtxos(false).await
 	}
 
 	pub async fn spendable_balance(&self) -> Amount {
-		let json = self.run(["balance"]).await;
-		serde_json::from_str::<json::cli::Balance>(&json).unwrap().spendable
+		self.offchain_balance().await.spendable
 	}
 
 	pub async fn spendable_balance_no_sync(&self) -> Amount {
-		let json = self.run(["balance", "--no-sync"]).await;
-		serde_json::from_str::<json::cli::Balance>(&json).unwrap().spendable
+		self.offchain_balance_no_sync().await.spendable
 	}
 
 	pub async fn pending_board_balance(&self) -> Amount {
-		let json = self.run(["balance"]).await;
-		serde_json::from_str::<json::cli::Balance>(&json).unwrap().pending_board
+		self.offchain_balance().await.pending_board
 	}
 
 	pub async fn inround_balance(&self) -> Amount {
-		let json = self.run(["balance"]).await;
-		serde_json::from_str::<json::cli::Balance>(&json).unwrap().pending_in_round
+		self.offchain_balance().await.pending_in_round
+	}
+
+	/// Return the balance, syncing first when `sync` is set, and assert that
+	/// it agrees with the wallet's VTXOs. bark 0.7.1 and older could count a
+	/// VTXO twice, so the checks are skipped for them.
+	pub async fn assert_balance_matches_vtxos(&self, sync: bool) -> json::cli::Balance {
+		let json = if sync {
+			self.run(["balance"]).await
+		} else {
+			self.run(["balance", "--no-sync"]).await
+		};
+		let balance = serde_json::from_str::<json::cli::Balance>(&json).unwrap();
+		if !crate::is_bark_version!(> "0.7.1") {
+			return balance;
+		}
+
+		let vtxos = self.vtxos_no_sync().await;
+		let spendable_vtxos = vtxos.iter()
+			.filter(|v| v.state == VtxoStateInfo::Spendable)
+			.map(|v| v.amount)
+			.sum::<Amount>();
+		let locked_vtxos = vtxos.iter()
+			.filter(|v| matches!(v.state, VtxoStateInfo::Locked { .. }))
+			.map(|v| v.amount)
+			.sum::<Amount>();
+
+		assert_eq!(balance.spendable + balance.needs_refresh, spendable_vtxos,
+			"{}: spendable and needs_refresh must equal the spendable VTXOs: {balance:?}",
+			self.name,
+		);
+		let pending_locked = balance.pending_in_round
+			+ balance.pending_board
+			+ balance.pending_arkoor_send
+			+ balance.pending_lightning_send
+			+ balance.claimable_lightning_receive
+			+ balance.pending_offboard;
+		assert!(pending_locked <= locked_vtxos,
+			"{}: pending categories count more than the locked VTXOs ({locked_vtxos}): {balance:?}",
+			self.name,
+		);
+		let summary = json::cli::BalanceSummary::from(&balance);
+		assert_eq!(summary.pending, pending_locked + balance.pending_exit,
+			"{}: the summary's pending must be the sum of the pending fields: {balance:?}", self.name,
+		);
+		assert_eq!(summary.total, balance.spendable + balance.needs_refresh + summary.pending,
+			"{}: the summary's total must be the sum of every field: {balance:?}", self.name,
+		);
+		balance
 	}
 
 	pub async fn get_onchain_address(&self) -> Address {

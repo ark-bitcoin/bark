@@ -5,6 +5,7 @@ extern crate async_trait;
 #[macro_use]
 extern crate lazy_static;
 
+pub mod balance;
 pub mod context;
 pub mod constants;
 pub mod daemon;

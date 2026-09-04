@@ -9,6 +9,7 @@
 //! that mode would silently test the current code under a "compat" label.
 
 mod arkoor;
+mod balance;
 mod exit;
 mod import;
 mod lightning;

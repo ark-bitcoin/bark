@@ -713,7 +713,14 @@ async fn stepwise_round() {
 
 	info!("Signed up for round, state_id={}", state_id);
 	print_pending_rounds(&bark).await;
-	assert_eq!(bark.balance().await.unwrap().pending_in_round, sat(800_000));
+	// A participation awaiting its round holds no lock yet: the input, which
+	// has reached its expiry, only needs a refresh and nothing is pending in
+	// round; the requested outputs are what the round will produce.
+	let balance = bark.balance().await.unwrap();
+	assert_eq!(balance.pending_in_round, Amount::ZERO, "{balance:?}");
+	assert_eq!(balance.needs_refresh, sat(800_000), "{balance:?}");
+	assert_eq!(balance.spendable, Amount::ZERO, "{balance:?}");
+	assert_eq!(bark.pending_round_balance().await.unwrap(), sat(800_000));
 
 	let mut rpc = srv.get_public_rpc().await;
 	let mut events = rpc.subscribe_rounds(protos::Empty{}).await.unwrap().into_inner();
@@ -751,6 +758,12 @@ async fn stepwise_round() {
 	}
 	drop(events);
 
+	// The round attempt locked the inputs; they stay pending in round until
+	// the round confirms.
+	let balance = bark.balance().await.unwrap();
+	assert_eq!(balance.pending_in_round, sat(800_000), "{balance:?}");
+	assert_eq!(balance.spendable, Amount::ZERO, "{balance:?}");
+
 	info!("Starting to wait for confirmations");
 
 	loop {
@@ -769,6 +782,10 @@ async fn stepwise_round() {
 
 		tokio::time::sleep(Duration::from_millis(500)).await;
 	}
+
+	let balance = bark.balance().await.unwrap();
+	assert_eq!(balance.pending_in_round, Amount::ZERO, "{balance:?}");
+	assert_eq!(balance.spendable, sat(800_000), "{balance:?}");
 
 	//TODO(stevenroose) test new vtxo state and movement
 }
