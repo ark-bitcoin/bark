@@ -1,0 +1,15 @@
+- Add `needs_refresh_sat`, `pending_arkoor_send_sat` and `pending_offboard_sat`
+  to `Balance`
+  `needs_refresh_sat` holds the VTXOs that cannot be sent in an arkoor
+  payment until a round has refreshed them; they are no longer part of
+  `spendable_sat`. The
+  two `pending_*` fields hold the sats locked in an arkoor send or an
+  offboard in progress, which no field reported before.
+  [#2509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2509)
+  - `pending_exit_sat` is always present; it used to be `null` while the
+    exit subsystem was busy.
+- Add `BalanceSummary`
+  The numbers to show a user without the breakdown of `Balance`:
+  `spendable_sat`, `needs_refresh_sat`, `pending_sat` and `total_sat`. Build
+  it from a `Balance` with `From`.
+  [#2509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2509)
