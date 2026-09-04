@@ -74,9 +74,14 @@ message ListRequest {
 		uint64 limit = 2;
 	}
 
+	message PaymentHashes {
+		repeated bytes payment_hashes = 1;
+	}
+
 	oneof constraint {
 		bytes payment_hash = 1;
 		Pagination pagination = 2;
+		PaymentHashes payment_hashes = 3;
 	}
 }
 

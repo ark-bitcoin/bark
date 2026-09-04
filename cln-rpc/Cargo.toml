@@ -1,6 +1,6 @@
 [package]
 name = "bark-cln-rpc"
-version = "0.6.0+cln.26.06.6-hold.0.3.3.patched"
+version = "0.6.0+cln.26.06.7-hold"
 license = "MIT"
 authors = [ "Team Second <hello@second.tech>" ]
 repository = "https://gitlab.com/ark-bitcoin/bark"

@@ -20,7 +20,7 @@
 
 use std::str::FromStr;
 use std::fmt;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,6 +59,38 @@ pub struct ClnHoldConfig {
 	pub track_all_base_delay: Duration,
 	/// Maximum delay for TrackAll reconnection backoff (e.g., 60 seconds)
 	pub max_track_all_delay: Duration,
+}
+
+/// Ask `hold.list` for exactly the payment hashes we care about and return
+/// the subset whose invoice is in Accepted state. Replaces a full-list
+/// pagination + client-side filter.
+async fn fetch_accepted_payment_hashes(
+	hold_client: &mut HoldClient<Channel>,
+	payment_hashes: Vec<Vec<u8>>,
+) -> anyhow::Result<HashSet<sha256::Hash>> {
+	if payment_hashes.is_empty() {
+		return Ok(HashSet::new());
+	}
+
+	let req = hold::ListRequest {
+		constraint: Some(hold::list_request::Constraint::PaymentHashes(
+			hold::list_request::PaymentHashes { payment_hashes },
+		)),
+	};
+	let res = hold_client.list(req).await?.into_inner();
+
+	let mut accepted = HashSet::new();
+	for inv in &res.invoices {
+		if inv.state != InvoiceState::Accepted as i32 {
+			continue;
+		}
+		match sha256::Hash::from_slice(&inv.payment_hash) {
+			Ok(h) => { accepted.insert(h); },
+			Err(e) => warn!("hold plugin returned invalid payment_hash \
+				(len {}, id {}): {}", inv.payment_hash.len(), inv.id, e),
+		}
+	}
+	Ok(accepted)
 }
 
 pub struct ClnHold {
@@ -364,28 +396,28 @@ impl ClnHoldProcess {
 			self.node_id,
 		).await).await?;
 
-		for htlc_subscription in htlc_subscriptions {
-			// Only poll for subscriptions that haven't been accepted yet
-			if htlc_subscription.status != LightningHtlcSubscriptionStatus::Created {
-				continue;
-			}
+		let created_subs = htlc_subscriptions.into_iter()
+			.filter(|s| s.status == LightningHtlcSubscriptionStatus::Created)
+			.collect::<Vec<_>>();
 
+		if created_subs.is_empty() {
+			return Ok(());
+		}
+
+		let payment_hashes = created_subs.iter()
+			.map(|s| s.invoice.payment_hash().to_byte_array().to_vec())
+			.collect::<Vec<_>>();
+		let accepted_hashes = fetch_accepted_payment_hashes(
+			&mut hold_client, payment_hashes,
+		).await?;
+
+		debug!("poll_htlc_state_updates: {} created subs, {} accepted invoices in plugin",
+			created_subs.len(), accepted_hashes.len(),
+		);
+
+		for htlc_subscription in created_subs {
 			let payment_hash = htlc_subscription.invoice.payment_hash();
-
-			debug!("Lightning htlc subscription ({}) is being verified.",
-				htlc_subscription.id,
-			);
-
-			let req = hold::ListRequest {
-				constraint: Some(hold::list_request::Constraint::PaymentHash(
-					payment_hash.to_byte_array().to_vec(),
-				)),
-			};
-			let res = hold_client.list(req).await?.into_inner();
-
-			let is_accepted = res.invoices.iter().any(|i| i.state == InvoiceState::Accepted as i32);
-
-			if is_accepted {
+			if accepted_hashes.contains(payment_hash) {
 				self.handle_invoice_accepted(&htlc_subscription).await?;
 			}
 		}
@@ -536,10 +568,12 @@ impl ClnHoldProcess {
 				}
 			}
 
-			// whether our invoice_interval should handle subscriptions or only timeouts
+			// whether our invoice_interval should handle subscriptions or only timeouts.
+			// Backoff polls too: otherwise Created -> Accepted detection waits for
+			// reconnect, delaying up to `max_track_all_delay`.
 			let interval_handle_subscriptions = match track_all_state {
 				TrackAllStreamState::Connected(_) => false,
-				TrackAllStreamState::Backoff { .. } => false,
+				TrackAllStreamState::Backoff { .. } => true,
 				TrackAllStreamState::Disabled | TrackAllStreamState::NeedsConnect => true,
 			};
 
@@ -587,10 +621,15 @@ impl ClnHoldProcess {
 						continue 'requests;
 					},
 					_ = invoice_interval.tick() => {
-						if interval_handle_subscriptions {
-							self.process_htlc_subscriptions().await?;
+						// Log rather than propagate: killing the worker would break
+						// the TrackAll reconnect loop we depend on to recover.
+						let res = if interval_handle_subscriptions {
+							self.process_htlc_subscriptions().await
 						} else {
-							self.check_htlc_subscription_timeouts().await?;
+							self.check_htlc_subscription_timeouts().await
+						};
+						if let Err(e) = res {
+							warn!("htlc subscription processing failed: {:#}", e);
 						}
 					},
 				}

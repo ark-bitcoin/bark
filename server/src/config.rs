@@ -289,6 +289,7 @@ mod defaults {
 	/// Must be longer than keepalives_idle (60s) so keepalive probes
 	/// can detect dead connections before the pool discards them.
 	pub fn idle_timeout_secs() -> u64 { 90 }
+
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -433,7 +434,6 @@ pub struct Config {
 	/// Maximum delay for TrackAll stream reconnection backoff (e.g., 60 seconds)
 	#[serde(alias = "track_all_max_delay", with = "utils::serde::duration")]
 	pub max_track_all_delay: Duration,
-
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries.
 	///
 	/// It also sets the extra delay on the user's preimage clause of an
