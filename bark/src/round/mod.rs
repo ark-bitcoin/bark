@@ -40,7 +40,7 @@ use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 use crate::subsystem::{RoundMovement, Subsystem};
-use crate::vtxo::validate_vtxo_tree_params;
+use crate::vtxo::{validate_vtxo_tree_params, VtxoLockHolder, VtxoState};
 
 /// How long [`Wallet::lock_wait_round_state`] waits for a contended
 /// round lock before giving up. Long enough to outlast a normal round.
@@ -454,14 +454,19 @@ impl RoundState {
 
 			RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height } => {
 				match progress_delegated(
-					wallet, &self.participation, unlock_hash, scheduled_height,
+					wallet, &self.participation, self.movement_id, unlock_hash, scheduled_height,
 					self.sent_forfeit_sigs,
 				).await {
 					Ok(HarkProgressResult::RoundPending) => Ok(RoundStatus::Pending),
-					// We don't lock inputs on delegated rounds, so if we don't find it,
-					// we just mark the refresh movement as failed
 					Ok(HarkProgressResult::RoundNotFound) => {
+						// Inputs are only locked once the round is issued, so this
+						// unlock is a no-op for a participation that never got that far.
+						// TODO: if the funding tx never confirms and/or double spends, consider an
+						//  auto-exit.
 						info!("Server reports round participation not found (no forfeits sent)");
+						wallet.unlock_vtxos(
+							&self.participation.inputs, self.movement_id.map(|m| m.into()),
+						).await.context("failed to unlock delegated round inputs")?;
 						self.flow = RoundFlowState::Failed {
 							error: "server reports round participation not found".into(),
 						};
@@ -1129,6 +1134,7 @@ enum HarkProgressResult {
 async fn progress_delegated(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
+	movement_id: Option<MovementId>,
 	unlock_hash: UnlockHash,
 	scheduled_height: Option<BlockHeight>,
 	sent_forfeit_sigs: bool,
@@ -1180,10 +1186,19 @@ async fn progress_delegated(
 	);
 
 	// Check the confirmation status of the funding tx
-	match check_funding_tx_confirmations(wallet, funding_txid, &funding_tx).await {
-		Ok(true) => {},
-		Ok(false) => return Ok(HarkProgressResult::FundingTxUnconfirmed { funding_txid }),
-		Err(e) => return Err(HarkForfeitError::Err(e.context("checking funding tx confirmations"))),
+	let confirmed = check_funding_tx_confirmations(wallet, funding_txid, &funding_tx).await
+		.context("checking funding tx confirmations")
+		.map_err(HarkForfeitError::Err)?;
+
+	// The server has issued the round and its funding tx is in our mempool or a
+	// block: the server no longer accepts these inputs, so hold them like the
+	// inputs of an interactive round before we forfeit them below.
+	wallet.lock_vtxos(&participation.inputs, movement_id.map(|m| m.into())).await
+		.context("failed to lock inputs of issued delegated round")
+		.map_err(HarkForfeitError::Err)?;
+
+	if !confirmed {
+		return Ok(HarkProgressResult::FundingTxUnconfirmed { funding_txid });
 	}
 
 	let mut new_vtxos = resp.output_vtxos.into_iter()
@@ -1853,16 +1868,21 @@ impl Wallet {
 	/// Returns all VTXOs that are locked in a pending round
 	///
 	/// This excludes all input VTXOs for which the output VTXOs have already
-	/// been created.
+	/// been created, and inputs the round does not hold: those of a delegated
+	/// participation the server has not issued yet, which are still spendable
+	/// or locked by another operation.
 	pub async fn pending_round_input_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut ret = Vec::new();
 		for round in self.pending_round_states().await? {
+			let holder = round.state().movement_id.map(|id| VtxoLockHolder::Movement { id });
 			let inputs = round.state().locked_pending_inputs();
 			ret.reserve(inputs.len());
 			for input in inputs {
 				let v = self.get_vtxo_by_id(input.id()).await
 					.context("unknown round input VTXO")?;
-				ret.push(v);
+				if matches!(&v.state, VtxoState::Locked { holder: h } if *h == holder) {
+					ret.push(v);
+				}
 			}
 		}
 		Ok(ret)
