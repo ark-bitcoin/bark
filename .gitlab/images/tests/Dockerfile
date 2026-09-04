@@ -1,4 +1,4 @@
-FROM docker.io/ubuntu:25.04
+FROM docker.io/ubuntu:26.04
 
 # Everything that runs a build or a CI helper needing real tools does so
 # inside the nix devShells (jobs wrap their commands in the contrib/ci-env scripts),
@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	podman \
 	buildah \
 	openssh-client \
-	qemu-user-static \
+	qemu-user-binfmt \
 	passt \
 	&& rm -rf /var/lib/apt/lists/*
 
