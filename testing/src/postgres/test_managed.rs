@@ -35,4 +35,8 @@ impl TestManagedPostgres {
 	pub async fn global_client(&self) -> Client {
 		self.database_client(None).await
 	}
+
+	pub async fn stop(&self) -> anyhow::Result<()> {
+		self.postgresd.stop().await
+	}
 }
