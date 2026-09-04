@@ -40,6 +40,7 @@ use crate::database::tree::VtxoTreeUpdate;
 use crate::{check_max_amount, telemetry, Server, SECP};
 use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
+use crate::nursery::NurseryTxKind;
 use crate::telemetry::{RoundStep, TimedRoundStep};
 use crate::utils::InstrumentedLock;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxoGuard};
@@ -1174,7 +1175,10 @@ impl SigningVtxoTree {
 
 		// Broadcast the transaction.
 		let confirm_target = srv.nursery_confirm_target();
-		if let Err(e) = srv.tx_nursery.broadcast_tx(signed_round_tx.tx, confirm_target).await {
+		let broadcast = srv.tx_nursery.broadcast_tx(
+			signed_round_tx.tx, NurseryTxKind::Round, confirm_target,
+		).await;
+		if let Err(e) = broadcast {
 			warn!("Failed to broadcast round tx: {:?}", e);
 		}
 

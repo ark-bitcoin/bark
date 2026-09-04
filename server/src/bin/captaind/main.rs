@@ -126,6 +126,31 @@ enum RpcCommand {
 	/// Manage vtxo bans
 	#[command(subcommand)]
 	Ban(BanCommand),
+
+	/// Manage the txs the nursery is following up on
+	#[command(subcommand)]
+	Nursery(NurseryCommand),
+}
+
+#[derive(clap::Subcommand)]
+enum NurseryCommand {
+	/// List the txs the nursery is following up on
+	#[command()]
+	List {
+		/// Also include confirmed txs
+		#[arg(long)]
+		include_confirmed: bool,
+		/// Also include abandoned txs
+		#[arg(long)]
+		include_abandoned: bool,
+	},
+	/// Abandon a nursery tx that can no longer make it onchain: the
+	/// nursery stops following it up and stops warning about it
+	#[command()]
+	Abandon {
+		/// The txid to give up on
+		txid: Txid,
+	},
 }
 
 #[derive(clap::Subcommand)]
@@ -692,6 +717,41 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 							println!("{} — banned until block {}", vtxo_id, until);
 						}
 					}
+				}
+			}
+		}
+		RpcCommand::Nursery(cmd) => {
+			let mut rpc = rpc::admin::NurseryAdminServiceClient::connect(endpoint)
+				.await.context("failed to connect to rpc")?;
+
+			match cmd {
+				NurseryCommand::List { include_confirmed, include_abandoned } => {
+					let res = rpc.list_nursery_txs(protos::ListNurseryTxsRequest {
+						include_confirmed, include_abandoned,
+					}).await?.into_inner();
+					if res.txs.is_empty() {
+						println!("No nursery txs");
+					}
+					for tx in &res.txs {
+						let status = if tx.abandoned_at.is_some() {
+							"abandoned".to_string()
+						} else if let Some(h) = tx.confirmed_at_height {
+							format!("confirmed at {}", h)
+						} else if tx.in_mempool {
+							"in mempool".to_string()
+						} else {
+							"MISSING FROM MEMPOOL".to_string()
+						};
+						println!("{} kind={} {}, should confirm by {}",
+							tx.txid, tx.kind, status, tx.confirm_target_height,
+						);
+					}
+				}
+				NurseryCommand::Abandon { txid } => {
+					rpc.abandon(protos::AbandonRequest {
+						txid: txid.to_string(),
+					}).await?;
+					println!("Abandoned nursery tx {}", txid);
 				}
 			}
 		}

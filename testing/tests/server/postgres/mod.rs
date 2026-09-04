@@ -27,6 +27,7 @@ use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
 use server::filters;
 use server::filters::Filters;
+use server::nursery::NurseryTxKind;
 use server::secret::Secret;
 use server::wallet::WalletKind;
 
@@ -660,20 +661,21 @@ async fn nursery_txs() {
 	let txid = tx.compute_txid();
 
 	// Hand the tx to the nursery.
-	db.write(async |t| t.upsert_nursery_tx(&tx, 100).await).await.unwrap();
+	db.write(async |t| t.upsert_nursery_tx(&tx, NurseryTxKind::Round, 100).await).await.unwrap();
 	let stored = db.read(async |t| t.get_nursery_raw_tx(txid).await).await.unwrap().unwrap();
 	assert_eq!(stored.compute_txid(), txid);
 
 	let active = db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap();
 	assert_eq!(active.len(), 1);
 	assert_eq!(active[0].txid, txid);
+	assert_eq!(active[0].kind, NurseryTxKind::Round);
 	assert_eq!(active[0].confirm_target_height, 100);
 	assert_eq!(active[0].confirmed_at_height, None);
 	let unconfirmed = db.read(async |t| t.get_unconfirmed_nursery_txids().await).await.unwrap();
 	assert_eq!(unconfirmed, vec![txid]);
 
 	// Upserting again keeps the original target.
-	db.write(async |t| t.upsert_nursery_tx(&tx, 200).await).await.unwrap();
+	db.write(async |t| t.upsert_nursery_tx(&tx, NurseryTxKind::Round, 200).await).await.unwrap();
 	let active = db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap();
 	assert_eq!(active.len(), 1);
 	assert_eq!(active[0].confirm_target_height, 100);

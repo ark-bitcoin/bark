@@ -55,6 +55,18 @@ CREATE TYPE public.mailbox_type AS ENUM (
 
 
 --
+-- Name: nursery_tx_kind; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.nursery_tx_kind AS ENUM (
+    'round',
+    'offboard',
+    'vtxopool',
+    'internal'
+);
+
+
+--
 -- Name: spend_state; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -1026,7 +1038,8 @@ CREATE TABLE public.nursery_tx (
     confirmed_at_height integer,
     abandoned_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    kind public.nursery_tx_kind NOT NULL
 );
 
 

@@ -1,0 +1,10 @@
+- The operator can inspect and manage the txs the nursery follows up on
+  Each nursery tx records its kind (round, offboard, vtxopool or
+  internal), and the new `ListNurseryTxs` admin RPC reports every
+  tracked tx with its confirmation state and mempool presence. New
+  `captaind rpc nursery` subcommands wrap the RPCs: `list` and
+  `abandon`.
+  [#2305](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2305)
+  - The nursery follow-up now runs in captaind, which broadcasts every
+    nursery tx; watchmand serves the admin RPCs but no longer runs
+    follow-up.

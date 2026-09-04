@@ -23,6 +23,7 @@ use crate::database::vtxopool::PoolVtxo;
 use crate::database::tree::VtxoTreeUpdate;
 use crate::wallet::BdkWalletExt;
 use crate::{database, telemetry, Server, SECP};
+use crate::nursery::NurseryTxKind;
 
 
 /// Type used to express a vtxo issuance target for the [VtxoPool]
@@ -597,7 +598,7 @@ impl Process {
 			);
 		self.srv.db.write(async |t| {
 			t.execute_vtxo_tree_update(update).await?;
-			t.upsert_nursery_tx(&tx, confirm_target).await
+			t.upsert_nursery_tx(&tx, NurseryTxKind::VtxoPool, confirm_target).await
 		}).await?;
 
 		// Here we commit the transaction to the wallet
@@ -620,7 +621,7 @@ impl Process {
 
 		slog!(FinishedPoolIssuance, txid: funding_txid, total_count: requests.len(), total_amount);
 
-		self.srv.tx_nursery.broadcast_tx(tx, confirm_target).await
+		self.srv.tx_nursery.broadcast_tx(tx, NurseryTxKind::VtxoPool, confirm_target).await
 			.with_context(|| format!("error broadcasting vtxopool issuance tx {}", txid))?;
 
 		Ok(())

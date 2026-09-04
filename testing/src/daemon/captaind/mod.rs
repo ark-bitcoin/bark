@@ -266,6 +266,18 @@ impl Captaind {
 			}).await.map(|_| ())
 	}
 
+	pub async fn list_nursery_txs(
+		&self,
+		include_confirmed: bool,
+		include_abandoned: bool,
+	) -> Vec<protos::NurseryTxInfo> {
+		self.get_nursery_rpc().await
+			.list_nursery_txs(protos::ListNurseryTxsRequest {
+				include_confirmed, include_abandoned,
+			}).await.expect("list_nursery_txs rpc failed")
+			.into_inner().txs
+	}
+
 	pub async fn ban_vtxo(&self, vtxo_id: ark::VtxoId, ban_blocks: u32) {
 		self.get_ban_rpc().await
 			.ban_vtxo(protos::BanVtxoRequest {

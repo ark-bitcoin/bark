@@ -4,11 +4,13 @@ use std::str::FromStr;
 use anyhow::Context;
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::{deserialize, serialize};
+use chrono::{DateTime, Local};
 use tokio_postgres::types::Type;
 
 use bitcoin_ext::BlockHeight;
 
 use crate::database::Tx;
+use crate::nursery::NurseryTxKind;
 
 /// Convert a [BlockHeight] into the INT4 stored in postgres.
 fn height_to_sql(height: BlockHeight) -> anyhow::Result<i32> {
@@ -25,9 +27,36 @@ fn height_from_sql(height: i32) -> BlockHeight {
 #[derive(Debug, Clone)]
 pub struct NurseryTx {
 	pub txid: Txid,
+	pub kind: NurseryTxKind,
 	pub confirm_target_height: BlockHeight,
 	pub confirmed_at_height: Option<BlockHeight>,
+	pub created_at: DateTime<Local>,
+	pub abandoned_at: Option<DateTime<Local>>,
 }
+
+impl NurseryTx {
+	fn from_row(row: &tokio_postgres::Row) -> NurseryTx {
+		let txid = Txid::from_str(row.get("txid"))
+			.expect("corrupt db: invalid txid");
+		let kind = NurseryTxKind::from_str(row.get("kind"))
+			.expect("corrupt db: invalid nursery tx kind");
+		let confirm_target_height =
+			height_from_sql(row.get("confirm_target_height"));
+		let confirmed_at_height = row.get::<_, Option<i32>>("confirmed_at_height")
+			.map(height_from_sql);
+		NurseryTx {
+			txid, kind, confirm_target_height, confirmed_at_height,
+			created_at: row.get("created_at"),
+			abandoned_at: row.get("abandoned_at"),
+		}
+	}
+}
+
+/// The columns needed to build a [NurseryTx].
+const NURSERY_TX_COLUMNS: &str = "
+	txid, kind::TEXT, confirm_target_height, confirmed_at_height,
+	created_at, abandoned_at
+";
 
 impl<'t> Tx<'t> {
 	/// Hand a tx over to the TxNursery.
@@ -37,16 +66,17 @@ impl<'t> Tx<'t> {
 	pub async fn upsert_nursery_tx(
 		&self,
 		tx: &Transaction,
+		kind: NurseryTxKind,
 		confirm_target_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		let stmt = self.prepare_typed("
-			INSERT INTO nursery_tx (txid, tx, confirm_target_height, created_at, updated_at)
-			VALUES ($1, $2, $3, NOW(), NOW())
+			INSERT INTO nursery_tx (txid, kind, tx, confirm_target_height, created_at, updated_at)
+			VALUES ($1, $2::TEXT::nursery_tx_kind, $3, $4, NOW(), NOW())
 			ON CONFLICT (txid) DO NOTHING
-		", &[Type::TEXT, Type::BYTEA, Type::INT4]).await?;
+		", &[Type::TEXT, Type::TEXT, Type::BYTEA, Type::INT4]).await?;
 
 		self.execute(&stmt, &[
-			&tx.compute_txid().to_string(), &serialize(tx),
+			&tx.compute_txid().to_string(), &kind.name(), &serialize(tx),
 			&height_to_sql(confirm_target_height)?,
 		]).await?;
 
@@ -72,24 +102,15 @@ impl<'t> Tx<'t> {
 		&self,
 		deeply_confirmed_height: BlockHeight,
 	) -> anyhow::Result<Vec<NurseryTx>> {
-		let stmt = self.prepare_typed("
-			SELECT txid, confirm_target_height, confirmed_at_height
-			FROM nursery_tx
+		let stmt = self.prepare_typed(&format!("
+			SELECT {} FROM nursery_tx
 			WHERE abandoned_at IS NULL
 			AND (confirmed_at_height IS NULL OR confirmed_at_height > $1)
 			ORDER BY id
-		", &[Type::INT4]).await?;
+		", NURSERY_TX_COLUMNS), &[Type::INT4]).await?;
 
 		let rows = self.query(&stmt, &[&height_to_sql(deeply_confirmed_height)?]).await?;
-		Ok(rows.into_iter().map(|row| {
-			let txid = Txid::from_str(row.get("txid"))
-				.expect("corrupt db: invalid txid");
-			let confirm_target_height =
-				height_from_sql(row.get("confirm_target_height"));
-			let confirmed_at_height = row.get::<_, Option<i32>>("confirmed_at_height")
-				.map(height_from_sql);
-			NurseryTx { txid, confirm_target_height, confirmed_at_height }
-		}).collect())
+		Ok(rows.iter().map(NurseryTx::from_row).collect())
 	}
 
 	/// Get the txids of all unconfirmed nursery txs. Only txids, to keep
@@ -154,6 +175,25 @@ impl<'t> Tx<'t> {
 				.expect("corrupt db: invalid txid");
 			(txid, height_from_sql(row.get(1)))
 		}).collect())
+	}
+
+	/// List nursery txs for the operator's report, newest first.
+	///
+	/// Deeply confirmed and abandoned rows are only included on request.
+	pub async fn list_nursery_txs(
+		&self,
+		include_confirmed: bool,
+		include_abandoned: bool,
+	) -> anyhow::Result<Vec<NurseryTx>> {
+		let stmt = self.prepare_typed(&format!("
+			SELECT {} FROM nursery_tx
+			WHERE (confirmed_at_height IS NULL OR $1)
+			AND (abandoned_at IS NULL OR $2)
+			ORDER BY id DESC
+		", NURSERY_TX_COLUMNS), &[Type::BOOL, Type::BOOL]).await?;
+
+		let rows = self.query(&stmt, &[&include_confirmed, &include_abandoned]).await?;
+		Ok(rows.iter().map(NurseryTx::from_row).collect())
 	}
 
 	/// Abandon a nursery tx: give up on it and stop warning.

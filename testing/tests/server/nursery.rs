@@ -104,3 +104,53 @@ async fn nursery_warns_until_tx_is_abandoned() {
 	let res = log_missed.recv().try_wait(Duration::from_secs(3)).await;
 	assert!(res.is_err(), "got missed-target warning after the tx was abandoned");
 }
+
+/// The operator can inspect the nursery through ListNurseryTxs: the
+/// default report shows what still needs follow-up, the full one keeps
+/// confirmed txs.
+#[tokio::test]
+async fn nursery_reports_tracked_txs() {
+	let ctx = TestContext::new("server/nursery_reports_tracked_txs").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).create().await;
+
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	ctx.refresh_all(&srv, &[&bark]).await;
+	let funding_txid = log_round_finished.recv().wait(Duration::from_secs(30)).await
+		.expect("timed out waiting for round to finish").txid;
+	srv.bitcoind().await_transaction(funding_txid).await;
+
+	// The report shows the unconfirmed round tx.
+	let txs = srv.list_nursery_txs(false, false).await;
+	let entry = txs.iter().find(|t| t.txid == funding_txid.to_string())
+		.expect("round tx missing from nursery report");
+	assert_eq!(entry.kind, "round");
+	assert!(entry.in_mempool);
+	assert!(entry.confirmed_at_height.is_none());
+
+	// Everything confirms; the confirmed tx leaves the default report
+	// but stays in the full one.
+	let mut log_confirmed = srv.subscribe_log::<NurseryTxConfirmed>();
+	ctx.await_transaction(funding_txid).await;
+	ctx.generate_blocks(1).await;
+	loop {
+		let confirmed = log_confirmed.recv().wait(Duration::from_secs(30)).await
+			.expect("timed out waiting for nursery confirmation");
+		if confirmed.txid == funding_txid {
+			break;
+		}
+	}
+	let txs = srv.list_nursery_txs(false, false).await;
+	assert!(!txs.iter().any(|t| t.txid == funding_txid.to_string()),
+		"confirmed tx still in the default report");
+	let txs = srv.list_nursery_txs(true, false).await;
+	let entry = txs.iter().find(|t| t.txid == funding_txid.to_string())
+		.expect("confirmed tx missing from full report");
+	assert!(entry.confirmed_at_height.is_some());
+}

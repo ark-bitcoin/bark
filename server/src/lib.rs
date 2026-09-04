@@ -25,7 +25,7 @@ pub(crate) mod bitcoin_blocklist;
 pub mod bitcoind;
 mod intman;
 pub mod ln;
-mod nursery;
+pub mod nursery;
 mod offboards;
 mod round;
 pub mod telemetry;
@@ -84,7 +84,7 @@ use crate::mailbox_manager::MailboxManager;
 use crate::fee_estimator::FeeEstimator;
 use crate::round::RoundInput;
 use crate::round::forfeit::HarkForfeitNonces;
-use crate::nursery::TxNursery;
+use crate::nursery::{NurseryTxKind, TxNursery};
 use crate::secret::Secret;
 use crate::system::RuntimeManager;
 use crate::utils::{InstrumentedLock, TimedEntryMap};
@@ -430,8 +430,6 @@ impl Server {
 
 			Some((watchman_cfg.clone(), watchman_wallet, frontier))
 		} else {
-			info!("Embedded watchman disabled: nursery tx follow-up is left \
-				to the watchmand process");
 			None
 		};
 		let watchman_wallet = watchman_deps.as_ref().map(|(_, w, _)| w.clone());
@@ -687,7 +685,7 @@ impl Server {
 		};
 		drop(wallet);
 
-		self.tx_nursery.broadcast_tx(tx, self.nursery_confirm_target()).await
+		self.tx_nursery.broadcast_tx(tx, NurseryTxKind::Internal, self.nursery_confirm_target()).await
 			.context("Failed to broadcast transaction")?;
 
 		Ok(())
