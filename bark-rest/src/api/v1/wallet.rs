@@ -1178,7 +1178,8 @@ pub async fn import_vtxo(
 	for vtxo_hex in body.vtxos {
 		let vtxo = ark::Vtxo::deserialize_hex(&vtxo_hex).badarg("invalid vtxo hex")?;
 		let vtxo_id = vtxo.id();
-		wallet.import_vtxo(&vtxo).await.context("Failed to import VTXO")?;
+		wallet.import_vtxo(&vtxo, bark::ImportVtxoArgs::default()).await
+			.context("Failed to import VTXO")?;
 		let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await.context("Failed to get imported VTXO")?;
 		imported.push((&wallet_vtxo).into());
 	}

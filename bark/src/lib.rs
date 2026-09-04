@@ -397,6 +397,7 @@ mod board;
 mod config;
 mod daemon;
 mod fees;
+mod import;
 mod lightning;
 mod mailbox;
 mod notification;
@@ -416,6 +417,7 @@ pub use self::config::{
 };
 pub use self::daemon::{tip_watcher, DaemonHandle};
 pub use self::fees::FeeEstimate;
+pub use self::import::{ImportVtxoArgs, ImportVtxoError};
 pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::recovery::{RecoveryReport, RecoveryReportEntry, RecoveryStatus};
 pub use self::vtxo::WalletVtxo;
@@ -436,6 +438,7 @@ use log::{debug, error, info, trace, warn};
 use tokio_stream::StreamExt;
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::attestations::VtxoStatusAttestation;
 use ark::address::VtxoDelivery;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::rounds::{RoundAttempt, RoundEvent};
@@ -443,6 +446,7 @@ use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef, VTXO_DUST};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
 use server_rpc::{protos, ServerConnection};
+use server_rpc::protos::VtxoSpendState;
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
@@ -1615,36 +1619,25 @@ impl Wallet {
 		vtxo.validate(&tx).map_err(VtxoValidationError::Invalid)
 	}
 
-	/// Manually import a VTXO into the wallet.
+	/// Ask the server for `vtxo_id`'s spend state.
 	///
-	/// # Arguments
-	/// * `vtxo` - The VTXO to import
-	///
-	/// # Errors
-	/// Returns an error if:
-	/// - The VTXO's chain anchor is not found or invalid
-	/// - The wallet doesn't own a signable clause for the VTXO
-	pub async fn import_vtxo(&self, vtxo: &Vtxo<Full>) -> anyhow::Result<()> {
-		if self.inner.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
-			info!("VTXO {} already exists in wallet, skipping import", vtxo.id());
-			return Ok(());
-		}
+	/// `keypair` must be the VTXO's private key so we can prove ownership.
+	pub(crate) async fn fetch_vtxo_spend_state(
+		&self,
+		vtxo_id: VtxoId,
+		keypair: &Keypair,
+	) -> anyhow::Result<VtxoSpendState> {
+		let (mut srv, _) = self.require_server().await?;
+		let attestation = VtxoStatusAttestation::new(vtxo_id, keypair);
+		let resp = srv.client.get_vtxo_status(protos::GetVtxoStatusRequest {
+			vtxo_id: vtxo_id.to_bytes().to_vec(),
+			attestation: attestation.serialize(),
+		}).await.with_context(|| format!("error fetching status for vtxo {vtxo_id}"))?.into_inner();
 
-		self.validate_vtxo(vtxo).await.context("VTXO validation failed")?;
-
-		if self.find_signable_clause(vtxo).await.is_none() {
-			bail!("VTXO {} is not owned by this wallet (no signable clause found)", vtxo.id());
-		}
-
-		let current_height = self.inner.chain.tip().await?;
-		if vtxo.expiry_height() <= current_height {
-			bail!("Vtxo {} has expired", vtxo.id());
-		}
-
-		self.store_spendable_vtxos([vtxo]).await.context("failed to store imported VTXO")?;
-
-		info!("Successfully imported VTXO {}", vtxo.id());
-		Ok(())
+		VtxoSpendState::try_from(resp.spend_state).map_err(|_| anyhow::anyhow!(
+			"server returned unknown spend state {} for vtxo {vtxo_id}; this wallet may \
+			need updating", resp.spend_state,
+		))
 	}
 
 	/// Retrieves the full state of a [Vtxo] for a given [VtxoId] if it exists in the database.

@@ -11,6 +11,7 @@ use log::{debug, info, warn};
 use ark::{ArkInfo, Vtxo, VtxoId};
 use ark::encode::ProtocolEncoding;
 use ark::vtxo::Full;
+use bark::ImportVtxoArgs;
 use bark_json::primitives::{VtxoInfo, WalletVtxoInfo};
 use server_rpc as rpc;
 
@@ -144,7 +145,7 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 			let mut imported = Vec::with_capacity(to_import.len());
 			for vtxo in to_import {
 				let vtxo_id = vtxo.id();
-				wallet.import_vtxo(&vtxo).await
+				wallet.import_vtxo(&vtxo, ImportVtxoArgs::default()).await
 					.with_context(|| format!("Failed to import vtxo {}", vtxo_id))?;
 				let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await
 					.with_context(|| format!("Failed to get imported vtxo {}", vtxo_id))?;

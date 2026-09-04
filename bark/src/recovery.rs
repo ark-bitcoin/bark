@@ -13,7 +13,6 @@ use bitcoin::secp256k1::Keypair;
 use log::{debug, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
-use ark::attestations::VtxoStatusAttestation;
 use ark::mailbox::MailboxAuthorization;
 use ark::vtxo::Full;
 use bitcoin_ext::BlockHeight;
@@ -370,18 +369,10 @@ impl Wallet {
 		vtxo: &Vtxo<Full>,
 		keypair: &Keypair,
 	) -> anyhow::Result<bool> {
-		let (mut srv, _) = self.require_server().await?;
 		let vtxo_id = vtxo.id();
-		let attestation = VtxoStatusAttestation::new(vtxo_id, keypair);
-		let resp = srv.client.get_vtxo_status(protos::GetVtxoStatusRequest {
-			vtxo_id: vtxo_id.to_bytes().to_vec(),
-			attestation: attestation.serialize(),
-		}).await.with_context(|| format!("error fetching status for vtxo {vtxo_id}"))?.into_inner();
-
-		let spend_state = protos::VtxoSpendState::try_from(resp.spend_state)
-			.map_err(|_| anyhow::anyhow!(
-				"server returned unknown spend state {} for vtxo {vtxo_id}", resp.spend_state,
-			));
+		// NB an error here (rpc or an unknown state) is a non-decision, so it
+		// lands in `failed` for the retry loop rather than aborting the scan.
+		let spend_state = self.fetch_vtxo_spend_state(vtxo_id, keypair).await;
 
 		// The server is the authority on whether it was spent elsewhere.
 		// Matched exhaustively (no catch-all) so a new spend state forces an
