@@ -12,7 +12,6 @@ use bark_json::primitives::VtxoStateInfo;
 use bitcoin::Amount;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoin_ext::TxStatus;
-use server::config::OptionalService;
 use server::database::Db;
 use server::vtxopool::VtxoTarget;
 use server_log::{
@@ -66,15 +65,14 @@ async fn watchman_sweeps_boards() {
 
 	let ctx = TestContext::new("server/watchman_sweeps_boards").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -125,11 +123,9 @@ async fn ark_fee_recorded_slog_on_board() {
 	let ctx = TestContext::new("server/ark_fee_recorded_slog_on_board").await;
 	let cfg_board_fees = board_fees.clone();
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(move |cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxopool.vtxo_targets = vec![];
 		cfg.fees.board = cfg_board_fees.clone();
 	}).create().await;
-	let _wm = ctx.watchmand("watchman").create(&srv).await;
 
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
@@ -155,15 +151,14 @@ async fn watchman_sweeps_round_vtxos() {
 
 	let ctx = TestContext::new("server/watchman_sweeps_round_vtxos").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -200,14 +195,13 @@ async fn watchman_sweeps_round_vtxos() {
 async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 	let ctx = TestContext::new("server/watchman_sweeps_arkoor_vtxos_sender_exit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -245,14 +239,13 @@ async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 	let ctx = TestContext::new("server/watchman_sweeps_arkoor_vtxos_receiver_exit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -294,18 +287,17 @@ async fn watchman_sweeps_lightning_vtxos() {
 	let ctx = TestContext::new("server/watchman_sweeps_lightning_vtxos").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_targets = vec![
 			VtxoTarget { count: 10, amount: sat(10_000) },
 		];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -349,16 +341,15 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 
 	let ctx = TestContext::new("server/watchman_sweeps_round_leftovers_after_exits").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.claim_chunksize = 20.try_into().unwrap();
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -436,7 +427,6 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	let ctx = TestContext::new("server/watchman_sweeps_vtxopool_with_exit").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").funded(btc(10)).lightningd(&ln.internal).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_targets = vec![
 			// total: 300_099_000
@@ -445,12 +435,12 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 			VtxoTarget { count: 3, amount: btc(1) },
 		];
 		cfg.vtxopool.vtxo_lifetime = 144;
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -512,16 +502,15 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 async fn watchman_sweeps_offboard_connectors() {
 	let ctx = TestContext::new("server/watchman_sweeps_offboard_connectors").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.claim_chunksize = 20.try_into().unwrap();
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -619,15 +608,14 @@ async fn watchman_sweeps_offboard_connectors() {
 async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 	let ctx = TestContext::new("server/watchman_sweeps_offboard_forfeit_after_confiscation").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -703,14 +691,13 @@ async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 async fn watchman_sweeps_exit_after_forfeit() {
 	let ctx = TestContext::new("server/watchman_sweeps_exit_after_forfeit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -789,20 +776,16 @@ async fn watchman_sweeps_forfeit_with_preimage_in_ln_settlement_table() {
 		.captaind("server")
 		.funded(btc(10))
 		.cfg(|cfg| {
-			cfg.watchman = OptionalService::Disabled;
 			cfg.vtxopool.vtxo_targets = vec![];
+		})
+		.watchmand_cfg(|cfg| {
+			cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+			cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
 		})
 		.create()
 		.await;
 	let failures = WatchmanFailureCollector::default();
-	let wm = ctx
-		.watchmand("watchman")
-		.cfg(|cfg| {
-			cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
-			cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-		})
-		.create(&srv)
-		.await;
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
@@ -900,14 +883,13 @@ async fn watchman_sweeps_exit_after_oor_then_forfeit() {
 
 	let ctx = TestContext::new("server/watchman_sweeps_exit_after_oor_then_forfeit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	// Fund the watchman wallet upfront so it can pay CPFP fees for the OOR tx progress
@@ -983,13 +965,12 @@ async fn watchman_sweeps_exit_after_oor_then_forfeit() {
 async fn offboard_exit_attack(test_name: &str, n_vtxos: usize) -> bitcoin::Amount {
 	let ctx = TestContext::new(test_name).await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let wm = srv.watchmand();
 
 	// fund the watchman so it can pay CPFP fees for its forfeit/connector broadcasts
 	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(1_000_000)).await;
@@ -1088,19 +1069,18 @@ async fn watchman_force_exit_lightning_vtxo_blocks_refresh() {
 	let ctx = TestContext::new("server/watchman_force_exit_lightning_vtxo_blocks_refresh").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		// One pool vtxo per receiver. The round tree has radix 4 (`ark::tree` RADIX), so up
 		// to 4 leaves sit directly under the root - with 3 they are siblings. Exiting one
 		// receiver broadcasts the shared root, dragging the others' HTLC sources on-chain,
 		// and the watchman then progresses down to each leaf. (The pool can't reuse change,
 		// so it needs one vtxo per receiver; a single vtxo can't serve three receives)
 		cfg.vtxopool.vtxo_targets = vec![VtxoTarget { count: 3, amount: sat(100_000) }];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	// Fund the watchman so it can pay CPFP fees for its progress broadcasts.
@@ -1228,14 +1208,13 @@ async fn watchman_force_exit_checkpointed_arkoor_stays_spendable() {
 
 	let ctx = TestContext::new("server/watchman_force_exit_checkpointed_arkoor_stays_spendable").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let failures = WatchmanFailureCollector::default();
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
 
 	// Fund the watchman so it can pay CPFP fees for its progress broadcasts.
@@ -1378,13 +1357,12 @@ struct OffboardAfterExit {
 async fn offboard_after_exit(test_name: &str, depth: ExitDepth) -> OffboardAfterExit {
 	let ctx = TestContext::new(test_name).await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxopool.vtxo_targets = vec![];
-	}).create().await;
-	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
-	}).create(&srv).await;
+	}).create().await;
+	let wm = srv.watchmand();
 
 	// fund the watchman so it can pay CPFP fees for any confiscation broadcast
 	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(1_000_000)).await;

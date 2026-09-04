@@ -1884,7 +1884,8 @@ async fn should_refuse_ln_pay_with_invalid_attestation() {
 #[tokio::test]
 async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	let ctx = TestContext::new("server/should_refuse_oor_input_vtxo_that_is_being_exited").await;
-	let srv = ctx.captaind("server").create().await;
+	// the watchmand marks the exited vtxo, which makes the server refuse it
+	let srv = ctx.captaind("server").watchmand().create().await;
 
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 	let bark2 = ctx.bark("bark2", &srv).create().await;
@@ -2078,7 +2079,8 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	trace!("Start lightningd-1");
 	let lightningd = ctx.lightningd("lightningd-1").create().await;
 
-	let srv = ctx.captaind("server").lightningd(&lightningd).create().await;
+	// the watchmand marks the exited vtxo, which makes the server refuse it
+	let srv = ctx.captaind("server").lightningd(&lightningd).watchmand().create().await;
 
 	let mut bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 

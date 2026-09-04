@@ -28,22 +28,12 @@ impl rpc::server::WalletAdminService for Server {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::WalletStatusResponse>, tonic::Status> {
 
-		let rounds = async {
-			Ok(self.rounds_wallet.lock().await.status())
-		};
-		let watchman = async {
-			if let Some(ref fw) = self.watchman_wallet {
-				Ok::<_, anyhow::Error>(Some(fw.lock().await.status()))
-			} else {
-				Ok(None)
-			}
-		};
-
-		let (rounds, watchman) = tokio::try_join!(rounds, watchman).to_status()?;
+		let rounds = self.rounds_wallet.lock().await.status();
 
 		Ok(tonic::Response::new(protos::WalletStatusResponse {
 			rounds: Some(rounds.into()),
-			watchman: watchman.map(|f| f.into()),
+			// the watchman wallet is managed by the watchmand process
+			watchman: None,
 		}))
 	}
 }
@@ -90,24 +80,6 @@ impl rpc::server::LightningAdminService for Server {
 		let uri = http::Uri::from_str(req.uri.as_str()).unwrap();
 		let _ = self.lightning_manager.disable(uri);
 		Ok(tonic::Response::new(protos::Empty{}))
-	}
-}
-
-#[async_trait]
-impl rpc::server::SweepAdminService for Server {
-	#[tracing::instrument(skip(self, _req))]
-	async fn trigger_sweep(
-		&self,
-		_req: tonic::Request<protos::Empty>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-
-		match &self.watchman_handle {
-			Some(handle) => {
-				handle.trigger_sweep();
-				Ok(tonic::Response::new(protos::Empty {}))
-			},
-			None => Err(tonic::Status::unavailable("watchman not enabled")),
-		}
 	}
 }
 
@@ -221,7 +193,6 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.add_service(rpc::server::WalletAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::RoundAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::LightningAdminServiceServer::from_arc(srv.clone()))
-		.add_service(rpc::server::SweepAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::BanAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::NurseryAdminServiceServer::from_arc(srv.clone()));
 

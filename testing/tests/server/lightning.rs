@@ -209,7 +209,7 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage(
 
 	assert_vtxopool_consistency(srv).await;
 }
-lightning_test!(server_settles_invoice_from_on_chain_htlc_preimage, |cfg| {
+lightning_test!(server_settles_invoice_from_on_chain_htlc_preimage, watchmand, |cfg| {
 	// Use a long receive_htlc_forward_timeout so hold invoices stay alive
 	// while the exit is driven to completion on-chain.
 	cfg.receive_htlc_forward_timeout = Duration::from_secs(5 * 60);
@@ -1546,7 +1546,8 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	trace!("Start lightningd-1");
 	let lightningd = ctx.lightningd("lightningd-1").create().await;
 
-	let srv = ctx.captaind("server").lightningd(&lightningd).create().await;
+	// the watchmand marks the exited vtxo, which makes the server refuse it
+	let srv = ctx.captaind("server").lightningd(&lightningd).watchmand().create().await;
 
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 

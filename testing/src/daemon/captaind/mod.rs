@@ -21,6 +21,7 @@ use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
 use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcProxy};
+use crate::daemon::watchmand::Watchmand;
 use crate::{Bitcoind, Daemon, DaemonHelper, TestContext};
 use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
 use crate::constants::env::CAPTAIND_EXEC;
@@ -84,13 +85,11 @@ where
 #[derive(Debug, Clone)]
 pub struct WalletStatuses {
 	pub rounds: rpc::WalletStatus,
-	pub watchman: Option<rpc::WalletStatus>,
 }
 
 impl WalletStatuses {
 	pub fn total(&self) -> Amount {
-		let watchman = self.watchman.as_ref().map_or(Amount::ZERO, |w| w.total_balance);
-		self.rounds.total_balance + watchman
+		self.rounds.total_balance
 	}
 }
 
@@ -132,6 +131,9 @@ pub struct CaptaindHelper {
 	bitcoind: Arc<Bitcoind>,
 	slog_handler_tx: parking_lot::Mutex<Option<mpsc::Sender<Box<dyn SlogHandler>>>>,
 	state: Arc<parking_lot::Mutex<State>>,
+	/// The watchmand process accompanying this captaind,
+	/// attached by the builder right after startup.
+	watchmand: std::sync::OnceLock<Watchmand>,
 }
 
 impl Captaind {
@@ -178,6 +180,7 @@ impl Captaind {
 			bitcoind,
 			slog_handler_tx: parking_lot::Mutex::new(None),
 			state: Arc::new(parking_lot::Mutex::new(State::default())),
+			watchmand: std::sync::OnceLock::new(),
 		};
 
 		Daemon::wrap(helper)
@@ -244,10 +247,6 @@ impl Captaind {
 
 	pub async fn get_round_rpc(&self) -> RoundAdminClient {
 		RoundAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server wallet rpc")
-	}
-
-	pub async fn get_sweep_rpc(&self) -> SweepAdminClient {
-		SweepAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server wallet rpc")
 	}
 
 	pub async fn get_ban_rpc(&self) -> BanAdminClient {
@@ -319,7 +318,6 @@ impl Captaind {
 		let res = rpc.wallet_status(protos::Empty{}).await.expect("wallet status error").into_inner();
 		WalletStatuses {
 			rounds: res.rounds.unwrap().try_into().unwrap(),
-			watchman: res.watchman.map(|w| w.try_into().unwrap()),
 		}
 	}
 
@@ -337,8 +335,17 @@ impl Captaind {
 		self.get_round_rpc().await.trigger_round(protos::Empty {}).await.unwrap();
 	}
 
-	pub async fn trigger_sweep(&self) {
-		self.get_sweep_rpc().await.trigger_sweep(protos::Empty {}).await.unwrap();
+	/// The watchmand process accompanying this captaind.
+	pub fn watchmand(&self) -> &Watchmand {
+		self.inner.watchmand.get()
+			.expect("no watchmand attached to this captaind; enable it with CaptaindBuilder::watchmand")
+	}
+
+	/// Attach the watchmand process accompanying this captaind.
+	pub fn attach_watchmand(&self, watchmand: Watchmand) {
+		if self.inner.watchmand.set(watchmand).is_err() {
+			panic!("this captaind already has a watchmand attached");
+		}
 	}
 
 	pub fn add_slog_handler<L: SlogHandler>(&self, handler: L) {

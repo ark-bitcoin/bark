@@ -386,17 +386,6 @@ impl TestContext {
 			otel_collector_endpoint: None,
 			otel_tracing_sampler: Some(1f64),
 			otel_deployment_name: db_name,
-			watchman: server::config::OptionalService::Enabled(
-				server::watchman::Config {
-					reaction_interval: std::time::Duration::from_secs(1),
-					sweep_interval: std::time::Duration::from_secs(1),
-					progress_grace_period: 2,
-					claim_chunksize: 15.try_into().unwrap(),
-					incremental_relay_fee: FeeRate::from_sat_per_kvb_ceil(100),
-					min_cpfp_amount: Amount::from_sat(10_000),
-				},
-			),
-			watchman_min_balance: Amount::from_sat(1_000_000),
 			vtxopool: server::vtxopool::Config {
 				vtxo_targets: vec![
 					VtxoTarget { count: 3, amount: sat(10_000) },

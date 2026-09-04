@@ -1,4 +1,4 @@
-use std::{fmt, fs, io};
+use std::{fs, io};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -16,104 +16,6 @@ use cln_rpc::plugins::hold::hold_client::HoldClient;
 
 use crate::{fee_estimator, utils, vtxopool};
 use crate::secret::Secret;
-
-
-/// Wraps another config struct but adds an enabled boolean
-pub enum OptionalService<T> {
-	Enabled(T),
-	Disabled,
-}
-
-impl<T> OptionalService<T> {
-	pub fn enabled(&self) -> Option<&T> {
-		match self {
-			Self::Enabled(c) => Some(c),
-			Self::Disabled => None,
-		}
-	}
-
-	pub fn enabled_mut(&mut self) -> Option<&mut T> {
-		match self {
-			Self::Enabled(c) => Some(c),
-			Self::Disabled => None,
-		}
-	}
-}
-
-impl<T: Default> OptionalService<T> {
-	/// Set the service to enabled if disabled and return the inner value
-	///
-	/// The inner value is set to [Default::default()] if previously disabled.
-	pub fn set_enabled(&mut self) -> &mut T {
-		match self {
-			Self::Enabled(c) => c,
-			Self::Disabled => {
-				*self = Self::Enabled(T::default());
-				self.enabled_mut().unwrap()
-			},
-		}
-	}
-}
-
-impl<T> From<T> for OptionalService<T> {
-	fn from(cfg: T) -> Self {
-	    Self::Enabled(cfg)
-	}
-}
-
-impl<T: Clone> Clone for OptionalService<T> {
-	fn clone(&self) -> Self {
-	    match self {
-			Self::Enabled(c) => Self::Enabled(c.clone()),
-			Self::Disabled => Self::Disabled,
-		}
-	}
-}
-
-impl<T: fmt::Debug> fmt::Debug for OptionalService<T> {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	    match self {
-			Self::Enabled(c) => fmt::Debug::fmt(c, f),
-			Self::Disabled => write!(f, "Disabled"),
-		}
-	}
-}
-
-impl<T: serde::Serialize> serde::Serialize for OptionalService<T> {
-	fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-		#[derive(Serialize)]
-	    struct C<T> {
-			enabled: bool,
-			#[serde(flatten)]
-			config: Option<T>,
-		}
-
-		let c = match self {
-			Self::Enabled(c) => C { enabled: true, config: Some(c) },
-			Self::Disabled => C { enabled: false, config: None },
-		};
-
-		serde::Serialize::serialize(&c, s)
-	}
-}
-
-impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for OptionalService<T> {
-	fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-		#[derive(Deserialize)]
-	    struct C<T> {
-			enabled: bool,
-			#[serde(flatten)]
-			config: Option<T>,
-		}
-
-		let c = C::<T>::deserialize(d)?;
-		if c.enabled {
-			Ok(Self::Enabled(c.config.ok_or_else(|| serde::de::Error::custom("missing config"))?))
-		} else {
-			Ok(Self::Disabled)
-		}
-	}
-}
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -387,12 +289,6 @@ pub struct Config {
 	pub otel_tracing_sampler: Option<f64>,
 	pub otel_deployment_name: String,
 
-	#[serde(with = "utils::serde::string")]
-	pub watchman_min_balance: Amount,
-
-	/// Config for the Watchman process.
-	pub watchman: OptionalService<crate::watchman::Config>,
-
 	/// Config for the VtxoPool process
 	pub vtxopool: vtxopool::Config,
 
@@ -585,6 +481,21 @@ impl Config {
 		};
 
 		let raw_cfg = builder.build().context("error building config")?;
+
+		// captaind used to be able to run the watchman inside its own process.
+		// Silently ignoring these leftover keys would leave an upgrading
+		// operator without any watchman at all, so fail loudly instead.
+		if raw_cfg.get::<Value>("watchman").is_ok() {
+			bail!("captaind no longer runs an embedded watchman. \
+				Remove the [watchman] section from the captaind config and \
+				run the watchmand binary as a separate process instead.");
+		}
+		if raw_cfg.get::<Value>("watchman_min_balance").is_ok() {
+			bail!("captaind no longer manages the watchman wallet, so \
+				watchman_min_balance has no effect. Remove it from the captaind \
+				config and make sure the watchmand wallet stays funded.");
+		}
+
 		let mut cfg = raw_cfg.try_deserialize::<Config>().context("error parsing config")?;
 		// merge the json parsed cln_array
 		cfg.cln_array.extend(cln_array);
@@ -769,6 +680,27 @@ mod test {
 	}
 
 	#[test]
+	fn captaind_config_rejects_embedded_watchman_leftovers() {
+		// captaind used to support running the watchman in-process. A config
+		// that still carries those keys must fail loudly instead of silently
+		// running without any watchman.
+		let dir = std::env::temp_dir().join("captaind-config-test");
+		std::fs::create_dir_all(&dir).unwrap();
+
+		let default = std::fs::read_to_string(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+
+		let path = dir.join("watchman-section.toml");
+		std::fs::write(&path, format!("{}\n[watchman]\nenabled = true\n", default)).unwrap();
+		let err = Config::load(&path).expect_err("watchman section must be rejected");
+		assert!(format!("{}", err).contains("watchmand"), "unexpected error: {}", err);
+
+		let path = dir.join("watchman-min-balance.toml");
+		std::fs::write(&path, format!("watchman_min_balance = \"1 btc\"\n{}", default)).unwrap();
+		let err = Config::load(&path).expect_err("watchman_min_balance must be rejected");
+		assert!(format!("{}", err).contains("watchman_min_balance"), "unexpected error: {}", err);
+	}
+
+	#[test]
 	fn parse_validate_default_watchmand_config_file() {
 		let mut cfg = watchmand::Config::load(DEFAULT_WATCHMAND_CONFIG_PATH)
 			.expect("error loading config");
@@ -917,25 +849,5 @@ mod test {
 		assert_eq!(lncfg.server_cert_path, PathBuf::from(server_cert_path));
 		assert_eq!(lncfg.client_cert_path, PathBuf::from(client_cert_path));
 		assert_eq!(lncfg.client_key_path, PathBuf::from(client_key_path));
-	}
-
-	#[test]
-	fn test_optional_service() {
-		#[derive(Serialize, Deserialize)]
-		struct S {
-			var: usize,
-		}
-		#[derive(Serialize, Deserialize)]
-		struct C {
-			optional: OptionalService<S>,
-		}
-
-		let enabled = "[optional]\nenabled = true\nvar = 5";
-		let enabled = toml::from_str::<C>(enabled).unwrap();
-		assert_eq!(enabled.optional.enabled().unwrap().var, 5);
-
-		let disabled = "[optional]\nenabled = false";
-		let disabled = toml::from_str::<C>(disabled).unwrap();
-		assert!(disabled.optional.enabled().is_none());
 	}
 }
