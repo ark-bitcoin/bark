@@ -132,7 +132,7 @@ pub use self::estimate::ExitFeeEstimate;
 
 use std::borrow::Borrow;
 use std::cmp;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -143,13 +143,15 @@ use bitcoin::consensus::Params;
 use log::{error, info, trace, warn};
 
 use ark::{Vtxo, VtxoId};
-use ark::vtxo::Bare;
+use ark::vtxo::{Bare, Full};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 
 use crate::Wallet;
 use crate::chain::ChainSource;
+use crate::exit::bdk::should_rbf;
 use crate::exit::transaction_manager::ExitTransactionManager;
+use crate::onchain::MakeCpfpFees;
 use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
@@ -159,6 +161,39 @@ use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
 use crate::subsystem::{ExitMovement, Subsystem};
 use crate::vtxo::VtxoStateKind;
+
+/// What is known about the CPFP child of a pending exit transaction.
+pub(crate) enum ChildState {
+	/// No package for the transaction is in the mempool.
+	Missing,
+	/// A package is in the mempool; `None` when its committed fee couldn't be determined.
+	InMempool(Option<FeeInfo>),
+}
+
+impl ChildState {
+	/// The child that would make the package commit `fee_rate`: a fresh one, a replacement of a
+	/// package paying below the rate, or none when the package already pays enough or can't be
+	/// safely replaced because its committed fee is unknown.
+	pub(crate) fn required_cpfp_fees(&self, fee_rate: FeeRate) -> Option<MakeCpfpFees> {
+		match self {
+			ChildState::Missing => Some(MakeCpfpFees::Effective(fee_rate)),
+			ChildState::InMempool(Some(fi)) if should_rbf(fee_rate, fi.fee_rate) => {
+				Some(MakeCpfpFees::Rbf {
+					min_effective_fee_rate: fee_rate,
+					current_package_fee: fi.total_fee,
+				})
+			},
+			ChildState::InMempool(_) => None,
+		}
+	}
+}
+
+/// The exit transactions of one VTXO not yet confirmed onchain, in broadcast order, each paired
+/// with what is known about its CPFP child.
+struct UnconfirmedExitParents {
+	vtxo: Vtxo<Full>,
+	parents: Vec<(Transaction, ChildState)>,
+}
 
 /// Handles the process of ongoing VTXO exits.
 pub(crate) struct ExitInner {
@@ -1046,5 +1081,140 @@ impl Exit {
 		// Now create the final signed PSBT
 		create_psbt(tx).await
 	}
-}
 
+	/// Resolves, per requested VTXO (in input order; duplicates: first occurrence wins), the
+	/// exit transactions not yet confirmed onchain and what is known about their CPFP children.
+	///
+	/// Omitted from the result: transactions already confirmed onchain and transactions
+	/// already attributed to an earlier VTXO in the same call (shared ancestry).
+	async fn collect_unconfirmed_exit_parents(
+		&self,
+		vtxos: &[VtxoId],
+	) -> Result<Vec<UnconfirmedExitParents>, ExitError> {
+		let mut groups = Vec::with_capacity(vtxos.len());
+		let mut requested = HashSet::with_capacity(vtxos.len());
+		let mut seen = HashSet::new();
+
+		for &vtxo_id in vtxos {
+			if !requested.insert(vtxo_id) {
+				continue;
+			}
+
+			let vtxo = self.inner.read().await.persister.get_full_vtxo(vtxo_id).await
+				.map_err(|e| ExitError::InvalidWalletState { error: e.to_string() })?
+				.ok_or(ExitError::UnknownVtxo { vtxo: vtxo_id })?;
+
+			if let Err(error) = vtxo.check_standard() {
+				return Err(ExitError::NonStandardVtxo { vtxo: vtxo_id, error });
+			}
+
+			let mut parents = Vec::new();
+			// Txs whose confirmation isn't tracked; queried against the chain below, after
+			// the read guard is dropped (the status query needs the write guard).
+			let mut pending_status = Vec::new();
+
+			{
+				let guard = self.inner.read().await;
+				match guard.exit_vtxos.iter().find(|ev| ev.id() == vtxo_id).map(|ev| ev.state()) {
+					Some(ExitState::Claimed(_)) => {
+						return Err(ExitError::VtxoAlreadyExited { vtxo: vtxo_id });
+					},
+					// The VTXO was consumed by something other than this exit (e.g. forfeited
+					// in a round), so no exit transactions can be broadcast.
+					Some(ExitState::VtxoAlreadySpent(_)) => {
+						return Err(ExitError::VtxoAlreadySpent { vtxo: vtxo_id });
+					},
+					Some(ExitState::Processing(s)) => {
+						// An in-progress exit: confirmed transactions are done, a package awaiting
+						// confirmation has a child in the mempool, and everything else still needs
+						// one. Confirmation is read from tracked state, so no chain query is needed.
+						for exit_tx in &s.transactions {
+							let child = match &exit_tx.status {
+								ExitTxStatus::Confirmed { .. } => continue,
+								ExitTxStatus::AwaitingConfirmation { .. } => {
+									match guard.tx_manager.get_child_status(exit_tx.txid).await {
+										Ok(Some(c)) => ChildState::InMempool(c.fee_info),
+										_ => ChildState::InMempool(None),
+									}
+								},
+								ExitTxStatus::VerifyInputs |
+								ExitTxStatus::AwaitingCpfpBroadcast |
+								ExitTxStatus::AwaitingInputConfirmation { .. } => ChildState::Missing,
+							};
+							if !seen.insert(exit_tx.txid) {
+								continue;
+							}
+							let package = guard.tx_manager.get_package(exit_tx.txid)?;
+							let tx = package.read().await.exit.tx.clone();
+							parents.push((tx, child));
+						}
+					},
+					// All exit txs are confirmed, so there's nothing left to broadcast.
+					Some(ExitState::AwaitingDelta(_)) |
+					Some(ExitState::Claimable(_)) |
+					Some(ExitState::ClaimInProgress(_)) => {},
+					// Exit not started: consider the whole tree chain, deferring the per-tx
+					// confirmation check until after we drop the lock.
+					Some(ExitState::Start(_)) | Some(ExitState::Canceled(_)) => {
+						for item in vtxo.transactions() {
+							pending_status.push(item.tx);
+						}
+					},
+					// Never exited: the wallet state still records a VTXO consumed outside
+					// the exit flow (e.g. forfeited in a round, or recovered as exited).
+					None => {
+						let state = guard.persister.get_wallet_vtxo(vtxo_id).await
+							.map_err(|e| ExitError::InvalidWalletState { error: e.to_string() })?
+							.ok_or(ExitError::UnknownVtxo { vtxo: vtxo_id })?
+							.state;
+						match state.kind() {
+							VtxoStateKind::Spent => {
+								return Err(ExitError::VtxoAlreadySpent { vtxo: vtxo_id });
+							},
+							VtxoStateKind::Exited => {
+								return Err(ExitError::VtxoAlreadyExited { vtxo: vtxo_id });
+							},
+							VtxoStateKind::Spendable | VtxoStateKind::Locked => {},
+						}
+						for item in vtxo.transactions() {
+							pending_status.push(item.tx);
+						}
+					},
+				}
+			}
+
+			// Query the chain for the not-yet-started candidates, skipping any already
+			// confirmed onchain and any duplicate shared txid. Statuses are cached and only
+			// refresh during exit sync, so results reflect the last sync.
+			for tx in pending_status {
+				let txid = tx.compute_txid();
+				if seen.contains(&txid) {
+					continue;
+				}
+				let mut guard = self.inner.write().await;
+				let status = guard.tx_manager.tx_status(txid).await
+					.map_err(|e| ExitError::TransactionRetrievalFailure {
+						txid, error: e.to_string(),
+					})?;
+
+				let child = match status {
+					TxStatus::NotFound => ChildState::Missing,
+					// A zero-fee exit tx only relays as a package, so some child is paying for it.
+					TxStatus::Mempool => {
+						match guard.tx_manager.get_child_status(txid).await {
+							Ok(Some(c)) => ChildState::InMempool(c.fee_info),
+							_ => ChildState::InMempool(None),
+						}
+					},
+					TxStatus::Confirmed(_) => continue,
+				};
+
+				seen.insert(txid);
+				parents.push((tx, child));
+			}
+
+			groups.push(UnconfirmedExitParents { vtxo, parents });
+		}
+		Ok(groups)
+	}
+}
