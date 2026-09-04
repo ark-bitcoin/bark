@@ -85,6 +85,20 @@ pub enum VtxoCommand {
 		/// (deprecated) VTXOs encoded in hex
 		#[arg(long = "vtxo", hide = true)]
 		vtxo_multi: Vec<String>,
+		/// How many consecutive unused key indices to scan for each VTXO's user
+		/// pubkey. Overrides the wallet's configured gap limit.
+		#[arg(long = "gap-limit")]
+		gap_limit: Option<u32>,
+		/// Import as spendable without asking the server for each VTXO's state.
+		///
+		/// Use it when you already know it's spendable or when the server can't be reached,
+		/// as it can leave the wallet in an inconsistent state.
+		#[arg(long = "skip-status-check")]
+		skip_status_check: bool,
+		/// Keep the VTXOs that import successfully even when another one in the
+		/// batch fails. Only the VTXOs that were kept are reported.
+		#[arg(long = "allow-partial")]
+		allow_partial: bool,
 	},
 }
 
@@ -118,7 +132,7 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 					.context("Failed to drop vtxo")?;
 			}
 		}
-		VtxoCommand::Import { vtxos, vtxo_multi } => {
+		VtxoCommand::Import { vtxos, vtxo_multi, gap_limit, skip_status_check, allow_partial } => {
 			if vtxos.is_empty() && vtxo_multi.is_empty() {
 				bail!("No VTXOs provided. Add raw VTXO arguments to import");
 			}
@@ -142,11 +156,14 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 				.context("No wallet found")?;
 
 			info!("Importing {} VTXOs...", to_import.len());
-			let mut imported = Vec::with_capacity(to_import.len());
-			for vtxo in to_import {
-				let vtxo_id = vtxo.id();
-				wallet.import_vtxo(&vtxo, ImportVtxoArgs::default()).await
-					.with_context(|| format!("Failed to import vtxo {}", vtxo_id))?;
+			let args = ImportVtxoArgs {
+				gap_limit, skip_status_check, allow_partial,
+			};
+			let ids = wallet.import_vtxos(&to_import, args).await
+				.context("Failed to import vtxos")?;
+
+			let mut imported = Vec::with_capacity(ids.len());
+			for vtxo_id in ids {
 				let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await
 					.with_context(|| format!("Failed to get imported vtxo {}", vtxo_id))?;
 				imported.push(WalletVtxoInfo::from(&wallet_vtxo));

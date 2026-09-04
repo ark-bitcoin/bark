@@ -133,6 +133,11 @@ pub struct ConfigOpts {
 	/// Automatically bypassed for localhost connections.
 	#[arg(long)]
 	pub socks5_proxy: Option<String>,
+
+	/// How many consecutive unused key indices a VTXO key scan may cross before
+	/// it concludes the wallet doesn't own a recovered/imported VTXO.
+	#[arg(long)]
+	pub gap_limit: Option<u32>,
 }
 
 impl ConfigOpts {
@@ -185,6 +190,13 @@ impl ConfigOpts {
 			_ => bail!("When providing --bitcoind, you need to provide auth args as well."),
 		}
 
+		if let Some(gap_limit) = self.gap_limit {
+			if gap_limit > bark::MAX_VTXO_KEY_GAP_LIMIT {
+				bail!("--gap-limit {} is above the maximum of {}",
+					gap_limit, bark::MAX_VTXO_KEY_GAP_LIMIT);
+			}
+		}
+
 		if let Some(ref proxy) = self.socks5_proxy {
 			let uri = proxy.parse::<Uri>().context("invalid socks5 proxy URI")?;
 			let scheme = uri.scheme_str().context("invalid socks5 proxy URI scheme")?;
@@ -229,6 +241,9 @@ impl ConfigOpts {
 		}
 		if let Some(ref v) = self.socks5_proxy {
 			writeln!(conf, "socks5_proxy = \"{}\"", v).unwrap();
+		}
+		if let Some(v) = self.gap_limit {
+			writeln!(conf, "vtxo_key_gap_limit = {}", v).unwrap();
 		}
 
 		let path = path.as_ref();
@@ -590,6 +605,35 @@ mod test {
 			birthday_height: None,
 			config: ConfigOpts::default(),
 		}
+	}
+
+	/// --gap-limit is config, not a one-shot: it must land in config.toml so
+	/// later commands (imports, a re-created wallet) see the same limit.
+	#[test]
+	fn gap_limit_is_written_to_config() {
+		let dir = tmp_dir();
+		let path = dir.join(CONFIG_FILE);
+		let opts = ConfigOpts {
+			ark: Some("http://127.0.0.1:3535".into()),
+			esplora: Some("http://127.0.0.1:3002".into()),
+			gap_limit: Some(10_000),
+			..ConfigOpts::default()
+		};
+
+		let config = opts.write_to_file(Network::Signet, &path)
+			.expect("writing the config should succeed");
+
+		assert_eq!(config.vtxo_key_gap_limit, 10_000, "the written config should carry the limit");
+		let written = fs::read_to_string(&path).expect("config file should exist");
+		assert!(written.contains("vtxo_key_gap_limit = 10000"), "unexpected config: {written}");
+
+		// Omitting the flag leaves the network default in place.
+		let bare_path = dir.join("bare.toml");
+		let bare = ConfigOpts { gap_limit: None, ..opts }
+			.write_to_file(Network::Signet, &bare_path)
+			.expect("writing the config should succeed");
+		assert_eq!(bare.vtxo_key_gap_limit, bark::DEFAULT_VTXO_KEY_GAP_LIMIT,
+			"without the flag the default should stand");
 	}
 
 	#[tokio::test]
