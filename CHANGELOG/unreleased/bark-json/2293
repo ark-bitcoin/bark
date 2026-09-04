@@ -1,0 +1,6 @@
+- Add presigned exit types
+  `PresignedExits` (a wave-by-wave broadcast plan), `PresignedWave`,
+  `PresignedExit`, `PresignedExitPackage`, `PresignedExitChildInfo` and
+  `PresignedExitStatus` mirror the `bark` presign API, with transactions
+  hex-encoded.
+  [#2293](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2293)
