@@ -211,6 +211,11 @@ pub struct CreateWalletRequest {
 	pub network: BarkNetwork,
 	/// An optional birthday height to start syncing the wallet from
 	pub birthday_height: Option<u32>,
+	/// How many consecutive unused key indices a VTXO key scan may cross before
+	/// it concludes the wallet doesn't own a recovered/imported VTXO.
+	#[serde(default)]
+	#[cfg_attr(feature = "utoipa", schema(maximum = 100_000))]
+	pub gap_limit: Option<u32>,
 	/// Proceed even if the datadir contains unexpected files
 	#[serde(default)]
 	pub force: bool,
@@ -484,6 +489,23 @@ pub struct OffboardAllRequest {
 pub struct ImportVtxoRequest {
 	/// Hex-encoded VTXOs to import
 	pub vtxos: Vec<String>,
+	/// How many consecutive unused key indices to scan for each VTXO's user
+	/// pubkey. Overrides the wallet's configured gap limit.
+	#[serde(default)]
+	#[cfg_attr(feature = "utoipa", schema(maximum = 100_000))]
+	pub gap_limit: Option<u32>,
+	/// Import as spendable without asking the server for each VTXO's state.
+	///
+	/// Use it when you already know it's spendable or when the server can't be reached,
+	/// as it can leave the wallet in an inconsistent state.
+	#[serde(default)]
+	pub skip_status_check: bool,
+	/// Keep the VTXOs that import successfully even when another one in the
+	/// request fails. The response lists the VTXOs that were kept.
+	///
+	/// Without it, a single failure discards the whole request.
+	#[serde(default)]
+	pub allow_partial: bool,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -296,7 +296,7 @@ This endpoint does not need any parameter.
 > Vec<models::WalletVtxoInfo> import_vtxo(import_vtxo_request)
 Import a VTXO
 
-Imports hex-encoded serialized VTXOs into the wallet. Validates that each VTXO is anchored on-chain, owned by this wallet, and has not expired. Useful for restoring VTXOs after database loss or re-importing from the server mailbox. The operation is idempotent.
+Imports the hex-encoded serialized VTXOs in the request body into the wallet; it does not read them from the server mailbox. Validates that each VTXO is anchored on-chain and owned by this wallet. Useful for restoring VTXOs after database loss, or for re-importing ones obtained elsewhere. Ownership is resolved by scanning the seed-derived key space, bounded by `gap_limit` or the wallet's configured gap limit; a key the scan does not reach is a 400. Only VTXOs the server reports as spendable or spent are stored, in that state, so one that has already been spent is recorded as spent rather than rejected. A VTXO still in flight (unclaimed, unregistered, or awaiting a preimage) is rejected with a 422, because it becomes importable once that flow finishes. Pass `skip_status_check` to store them as spendable without asking the server. Expiry is not checked. The VTXOs are imported together, in one key scan and one transaction, so a rejected VTXO leaves none of them stored; pass `allow_partial` to keep the VTXOs that did import, and the response then lists only those. Already-imported VTXOs are skipped, so the operation is idempotent and a failed request can be retried.
 
 ### Parameters
 

@@ -301,7 +301,7 @@ fn wallet_create_request_to_create_opts(req: CreateWalletRequest) -> anyhow::Res
 		bitcoind_user: None,
 		bitcoind_pass: None,
 		socks5_proxy: None,
-		gap_limit: None,
+		gap_limit: req.gap_limit,
 	};
 
 	if let Some(chain_source) = req.chain_source {

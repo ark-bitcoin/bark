@@ -2572,7 +2572,7 @@
           "wallet"
         ],
         "summary": "Import a VTXO",
-        "description": "Imports hex-encoded serialized VTXOs into the wallet. Validates that each VTXO is anchored on-chain, owned by this wallet, and has not expired. Useful for restoring VTXOs after database loss or re-importing from the server mailbox. The operation is idempotent.",
+        "description": "Imports the hex-encoded serialized VTXOs in the request body into the wallet; it does not read them from the server mailbox. Validates that each VTXO is anchored on-chain and owned by this wallet. Useful for restoring VTXOs after database loss, or for re-importing ones obtained elsewhere. Ownership is resolved by scanning the seed-derived key space, bounded by `gap_limit` or the wallet's configured gap limit; a key the scan does not reach is a 400. Only VTXOs the server reports as spendable or spent are stored, in that state, so one that has already been spent is recorded as spent rather than rejected. A VTXO still in flight (unclaimed, unregistered, or awaiting a preimage) is rejected with a 422, because it becomes importable once that flow finishes. Pass `skip_status_check` to store them as spendable without asking the server. Expiry is not checked. The VTXOs are imported together, in one key scan and one transaction, so a rejected VTXO leaves none of them stored; pass `allow_partial` to keep the VTXOs that did import, and the response then lists only those. Already-imported VTXOs are skipped, so the operation is idempotent and a failed request can be retried.",
         "operationId": "import_vtxo",
         "requestBody": {
           "content": {
@@ -2599,11 +2599,21 @@
             }
           },
           "400": {
-            "description": "Invalid VTXO hex or VTXO not owned by wallet",
+            "description": "Invalid VTXO hex, a VTXO that does not match the chain, or a VTXO whose user pubkey is not derivable from this seed within the gap limit",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The VTXO is neither spendable nor spent, so it cannot be imported yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnprocessableEntityError"
                 }
               }
             }
@@ -3943,6 +3953,16 @@
           "force": {
             "type": "boolean",
             "description": "Proceed even if the datadir contains unexpected files"
+          },
+          "gap_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many consecutive unused key indices a VTXO key scan may cross before\nit concludes the wallet doesn't own a recovered/imported VTXO.",
+            "maximum": 100000,
+            "minimum": 0
           },
           "mnemonic": {
             "type": [
@@ -5624,6 +5644,24 @@
           "vtxos"
         ],
         "properties": {
+          "allow_partial": {
+            "type": "boolean",
+            "description": "Keep the VTXOs that import successfully even when another one in the\nrequest fails. The response lists the VTXOs that were kept.\n\nWithout it, a single failure discards the whole request."
+          },
+          "gap_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many consecutive unused key indices to scan for each VTXO's user\npubkey. Overrides the wallet's configured gap limit.",
+            "maximum": 100000,
+            "minimum": 0
+          },
+          "skip_status_check": {
+            "type": "boolean",
+            "description": "Import as spendable without asking the server for each VTXO's state.\n\nUse it when you already know it's spendable or when the server can't be reached,\nas it can leave the wallet in an inconsistent state."
+          },
           "vtxos": {
             "type": "array",
             "items": {
@@ -6884,6 +6922,17 @@
             "type": "string"
           },
           "txid": {
+            "type": "string"
+          }
+        }
+      },
+      "UnprocessableEntityError": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
             "type": "string"
           }
         }

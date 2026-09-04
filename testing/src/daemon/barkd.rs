@@ -170,6 +170,7 @@ impl Barkd {
 			mnemonic,
 			network: BarkNetwork::Regtest,
 			birthday_height,
+			gap_limit: None,
 			force: false,
 		};
 
@@ -201,6 +202,7 @@ impl Barkd {
 			mnemonic: None,
 			network: BarkNetwork::Regtest,
 			birthday_height: None,
+			gap_limit: None,
 			force: false,
 		};
 
@@ -436,7 +438,12 @@ impl Barkd {
 	/// Import VTXOs from hex-encoded strings.
 	pub async fn import_vtxo(&self, vtxo_hexes: Vec<String>) -> Vec<WalletVtxoInfo> {
 		let config = self.client_config();
-		let req = bark_json::web::ImportVtxoRequest { vtxos: vtxo_hexes };
+		let req = bark_json::web::ImportVtxoRequest {
+			vtxos: vtxo_hexes,
+			gap_limit: None,
+			skip_status_check: false,
+			allow_partial: false,
+		};
 		wallet_api::import_vtxo(&config, req).await
 			.expect("failed to import barkd vtxos")
 	}

@@ -273,6 +273,7 @@ Class | Method | HTTP request | Description
  - [SignedMessage](docs/SignedMessage.md)
  - [TipResponse](docs/TipResponse.md)
  - [TransactionInfo](docs/TransactionInfo.md)
+ - [UnprocessableEntityError](docs/UnprocessableEntityError.md)
  - [UtxoInfo](docs/UtxoInfo.md)
  - [VerifyMessageRequest](docs/VerifyMessageRequest.md)
  - [VtxoInfo](docs/VtxoInfo.md)
