@@ -136,6 +136,15 @@ pub enum GetLiveExitStatusError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`remaining_exit_transactions`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RemainingExitTransactionsError {
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
 
 /// Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. The broadcast fee includes the `fee_margin` scaling and is the on-chain balance to fund the exit with at that margin; the wallet's actual funds are never consulted.
 pub async fn emergency_exit_fee(configuration: &configuration::Configuration, vtxo_ids: Option<&str>, fee_rate_sat_per_vb: Option<f64>, destination: Option<&str>, fee_margin: Option<f64>) -> Result<models::EmergencyExitFeeEstimateResponse, Error<EmergencyExitFeeError>> {
@@ -737,6 +746,49 @@ pub async fn get_live_exit_status(configuration: &configuration::Configuration, 
     } else {
         let content = resp.text().await?;
         let entity: Option<GetLiveExitStatusError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Lists every exit transaction of the given VTXOs not yet confirmed on-chain: per VTXO, the transaction ids it needs confirmed in broadcast order, plus each transaction exactly once with parents before children. Read-only: nothing is signed and the wallet is never touched, so this works whether or not an exit has been started. Transaction statuses reflect the last exit sync; the daemon refreshes them at the cadence of `SLOW_INTERVAL`, and `POST /exits/progress` forces a refresh. Use `POST /exits/presign` to sign CPFP children for the listed transactions.
+pub async fn remaining_exit_transactions(configuration: &configuration::Configuration, vtxo_ids: Option<&str>) -> Result<models::RemainingExitTransactions, Error<RemainingExitTransactionsError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_query_vtxo_ids = vtxo_ids;
+
+    let uri_str = format!("{}/api/v1/exits/remaining", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref param_value) = p_query_vtxo_ids {
+        req_builder = req_builder.query(&[("vtxo_ids", &param_value.to_string())]);
+    }
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::RemainingExitTransactions`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::RemainingExitTransactions`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<RemainingExitTransactionsError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

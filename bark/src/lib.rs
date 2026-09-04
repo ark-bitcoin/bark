@@ -455,7 +455,7 @@ use server_rpc::protos::VtxoSpendState;
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
-use crate::exit::{Exit, ExitError, PresignedExits};
+use crate::exit::{Exit, ExitError, PresignedExits, RemainingExitTransactions};
 use crate::lock_manager::LockManager;
 use crate::movement::{Movement, MovementId, PaymentMethod};
 use crate::movement::manager::MovementManager;
@@ -2102,6 +2102,16 @@ impl Wallet {
 		fee_rate: Option<FeeRate>,
 	) -> anyhow::Result<PresignedExits, ExitError> {
 		self.exit_mgr().presign_emergency_exit(vtxos, self, fee_rate).await
+	}
+
+	/// List the exit transactions still awaiting confirmation for the given VTXOs.
+	///
+	/// Thin wrapper over [Exit::remaining_exit_transactions]; see it for the semantics.
+	pub async fn remaining_exit_transactions(
+		&self,
+		vtxos: &[VtxoId],
+	) -> anyhow::Result<RemainingExitTransactions, ExitError> {
+		self.exit_mgr().remaining_exit_transactions(vtxos).await
 	}
 
 	/// Detect spendable VTXOs that were exited on-chain without the user asking for it — e.g.

@@ -33,7 +33,7 @@ use bark_rest_client::apis::{
 use bark_rest_client::models::{
 	BoardRequest, DelegatedRefreshRequest, ExitClaimAllRequest, ExitClaimVtxosRequest,
 	ExitPresignRequest, ExitProgressRequest, ExitStartRequest, LightningInvoiceRequest,
-	OffboardAllRequest,
+	OffboardAllRequest, RemainingExitTransactions,
 	RefreshRequest, SendOnchainRequest, SendRequest, WaitNotificationResponse,
 };
 use futures::{Stream, StreamExt};
@@ -704,6 +704,18 @@ impl Barkd {
 			vtxos: vtxo_ids,
 			fee_rate_sat_per_vb,
 		}).await.expect("barkd exit_presign failed")
+	}
+
+	/// List the remaining exit transactions for the given VTXOs, or every spendable VTXO when
+	/// `None`.
+	pub async fn remaining_exit_transactions(
+		&self,
+		vtxo_ids: Option<Vec<String>>,
+	) -> RemainingExitTransactions {
+		let config = self.client_config();
+		let ids = vtxo_ids.map(|v| v.join(","));
+		exits_api::remaining_exit_transactions(&config, ids.as_deref()).await
+			.expect("barkd remaining_exit_transactions failed")
 	}
 
 	/// Force a full off-chain sync via `POST /sync`. Updates fee rates,

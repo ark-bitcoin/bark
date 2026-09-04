@@ -178,6 +178,8 @@ docs/PresignedExits.md
 docs/PresignedWave.md
 docs/RefreshFees.md
 docs/RefreshRequest.md
+docs/RemainingExitTransactions.md
+docs/RemainingExitTransactionsQuery.md
 docs/RoundFlowState.md
 docs/RoundParticipationInfo.md
 docs/RoundStatus.md
@@ -399,6 +401,8 @@ src/models/presigned_exits.rs
 src/models/presigned_wave.rs
 src/models/refresh_fees.rs
 src/models/refresh_request.rs
+src/models/remaining_exit_transactions.rs
+src/models/remaining_exit_transactions_query.rs
 src/models/round_flow_state.rs
 src/models/round_participation_info.rs
 src/models/round_status.rs

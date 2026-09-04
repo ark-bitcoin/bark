@@ -1,9 +1,10 @@
 
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 
 use bitcoin::{Amount, Txid};
 
-use ark::ProtocolEncoding;
+use ark::{ProtocolEncoding, VtxoId};
 use bark_json::movements::MovementStatus;
 use bark_json::primitives::VtxoStateInfo;
 
@@ -15,6 +16,7 @@ use bark_json::exit::ExitState;
 use bark_json::exit::presign::{
 	PresignedExitPackage, PresignedExitStatus, PresignedExits, PresignedWave,
 };
+use bark_json::exit::remaining::RemainingExitTransactions;
 use bark_json::exit::states::ExitTxStatus;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 
@@ -882,4 +884,76 @@ async fn presign_exit_concurrent_chains_barkd() {
 	ctx.generate_blocks(1).await;
 	barkd.onchain_sync().await;
 	assert_eq!(barkd.onchain_balance().await, sat(390_040));
+}
+
+/// The read-only remaining-transactions API lists pending exit transactions per VTXO and
+/// de-duplicated, without signing anything or touching the onchain wallet.
+#[tokio::test]
+async fn remaining_exit_transactions_barkd() {
+	require_bark_version!(> "0.8.0");
+
+	let ctx = TestContext::new("barkd/remaining_exit_transactions_barkd").await;
+
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let sender = ctx.bark("sender", &srv).funded(sat(1_000_000)).create().await;
+	let barkd = ctx.barkd("barkd1", &srv).cfg(|c| c.daemon_manual_sync = true).create().await;
+
+	// Two VTXOs sharing a two-transaction chain prefix, as in the presign tests.
+	sender.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+	let addr = barkd.ark_address().await;
+	sender.send_oor(&addr, sat(100_000)).await;
+	sender.send_oor(&addr, sat(200_000)).await;
+	barkd.sync().await;
+
+	let vtxos = barkd.vtxos(None).await;
+	let v1 = vtxos.iter().find(|v| v.amount == sat(100_000)).unwrap().id.to_string();
+	let v2 = vtxos.iter().find(|v| v.amount == sat(200_000)).unwrap().id.to_string();
+	let v1_id = VtxoId::from_str(&v1).unwrap();
+	let v2_id = VtxoId::from_str(&v2).unwrap();
+	let v1_txids = expected_exit_txids(&barkd, &v1).await;
+	let v2_txids = expected_exit_txids(&barkd, &v2).await;
+	assert_eq!(v1_txids[..2], v2_txids[..2]);
+
+	let txids = |r: &RemainingExitTransactions| r.transactions.iter()
+		.map(|t| t.txid)
+		.collect::<Vec<_>>();
+
+	// Read-only: works with no onchain funds and no started exit. Each VTXO lists its full chain
+	// while the shared prefix appears once, parents first.
+	let remaining = barkd.remaining_exit_transactions(Some(vec![v1.clone(), v2.clone()])).await;
+	assert_eq!(remaining.exits.len(), 2);
+	assert_eq!(remaining.exits[&v1_id], v1_txids);
+	assert_eq!(remaining.exits[&v2_id], v2_txids);
+	assert_eq!(txids(&remaining), [&v1_txids[..], &v2_txids[2..]].concat());
+
+	// Confirm the first presigned package and leave the second in the mempool.
+	ctx.fund_barkd(&barkd, sat(100_000)).await;
+	srv.stop().await.unwrap();
+	let presigned = barkd.presign_exits(Some(vec![v1.clone(), v2.clone()]), None).await;
+	broadcast_presigned_wave(&ctx, &presigned.waves[0]).await;
+	let second = &presigned.waves[1].packages[0];
+	ctx.bitcoind().sync_client()
+		.submit_package(&[&second.exit.tx, &second.child.tx])
+		.expect("submit_package of second presigned package failed");
+	ctx.await_transaction(second.child.txid).await;
+
+	// Statuses reflect the last exit sync, so refresh before querying again (a progress call
+	// with no started exits only syncs transaction state).
+	barkd.exit_progress().await;
+
+	// The confirmed transaction drops off every VTXO; the one in the mempool remains.
+	let remaining = barkd.remaining_exit_transactions(Some(vec![v1.clone(), v2.clone()])).await;
+	assert_eq!(remaining.exits[&v1_id], v1_txids[1..]);
+	assert_eq!(remaining.exits[&v2_id], v2_txids[1..]);
+	assert_eq!(txids(&remaining), [&v1_txids[1..], &v2_txids[2..]].concat());
+
+	// A started exit reports from its tracked state instead of querying the chain.
+	ctx.generate_blocks(1).await;
+	barkd.onchain_sync().await;
+	barkd.exit_start_vtxos(vec![v1.clone()]).await;
+	barkd.exit_progress().await;
+	let remaining = barkd.remaining_exit_transactions(Some(vec![v1.clone(), v2.clone()])).await;
+	assert_eq!(remaining.exits[&v1_id], v1_txids[2..]);
+	assert_eq!(remaining.exits[&v2_id], v2_txids[2..]);
+	assert_eq!(txids(&remaining), [&v1_txids[2..], &v2_txids[2..]].concat());
 }

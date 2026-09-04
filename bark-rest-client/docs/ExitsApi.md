@@ -18,6 +18,7 @@ Method | HTTP request | Description
 [**get_exit_status_by_vtxo_id_deprecated**](ExitsApi.md#get_exit_status_by_vtxo_id_deprecated) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status (deprecated)
 [**get_finished_exits**](ExitsApi.md#get_finished_exits) | **GET** /api/v1/exits/status/finished | List finished exits
 [**get_live_exit_status**](ExitsApi.md#get_live_exit_status) | **GET** /api/v1/exits/status/live | List live exit statuses
+[**remaining_exit_transactions**](ExitsApi.md#remaining_exit_transactions) | **GET** /api/v1/exits/remaining | List remaining exit transactions
 
 
 
@@ -432,6 +433,36 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**Vec<models::ExitTransactionStatus>**](ExitTransactionStatus.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## remaining_exit_transactions
+
+> models::RemainingExitTransactions remaining_exit_transactions(vtxo_ids)
+List remaining exit transactions
+
+Lists every exit transaction of the given VTXOs not yet confirmed on-chain: per VTXO, the transaction ids it needs confirmed in broadcast order, plus each transaction exactly once with parents before children. Read-only: nothing is signed and the wallet is never touched, so this works whether or not an exit has been started. Transaction statuses reflect the last exit sync; the daemon refreshes them at the cadence of `SLOW_INTERVAL`, and `POST /exits/progress` forces a refresh. Use `POST /exits/presign` to sign CPFP children for the listed transactions.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**vtxo_ids** | Option<**String**> | Comma-separated VTXO ids to inspect; omit to inspect the entire wallet |  |
+
+### Return type
+
+[**models::RemainingExitTransactions**](RemainingExitTransactions.md)
 
 ### Authorization
 

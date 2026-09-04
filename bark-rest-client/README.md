@@ -49,6 +49,7 @@ Class | Method | HTTP request | Description
 *ExitsApi* | [**get_exit_status_by_vtxo_id_deprecated**](docs/ExitsApi.md#get_exit_status_by_vtxo_id_deprecated) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status (deprecated)
 *ExitsApi* | [**get_finished_exits**](docs/ExitsApi.md#get_finished_exits) | **GET** /api/v1/exits/status/finished | List finished exits
 *ExitsApi* | [**get_live_exit_status**](docs/ExitsApi.md#get_live_exit_status) | **GET** /api/v1/exits/status/live | List live exit statuses
+*ExitsApi* | [**remaining_exit_transactions**](docs/ExitsApi.md#remaining_exit_transactions) | **GET** /api/v1/exits/remaining | List remaining exit transactions
 *FeesApi* | [**board_fee**](docs/FeesApi.md#board_fee) | **GET** /api/v1/fees/board | Estimate board fee
 *FeesApi* | [**lightning_receive_fee**](docs/FeesApi.md#lightning_receive_fee) | **GET** /api/v1/fees/lightning/receive | Estimate Lightning receive fee
 *FeesApi* | [**lightning_send_fee**](docs/FeesApi.md#lightning_send_fee) | **GET** /api/v1/fees/lightning/pay | Estimate Lightning send fee
@@ -275,6 +276,8 @@ Class | Method | HTTP request | Description
  - [PresignedWave](docs/PresignedWave.md)
  - [RefreshFees](docs/RefreshFees.md)
  - [RefreshRequest](docs/RefreshRequest.md)
+ - [RemainingExitTransactions](docs/RemainingExitTransactions.md)
+ - [RemainingExitTransactionsQuery](docs/RemainingExitTransactionsQuery.md)
  - [RoundFlowState](docs/RoundFlowState.md)
  - [RoundParticipationInfo](docs/RoundParticipationInfo.md)
  - [RoundStatus](docs/RoundStatus.md)

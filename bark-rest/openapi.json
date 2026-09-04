@@ -491,6 +491,59 @@
         }
       }
     },
+    "/api/v1/exits/remaining": {
+      "get": {
+        "tags": [
+          "exits"
+        ],
+        "summary": "List remaining exit transactions",
+        "description": "Lists every exit transaction of the given VTXOs not yet confirmed on-chain: per VTXO, the transaction ids it needs confirmed in broadcast order, plus each transaction exactly once with parents before children. Read-only: nothing is signed and the wallet is never touched, so this works whether or not an exit has been started. Transaction statuses reflect the last exit sync; the daemon refreshes them at the cadence of `SLOW_INTERVAL`, and `POST /exits/progress` forces a refresh. Use `POST /exits/presign` to sign CPFP children for the listed transactions.",
+        "operationId": "remaining_exit_transactions",
+        "parameters": [
+          {
+            "name": "vtxo_ids",
+            "in": "query",
+            "description": "Comma-separated VTXO ids to inspect; omit to inspect the entire wallet",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the remaining exit transactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemainingExitTransactions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A VTXO is unknown, non-standard, already exited, or already spent, or a parameter is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/exits/start/all": {
       "post": {
         "tags": [
@@ -7155,6 +7208,49 @@
               "type": "string"
             },
             "description": "List of VTXO IDs to refresh. The sum of the VTXOs being refreshed must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Keep in mind that fees set out in\n[RefreshFees](crate::cli::fees::RefreshFees) will be deducted from the newly created VTXO, this\nvalue must also be >= [P2TR_DUST](bitcoin_ext::P2TR_DUST)."
+          }
+        }
+      },
+      "RemainingExitTransactions": {
+        "type": "object",
+        "description": "The exit transactions of a set of VTXOs still awaiting confirmation.",
+        "required": [
+          "exits",
+          "transactions"
+        ],
+        "properties": {
+          "exits": {
+            "type": "object",
+            "description": "The transactions each VTXO needs confirmed to be exited, in broadcast order.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "transactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransactionInfo"
+            },
+            "description": "Every transaction referenced by `exits` exactly once, parents before children."
+          }
+        }
+      },
+      "RemainingExitTransactionsQuery": {
+        "type": "object",
+        "description": "Query parameters for listing the remaining exit transactions.",
+        "properties": {
+          "vtxo_ids": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Comma-separated VTXO ids to inspect. When omitted, every spendable VTXO in the wallet is\nused."
           }
         }
       },

@@ -117,6 +117,7 @@ mod models;
 mod vtxo;
 mod estimate;
 mod presign;
+mod remaining;
 pub mod bdk;
 pub(crate) mod progress;
 pub(crate) mod transaction_manager;
@@ -134,6 +135,7 @@ pub use self::presign::{
 	PresignedExit, PresignedExitChildInfo, PresignedExitPackage, PresignedExitStatus,
 	PresignedExits, PresignedWave,
 };
+pub use self::remaining::RemainingExitTransactions;
 
 use std::borrow::Borrow;
 use std::cmp;
@@ -198,6 +200,9 @@ impl ChildState {
 struct UnconfirmedExitParents {
 	vtxo: Vtxo<Full>,
 	parents: Vec<(Transaction, ChildState)>,
+	/// Every unconfirmed exit transaction of the VTXO in broadcast order, including those
+	/// listed in an earlier group's `parents`.
+	unconfirmed_txids: Vec<Txid>,
 }
 
 /// Handles the process of ongoing VTXO exits.
@@ -1096,6 +1101,7 @@ impl Exit {
 			}
 
 			let mut parents = Vec::new();
+			let mut unconfirmed_txids = Vec::new();
 			// Txs whose confirmation isn't tracked; queried against the chain below, after
 			// the read guard is dropped (the status query needs the write guard).
 			let mut pending_status = Vec::new();
@@ -1133,6 +1139,7 @@ impl Exit {
 								ExitTxStatus::AwaitingCpfpBroadcast |
 								ExitTxStatus::AwaitingInputConfirmation { .. } => ChildState::Missing,
 							};
+							unconfirmed_txids.push(exit_tx.txid);
 							if !seen.insert(exit_tx.txid) {
 								continue;
 							}
@@ -1181,6 +1188,7 @@ impl Exit {
 			for tx in pending_status {
 				let txid = tx.compute_txid();
 				if seen.contains(&txid) {
+					unconfirmed_txids.push(txid);
 					continue;
 				}
 				let mut guard = self.inner.write().await;
@@ -1202,10 +1210,11 @@ impl Exit {
 				};
 
 				seen.insert(txid);
+				unconfirmed_txids.push(txid);
 				parents.push((tx, child));
 			}
 
-			groups.push(UnconfirmedExitParents { vtxo, parents });
+			groups.push(UnconfirmedExitParents { vtxo, parents, unconfirmed_txids });
 		}
 		Ok(groups)
 	}

@@ -384,3 +384,24 @@ async fn finished_exit_does_not_change_on_sync() {
 		}
 	}
 }
+
+/// The read-only listing rejects a VTXO spent outside the exit flow just like the estimate.
+#[tokio::test]
+async fn exit_remaining_rejects_spent_vtxo() {
+	let ctx = TestContext::new("bark_sdk/exit_remaining_rejects_spent_vtxo").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let sender = ctx.bark_sdk("bark", &srv).boarded(sat(400_000)).create().await;
+	let receiver = ctx.bark_sdk("bark2", &srv).create().await;
+
+	let [boarded] = sender.vtxos().await.expect("list vtxos")
+		.try_into().expect("expected exactly one boarded vtxo");
+	let spent_id = boarded.vtxo.id();
+
+	let address = receiver.new_address().await.expect("new address");
+	sender.send_arkoor_payment(&address, sat(100_000)).await.expect("arkoor send");
+
+	let err = sender.remaining_exit_transactions(&[spent_id]).await
+		.expect_err("listing a spent VTXO's exit transactions must fail");
+	assert_eq!(err, ExitError::VtxoAlreadySpent { vtxo: spent_id });
+}

@@ -104,6 +104,15 @@ impl From<bark::FeeEstimate> for FeeEstimateResponse {
 	}
 }
 
+/// Query parameters for listing the remaining exit transactions.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct RemainingExitTransactionsQuery {
+	/// Comma-separated VTXO ids to inspect. When omitted, every spendable VTXO in the wallet is
+	/// used.
+	pub vtxo_ids: Option<String>,
+}
+
 /// Query parameters for emergency (unilateral) exit fee estimates.
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
