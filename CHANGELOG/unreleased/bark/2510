@@ -1,0 +1,24 @@
+- Make the VTXO key gap limit configurable
+  Recovery gave up after 50 unused key indices with no way to ask for more, so
+  a wallet that handed out many addresses without receiving into them could not
+  find its VTXOs. The limit now lives in `Config`, so it can be set in
+  `config.toml`, and the default is 250 rather than 50.
+  [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+  - **BREAKING:** `Config` gained the `vtxo_key_gap_limit` field
+  - **BREAKING:** `Wallet::recover_vtxos` takes a `gap_limit` override
+  - A limit above `MAX_VTXO_KEY_GAP_LIMIT` (100,000) is refused when the config
+    loads, since a scan derives a keypair per index it crosses
+- Overhaul the VTXO import system
+  A variety of changes have been made to how VTXOs are imported. Previously
+  we only scanned revealed keys to check if the wallet owns a VTXO, now we
+  scan up to the configured gap limit. By default we also request the spent
+  state from the server to avoid importing a previously-spent VTXO as
+  spendable which can leave the wallet in an inconsistent state.
+  [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+  - **BREAKING:** `Wallet::import_vtxo` takes an `ImportVtxoArgs` and returns a
+    typed `ImportVtxoError`, so a caller can tell the outcomes apart
+  - **BREAKING:** `Wallet::import_vtxo` no longer refuses an expired VTXO, and
+    fails on a VTXO the server reports as neither spendable nor spent
+  - `Wallet::import_vtxos` imports a batch under one key scan and one
+    transaction, so a rejected VTXO leaves none of them stored. Set
+    `ImportVtxoArgs::allow_partial` to keep the VTXOs that did import instead

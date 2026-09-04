@@ -1,0 +1,19 @@
+- Accept a VTXO key gap limit when creating a wallet
+  `POST /wallet/create` takes a `gap_limit`, which barkd writes to the config
+  it creates for the new wallet, so it applies to later imports too.
+  [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+- Overhaul the VTXO import endpoint
+  `POST /wallet/import-vtxo` follows the wallet's new import behaviour.
+  Previously we only scanned revealed keys to check ownership, now we scan up
+  to the configured gap limit, and `gap_limit` widens it for a single request.
+  By default we also request the spent state from the server, so a
+  previously-spent VTXO is recorded as spent rather than rejected;
+  `skip_status_check` skips that query. An expired VTXO is no longer refused.
+  One VTXO that cannot be imported discards the whole request, unless it
+  passes `allow_partial`, which keeps the VTXOs that did import; the response
+  then lists only those.
+  [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+  - Answers 400 for a VTXO it cannot validate, and for one whose user pubkey
+    it cannot derive within the gap limit
+  - Answers 422 for a VTXO that is neither spendable nor spent, since it
+    becomes importable once the server finishes its flow
