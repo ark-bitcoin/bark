@@ -9,7 +9,7 @@ use server_rpc::protos;
 use ark_testing::{TestContext, btc, is_bark_version, require_bark_version, sat};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, MailboxClient};
-use ark_testing::util::FutureExt;
+use ark_testing::util::{FutureExt, ToAltString};
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 #[tokio::test]
@@ -148,8 +148,17 @@ async fn accept_mailbox() {
 	bark2.import_vtxos(&[&vtxo_hex]).await;
 	assert_eq!(bark2.vtxos().await.len(), 1, "import should be idempotent");
 
+	// Import decides ownership by deriving the VTXO's user pubkey, so it reports
+	// a key it cannot derive where older barks reported a missing signable clause.
 	let err = bark.try_import_vtxos(&[&vtxo_hex]).await.unwrap_err();
-	assert!(err.to_string().contains("signable clause") || err.to_string().contains("not owned"), "expected ownership error, got: {}", err);
+	if is_bark_version!(> "0.7.0") {
+		assert!(err.to_alt_string().contains("unable to derive the key"),
+			"expected ownership error, got: {}", err);
+	} else {
+		assert!(err.to_string().contains("signable clause")
+			|| err.to_string().contains("not owned"),
+			"expected ownership error, got: {}", err);
+	}
 
 	let bark3 = ctx.bark("bark3", &srv).create().await;
 	bark.send_oor(bark3.address().await, sat(50_000)).await;
@@ -193,8 +202,16 @@ async fn accept_mailbox() {
 
 	ctx.generate_blocks(srv.config().vtxo_lifetime as u32 + 10).await;
 
-	let err = bark4.try_import_vtxos(&[&expired_vtxo_hex]).await.unwrap_err();
-	assert!(err.to_string().contains("expired"), "expected expiry error, got: {}", err);
+	// Import gates on ownership and the server's spend state, not on expiry, and
+	// the server still reports an expired vtxo as spendable, so this is accepted
+	// where older barks refused it for being expired.
+	if is_bark_version!(> "0.7.0") {
+		let imported = bark4.import_vtxos(&[&expired_vtxo_hex]).await;
+		assert_eq!(imported.len(), 1, "an expired vtxo is still importable");
+	} else {
+		let err = bark4.try_import_vtxos(&[&expired_vtxo_hex]).await.unwrap_err();
+		assert!(err.to_string().contains("expired"), "expected expiry error, got: {}", err);
+	}
 }
 
 /// Helper to read all vtxo_ids from a recovery mailbox

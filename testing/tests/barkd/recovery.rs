@@ -773,37 +773,52 @@ async fn recovered_wallet_reads_paginated_mailbox() {
 	}
 }
 
-/// Recovery does not recover a VTXO whose key is beyond the gap limit.
+/// The gap limit decides whether recovery reaches a far VTXO.
 ///
-/// The recipient advances its key index well past `STOP_GAP` (50) by minting
-/// many addresses, then receives into the last one. A freshly recovered wallet
-/// only scans `STOP_GAP` keys ahead of the last match, so this VTXO is out of
-/// reach and — by design — is not recovered.
+/// The recipient advances its key index well past 50 before it receives, then
+/// two wallets recover from that seed: one pinned to 50, which cannot reach the
+/// key, and one pinned wide enough to cross the run of unused indices. Both
+/// halves matter, so they share one setup: the narrow wallet must find nothing
+/// and the wide one must find the VTXO.
 #[tokio::test]
-async fn recovered_wallet_skips_vtxo_beyond_gap_limit() {
-	let ctx = TestContext::new("barkd/recovered_wallet_skips_vtxo_beyond_gap_limit").await;
+async fn recovered_wallet_finds_vtxo_only_within_the_gap_limit() {
+	let ctx = TestContext::new("barkd/recovered_wallet_finds_vtxo_only_within_the_gap_limit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
 	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).create().await;
 	let recipient = ctx.barkd("recipient", &srv).expose_mnemonic().create().await;
 
-	// Mint 60 addresses (> STOP_GAP of 50), each revealing a fresh key, then
-	// receive into the last (highest-index) one.
+	// Derive 60 addresses, each revealing a fresh key, then receive into the last
+	// one, so the key sits at index 59.
 	let mut dest = String::new();
 	for _ in 0..60 {
 		dest = recipient.ark_address().await;
 	}
 	sender.send(&dest, sat(50_000)).await;
 	recipient.sync().await;
-	assert_eq!(recipient.vtxos(None).await.len(), 1, "recipient should hold the received VTXO");
-
+	let before = recipient.vtxos(None).await;
+	assert_eq!(before.len(), 1, "recipient should hold the received VTXO");
 	let mnemonic = recipient.mnemonic().await;
-	let recovered = ctx.barkd("recipient_recovered", &srv).mnemonic(mnemonic).create().await;
-	recovered.onchain_sync().await;
-	recovered.sync().await;
 
-	assert!(recovered.vtxos(Some(true)).await.is_empty(),
+	let narrow = ctx.barkd("recovered_narrow", &srv)
+		.mnemonic(mnemonic.clone())
+		.cfg(|c| c.vtxo_key_gap_limit = 50)
+		.create().await;
+	narrow.onchain_sync().await;
+	narrow.sync().await;
+	assert!(narrow.vtxos(Some(true)).await.is_empty(),
 		"a VTXO beyond the gap limit must not be recovered");
+
+	let wide = ctx.barkd("recovered_wide", &srv)
+		.mnemonic(mnemonic)
+		.cfg(|c| c.vtxo_key_gap_limit = 100)
+		.create().await;
+	wide.onchain_sync().await;
+	wide.sync().await;
+	let after = wide.vtxos(Some(true)).await;
+	assert_eq!(after.len(), 1, "a gap limit of 100 must reach the VTXO at key index 59");
+	assert_eq!(after[0].vtxo.id, before[0].vtxo.id,
+		"the recovered VTXO should be the one that was received");
 }
 
 /// Recovery from the same seed is repeatable.

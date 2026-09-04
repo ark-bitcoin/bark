@@ -110,7 +110,7 @@ async fn wallet_create_after_delete_needs_no_restart() {
 	assert!(datadir.join("auth_token").exists(), "a failed create must keep the auth token");
 	barkd.ping().await;
 
-	barkd.create_wallet_from_args().await
+	barkd.create_wallet_from_args(barkd.create_wallet_request()).await
 		.expect("barkd should accept a new wallet without a restart");
 
 	let new_fingerprint = wallet_api::wallet_exists(&config).await
@@ -121,4 +121,35 @@ async fn wallet_create_after_delete_needs_no_restart() {
 	// The new wallet reaches both its database and the Ark server.
 	barkd.ark_address().await;
 	assert!(barkd.connected().await.connected, "the new wallet should reach the Ark server");
+}
+
+/// A gap limit given to `POST /wallet/create` is persisted to config.toml.
+///
+/// It is config, not a one-shot recovery knob, so it has to outlive the create
+/// call and apply to later imports too. Deleting the wallet first wipes
+/// config.toml, so the re-create writes a fresh one from the request alone.
+#[tokio::test]
+async fn wallet_create_persists_gap_limit() {
+	let ctx = TestContext::new("barkd/wallet_create_persists_gap_limit").await;
+	let srv = ctx.captaind("server").create().await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
+
+	let datadir = barkd.datadir();
+	let config = barkd.client_config();
+	let fingerprint = wallet_api::wallet_exists(&config).await.unwrap()
+		.fingerprint.expect("a wallet should be loaded");
+	wallet_api::wallet_delete(&config, WalletDeleteRequest {
+		dangerous: true,
+		fingerprint,
+	}).await.expect("wallet delete should succeed");
+
+	let mut req = barkd.create_wallet_request();
+	req.gap_limit = Some(10_000);
+	barkd.create_wallet_from_args(req).await
+		.expect("barkd should accept a create-time gap limit");
+
+	let written = std::fs::read_to_string(datadir.join("config.toml"))
+		.expect("the re-created wallet should have a config file");
+	assert!(written.contains("vtxo_key_gap_limit = 10000"),
+		"the requested gap limit should be persisted, got: {written}");
 }
