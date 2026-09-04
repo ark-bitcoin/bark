@@ -1,0 +1,8 @@
+- Price `GET /v1/exits/fee` deterministically and add `fee_margin`
+  The broadcast fee is weight-based at the requested feerate, scaled by the
+  optional `fee_margin` query parameter (default 1.2), and no longer consults
+  the wallet's funds.
+  [#2511](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2511)
+  - **BREAKING:** the `fundable` response field is removed
+  - the `fee_rate_sat_per_vb` query parameter and response field accept and
+    report fractional sat/vB
