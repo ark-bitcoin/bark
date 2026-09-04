@@ -652,6 +652,7 @@ impl TestContext {
 			daemon_sync_interval_secs: 3,
 			daemon_manual_sync: false,
 			change_vtxo_split_factor: 2,
+			vtxo_key_gap_limit: bark::DEFAULT_VTXO_KEY_GAP_LIMIT,
 		}
 	}
 

@@ -411,7 +411,9 @@ pub use self::arkoor::{ArkoorCreateResult, ArkoorAddressError};
 pub use self::payment_request::{
 	AvailablePaymentMethod, PaymentInitOutput, PaymentMethodParsingError, PaymentRequest,
 };
-pub use self::config::{BarkNetwork, Config};
+pub use self::config::{
+	BarkNetwork, Config, DEFAULT_VTXO_KEY_GAP_LIMIT, MAX_VTXO_KEY_GAP_LIMIT,
+};
 pub use self::daemon::{tip_watcher, DaemonHandle};
 pub use self::fees::FeeEstimate;
 pub use self::notification::{WalletNotification, NotificationStream};
@@ -1040,12 +1042,18 @@ impl Wallet {
 	/// nothing leaves the key index unchanged. Keys that never match are absent
 	/// from the result.
 	///
-	/// Returns the matched pubkeys paired with their keypair.
+	/// Errors if `gap_limit` is above [MAX_VTXO_KEY_GAP_LIMIT].
 	pub(crate) async fn find_vtxo_keypairs(
 		&self,
 		wanted: impl IntoIterator<Item = PublicKey>,
 		gap_limit: u32,
 	) -> anyhow::Result<HashMap<PublicKey, Keypair>> {
+		// Disallow unreasonable gap limits to avoid allocating enormous amounts of memory.
+		if gap_limit > MAX_VTXO_KEY_GAP_LIMIT {
+			bail!("vtxo key gap limit {gap_limit} is above the maximum of {}",
+				MAX_VTXO_KEY_GAP_LIMIT);
+		}
+
 		// A revealed key is already on record, so only scan for what is left.
 		let mut found = HashMap::new();
 		let mut unrevealed = HashSet::new();

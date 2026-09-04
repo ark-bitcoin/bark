@@ -53,6 +53,19 @@ impl fmt::Debug for BarkNetwork {
 	}
 }
 
+/// Consecutive unused seed-derived VTXO key indices we tolerate before
+/// concluding a VTXO isn't ours.
+///
+/// The default for [Config::vtxo_key_gap_limit].
+pub const DEFAULT_VTXO_KEY_GAP_LIMIT: u32 = 250;
+
+/// The largest gap limit a VTXO key scan will accept.
+///
+/// A scan for a key that isn't ours runs the limit to its end, deriving a
+/// keypair per index and holding the unmatched ones, so an unbounded limit is
+/// unbounded work. The worst real case seen so far needed 10,000.
+pub const MAX_VTXO_KEY_GAP_LIMIT: u32 = 100_000;
+
 /// Configuration of the Bark wallet.
 ///
 /// - [Config::esplora_address] or [Config::bitcoind_address] must be provided.
@@ -220,6 +233,18 @@ pub struct Config {
 	///
 	/// Default value: false
 	pub daemon_manual_sync: bool,
+
+	/// How many consecutive unused seed-derived VTXO key indices a scan crosses
+	/// before concluding a VTXO isn't ours.
+	///
+	/// Used by [Wallet::recover_vtxos](crate::Wallet::recover_vtxos) and
+	/// [Wallet::import_vtxos](crate::Wallet::import_vtxos). Every match extends
+	/// the window, so this bounds the run of unused indices, not the total keys
+	/// derived. Raise it for a wallet that handed out many addresses without
+	/// receiving into them. Capped at [MAX_VTXO_KEY_GAP_LIMIT].
+	///
+	/// Default value: 250
+	pub vtxo_key_gap_limit: u32,
 }
 
 impl Config {
@@ -251,6 +276,7 @@ impl Config {
 			daemon_sync_interval_secs: 60,
 			daemon_manual_sync: false,
 			change_vtxo_split_factor: 2,
+			vtxo_key_gap_limit: DEFAULT_VTXO_KEY_GAP_LIMIT,
 		};
 
 		if network != Network::Bitcoin {
@@ -274,12 +300,21 @@ impl Config {
 		let default = config::Config::try_from(&Self::network_default(network))
 			.expect("default config failed to deconstruct");
 
-		Ok(config::Config::builder()
+		let config = config::Config::builder()
 			.add_source(default)
 			.add_source(config::File::from(path.as_ref()).required(false))
 			.add_source(config::Environment::with_prefix("BARK"))
 			.build().context("error building config")?
-			.try_deserialize::<Config>().context("error parsing config")?)
+			.try_deserialize::<Config>().context("error parsing config")?;
+
+		// Caught here so an out-of-range limit is refused up front, rather than
+		// failing the first scan that reads it.
+		if config.vtxo_key_gap_limit > MAX_VTXO_KEY_GAP_LIMIT {
+			bail!("vtxo_key_gap_limit {} is above the maximum of {}",
+				config.vtxo_key_gap_limit, MAX_VTXO_KEY_GAP_LIMIT);
+		}
+
+		Ok(config)
 	}
 
 	/// Creates a [crate::chain::ChainSource] instance to communicate with a chain
@@ -307,5 +342,55 @@ impl Config {
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	/// A wallet created before a field existed has a config file without it, so
+	/// loading must fall back to the network default instead of failing.
+	#[test]
+	fn config_file_without_gap_limit_gets_the_default() {
+		let dir = std::env::temp_dir().join(format!("bark-cfg-{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.toml");
+		std::fs::write(&path, "\
+			server_address = \"http://127.0.0.1:3535\"\n\
+			esplora_address = \"http://127.0.0.1:3002\"\n\
+		").unwrap();
+
+		let config = Config::load(Network::Regtest, &path).expect("an old config should load");
+		assert_eq!(config.vtxo_key_gap_limit, DEFAULT_VTXO_KEY_GAP_LIMIT,
+			"a missing gap limit should fall back to the default");
+
+		std::fs::remove_dir_all(&dir).ok();
+	}
+
+	/// An out-of-range gap limit is refused when the config loads, rather than
+	/// surfacing later from whichever scan first reads it.
+	#[test]
+	fn config_file_with_an_out_of_range_gap_limit_is_refused() {
+		let dir = std::env::temp_dir().join(format!("bark-cfg-max-{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.toml");
+		let write = |limit: u32| std::fs::write(&path, format!("\
+			server_address = \"http://127.0.0.1:3535\"\n\
+			esplora_address = \"http://127.0.0.1:3002\"\n\
+			vtxo_key_gap_limit = {limit}\n\
+		")).unwrap();
+
+		write(MAX_VTXO_KEY_GAP_LIMIT + 1);
+		let err = Config::load(Network::Regtest, &path)
+			.expect_err("a gap limit above the maximum should be refused");
+		assert!(err.to_string().contains("above the maximum"), "err: {err:#}");
+
+		// The maximum itself loads, so the guard is a ceiling.
+		write(MAX_VTXO_KEY_GAP_LIMIT);
+		let config = Config::load(Network::Regtest, &path).expect("the maximum should load");
+		assert_eq!(config.vtxo_key_gap_limit, MAX_VTXO_KEY_GAP_LIMIT);
+
+		std::fs::remove_dir_all(&dir).ok();
 	}
 }
