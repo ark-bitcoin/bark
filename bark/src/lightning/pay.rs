@@ -14,10 +14,10 @@ use ark::lightning::{
 
 use crate::Wallet;
 use crate::WalletVtxo;
-use crate::actions::DriveMode;
+use crate::actions::{DriveMode, WalletAction};
 use crate::actions::lightning::pay::ln_pay_action_id;
 use crate::actions::lightning::pay::{
-	Htlcs, LightningSend, LightningSendState, Progress, settle_lightning_send_payment,
+	Htlcs, LightningSend, LightningSendState, settle_lightning_send_payment,
 	start_lightning_send,
 };
 use crate::lightning::{lnaddr_invoice, lnurlp_invoice};
@@ -71,14 +71,7 @@ impl Wallet {
 	pub async fn pending_lightning_send_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut vtxos = Vec::new();
 		for send in self.pending_lightning_sends().await? {
-			let ids: Vec<_> = match &send.progress {
-				Progress::Start => send.input_vtxo_ids.clone(),
-				Progress::HtlcReceived(h) => h.vtxo_ids.clone(),
-				Progress::PaymentInitiated(h) => h.vtxo_ids.clone(),
-				Progress::RevocableHtlcs { htlcs, .. } => htlcs.vtxo_ids.clone(),
-				Progress::RevocationStuck { htlcs, .. } => htlcs.vtxo_ids.clone(),
-			};
-			for id in ids {
+			for id in send.pending_balance_vtxo_ids() {
 				vtxos.push(self.get_vtxo_by_id(id).await?);
 			}
 		}

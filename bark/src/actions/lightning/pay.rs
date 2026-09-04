@@ -173,6 +173,19 @@ impl WalletAction for LightningSend {
 		Ok(Advance::Next(LightningSend { progress: new_progress, ..self }))
 	}
 
+	/// The inputs until the server has cosigned the HTLCs, the HTLCs after
+	/// that. A send that learns the preimage settles and holds nothing.
+	fn pending_balance_vtxo_ids(&self) -> Vec<VtxoId> {
+		match &self.progress {
+			Progress::Start => self.input_vtxo_ids.clone(),
+			Progress::HtlcReceived(h)
+				| Progress::PaymentInitiated(h)
+				| Progress::RevocableHtlcs { htlcs: h, .. }
+				| Progress::RevocationStuck { htlcs: h, .. }
+			=> h.vtxo_ids.clone(),
+		}
+	}
+
 	async fn on_retry(self, wallet: &Wallet, retries: u32, _error: AdvanceError)
 		-> anyhow::Result<Advance<Self>>
 	{

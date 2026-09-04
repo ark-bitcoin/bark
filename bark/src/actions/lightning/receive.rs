@@ -177,6 +177,19 @@ impl WalletAction for LightningReceive {
 		Ok(Advance::Next(LightningReceive { progress: new_progress, ..self }))
 	}
 
+	/// The HTLCs once the preimage has been revealed. Before that the payment
+	/// can still be cancelled, so the sats are not the wallet's yet, and claim
+	/// outputs being delivered belong to another wallet.
+	fn pending_balance_vtxo_ids(&self) -> Vec<VtxoId> {
+		match &self.progress {
+			Progress::PreimageRevealed(htlcs) => htlcs.vtxo_ids.clone(),
+			Progress::AwaitingPayment
+				| Progress::HtlcsReady(_)
+				| Progress::Delivering(_)
+			=> Vec::new(),
+		}
+	}
+
 	async fn on_retry(self, wallet: &Wallet, retries: u32, error: AdvanceError)
 		-> anyhow::Result<Advance<Self>>
 	{
