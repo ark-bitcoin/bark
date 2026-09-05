@@ -1,6 +1,0 @@
-- Count a board as pending only once its funding tx is seen
-  Pending board balance no longer includes a board whose funding tx a
-  counterparty hasn't broadcast yet. A board whose funding input turns out to
-  already be spent by a confirmed conflicting tx is now also torn down before
-  bark ever tries to broadcast it, instead of only after a failed attempt.
-  [#2438](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2438)

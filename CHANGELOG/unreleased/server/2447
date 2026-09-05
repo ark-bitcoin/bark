@@ -1,8 +1,0 @@
-- Reshape the VTXO pool by-expiry and by-amount telemetry into Prometheus
-  histogram-schema gauges
-  Consumers gain direct queries like `vtxo_pool_expiry_blocks_bucket{le="144"}`
-  for "VTXOs past the wallet refresh threshold" and `histogram_quantile` for
-  median-VTXO analyses. `le` boundaries are fixed in captaind (no longer
-  derived from `config.vtxo_targets`), so cross-deployment dashboards share
-  the same axis.
-  [#2447](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2447)

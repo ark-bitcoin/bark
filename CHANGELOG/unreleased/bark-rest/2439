@@ -1,5 +1,0 @@
-- share the REST server state as an `Arc`: handlers now receive `Arc<ServerState>`
-  [#2439](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2439)
-  - **BREAKING:** `RestServer::start` takes an `Arc<ServerState>`
-  - **BREAKING:** the `ServerStateBuilder` hooks take `Box<...>` instead of
-    `Arc<...>`

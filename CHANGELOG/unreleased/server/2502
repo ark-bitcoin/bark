@@ -1,7 +1,0 @@
-- Round, offboard, vtxo pool and internal wallet txs always keep a
-  change output
-  A stuck tx whose txid is protocol-committed can only be rescued by a
-  CPFP child spending its change. Round funding txs also prefer
-  confirmed inputs: unconfirmed ones only top up the difference when
-  confirmed funds are insufficient.
-  [#2502](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2502)

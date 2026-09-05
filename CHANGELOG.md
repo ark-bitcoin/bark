@@ -6,6 +6,211 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.7.0
+
+- `ark-lib`
+  - Make mailbox blinding fallible
+    A peer-supplied blinded point that cancels the ECDH tweak used to
+    panic through the public gRPC surface. Return an error instead so
+    callers can treat it as invalid peer input.
+    [#2456](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2456)
+    - **BREAKING:** `MailboxIdentifier::to_blinded` and
+      `MailboxIdentifier::from_blinded` now return
+      `Result<_, MailboxBlindingError>`.
+
+- `bark`
+  - Add `Wallet::stop_daemon_wait`
+    Stops the daemon for the wallet and waits until its tasks have finished, so
+    a caller can act knowing nothing runs in the background anymore. barkd uses
+    it before wiping the datadir on wallet delete.
+    [#2415](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2415)
+  - Count a board as pending only once its funding tx is seen
+    Pending board balance no longer includes a board whose funding tx a
+    counterparty hasn't broadcast yet. A board whose funding input turns out to
+    already be spent by a confirmed conflicting tx is now also torn down before
+    bark ever tries to broadcast it, instead of only after a failed attempt.
+    [#2438](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2438)
+  - Validate the backing tree of the HTLC-recv VTXOs granted for a lightning receive
+    bark only checked the HTLC leaf's own timelocks, so a grant could look safe
+    while the tree behind it expires first. Grants are now held to the advertised
+    tree parameters before the preimage is revealed.
+    [#2441](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2441)
+  - bugfix: stop retried lightning receive claims from failing forever
+    The server hands back the VTXOs it granted on the first attempt, so comparing
+    the granted HTLC expiry against a freshly computed one failed on every retry
+    once a block was mined, and the receive could never be claimed.
+    [#2441](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2441)
+  - Refuse to send to an Ark address bark cannot deliver to
+    An address whose only delivery mechanisms are ones this bark doesn't
+    support is now rejected up front. Such a send used to be cosigned and
+    registered, then retry delivery forever with the selected VTXOs locked;
+    it now fails immediately and leaves the funds spendable.
+    An address that lists no delivery mechanism at all is the receiver's
+    explicit choice: the send now succeeds without attempting any delivery,
+    where it used to be rejected.
+    [#2468](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2468)
+    - Removed `ArkoorAddressError::NoDeliveryMechanism`; an address without
+      delivery mechanisms is valid now.
+  - Require the lock holder on `Wallet::unlock_vtxos`
+    An idempotent unlock (board register on retry, action rollback, round
+    teardown, offboard change release) no longer steals a lock that another
+    operation has since acquired: a mismatch is now a silent no-op success.
+    [#2475](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2475)
+    - **BREAKING:** `Wallet::unlock_vtxos` now takes the `Option<VtxoLockHolder>` that took the lock.
+  - **BREAKING**: change `Config::vtxo_refresh_expiry_threshold` to `BlockDelta`
+    [#2479](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2479)
+  - Add the `round list` command
+    Lists the pending round participations an interrupted refresh leaves behind,
+    with the id to pass to `round cancel`. It reads the stored state and does not
+    contact the server.
+    [#2487](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2487)
+  - Report the outcome of the recovery scan on wallet open
+    `on_recovery_finished` no longer stays silent when the scan errors, so a
+    failed scan is distinguishable from one that never ran: recoverable funds
+    can be flagged for retry instead of quietly missing from a wallet.
+    [#2506](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2506)
+    - **BREAKING:** `OpenWalletArgs::on_recovery_finished` now receives a
+      `RecoveryStatus` (`NotRun`, `Failed`, or `Completed`) instead of a
+      `RecoveryReport`, and is called exactly once per successful open.
+    - `RecoveryStatus`, `RecoveryReport` and `RecoveryReportEntry` are now
+      exported; `RecoveryReport` was previously unnameable outside the crate.
+  - Add `OnchainWalletTrait::evict_tx`
+    Marks a wallet-known tx as evicted from the mempool so its inputs return to
+    coin selection immediately, without waiting for the sync eviction grace
+    period. Bark itself calls it from the exit driver when a CPFP is RBF-replaced.
+    [#2508](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2508)
+
+- `bark-json`
+  - Add `fingerprint` to `WalletDeleteResponse`
+    Carries the fingerprint of the deleted wallet; `null` when no wallet was
+    loaded.
+    [#2415](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2415)
+  - Add `state` and `scheduled_height` to `PendingRoundInfo`
+    `state` is the lifecycle phase of the participation. `scheduled_height` is
+    the block height a delegated participation waits for.
+    [#2487](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2487)
+  - Add `PendingRoundInfo::from_state`
+    Derives the status from the stored state, without a request to the server.
+    [#2487](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2487)
+
+- `bark-rest`
+  - Make barkd wallet deletion safe to retry
+    The deletion endpoint stops the wallet, the notification manager and
+    awaits for the tasks to finish before wiping the wallet datadir.
+    This prevents any task still writing to disk after deletion, which
+    could strand a new wallet create. A deletion while no wallet is loaded
+    returns `deleted: false`, but it can finish a failed deletion.
+    [#2415](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2415)
+  - Return the fingerprint of the deleted wallet
+    The delete response now carries the deleted wallet's fingerprint, so a
+    client can check it deleted the wallet it asked for; `null` when no wallet
+    was loaded.
+    [#2415](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2415)
+  - share the REST server state as an `Arc`: handlers now receive `Arc<ServerState>`
+    [#2439](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2439)
+    - **BREAKING:** `RestServer::start` takes an `Arc<ServerState>`
+    - **BREAKING:** the `ServerStateBuilder` hooks take `Box<...>` instead of
+      `Arc<...>`
+  - Add `state` and `scheduled_height` to the `PendingRoundInfo` schema
+    A client can now tell an ongoing participation from a delegated one that
+    waits for its scheduled block height.
+    [#2487](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2487)
+
+- `bip321`
+  - add `lightning` compilation feature to make lightning dependencies optional
+    [#2476](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2476)
+
+- `bitcoin-ext`
+  - replace `NonDustDrainCoinSelection` coin selection algorithm with `WithGuaranteedChange`
+  - add `PreferConfirmedCoinSelection` coin selection algorithm
+
+- `server`
+  - Record ark protocol fees per op at success boundaries
+    New `ark_protocol_fee_sat` counter and `ArkFeeRecorded` slog, labeled by
+    `op_type` (board, offboard, refresh, lightning_send, lightning_receive).
+    Each op records once at its success edge; the slog carries `user_fee_sat`
+    and `net_fee_sat` (equal for ops without a routing component), plus
+    `routing_fee_sat` for lightning_send. Migration V57 adds `block_height`
+    and `user_fee_sat` to `lightning_payment_attempt`, and `user_fee_sat` to
+    `offboards`. Offboard fee telemetry is recorded from `commit_offboard`
+    gated on the `wallet_commit` FALSE->TRUE transition, so a crash between
+    registration and commit still records exactly once via the retry task.
+    [#2192](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2192)
+  - Force watchmand to run as a separate process
+    captaind no longer supports running the watchman embedded in its own
+    process. The single-process mode was dangerous: a captaind crash or DoS
+    also took down the watchman, publicly advertising that the server isn't
+    sweeping or claiming and giving malicious counterparties an opportunity
+    to attempt exits. Every deployment must now run the `watchmand` binary
+    alongside `captaind`.
+    [#2259](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2259)
+    - **BREAKING:** captaind refuses to start if the config still contains a
+      `[watchman]` section or `watchman_min_balance`; remove them and run
+      `watchmand` as a separate process
+    - **BREAKING:** captaind no longer tops up the watchman wallet from the
+      rounds wallet; the watchmand wallet must be funded externally (as was
+      already the case for two-process deployments)
+    - **BREAKING:** captaind's admin RPC no longer serves `SweepAdminService`
+      (`trigger_sweep`); use watchmand's admin RPC instead
+  - The operator can inspect and manage the txs the nursery follows up on
+    Each nursery tx records its kind (round, offboard, vtxopool or
+    internal), and the new `ListNurseryTxs` admin RPC reports every
+    tracked tx with its confirmation state and mempool presence. New
+    `captaind rpc nursery` subcommands wrap the RPCs: `list` and
+    `abandon`.
+    [#2305](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2305)
+    - The nursery follow-up now runs in captaind, which broadcasts every
+      nursery tx; watchmand serves the admin RPCs but no longer runs
+      follow-up.
+  - Store the amount of a pending lightning receive on the mailbox row itself
+    Mailbox messages are stand-alone records now: reading a mailbox no longer
+    resolves the amount from the lightning HTLC subscription, so a message keeps
+    reading correctly for as long as it is in the mailbox.
+    [#2423](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2423)
+  - Reshape the VTXO pool by-expiry and by-amount telemetry into Prometheus
+    histogram-schema gauges
+    Consumers gain direct queries like `vtxo_pool_expiry_blocks_bucket{le="144"}`
+    for "VTXOs past the wallet refresh threshold" and `histogram_quantile` for
+    median-VTXO analyses. `le` boundaries are fixed in captaind (no longer
+    derived from `config.vtxo_targets`), so cross-deployment dashboards share
+    the same axis.
+    [#2447](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2447)
+  - Remove the cancel Lightning payment RPC
+    The feature was untested and appeared in several vulnerability
+    reports. Removing it shrinks the Lightning attack surface.
+    [#2456](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2456)
+    - **BREAKING:** The cancel Lightning payment RPC is gone.
+  - The TxNursery now guarantees follow-up on every tx it broadcasts
+    Round funding, offboard, vtxo pool issuance and internal wallet txs
+    are persisted before broadcast, rebroadcast until they confirm, and
+    follow-up survives restarts. Previously a tx was broadcast once and
+    a failure only logged, which could leave a round funding tx
+    unconfirmed forever.
+    [#2478](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2478)
+    - Once a tx misses its confirmation target
+      (`nursery_confirm_target_blocks`), the operator is warned on every
+      block until the tx confirms or they give up on it via the new
+      `Abandon` admin RPC.
+    - Txs already stuck before this upgrade are not backfilled;
+      rebroadcast those manually.
+    - **BREAKING:** config: `nursery_confirm_target_blocks` is required;
+      every deployment has to pick its own confirmation target.
+    - **BREAKING:** config: `transaction_rebroadcast_interval` and
+      `txindex_check_interval` were removed; follow-up is driven by
+      chain events now.
+  - Fix a Postgres deadlock when registering vtxo transactions concurrently
+    Two simultaneous registrations of overlapping vtxo chains could deadlock
+    and fail one of the calls. The upsert now takes its row locks in canonical
+    txid order, so concurrent registrations serialize and both succeed.
+    [#2488](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2488)
+  - Round, offboard, vtxo pool and internal wallet txs always keep a
+    change output
+    A stuck tx whose txid is protocol-committed can only be rescued by a
+    CPFP child spending its change. Round funding txs also prefer
+    confirmed inputs: unconfirmed ones only top up the difference when
+    confirmed funds are insufficient.
+    [#2502](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2502)
+
 # v0.6.2
 
 Special thanks to the Red team and project Loupe for responsible disclsure.
