@@ -1,5 +1,0 @@
-- Add `Wallet::stop_daemon_wait`
-  Stops the daemon for the wallet and waits until its tasks have finished, so
-  a caller can act knowing nothing runs in the background anymore. barkd uses
-  it before wiping the datadir on wallet delete.
-  [#2415](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2415)

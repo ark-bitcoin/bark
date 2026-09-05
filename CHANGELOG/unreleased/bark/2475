@@ -1,6 +1,0 @@
-- Require the lock holder on `Wallet::unlock_vtxos`
-  An idempotent unlock (board register on retry, action rollback, round
-  teardown, offboard change release) no longer steals a lock that another
-  operation has since acquired: a mismatch is now a silent no-op success.
-  [#2475](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2475)
-  - **BREAKING:** `Wallet::unlock_vtxos` now takes the `Option<VtxoLockHolder>` that took the lock.

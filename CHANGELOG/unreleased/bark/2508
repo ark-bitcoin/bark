@@ -1,5 +1,0 @@
-- Add `OnchainWalletTrait::evict_tx`
-  Marks a wallet-known tx as evicted from the mempool so its inputs return to
-  coin selection immediately, without waiting for the sync eviction grace
-  period. Bark itself calls it from the exit driver when a CPFP is RBF-replaced.
-  [#2508](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2508)

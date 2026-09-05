@@ -1,7 +1,0 @@
-- Add `state` and `scheduled_height` to `PendingRoundInfo`
-  `state` is the lifecycle phase of the participation. `scheduled_height` is
-  the block height a delegated participation waits for.
-  [#2487](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2487)
-- Add `PendingRoundInfo::from_state`
-  Derives the status from the stored state, without a request to the server.
-  [#2487](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2487)

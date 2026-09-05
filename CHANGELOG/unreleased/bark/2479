@@ -1,2 +1,0 @@
-- **BREAKING**: change `Config::vtxo_refresh_expiry_threshold` to `BlockDelta`
-  [#2479](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2479)
