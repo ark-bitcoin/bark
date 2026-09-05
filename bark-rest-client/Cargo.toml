@@ -1,6 +1,6 @@
 [package]
 name = "bark-rest-client"
-version = "0.6.2"
+version = "0.7.0"
 authors = ["hello@second.tech"]
 description = "A simple REST API for barkd, a wallet daemon for integrating bitcoin payments into your app over HTTP. Supports self-custodial Lightning, Ark, and on-chain out of the box.  barkd is a long-running daemon best suited for always-on or high-connectivity environments like nodes, servers, desktops, and point-of-sale terminals.  All endpoints return JSON. Amounts are denominated in satoshis."
 license = "MIT"
@@ -14,8 +14,8 @@ serde_repr = "^0.1"
 url = "^2.5"
 chrono = { version = "^0.4",  features = ["serde"] }
 reqwest = { version = "^0.13", default-features = false, features = ["json", "multipart", "query", "form"] }
-bark-json = { version = "0.6.2", path = "../bark-json" }
-bark-rest = { version = "0.6.2", path = "../bark-rest", default-features = false }
+bark-json = { version = "0.7.0", path = "../bark-json" }
+bark-rest = { version = "0.7.0", path = "../bark-rest", default-features = false }
 
 [features]
 default = ["rustls"]
