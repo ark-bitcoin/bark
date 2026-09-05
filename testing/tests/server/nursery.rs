@@ -151,3 +151,30 @@ async fn nursery_reports_tracked_txs() {
 		.expect("confirmed tx missing from full report");
 	assert!(entry.confirmed_at_height.is_some());
 }
+
+/// Every wallet-funded tx keeps a change output, so a stuck one can be
+/// CPFP bumped later.
+#[tokio::test]
+async fn wallet_txs_keep_a_change_output() {
+	let ctx = TestContext::new("server/wallet_txs_keep_a_change_output").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+	let issuance_txid = srv.vtxopool_last_issuance().expect("pool issued a funding tx");
+
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	ctx.refresh_all(&srv, &[&bark]).await;
+	let funding_txid = log_round_finished.recv().wait(Duration::from_secs(30)).await
+		.expect("timed out waiting for the round").txid;
+
+	for txid in [funding_txid, issuance_txid] {
+		let tx = srv.bitcoind().await_transaction(txid).await;
+		assert!(tx.output.len() >= 2, "tx {} must keep a change output", txid);
+	}
+}
