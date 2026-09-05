@@ -22,7 +22,6 @@ Use the skills in `contrib/agents/skills/` extensively:
 | `protocol-encoding.md` | Working with ProtocolEncoding (backward compat, no panics, DoS protection) |
 | `documentation.md` | Documentation conventions (vocabulary is in CONTRIBUTING/style_guide.md) |
 | `database-schema.md` | Finding the full database DDL (use schema.sql, not migrations) |
-| `release-tagging.md` | Tagging releases |
 | `prompts.md` | Managing prompts and research |
 | `corrections.md` | When corrected, encode the fix into skill files |
 | `debug-ci.md` | Debugging CI failures — `debug <url to failed pipeline>` |
