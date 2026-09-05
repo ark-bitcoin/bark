@@ -587,12 +587,14 @@ mod test {
 			.coin_selection(WithGuaranteedChange(DefaultCoinSelectionAlgorithm::default()));
 		b.add_utxo(op1).unwrap();
 		b.only_witness_utxo();
-		b.drain_to(change_spk);
+		b.drain_to(change_spk.clone());
 		b.fee_absolute(fee);
 		let psbt = b.finish().unwrap();
 
 		let tx = &psbt.unsigned_tx;
 		assert_eq!(tx.input.len(), 1, "1000-sat input alone leaves non-dust change");
+		assert_eq!(tx.output.len(), 1);
+		assert_eq!(tx.output[0].script_pubkey, change_spk, "the only output is the change");
 		assert_eq!(tx.output[0].value, Amount::from_sat(500));
 		assert_eq!(psbt.fee().unwrap(), fee);
 	}
