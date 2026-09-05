@@ -132,6 +132,16 @@ pub trait OnchainWalletTrait: std::any::Any + Send + Sync {
 	/// Register an unconfirmed transaction relevant to the wallet
 	async fn register_tx(&mut self, tx: &Transaction) -> anyhow::Result<()>;
 
+	/// Mark a wallet-known transaction as evicted from the mempool.
+	///
+	/// Frees its inputs for coin selection immediately, without waiting for the
+	/// sync eviction grace period. Callers must only invoke this on a tx that
+	/// has definitively been superseded on-chain (e.g. an exit CPFP that was
+	/// RBF-replaced by a competing party); evicting a still-in-flight tx
+	/// causes the same self-inflicted double-spend the grace period exists to
+	/// avoid.
+	async fn evict_tx(&mut self, txid: Txid) -> anyhow::Result<()>;
+
 	/// Prepare a [Transaction] which will send to the given destinations
 	async fn prepare_tx(
 		&mut self,
