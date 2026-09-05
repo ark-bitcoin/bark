@@ -1,6 +1,7 @@
 
 use std::time::Duration;
 
+use bitcoin::Txid;
 use log::info;
 use serde_json::json;
 
@@ -8,7 +9,8 @@ use bitcoin_ext::rpc::RpcApi;
 use server_log::{NurseryTxConfirmed, NurseryTxMissedTarget, RoundFinished};
 
 use ark_testing::{btc, sat, TestContext};
-use ark_testing::constants::BOARD_CONFIRMATIONS;
+use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
+use ark_testing::daemon::captaind::Captaind;
 use ark_testing::util::FutureExt;
 
 #[tokio::test]
@@ -160,8 +162,12 @@ async fn wallet_txs_keep_a_change_output() {
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 	}).create().await;
+
+	// Each tx may spend the change of the one before it, so check every
+	// tx right after it is broadcast.
 	srv.wait_for_vtxopool(&ctx).await;
 	let issuance_txid = srv.vtxopool_last_issuance().expect("pool issued a funding tx");
+	assert_has_wallet_change(&srv, issuance_txid).await;
 
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 	bark.board(sat(800_000)).await;
@@ -172,9 +178,21 @@ async fn wallet_txs_keep_a_change_output() {
 	ctx.refresh_all(&srv, &[&bark]).await;
 	let funding_txid = log_round_finished.recv().wait(Duration::from_secs(30)).await
 		.expect("timed out waiting for the round").txid;
+	assert_has_wallet_change(&srv, funding_txid).await;
 
-	for txid in [funding_txid, issuance_txid] {
-		let tx = srv.bitcoind().await_transaction(txid).await;
-		assert!(tx.output.len() >= 2, "tx {} must keep a change output", txid);
-	}
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark.sync().await;
+	let address = ctx.bitcoind().get_new_address();
+	let offboard_txid = bark.offboard_all(&address).await.offboard_txid;
+	assert_has_wallet_change(&srv, offboard_txid).await;
+}
+
+/// Asserts that one of the outputs of the tx is a UTXO of the rounds
+/// wallet, i.e. that the tx kept a change output.
+async fn assert_has_wallet_change(srv: &Captaind, txid: Txid) {
+	let rounds = srv.wallet_status().await.rounds;
+	let has_change = rounds.confirmed_utxos.iter()
+		.chain(rounds.unconfirmed_utxos.iter())
+		.any(|utxo| utxo.txid == txid);
+	assert!(has_change, "tx {} must keep a change output", txid);
 }
