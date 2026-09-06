@@ -26,6 +26,8 @@ use server::Server;
 use tokio::{fs, join};
 use tonic::transport::Uri;
 
+use bitcoind_async_client::traits::Reader;
+
 use crate::daemon::bitcoind::BitcoindRpcHandle;
 use crate::daemon::bitcoind::snapshot;
 use crate::daemon::captaind::proxy::ArkRpcProxyServer;
@@ -303,11 +305,70 @@ impl TestContext {
 
 		let bitcoind = Bitcoind::new(name.to_string(), cfg, Some(self.bitcoind().p2p_url()));
 		bitcoind.start().await.unwrap();
+		// A freshly snapshot-loaded secondary occasionally fails to catch up to
+		// the ctx bitcoind over P2P: the log shows the missing blocks arriving
+		// from the peer but being rejected as "Unexpected block message
+		// received from peer 0", and the tip stays put. Nudge it past this
+		// before any downstream captaind hits the node's RPC.
+		self.await_secondary_bitcoind_synced(&bitcoind).await;
 		if wallet {
 			bitcoind.create_wallet(name).await;
 		}
 		self.secondary_bitcoinds.lock().unwrap().push(bitcoind.rpc_handle());
 		bitcoind
+	}
+
+	/// Ensure a freshly-started secondary bitcoind has caught up to the ctx
+	/// bitcoind's tip. See the call site in [`new_bitcoind_with_cfg`] for the
+	/// direct-fetch race this guards against.
+	async fn await_secondary_bitcoind_synced(&self, node: &Bitcoind) {
+		let Some(ctx) = self.bitcoind.as_ref() else { return };
+		let target = ctx.get_block_count().await;
+
+		// Fast path: ZMQ tip notifications from the node itself. Bounded so a
+		// stalled P2P direct-fetch falls through to the RPC push below.
+		let fast = tokio::time::timeout(
+			Duration::from_secs(2),
+			node.wait_for_blockheight(target as BlockHeight),
+		).await;
+		if fast.is_ok() {
+			return;
+		}
+
+		// P2P stalled. Push blocks one at a time to avoid retriggering the
+		// batch race; `submitblock` is idempotent on already-known blocks.
+		let ctx_rpc = ctx.async_client();
+		let node_rpc = node.async_client();
+		let mut have = node.get_block_count().await;
+		while have < target {
+			let next = have + 1;
+			let hash = ctx_rpc.get_block_hash(next).await
+				.expect("get_block_hash on ctx bitcoind");
+			let hex: String = ctx_rpc.call_raw(
+				"getblock", &[hash.to_string().into(), 0.into()],
+			).await.expect("getblock hex on ctx bitcoind");
+			// `submitblock`: null = accepted, "duplicate" = already had it,
+			// any other string = rejected. On rejection, only advance if the
+			// tip actually moved (e.g. via P2P); otherwise panic.
+			let resp: serde_json::Value = node_rpc.call_raw(
+				"submitblock", &[hex.into()],
+			).await.expect("submitblock on stalled secondary bitcoind");
+			match &resp {
+				serde_json::Value::Null => {},
+				serde_json::Value::String(s) if s == "duplicate" => {},
+				other => {
+					let observed = node.get_block_count().await;
+					if observed <= have {
+						panic!("submitblock rejected block {} at height {} on {}: {}",
+							hash, next, node.name, other,
+						);
+					}
+					have = observed;
+					continue;
+				},
+			}
+			have = next;
+		}
 	}
 
 	pub async fn new_postgres(&self, db_name: &str) -> server::config::Postgres {
