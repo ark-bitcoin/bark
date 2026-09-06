@@ -54,6 +54,8 @@ async fn main() {
 		.wait().expect("Failed to wait for pgdump")
 		.code().unwrap_or(1);
 
+	db_manager.stop().await.expect("failed to stop postgres");
+
 	// Clean the file
 	if tmp_pg_datadir.exists() {
 		fs::remove_dir_all(&tmp_pg_datadir).expect("failed to remove existing temporary db file");

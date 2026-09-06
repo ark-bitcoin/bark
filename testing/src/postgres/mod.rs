@@ -81,4 +81,11 @@ impl PostgresDatabaseManager {
 			Self::TestManaged(p) => p.global_client().await,
 		}
 	}
+
+	pub async fn stop(&self) -> anyhow::Result<()> {
+		match self {
+			Self::ExternallyHosted(_) => Ok(()),
+			Self::TestManaged(p) => p.stop().await,
+		}
+	}
 }

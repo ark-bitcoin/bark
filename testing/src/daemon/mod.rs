@@ -251,10 +251,23 @@ impl<T> Daemon<T>
 			Err(_) => warn!("Shutting down daemon {} timed out", self.name),
 		}
 
-		// In case that failed, we send a SIGKILL
+		// In case that failed, we send a SIGKILL and reap. Without the second
+		// wait callers can delete the datadir before the process has fully
+		// released its files, corrupting the next test's run.
 		if let Some(pid) = child.id() {
 			let pid = nix::unistd::Pid::from_raw(pid as i32);
-			signal::kill(pid, signal::Signal::SIGKILL).expect("sending SIGKILL failed");
+			let already_gone = match signal::kill(pid, signal::Signal::SIGKILL) {
+				Ok(()) => false,
+				Err(nix::errno::Errno::ESRCH) => true,
+				Err(e) => bail!("failed to SIGKILL daemon {}: {}", self.name, e),
+			};
+			match child.wait().await {
+				Ok(_) => {},
+				Err(e) if already_gone => trace!(
+					"wait error for already-gone daemon {}: {}", self.name, e,
+				),
+				Err(e) => bail!("failed to reap daemon {} after SIGKILL: {}", self.name, e),
+			}
 		}
 		self.inner.cleanup_external();
 
