@@ -32,6 +32,7 @@ use server_rpc::TryFromBytes;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
+use crate::database::htlc_vtxo::{self, HtlcResolution};
 use crate::database::tree::VtxoTreeUpdate;
 use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
@@ -498,7 +499,14 @@ impl Server {
 				}
 			}
 
-			t.execute_vtxo_tree_update(update).await
+			t.execute_vtxo_tree_update(update).await?;
+
+			// Committing the refund spend concludes these htlcs: the server
+			// can no longer collect them against the preimage.
+			htlc_vtxo::set_htlc_vtxo_resolutions(
+				&t, &htlc_vtxo_ids, HtlcResolution::Revoked,
+			).await?;
+			Ok(())
 		}).await?;
 
 		let new_vtxo_ids = builder.build_unsigned_vtxos().map(|v| v.id()).collect::<Vec<_>>();

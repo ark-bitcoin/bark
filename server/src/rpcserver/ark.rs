@@ -262,7 +262,7 @@ impl rpc::server::ArkService for Server {
 			.collect::<Result<Vec<_>, _>>()
 			.map_err(|e| tonic::Status::invalid_argument(format!("invalid vtxo: {}", e)))?;
 
-		self.store_vtxo_transactions(&vtxos).await.to_status()?;
+		Server::register_vtxo_transactions(self, &vtxos).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
@@ -276,7 +276,20 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::RegisterVtxoTransactionsRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		self.register_vtxo_transactions(req).await
+		let req = req.into_inner();
+
+		if req.vtxos.is_empty() {
+			macros::badarg!("no vtxos provided");
+		}
+
+		let vtxos = req.vtxos.iter()
+			.map(|v| <Vtxo<Full>>::deserialize(&v[..]))
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| tonic::Status::invalid_argument(format!("invalid vtxo: {}", e)))?;
+
+		Server::register_vtxo_transactions(self, &vtxos).await.to_status()?;
+
+		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
 	// arkoor

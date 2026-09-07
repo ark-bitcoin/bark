@@ -12,6 +12,7 @@ use ark::arkoor::package::{
 };
 use bitcoin_ext::P2TR_DUST;
 
+use crate::database::htlc_vtxo::{self, HtlcResolution};
 use crate::database::tree::VtxoTreeUpdate;
 use crate::error::ContextExt;
 use crate::{check_max_amount, Server};
@@ -124,6 +125,16 @@ impl Server {
 			badarg_err!("some VTXO is already locked by another process: {}", e.id)
 		})?;
 
+		// The only cosign path that spends htlc-recv vtxos is the lightning
+		// receive claim, so cosigning their spend resolves them as fulfilled.
+		let claimed_htlc_recvs = builder.builders.iter()
+			.filter_map(|b| match b.input().policy() {
+				VtxoPolicy::ServerHtlcRecv(..) | VtxoPolicy::ServerHtlcRecv_v0(..) =>
+					Some(b.input().id()),
+				_ => None,
+			})
+			.collect::<Vec<_>>();
+
 		// Output user vtxos go in as `unregistered`. They become spendable
 		// once the sender uploads the signed transaction chain via
 		// register_vtxo_transactions; until then `check_spendable` rejects
@@ -133,7 +144,13 @@ impl Server {
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
 			.insert_unregistered_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_oor_spent(builder.input_spend_info());
-		let inserted = self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
+		let inserted = self.db.write(async |t| {
+			let inserted = t.execute_vtxo_tree_update(update).await?;
+			htlc_vtxo::set_htlc_vtxo_resolutions(
+				&t, &claimed_htlc_recvs, HtlcResolution::Fulfilled,
+			).await?;
+			Ok(inserted)
+		}).await?;
 		drop(vtxo_guard);
 
 		// Only now it's safe to sign

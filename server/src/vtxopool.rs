@@ -22,6 +22,7 @@ use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef, P2TR_DUST};
 use bitcoin_ext::bdk::WithGuaranteedChange;
 
 use crate::database::vtxopool::PoolVtxo;
+use crate::database::htlc_vtxo::{self, HtlcDirection};
 use crate::database::tree::VtxoTreeUpdate;
 use crate::wallet::BdkWalletExt;
 use crate::{database, telemetry, Server, SECP};
@@ -359,8 +360,22 @@ impl VtxoPool {
 				database::SpendState::Pool,
 			)
 			.mark_vtxos_oor_spent(input_spend_info);
+
+		// An htlc-recv vtxo exists as soon as we hand out our signatures,
+		// so its htlc_vtxo row is written together with the vtxo itself.
+		let htlc_recvs = sent.iter()
+			.filter_map(|v| match v.policy() {
+				VtxoPolicy::ServerHtlcRecv(p) =>
+					Some((v.id(), p.payment_hash, p.htlc_expiry)),
+				VtxoPolicy::ServerHtlcRecv_v0(p) =>
+					Some((v.id(), p.payment_hash, p.htlc_expiry)),
+				_ => None,
+			})
+			.collect::<Vec<_>>();
+
 		srv.db.write(async |t| {
 			t.execute_vtxo_tree_update(update).await?;
+			htlc_vtxo::create_htlc_vtxos(&t, &htlc_recvs, HtlcDirection::Outgoing).await?;
 			t.mark_vtxopool_vtxos_spent(inputs.iter().map(|v| v.0)).await
 				.context("failed to mark vtxopool vtxos as spent")?;
 			Ok(())

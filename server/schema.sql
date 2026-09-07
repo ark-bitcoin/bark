@@ -17,6 +17,26 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: htlc_direction; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.htlc_direction AS ENUM (
+    'incoming',
+    'outgoing'
+);
+
+
+--
+-- Name: htlc_resolution; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.htlc_resolution AS ENUM (
+    'fulfilled',
+    'revoked'
+);
+
+
+--
 -- Name: lightning_htlc_subscription_status; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -583,6 +603,19 @@ CREATE SEQUENCE public.htlc_settlement_id_seq
 --
 
 ALTER SEQUENCE public.htlc_settlement_id_seq OWNED BY public.htlc_settlement.id;
+
+
+--
+-- Name: htlc_vtxo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.htlc_vtxo (
+    id bigint NOT NULL,
+    payment_hash text NOT NULL,
+    htlc_expiry integer NOT NULL,
+    direction public.htlc_direction NOT NULL,
+    resolution public.htlc_resolution
+);
 
 
 --
@@ -2079,6 +2112,14 @@ ALTER TABLE ONLY public.htlc_settlement
 
 
 --
+-- Name: htlc_vtxo htlc_vtxo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.htlc_vtxo
+    ADD CONSTRAINT htlc_vtxo_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: integration_api_key integration_api_key_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2289,6 +2330,13 @@ CREATE UNIQUE INDEX arkoor_mailbox_vtxo_id_uix ON public.arkoor_mailbox USING bt
 --
 
 CREATE UNIQUE INDEX htlc_settlement_payment_hash_ix ON public.htlc_settlement USING btree (payment_hash);
+
+
+--
+-- Name: htlc_vtxo_payment_hash_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX htlc_vtxo_payment_hash_ix ON public.htlc_vtxo USING btree (payment_hash);
 
 
 --
@@ -2661,6 +2709,14 @@ CREATE TRIGGER vtxo_update BEFORE UPDATE ON public.vtxo FOR EACH ROW EXECUTE FUN
 
 ALTER TABLE ONLY public.arkoor_mailbox
     ADD CONSTRAINT arkoor_mailbox_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(id);
+
+
+--
+-- Name: htlc_vtxo htlc_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.htlc_vtxo
+    ADD CONSTRAINT htlc_vtxo_id_fkey FOREIGN KEY (id) REFERENCES public.vtxo(id);
 
 
 --

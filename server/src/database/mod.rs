@@ -11,6 +11,7 @@ mod embedded {
 mod ban;
 pub mod block;
 pub mod data_migrations;
+pub mod htlc_vtxo;
 pub mod watchman;
 pub mod intman;
 pub mod ln;
