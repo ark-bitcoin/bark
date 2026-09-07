@@ -247,9 +247,12 @@ ppm = 1000 # 0.1%
 base_fee_sat = 200
 # The number of bytes we charge fixed for each offboard
 #
-# This is multiplied with the offboard feerate.
-# A single 2-in-2-out taproot keyspend tx is 846 or 212 vb.
-fixed_additional_vb = 212
+# This is multiplied with the offboard feerate. The user's output script is
+# charged on top, so this covers the rest of a 2-in-3-out taproot keyspend tx:
+#   2-in-3-out taproot keyspend tx     1018 wu   255 vb
+#   user's p2tr output script         - 136 wu  - 34 vb
+#                                      882 wu   221 vb
+fixed_additional_vb = 221
 ppm_expiry_table = [
     { expiry_blocks_threshold = 0, ppm = 0 },       # exp <= 96: 0 ppm
     { expiry_blocks_threshold = 97, ppm = 1000 },   # 96 < exp <= 198: 1,000 ppm (0.1%)
