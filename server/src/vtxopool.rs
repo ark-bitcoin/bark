@@ -83,7 +83,9 @@ impl Default for Config {
 			vtxo_target_issue_threshold: 80,
 			vtxo_lifetime: 144 * 3,
 			vtxo_pre_expiry: 144,
-			max_vtxo_exit_depth: 3,
+			// A checkpointed allocation adds two txs to the chain, so this
+			// allows the same three chained allocations as before checkpoints.
+			max_vtxo_exit_depth: 6,
 		}
 	}
 }
@@ -331,7 +333,10 @@ impl VtxoPool {
 				},
 			]
 		};
-		let builder = ArkoorPackageBuilder::new_without_checkpoints(
+		// The checkpoint caps the watchman's on-chain traversal when an exit
+		// anchors an allocation chain: checkpoints are swept at expiry instead
+		// of progressed further.
+		let builder = ArkoorPackageBuilder::new_with_checkpoints(
 			input_vtxos.into_iter().map(|v| v.into_inner()),
 			outputs,
 		).context("arkoor builder error")?;

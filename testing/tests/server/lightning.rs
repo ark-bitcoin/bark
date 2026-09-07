@@ -1852,6 +1852,55 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 }
 
 #[tokio::test]
+async fn vtxo_pool_allocation_stores_checkpoint_vtxos() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/vtxo_pool_allocation_stores_checkpoint_vtxos").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("server").lightningd(&lightning.external).cfg(|cfg| {
+		cfg.vtxopool.vtxo_targets = vec![
+			VtxoTarget { count: 5, amount: sat(100_000) },
+		];
+	}).create().await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = Arc::new(ctx.bark("bark", &srv).funded(btc(3)).create().await);
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(sat(50_000)).await;
+	let cloned_invoice_info = invoice_info.clone();
+	let res1 = tokio::spawn(async move {
+		lightning.internal.pay_bolt11(cloned_invoice_info.invoice).await
+	});
+
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
+	// HTLC settlement on lightning side
+	res1.ready().await.unwrap();
+
+	// A spent pool vtxo is spent into a checkpoint the server can sweep at
+	// expiry, and the allocation's arkoor txs spend that checkpoint in turn.
+	let pg_cfg = srv.config().postgres.clone();
+	let db = Db::connect(&pg_cfg).await.unwrap();
+	let checkpoints = db.read(async |t| {
+		let row = t.query_one("
+			SELECT COUNT(*)
+			FROM vtxo_pool
+			JOIN vtxo input ON input.vtxo_id = vtxo_pool.vtxo_id
+			JOIN vtxo checkpoint ON checkpoint.vtxo_txid = input.oor_spent_txid
+			WHERE vtxo_pool.spent_at IS NOT NULL
+				AND checkpoint.policy_type = 'checkpoint'
+				AND checkpoint.oor_spent_txid IS NOT NULL
+		", &[]).await?;
+		Ok(row.get::<_, i64>(0))
+	}).await.unwrap();
+	assert!(checkpoints > 0,
+		"a pool allocation must route through a checkpoint vtxo; found none");
+}
+
+#[tokio::test]
 async fn initiate_lightning_payment_fails_without_register_vtxo_transactions() {
 	require_bark_version!(> "0.5.0");
 

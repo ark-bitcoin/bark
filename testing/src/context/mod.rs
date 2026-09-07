@@ -455,7 +455,9 @@ impl TestContext {
 				vtxo_target_issue_threshold: 50,
 				vtxo_lifetime: 432,
 				vtxo_pre_expiry: 12,
-				max_vtxo_exit_depth: 3,
+				// A checkpointed allocation adds two txs to the chain, so this
+				// allows the same three chained allocations as before checkpoints.
+				max_vtxo_exit_depth: 6,
 			},
 			offboard_session_timeout: Duration::from_secs(30),
 			offboard_check_interval: Duration::from_secs(1),
