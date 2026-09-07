@@ -9,16 +9,13 @@ let
 		cargoToml = ./../server/Cargo.toml;
 	};
 
-	# The version stamped into the binaries. Mirrors server/build.rs: only
-	# a build of the commit carrying the server-X.Y.Z release tag gets the
-	# clean release version, anything else keeps the crate version as a
-	# readable base with a -dev suffix. The nix sandbox has no .git to
-	# inspect the tag, so release builds pass the version in through the
-	# SERVER_VERSION env var (visible only under `nix build --impure`); the
-	# justfile server release recipes do this automatically when HEAD carries
-	# the tag. In pure evaluation getEnv returns "", i.e. dev.
-	envVersion = builtins.getEnv "SERVER_VERSION";
-	serverVersion = if envVersion != "" then envVersion else "${crateInfo.version}-dev";
+	# The version stamped into the binaries. The nix sandbox has no .git, so
+	# unlike server/build.rs we can't tell a build of the tagged release
+	# commit from any other commit: nix builds always stamp the plain crate
+	# version, without the -dev suffix cargo builds of untagged commits get.
+	# Passing it as the SERVER_VERSION env var also stops build.rs from using
+	# git directly; the GIT_HASH stamp still identifies the exact commit.
+	serverVersion = crateInfo.version;
 
 	src = lib.fileset.toSource {
 		root = ./..;
