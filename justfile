@@ -437,14 +437,14 @@ bump-workspace-versions NEW_VERSION:
 	bash contrib/bump-workspace-versions.sh {{NEW_VERSION}}
 
 # Release cut: bump versions, regen derived files, verify build.
-# Changelog, commit, tag, and push are manual. See contrib/agents/skills/release-tagging.md.
+# Changelog, commit, tag, and push are manual.
 release-new-version NEW_VERSION: (bump-workspace-versions NEW_VERSION) generate-static-files checks
 	#!/usr/bin/env bash
 	set -euo pipefail
 	echo ""
 	echo "Workspace bumped, derived state refreshed, and build verified for v{{NEW_VERSION}}."
 	echo ""
-	echo "Next steps (manual, see contrib/agents/skills/release-tagging.md):"
+	echo "Next steps (manual):"
 	echo "  1. Review the diff. Verify Cargo.toml bumps hit every lockstep"
 	echo "     crate and no unrelated external deps got dragged along."
 	echo "  2. Merge unreleased CHANGELOG entries into CHANGELOG.md"
