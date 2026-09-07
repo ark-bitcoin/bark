@@ -69,6 +69,7 @@ pub mod duration_millis {
 	}
 }
 
+/// Serde serialization of a [FeeRate] as sat/kvb.
 pub mod fee_rate {
 	use serde::{Deserialize, Deserializer, Serializer};
 	use bitcoin::FeeRate;
@@ -81,5 +82,50 @@ pub mod fee_rate {
 	pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<FeeRate, D::Error> {
 		let sat_kvb = u64::deserialize(d)?;
 		Ok(FeeRate::from_sat_per_kvb_ceil(sat_kvb))
+	}
+
+	pub mod opt {
+		use serde::{Deserialize, Deserializer, Serializer};
+		use bitcoin::FeeRate;
+		use bitcoin_ext::FeeRateExt;
+
+		pub fn serialize<S: Serializer>(v: &Option<FeeRate>, s: S) -> Result<S::Ok, S::Error> {
+			match v {
+				Some(v) => s.serialize_some(&v.to_sat_per_kvb()),
+				None => s.serialize_none(),
+			}
+		}
+
+		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<FeeRate>, D::Error> {
+			Ok(Option::<u64>::deserialize(d)?.map(FeeRate::from_sat_per_kvb_ceil))
+		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	use bitcoin::FeeRate;
+
+	#[derive(Debug, PartialEq, Serialize, Deserialize)]
+	struct OptFeeRate {
+		#[serde(default, with = "fee_rate::opt")]
+		feerate: Option<FeeRate>,
+	}
+
+	#[test]
+	fn fee_rate_opt_round_trip() {
+		let some = OptFeeRate { feerate: Some(FeeRate::from_sat_per_kwu(250)) };
+		let json = serde_json::to_string(&some).unwrap();
+		assert_eq!(json, r#"{"feerate":1000}"#);
+		assert_eq!(serde_json::from_str::<OptFeeRate>(&json).unwrap(), some);
+
+		let none = OptFeeRate { feerate: None };
+		let json = serde_json::to_string(&none).unwrap();
+		assert_eq!(json, r#"{"feerate":null}"#);
+		assert_eq!(serde_json::from_str::<OptFeeRate>(&json).unwrap(), none);
+
+		// Records written before the field existed still parse.
+		assert_eq!(serde_json::from_str::<OptFeeRate>("{}").unwrap(), none);
 	}
 }

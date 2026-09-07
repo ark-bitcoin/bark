@@ -1,11 +1,16 @@
 
 use std::time::Duration;
 
-use bitcoin::Txid;
+use bitcoin::{
+	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness,
+};
+use bitcoin::absolute::LockTime;
 use log::info;
 use serde_json::json;
 
+use bitcoin_ext::FeeRateExt;
 use bitcoin_ext::rpc::RpcApi;
+use server::bitcoind::MempoolEntry;
 use server_log::{NurseryTxConfirmed, NurseryTxMissedTarget, RoundFinished};
 
 use ark_testing::{btc, sat, TestContext};
@@ -89,6 +94,7 @@ async fn nursery_warns_until_tx_is_abandoned() {
 			.expect("timed out waiting for missed-target warning");
 		assert_eq!(missed.txid, funding_txid);
 		assert!(missed.current_height >= missed.confirm_target_height);
+		assert!(missed.chunk_fee_rate.is_some(), "feerate of an in-mempool tx is unknown");
 	}
 
 	// The operator abandons the tx, which silences the warning.
@@ -132,6 +138,7 @@ async fn nursery_reports_tracked_txs() {
 	assert_eq!(entry.kind, "round");
 	assert!(entry.in_mempool);
 	assert!(entry.confirmed_at_height.is_none());
+	assert_eq!(entry.chunk_fee_rate_kwu, Some(chunk_fee_rate_kwu(&srv, funding_txid)));
 
 	// Everything confirms; the confirmed tx leaves the default report
 	// but stays in the full one.
@@ -152,6 +159,102 @@ async fn nursery_reports_tracked_txs() {
 	let entry = txs.iter().find(|t| t.txid == funding_txid.to_string())
 		.expect("confirmed tx missing from full report");
 	assert!(entry.confirmed_at_height.is_some());
+	assert!(!entry.in_mempool);
+	assert!(entry.chunk_fee_rate_kwu.is_none());
+}
+
+/// The reported feerate follows the chunk bitcoind mines the tx in. A
+/// low-fee child leaves it alone, and a high-fee grandchild raises it,
+/// which the ancestor feerate of the tx and its children never shows.
+#[tokio::test]
+async fn nursery_reports_chunk_fee_rate() {
+	let ctx = TestContext::new("server/nursery_reports_chunk_fee_rate").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).create().await;
+
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	// Offboard to the central bitcoind's wallet so the test can spend the output.
+	let address = ctx.bitcoind().get_new_address();
+	let offboard_txid = bark.offboard_all(&address).await.offboard_txid;
+	let offboard_tx = srv.bitcoind().await_transaction(offboard_txid).await;
+	let alone = nursery_chunk_fee_rate_kwu(&srv, offboard_txid).await;
+	assert_eq!(alone, chunk_fee_rate_kwu(&srv, offboard_txid));
+
+	// A child at a lower feerate than the offboard tx forms its own chunk,
+	// so the report doesn't move.
+	let vout = offboard_tx.output.iter()
+		.position(|o| o.script_pubkey == address.script_pubkey())
+		.expect("offboard output missing") as u32;
+	let child_txid = spend_from_wallet(&ctx, OutPoint::new(offboard_txid, vout), sat(200)).await;
+	srv.bitcoind().await_transaction(child_txid).await;
+	let with_child = nursery_chunk_fee_rate_kwu(&srv, offboard_txid).await;
+	assert_eq!(with_child, alone, "a low-fee child must not change the chunk feerate");
+
+	// A grandchild at a much higher feerate pulls the whole chain into one
+	// chunk, so the report rises to what the grandchild pays for it.
+	let grandchild_txid = spend_from_wallet(&ctx, OutPoint::new(child_txid, 0), sat(50_000)).await;
+	srv.bitcoind().await_transaction(grandchild_txid).await;
+	let with_grandchild = nursery_chunk_fee_rate_kwu(&srv, offboard_txid).await;
+	assert!(with_grandchild > alone, "grandchild at a higher feerate must raise the chunk feerate");
+	assert_eq!(with_grandchild, chunk_fee_rate_kwu(&srv, offboard_txid));
+
+	// The ancestor feerate of the tx and of its child are both below the
+	// chunk feerate, so a report based on them would have missed the bump.
+	let child_entry = srv.bitcoind().sync_client().get_mempool_entry(&child_txid)
+		.expect("server bitcoind has the child");
+	let child_ancestor_kwu = FeeRate::from_amount_and_weight_ceil(
+		child_entry.fees.ancestor, Weight::from_vb(child_entry.ancestor_size).unwrap(),
+	).unwrap().to_sat_per_kwu();
+	assert!(with_grandchild > child_ancestor_kwu);
+}
+
+/// Spend the outpoint, owned by the central bitcoind's wallet, to a fresh
+/// address of that wallet, paying the given fee.
+async fn spend_from_wallet(ctx: &TestContext, outpoint: OutPoint, fee: Amount) -> Txid {
+	let client = ctx.bitcoind().sync_client();
+	let prev_tx = client.get_raw_transaction(&outpoint.txid, None)
+		.expect("get_raw_transaction failed");
+	let prev_out = &prev_tx.output[outpoint.vout as usize];
+	let unsigned = Transaction {
+		version: prev_tx.version,
+		lock_time: LockTime::ZERO,
+		input: vec![TxIn {
+			previous_output: outpoint,
+			script_sig: ScriptBuf::new(),
+			sequence: Sequence::ZERO,
+			witness: Witness::new(),
+		}],
+		output: vec![TxOut {
+			value: prev_out.value - fee,
+			script_pubkey: ctx.bitcoind().get_new_address().script_pubkey(),
+		}],
+	};
+	let signed = client.sign_raw_transaction_with_wallet(&unsigned, None, None)
+		.expect("sign_raw_transaction_with_wallet failed")
+		.transaction().expect("failed to deserialize signed tx");
+	client.send_raw_transaction(&signed).expect("send_raw_transaction failed")
+}
+
+/// The chunk feerate the nursery report shows for an in-mempool tx.
+async fn nursery_chunk_fee_rate_kwu(srv: &Captaind, txid: Txid) -> u64 {
+	let txs = srv.list_nursery_txs(false, false).await;
+	let entry = txs.iter().find(|t| t.txid == txid.to_string())
+		.expect("tx missing from nursery report");
+	assert!(entry.in_mempool);
+	entry.chunk_fee_rate_kwu.expect("feerate of an in-mempool tx is unknown")
+}
+
+/// The chunk feerate the server's bitcoind reports for a mempool tx, in sat/kwu.
+fn chunk_fee_rate_kwu(srv: &Captaind, txid: Txid) -> u64 {
+	let entry: MempoolEntry = srv.bitcoind().sync_client()
+		.call("getmempoolentry", &[json!(txid)])
+		.expect("server bitcoind has the tx");
+	entry.fees.chunk.div_by_weight_floor(Weight::from_wu(entry.chunk_weight)).unwrap().to_sat_per_kwu()
 }
 
 /// Every wallet-funded tx keeps a change output, so a stuck one can be

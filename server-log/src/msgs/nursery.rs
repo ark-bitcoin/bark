@@ -1,5 +1,5 @@
 
-use bitcoin::Txid;
+use bitcoin::{FeeRate, Txid};
 use bitcoin_ext::BlockHeight;
 
 
@@ -45,10 +45,22 @@ pub struct NurseryTxMissedTarget {
 	pub txid: Txid,
 	pub confirm_target_height: BlockHeight,
 	pub current_height: BlockHeight,
+	/// Chunk feerate bitcoind reports for the tx, in sat/kvb. None if the
+	/// tx is not in the mempool or the lookup failed.
+	#[serde(default, with = "crate::serde_utils::fee_rate::opt")]
+	pub chunk_fee_rate: Option<FeeRate>,
 }
 impl_slog!(NurseryTxMissedTarget, WARN,
 	"nursery tx missed its confirmation target; operator intervention required"
 );
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NurseryTxFeerateError {
+	pub txid: Txid,
+	pub error: String,
+}
+impl_slog!(NurseryTxFeerateError, WARN, "failed to fetch the mempool feerate of a nursery tx");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
