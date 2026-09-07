@@ -660,7 +660,12 @@ pub mod watchmand {
 mod test {
 	use std::collections::HashMap;
 	use std::str::FromStr;
+
+	use bitcoin::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Witness};
+	use bitcoin::opcodes::all::OP_PUSHNUM_1;
+	use bitcoin::script::PushBytes;
 	use tonic::transport::Uri;
+
 	use super::*;
 
 	const DEFAULT_CAPTAIND_CONFIG_PATH: &str =
@@ -677,6 +682,32 @@ mod test {
 		cfg.bitcoind.cookie = Some(".cookie".into());
 
 		cfg.validate().expect("error validating default config");
+	}
+
+	#[test]
+	fn default_offboard_fixed_vb_covers_a_two_in_three_out_keyspend() {
+		let cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+
+		let keyspend_input = TxIn {
+			previous_output: OutPoint::null(),
+			script_sig: ScriptBuf::new(),
+			sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+			witness: Witness::from_slice(&[[0u8; 64]]),
+		};
+		let p2tr_spk = ScriptBuf::builder()
+			.push_opcode(OP_PUSHNUM_1)
+			.push_slice(<&PushBytes>::try_from(&[0u8; 32][..]).unwrap())
+			.into_script();
+		let p2tr_output = TxOut { value: Amount::ZERO, script_pubkey: p2tr_spk.clone() };
+		let offboard_tx = Transaction {
+			version: bitcoin::transaction::Version::TWO,
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: vec![keyspend_input; 2],
+			output: vec![p2tr_output; 3],
+		};
+
+		let priced_vb = cfg.fees.offboard.fixed_additional_vb + p2tr_spk.len() as u64;
+		assert_eq!(priced_vb, offboard_tx.vsize() as u64);
 	}
 
 	#[test]
