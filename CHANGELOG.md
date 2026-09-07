@@ -130,7 +130,7 @@ Below is a more detailed summary for each version.
     `op_type` (board, offboard, refresh, lightning_send, lightning_receive).
     Each op records once at its success edge; the slog carries `user_fee_sat`
     and `net_fee_sat` (equal for ops without a routing component), plus
-    `routing_fee_sat` for lightning_send. Migration V57 adds `block_height`
+    `routing_fee_sat` for lightning_send. Migration V61 adds `block_height`
     and `user_fee_sat` to `lightning_payment_attempt`, and `user_fee_sat` to
     `offboards`. Offboard fee telemetry is recorded from `commit_offboard`
     gated on the `wallet_commit` FALSE->TRUE transition, so a crash between
@@ -160,7 +160,7 @@ Below is a more detailed summary for each version.
     `abandon`.
     [#2305](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2305)
     - The nursery follow-up now runs in captaind, which broadcasts every
-      nursery tx; watchmand serves the admin RPCs but no longer runs
+      nursery tx and serves the admin RPCs; watchmand no longer runs
       follow-up.
   - Store the amount of a pending lightning receive on the mailbox row itself
     Mailbox messages are stand-alone records now: reading a mailbox no longer
@@ -175,11 +175,11 @@ Below is a more detailed summary for each version.
     derived from `config.vtxo_targets`), so cross-deployment dashboards share
     the same axis.
     [#2447](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2447)
-  - Remove the cancel Lightning payment RPC
+  - Disable the cancel Lightning payment RPC
     The feature was untested and appeared in several vulnerability
-    reports. Removing it shrinks the Lightning attack surface.
+    reports. Disabling it shrinks the Lightning attack surface.
     [#2456](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2456)
-    - **BREAKING:** The cancel Lightning payment RPC is gone.
+    - **BREAKING:** The cancel Lightning payment RPC always returns an error.
   - The TxNursery now guarantees follow-up on every tx it broadcasts
     Round funding, offboard, vtxo pool issuance and internal wallet txs
     are persisted before broadcast, rebroadcast until they confirm, and
