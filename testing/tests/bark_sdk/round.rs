@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use ark::VtxoId;
 use bark::movement::MovementStatus;
-use bark::vtxo::VtxoState;
+use bark::vtxo::{VtxoLockHolder, VtxoState};
 use bitcoin::hashes::Hash;
 use server_log::{NoRoundPayments, RoundFinished, RoundParticipationRejected};
 use server_rpc::protos;
@@ -11,7 +11,7 @@ use server_rpc::protos;
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::ROUND_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient, Captaind};
-use ark_testing::util::FutureExt;
+use ark_testing::util::{FutureExt, poll_interval};
 
 /// A captaind proxy that rejects any round submission — interactive
 /// (`submit_payment`) or delegated (`submit_round_participation`) — whose inputs
@@ -612,4 +612,79 @@ async fn maintenance_refresh_delegated_drops_server_rejected_vtxo() {
 	);
 
 	assert_dropped_and_retried_movements(&wallet, bad_id, good_id).await;
+}
+
+/// A delegated participation the server has not picked up yet leaves its inputs
+/// spendable. Once the server has issued the round and its funding tx is in the
+/// mempool, a sync locks the inputs under the refresh movement, and the round
+/// subsystem reports them as its pending inputs. When the round confirms the
+/// inputs are forfeited and replaced by the new VTXOs.
+#[tokio::test]
+async fn delegated_round_locks_inputs_once_issued() {
+	let ctx = TestContext::new("bark_sdk/delegated_round_locks_inputs_once_issued").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(800_000))
+		.create().await;
+
+	let ids = wallet.spendable_vtxos().await.expect("list vtxos")
+		.into_iter().map(|v| v.id()).collect::<Vec<_>>();
+	wallet.refresh_vtxos_delegated(ids.clone()).await
+		.expect("submit the delegated participation")
+		.expect("a participation was submitted");
+
+	wallet.sync().await;
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(), ids,
+		"the inputs stay spendable until the server issues the round",
+	);
+	assert!(wallet.pending_round_input_vtxos().await.expect("round inputs").is_empty(),
+		"an unissued participation holds no inputs",
+	);
+
+	let mut log_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	let finished = log_finished.recv().wait(Duration::from_secs(30)).await
+		.expect("the round must finish");
+	ctx.await_transaction(finished.txid).await;
+	wallet.chain().invalidate_caches().await;
+	wallet.sync().await;
+
+	assert_eq!(wallet.pending_round_states().await.expect("round states").len(), 1,
+		"the participation is still pending",
+	);
+	for id in &ids {
+		let v = wallet.get_vtxo_by_id(*id).await.expect("input vtxo");
+		assert!(
+			matches!(&v.state, VtxoState::Locked { holder: Some(VtxoLockHolder::Movement { .. }) }),
+			"issued round input {id} must be locked by the refresh movement: {:?}", v.state,
+		);
+	}
+	assert!(wallet.spendable_vtxos().await.expect("list vtxos").is_empty(),
+		"nothing is spendable while the round is unconfirmed",
+	);
+	let inround = wallet.pending_round_input_vtxos().await.expect("round inputs")
+		.into_iter().map(|v| v.id()).collect::<Vec<_>>();
+	assert_eq!(inround, ids, "the round reports its locked inputs");
+
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	for _ in 0..30 {
+		wallet.chain().invalidate_caches().await;
+		wallet.sync().await;
+		if wallet.pending_round_states().await.expect("round states").is_empty() {
+			break;
+		}
+		tokio::time::sleep(poll_interval()).await;
+	}
+	assert!(wallet.pending_round_states().await.expect("round states").is_empty(),
+		"the delegated participation must be finished",
+	);
+	let new_ids = wallet.spendable_vtxos().await.expect("list vtxos")
+		.into_iter().map(|v| v.id()).collect::<Vec<_>>();
+	assert_eq!(new_ids.len(), ids.len(), "one output per input: {new_ids:?}");
+	assert!(new_ids.iter().all(|id| !ids.contains(id)),
+		"the inputs must be replaced by the round outputs: {ids:?} -> {new_ids:?}",
+	);
 }
