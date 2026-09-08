@@ -8,6 +8,8 @@ use parking_lot::Mutex;
 use bitcoincore_rpc::RpcApi;
 
 use ark::fees::{BoardFees, PpmFeeRate};
+use ark::lightning::PaymentHash;
+use bark::exit::ExitState;
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin::Amount;
 use bitcoin_ext::rpc::BitcoinRpcExt;
@@ -489,7 +491,7 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	failures.assert_empty();
 	println!("Lightning vtxo sweep: {:#?}", msg);
 	assert_eq!(300_099_000, msg.total_input_value.to_sat());
-	assert_eq!(300_094_905, msg.total_output_value.to_sat());
+	assert_eq!(300_094_901, msg.total_output_value.to_sat());
 }
 
 /// Offboard connectors pay a plain keyspend of the server key, but they must
@@ -1049,32 +1051,21 @@ async fn offboard_exit_attack(test_name: &str, n_vtxos: usize) -> bitcoin::Amoun
 	stolen
 }
 
-/// A *lightning-receive* VTXO can be force-exited on-chain by the *watchman* (not by the owner)
-/// when a third party exits the shared round tree and drags the VTXO's parent on-chain. The fix
-/// (bark >= 0.2.6) checkpoints the claim, giving the watchman a stopping point: it broadcasts the
-/// checkpoint but never the user's leaf, so the leaf stays a refreshable off-chain VTXO.
-///
-/// This test pins the fix at the 0.2.6 boundary by branching on the bark client version:
-/// - bark >= 0.2.6 (incl. DIRTY working-tree builds): the leaf is NOT force-exited; it stays
-///   `Spendable`, off-chain, and refreshable.
-/// - bark < 0.2.6: the pre-fix behaviour — the leaf is force-exited and the server rejects refresh
-///   because the vtxo row records the exit's confirmation height.
-///
-/// The `safe` wallet (which spends its receive to itself, adding a checkpoint) is a control that is
-/// never force-exited in either case.
+/// The vtxopool funds each lightning receive from the change of the previous one, so all the
+/// receives hang off a single allocation chain. When a user exits the oldest receive, the txs
+/// it shares with the others hit the chain, but the checkpoint caps how far that reaches: the
+/// watchman broadcasts nothing, and the pool remainder is swept once the pool vtxos expire.
 #[tokio::test]
-async fn watchman_force_exit_lightning_vtxo_blocks_refresh() {
-	require_bark_version!(> "0.5.0");
-
-	let ctx = TestContext::new("server/watchman_force_exit_lightning_vtxo_blocks_refresh").await;
+async fn watchman_doesnt_broadcast_htlc_recv_chain() {
+	let ctx = TestContext::new("server/watchman_doesnt_broadcast_htlc_recv_chain").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
-		// One pool vtxo per receiver. The round tree has radix 4 (`ark::tree` RADIX), so up
-		// to 4 leaves sit directly under the root - with 3 they are siblings. Exiting one
-		// receiver broadcasts the shared root, dragging the others' HTLC sources on-chain,
-		// and the watchman then progresses down to each leaf. (The pool can't reuse change,
-		// so it needs one vtxo per receiver; a single vtxo can't serve three receives)
-		cfg.vtxopool.vtxo_targets = vec![VtxoTarget { count: 3, amount: sat(100_000) }];
+		cfg.vtxo_lifetime = 144;
+		// The pool never issues a single vtxo at a time, so ask for the minimum of two.
+		cfg.vtxopool.vtxo_targets = vec![VtxoTarget { count: 2, amount: sat(100_000) }];
+		cfg.vtxopool.vtxo_lifetime = 144;
+		// Keep the change in the pool so all the receives share one allocation chain.
+		cfg.vtxopool.max_vtxo_exit_depth = 100;
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
@@ -1082,116 +1073,70 @@ async fn watchman_force_exit_lightning_vtxo_blocks_refresh() {
 	let failures = WatchmanFailureCollector::default();
 	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
+	let mut log_progress = wm.subscribe_log::<ProgressBroadcast>();
+	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
 
-	// Fund the watchman so it can pay CPFP fees for its progress broadcasts.
+	// Fund the watchman so it can pay CPFP fees for progress broadcasts.
 	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(1_000_000)).await;
 
-	let attacker = Arc::new(ctx.bark("attacker", &srv).funded(sat(1_000_000)).create().await);
-	let victim = Arc::new(ctx.bark("victim", &srv).funded(sat(1_000_000)).create().await);
-	let safe = Arc::new(ctx.bark("safe", &srv).funded(sat(1_000_000)).create().await);
+	let wallet = ctx.bark_sdk("bark", &srv).funded(sat(1_000_000)).create().await;
 	srv.wait_for_vtxopool(&ctx).await;
 
-	// Receive sequentially for deterministic input assignment, `attacker` first. Each
-	// HOLDS its claimed vtxo (no exit, no refresh).
-	for receiver in [attacker.clone(), victim.clone(), safe.clone()] {
-		let invoice = receiver.bolt11_invoice(sat(50_000)).await.invoice;
-		let receiver_bark = receiver.clone();
-		tokio::join!(
-			ln.external.pay_bolt11(&invoice),
-			async move { receiver_bark.lightning_receive_all().wait_millis(60_000).await; },
+	// Receive sequentially so each allocation spends the change of the previous one.
+	for _ in 0..20 {
+		let invoice = wallet.bolt11_invoice(sat(1_000), None, None).await
+			.expect("creating the invoice");
+		let (pay, _) = tokio::join!(
+			ln.external.try_pay_bolt11(invoice.to_string()),
+			wallet.try_claim_lightning_receive(PaymentHash::from(&invoice), true),
 		);
+		pay.expect("the lightning payment should succeed");
 	}
-	let victim_vtxo = {
-		victim.sync().await;
-		let vtxos = victim.vtxos().await;
-		let v = vtxos.iter().find(|v| matches!(v.state, VtxoStateInfo::Spendable))
-			.expect("victim should hold a spendable received vtxo");
-		v.id
-	};
-	let victim_txid = victim_vtxo.to_point().txid;
-	let safe_vtxo = {
-		safe.sync().await;
-		let vtxos = safe.vtxos().await;
-		let old = vtxos.iter().find(|v| matches!(v.state, VtxoStateInfo::Spendable))
-			.expect("safe should hold a spendable ln-receive vtxo");
-		// Send to self to make the VTXO safe.
-		safe.send_oor(safe.address().await, sat(40_000)).await;
-		let vtxos = safe.vtxos().await;
-		let new = vtxos.iter().find(|v| matches!(v.state, VtxoStateInfo::Spendable))
-			.expect("safe should hold a spendable arkoor vtxo");
-		assert_ne!(old.id, new.id);
-		new.id
-	};
-	let safe_txid = safe_vtxo.to_point().txid;
 
-	// The attacker unilaterally exits its received vtxo, broadcasting the shared pool
-	// tree and dragging the victim's HTLC source on-chain.
-	attacker.start_exit_all().await;
-	progress_exit_until_awaiting_delta(&ctx, &attacker).await;
+	// The shortest exit chain belongs to the oldest receive. Exiting it drags the txs it
+	// shares with the other receives on-chain.
+	let oldest = wallet.vtxos().await.expect("listing vtxos").into_iter()
+		.min_by_key(|v| v.exit_depth)
+		.expect("there should be receives")
+		.vtxo;
+	wallet.exit_mgr().start_exit_for_vtxos(&[oldest.clone()]).await
+		.expect("starting the exit");
+	let mut state = None;
+	for _ in 0..30 {
+		wallet.sync_onchain().await.expect("onchain sync");
+		wallet.progress_exits().await.expect("progressing the exit");
+		state = wallet.exit_mgr().get_exit_vtxo(oldest.id()).await
+			.map(|exit| exit.state().clone());
+		if matches!(state, Some(ExitState::AwaitingDelta(_))) {
+			break;
+		}
+		ctx.generate_blocks(1).await;
+	}
+	assert!(matches!(state, Some(ExitState::AwaitingDelta(_))),
+		"the exit should have confirmed on-chain, was {:?}", state,
+	);
 
-	// Drive the watchman. With the victim's source now on-chain, it progresses the
-	// checkpoint-free chain down to the victim's leaf, force-exiting it.
-	let mut log_progress = wm.subscribe_log::<ProgressBroadcast>();
-	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	let grace = u32::from(wm.config().watchman.progress_grace_period);
+	let tip = ctx.generate_blocks(grace).await;
 	wm.wait_for_sync_height(tip).await;
 
-	let mut forced = false;
-	let mut any_progress = false;
-	for _ in 0..25 {
-		wm.trigger_sweep().await;
-		tokio::time::sleep(Duration::from_secs(2)).await;
-		while let Ok(p) = log_progress.try_recv() {
-			println!("ProgressBroadcast vtxo_id={} txid={}", p.vtxo_id, p.txid);
-			any_progress = true;
-			ctx.await_transactions_across_nodes([p.cpfp_txid], [wm.bitcoind().as_ref()]).await;
-			if p.txid == victim_txid {
-				forced = true;
-			}
-			assert_ne!(p.txid, safe_txid, "the safe VTXO should not be broadcast");
-		}
-		let tip = ctx.generate_blocks(1).await;
-		wm.wait_for_sync_height(tip).await;
+	// Give the watchman its chance to broadcast the receive chain; it must not take it.
+	wm.trigger_sweep().await;
+
+	// Once the pool vtxos expire, the watchman claims the pool remainder in one tx.
+	let tip = ctx.generate_blocks(150).await;
+	wm.wait_for_sync_height(tip).await;
+	wm.trigger_sweep().await;
+	let claim = log_claim.recv().wait_millis(30_000).await.expect("no claim log");
+	println!("vtxopool sweep: {:#?}", claim);
+	assert!(log_claim.try_recv().is_err(), "the watchman should sweep in a single claim");
+
+	// The watchman broadcast none of the txs in the receive chain.
+	if let Ok(p) = log_progress.try_recv() {
+		panic!("watchman broadcast progress tx {} for vtxo {}", p.txid, p.vtxo_id);
 	}
-	// Fixed: the leaf was not force-exited and stays a refreshable off-chain VTXO.
-	// Guard against a vacuous pass: the watchman must have actually progressed the
-	// dragged-on-chain tree (up to the checkpoint), otherwise `!forced` proves nothing.
-	assert!(any_progress,
-		"watchman never broadcast any progress; the checkpoint-stop assertion is vacuous",
-	);
-	assert!(!forced,
-		"watchman must not force-exit the checkpointed ln leaf {}", victim_txid,
-	);
-	let vtxos = victim.vtxos().await;
-	let v = vtxos.iter().find(|v| v.id == victim_vtxo).expect("victim vtxo disappeared");
-	assert!(matches!(v.state, VtxoStateInfo::Spendable),
-		"victim ln leaf must stay Spendable, was {:?}", v.state,
-	);
-	let status = ctx.bitcoind().sync_client().tx_status(victim_txid)
-		.expect("status should succeed");
-	assert!(matches!(status, TxStatus::NotFound),
-		"victim ln leaf must not be on-chain, status was {:?}", status,
-	);
-	let (res, _) = tokio::join!(
-		victim.try_refresh_all_no_retry(),
-		srv.trigger_round(),
-	);
-	assert!(res.is_ok(),
-		"refresh of the non-force-exited ln leaf must succeed: {:?}", res,
-	);
 
 	failures.assert_empty();
-
-	// The safe VTXO should not have been broadcast because it's protected by the spend.
-	let vtxos = safe.vtxos().await; // syncs
-	let state = vtxos.iter().find(|v| v.id == safe_vtxo).map(|v| format!("{:?}", v.state));
-	println!("safe {} state on client after force-exit: {:?}", safe_vtxo, state);
-
-	// The server accepts the input because it shouldn't be exited during round registration.
-	let (res, _) = tokio::join!(
-		safe.try_refresh_all_no_retry(),
-		srv.trigger_round(),
-	);
-	assert!(res.is_ok(), "server should accept the safe vtxo during round registration");
 }
 
 /// Safety guard for the *checkpointed* arkoor case (counterpart to the lightning bug

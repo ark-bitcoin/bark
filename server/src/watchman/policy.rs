@@ -1,11 +1,11 @@
 
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::Txid;
+use bitcoin::{Amount, Transaction, Txid};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
 use ark::lightning::PaymentHash;
 use bitcoind_async_client::Client as BitcoindClient;
-use bitcoin_ext::{BlockDelta, BlockHeight};
+use bitcoin_ext::{fee, BlockDelta, BlockHeight, P2TR_DUST};
 use server_log::slog;
 use tracing::{error, warn};
 
@@ -17,6 +17,22 @@ use super::{Action, Config};
 struct ProgressSpec {
 	next_txid: Txid,
 	is_signed: bool,
+}
+
+/// We ignore transactions with dust-outputs because they are non-standard.
+/// Their is no point in trying to claim them. We will only get warnings
+///
+/// We only do this if the input is sufficiently small so we only
+/// do this on txs that are not economically relevant.`
+fn is_ignorable_dust(tx: &Transaction, input_amount: Amount) -> bool {
+	if input_amount >= P2TR_DUST * 2 || tx.input.len() != 1 {
+		return false;
+	}
+	tx.output.iter().any(|o| {
+		!o.script_pubkey.is_op_return()
+			&& o.script_pubkey != *fee::P2A_SCRIPT
+			&& o.value < o.script_pubkey.minimal_non_dust()
+	})
 }
 
 struct ActionParams<T = ()> {
@@ -343,6 +359,13 @@ impl ActionContextFetcher<'_> {
 		let vtx = self.db.read(async |t| t.get_virtual_transaction_by_txid(oor_txid).await).await
 			.inspect_err(|e| warn!("DB error: {:#}", e))
 			.ok()??;
+
+		if let Some(ref tx) = vtx.signed_tx {
+			if is_ignorable_dust(tx.as_ref(), vtxo.amount()) {
+				slog!(ProgressIgnoredDust, vtxo_id: vtxo.id(), txid: oor_txid);
+				return None;
+			}
+		}
 
 		// For forfeit txs with connector inputs, we check if we should broadcast
 		// the connector tx first.
@@ -874,5 +897,64 @@ mod tests {
 		// claim_height = max(500, 244) = 500, chain_tip >= claim_height
 		// deadline = 100 + 40 + 144 = 284
 		assert_eq!(decide_action_server_htlc_recv(&params), Action::Claim { deadline: 284 });
+	}
+
+	fn p2tr_spk() -> bitcoin::ScriptBuf {
+		bitcoin::ScriptBuf::from_hex(
+			"51201234123412341234123412341234123412341234123412341234123412341234",
+		).unwrap()
+	}
+
+	fn tx_with_outputs(nb_inputs: usize, outputs: Vec<bitcoin::TxOut>) -> Transaction {
+		Transaction {
+			version: bitcoin::transaction::Version(3),
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: vec![Default::default(); nb_inputs],
+			output: outputs,
+		}
+	}
+
+	/// A tx with a sub-dust P2TR output and a sub-660-sat input is ignorable.
+	#[test]
+	fn ignorable_dust_sub_dust_output_small_input() {
+		let tx = tx_with_outputs(1, vec![
+			bitcoin::TxOut { value: Amount::from_sat(308), script_pubkey: p2tr_spk() },
+			bitcoin::TxOut { value: Amount::from_sat(340), script_pubkey: p2tr_spk() },
+			bitcoin_ext::fee::fee_anchor(),
+		]);
+		assert!(is_ignorable_dust(&tx, Amount::from_sat(648)));
+	}
+
+	/// A tx funded by 660 sats or more is never ignored, even with a
+	/// sub-dust output.
+	#[test]
+	fn ignorable_dust_input_at_threshold_kept() {
+		let tx = tx_with_outputs(1, vec![
+			bitcoin::TxOut { value: Amount::from_sat(308), script_pubkey: p2tr_spk() },
+			bitcoin_ext::fee::fee_anchor(),
+		]);
+		assert!(!is_ignorable_dust(&tx, Amount::from_sat(660)));
+	}
+
+	/// A 330-sat P2TR output is not dust and the 0-value anchor is exempt
+	/// from the dust check, so the tx can be relayed and is never ignored.
+	#[test]
+	fn ignorable_dust_relayable_tx_kept() {
+		let tx = tx_with_outputs(1, vec![
+			bitcoin::TxOut { value: Amount::from_sat(330), script_pubkey: p2tr_spk() },
+			bitcoin_ext::fee::fee_anchor(),
+		]);
+		assert!(!is_ignorable_dust(&tx, Amount::from_sat(648)));
+	}
+
+	/// With more than one input the vtxo amount doesn't bound the total
+	/// input value, so the tx is never ignored.
+	#[test]
+	fn ignorable_dust_multi_input_kept() {
+		let tx = tx_with_outputs(2, vec![
+			bitcoin::TxOut { value: Amount::from_sat(308), script_pubkey: p2tr_spk() },
+			bitcoin_ext::fee::fee_anchor(),
+		]);
+		assert!(!is_ignorable_dust(&tx, Amount::from_sat(648)));
 	}
 }

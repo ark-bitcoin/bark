@@ -1,0 +1,5 @@
+- Captaind uses checkpoints when issuing htlcs from the vtxopool
+  [#2528](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2528)
+- Watchmand will not attempt to progress non-standard vtxos if the value is
+  not economical
+  [#2528](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2528)
