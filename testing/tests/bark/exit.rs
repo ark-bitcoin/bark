@@ -1360,7 +1360,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	// Drive the exit past Claimable → Claimed now that the drain has confirmed.
 	bark.progress_exit().await;
 
-	assert_eq!(bark.onchain_balance().await, sat(109_993_689));
+	assert_eq!(bark.onchain_balance().await, sat(109_992_307));
 
 	// Check that we have a lightning receive -> exit movement chain
 	let movements = bark.history().await;

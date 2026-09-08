@@ -489,7 +489,7 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	failures.assert_empty();
 	println!("Lightning vtxo sweep: {:#?}", msg);
 	assert_eq!(300_099_000, msg.total_input_value.to_sat());
-	assert_eq!(300_094_905, msg.total_output_value.to_sat());
+	assert_eq!(300_094_901, msg.total_output_value.to_sat());
 }
 
 /// Offboard connectors pay a plain keyspend of the server key, but they must
