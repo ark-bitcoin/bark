@@ -495,18 +495,22 @@ impl Wallet {
 			MAILBOX_PROCESSING_LOCK_KEY, MAILBOX_PROCESSING_LOCK_TIMEOUT,
 		).await.context("failed to acquire mailbox processing lock")?;
 
-		let mut new_vtxos = Vec::with_capacity(vtxos.len());
-		for vtxo in &vtxos {
-			// Skip if already in wallet
-			if self.inner.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
-				debug!("Ignoring duplicate arkoor VTXO {}", vtxo.id());
-				continue;
+		// Everything works off of a deduplicated set. This is important to avoid accounting
+		// mistakes in the movement and marking the entire package as spendable, even if it contains
+		// VTXOs we already marked as spent.
+		let mut new_vtxos = Vec::<Vtxo<Full>>::with_capacity(vtxos.len());
+		for vtxo in vtxos {
+			// Skip if the VTXO is already in the wallet or is in the VTXO list multiple times.
+			let vtxo_id = vtxo.id();
+			if new_vtxos.iter().any(|v| v.id() == vtxo_id) {
+				debug!("Ignoring duplicate VTXO {} in arkoor package", vtxo_id);
+			} else if self.inner.db.get_wallet_vtxo(vtxo_id).await?.is_some() {
+				debug!("Ignoring already-known VTXO {} in arkoor package", vtxo_id);
+			} else {
+				trace!("Received VTXO {} for {} in arkoor package", vtxo_id, vtxo.amount());
+				new_vtxos.push(vtxo);
 			}
-
-			trace!("Received arkoor VTXO {} for {}", vtxo.id(), vtxo.amount());
-			new_vtxos.push(vtxo);
 		}
-
 		if new_vtxos.is_empty() {
 			return Ok(());
 		}
@@ -522,15 +526,17 @@ impl Wallet {
 			warn!("Failed to register received arkoor vtxo transactions with server: {:#}", e);
 		}
 
-		let balance = vtxos
+		// TODO: Make sure we don't effectively skip the entire package if the movement fails to
+		//       be recorded due to bark getting killed after this point.
+		let balance = new_vtxos
 			.iter()
 			.map(|vtxo| vtxo.amount()).sum::<Amount>()
 			.to_signed()?;
-		self.store_spendable_vtxos(&vtxos).await?;
+		self.store_spendable_vtxos(&new_vtxos).await?;
 
 		// Build received_on destinations from received VTXOs, aggregated by address
 		let mut received_by_address = HashMap::<ark::Address, Amount>::new();
-		for vtxo in &vtxos {
+		for vtxo in &new_vtxos {
 			if let Ok(Some((index, _))) = self.pubkey_keypair(&vtxo.user_pubkey()).await {
 				if let Ok(address) = self.peek_address(index).await {
 					*received_by_address.entry(address).or_default() += vtxo.amount();
@@ -547,7 +553,7 @@ impl Wallet {
 			ArkoorMovement::Receive.to_string(),
 			MovementStatus::Successful,
 			MovementUpdate::new()
-				.produced_vtxos(&vtxos)
+				.produced_vtxos(&new_vtxos)
 				.intended_and_effective_balance(balance)
 				.received_on(received_on),
 		).await?;
