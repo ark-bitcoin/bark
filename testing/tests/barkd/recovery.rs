@@ -3,7 +3,7 @@ use ark::vtxo::Full;
 use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient, MailboxClient};
-use bark_json::primitives::VtxoStateInfo;
+use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
 use bitcoin::Amount;
 use server_rpc::protos;
 
@@ -13,6 +13,20 @@ use super::helpers::{
 	wait_for_exits_claimable, wait_for_rounds_complete, wait_for_spendable,
 	wait_for_spendable_vtxos, wait_for_vtxos,
 };
+
+/// Split a recovered wallet's VTXOs into the spendable ones and the ones recovery
+/// recorded as spent.
+fn partition_recovered(vtxos: Vec<WalletVtxoInfo>) -> (Vec<WalletVtxoInfo>, Vec<WalletVtxoInfo>) {
+	let (spendable, spent): (Vec<_>, Vec<_>) = vtxos.into_iter()
+		.partition(|v| v.state == VtxoStateInfo::Spendable);
+	for vtxo in &spent {
+		assert_eq!(vtxo.state, VtxoStateInfo::Spent,
+			"recovery should leave only spendable or spent VTXOs, got {:?} for {}",
+			vtxo.state, vtxo.vtxo.id,
+		);
+	}
+	(spendable, spent)
+}
 
 /// Wallet recovery from seed.
 ///
@@ -93,10 +107,13 @@ async fn recovered_wallet_finds_round_vtxo() {
 	recovered.onchain_sync().await;
 	recovered.sync().await;
 
-	// Only the round output is recovered; the board VTXO is spent (round input).
-	let after = recovered.vtxos(Some(true)).await;
+	// Only the round output is recovered; the board VTXO is spent (round input)
+	// and recorded as such.
+	let (after, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
 	assert_eq!(after.len(), 1, "recovered wallet should hold exactly one VTXO");
 	assert_eq!(after[0].vtxo.id, round_id, "recovered VTXO should be the round output");
+	assert_eq!(spent.len(), 1, "the round input should be recorded as spent");
+	assert_eq!(spent[0].vtxo.id, board_id, "the spent record should be the board VTXO");
 
 	// Spend recovered VTXOs in a payment
 	let recipient = ctx.barkd("recipient", &srv).create().await;
@@ -146,9 +163,12 @@ async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
 
 	// Exactly the unspent leaves are recovered — the spent intermediate
 	// changes must not be resurrected.
-	let sender_after = sender_recovered.vtxos(Some(true)).await;
+	let (sender_after, sender_spent) =
+		partition_recovered(sender_recovered.vtxos(Some(true)).await);
 	assert_eq!(sender_after.len(), sender_before.len(),
 		"recovered sender wallet should hold exactly the unspent change leaves");
+	assert!(!sender_spent.is_empty(),
+		"the spent intermediate changes should be recorded as spent");
 	for vtxo in sender_before.iter() {
 		assert!(
 			sender_after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
@@ -170,9 +190,12 @@ async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
 	recipient_recovered.sync().await;
 
 	// The recovered wallet must rediscover the same VTXO.
-	let recipient_after = recipient_recovered.vtxos(Some(true)).await;
+	let (recipient_after, recipient_spent) =
+		partition_recovered(recipient_recovered.vtxos(Some(true)).await);
 	assert_eq!(recipient_after.len(), recipient_before.len(),
 		"recovered recipient wallet should rediscover the same number of VTXOs");
+	assert!(recipient_spent.is_empty(),
+		"the recipient spent nothing, so recovery should record nothing as spent");
 	for vtxo in recipient_before.iter() {
 		assert!(
 			recipient_after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
@@ -230,9 +253,10 @@ async fn recovered_wallet_finds_lightning_receive() {
 	recovered.onchain_sync().await;
 	recovered.sync().await;
 
-	let after = recovered.vtxos(Some(true)).await;
+	let (after, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
 	assert_eq!(after.len(), 1, "recovered wallet should hold the lightning-receive VTXO");
 	assert_eq!(after[0].vtxo.id, recv_id, "recovered VTXO should be the claimed receive output");
+	assert!(!spent.is_empty(), "the claimed HTLC VTXO should be recorded as spent");
 
 	// Spend recovered VTXOs in a payment
 	let recipient = ctx.barkd("recipient", &srv).create().await;
@@ -285,9 +309,10 @@ async fn recovered_wallet_finds_lightning_send_change() {
 	recovered.onchain_sync().await;
 	recovered.sync().await;
 
-	let after = recovered.vtxos(Some(true)).await;
+	let (after, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
 	assert_eq!(after.len(), before.len(),
 		"recovered wallet should rediscover the change VTXO");
+	assert!(!spent.is_empty(), "the payment's input should be recorded as spent");
 	for vtxo in before.iter() {
 		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
 			"recovered wallet should rediscover VTXO {:?}", vtxo.vtxo.id);
@@ -337,9 +362,10 @@ async fn recovered_wallet_finds_lightning_send_revocation() {
 	recovered.onchain_sync().await;
 	recovered.sync().await;
 
-	let after = recovered.vtxos(Some(true)).await;
+	let (after, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
 	assert_eq!(after.len(), before.len(),
 		"recovered wallet should rediscover both the change and revocation VTXOs");
+	assert!(!spent.is_empty(), "the revoked payment's input should be recorded as spent");
 	for vtxo in before.iter() {
 		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
 			"recovered wallet should rediscover VTXO {:?}", vtxo.vtxo.id);
@@ -387,9 +413,10 @@ async fn recovered_wallet_finds_offboard_change() {
 	recovered.onchain_sync().await;
 	recovered.sync().await;
 
-	let after = recovered.vtxos(Some(true)).await;
+	let (after, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
 	assert_eq!(after.len(), before.len(),
 		"recovered wallet should hold the offboard change VTXOs");
+	assert!(!spent.is_empty(), "the offboard input should be recorded as spent");
 	for vtxo in before.iter() {
 		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
 			"recovered wallet should rediscover the change VTXO {:?}", vtxo.vtxo.id);
@@ -429,8 +456,11 @@ async fn recovered_wallet_is_empty_when_fully_spent() {
 	recovered.onchain_sync().await;
 	recovered.sync().await;
 
-	let after = recovered.vtxos(Some(true)).await;
-	assert!(after.is_empty(), "recovered wallet should hold no VTXOs, got {:?}", after);
+	// Nothing is spendable, but the offboarded VTXO is recorded as spent, so the
+	// verdict outlives the scan and a replayed delivery can't restore it.
+	let (after, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
+	assert!(after.is_empty(), "recovered wallet should hold no spendable VTXOs, got {:?}", after);
+	assert_eq!(spent.len(), 1, "the offboarded VTXO should be recorded as spent");
 }
 
 /// Recovery does not resurrect a unilaterally-exited VTXO.
@@ -525,9 +555,10 @@ async fn recovered_wallet_finds_mixed_origin_vtxos() {
 	recovered.onchain_sync().await;
 	recovered.sync().await;
 
-	let after = recovered.vtxos(Some(true)).await;
+	let (after, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
 	assert_eq!(after.len(), before.len(),
 		"recovered wallet should rediscover all VTXOs");
+	assert!(!spent.is_empty(), "the spent inputs should be recorded as spent");
 	for vtxo in before.iter() {
 		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
 			"recovered wallet should rediscover VTXO {:?}", vtxo.vtxo.id);
