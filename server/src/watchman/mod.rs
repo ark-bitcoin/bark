@@ -473,7 +473,7 @@ impl Watchman {
 			return;
 		}
 
-		let Ok(Some(feerate)) = bcd::estimate_mempool_feerate(
+		let Ok(Some(feerate)) = bcd::chunk_fee_rate(
 			&self.bitcoind, spending_txid,
 		).await else {
 			self.mempool_spends.write().remove(&vtxo_id);

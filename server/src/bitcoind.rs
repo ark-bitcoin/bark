@@ -23,10 +23,12 @@ use bitcoin_ext::rpc::{
 	self, Auth, GetRawTransactionResult, RPC_INVALID_ADDRESS_OR_KEY,
 	RPC_VERIFY_ALREADY_IN_UTXO_SET, SubmitPackageResult,
 };
-use bitcoin_ext::{BlockHeight, BlockRef, DEEPLY_CONFIRMED, FeeRateExt, TxStatus};
+use bitcoin_ext::{BlockHeight, BlockRef, DEEPLY_CONFIRMED, TxStatus};
+use serde::Deserialize;
 use serde_json::Value;
 
-const MIN_BITCOIND_VERSION: usize = 29_00_00;
+/// v31 added the chunk fields of `getmempoolentry`.
+const MIN_BITCOIND_VERSION: usize = 31_00_00;
 
 /// Build a [`bitcoind_async_client::Client`] from our config-supplied auth.
 ///
@@ -164,44 +166,42 @@ pub async fn get_mempool_spending_tx(
 	Ok(None)
 }
 
-/// Effective feerate for a mempool tx, considering ancestors and any
-/// direct descendants that bump it via CPFP. Returns `Ok(None)` if the
-/// tx is not in the mempool.
-pub async fn estimate_mempool_feerate(
+/// The `getmempoolentry` fields the server reads. The bitcoincore_rpc
+/// type predates the chunk fields.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MempoolEntry {
+	/// Sigops-adjusted weight of the tx's chunk.
+	#[serde(rename = "chunkweight")]
+	pub chunk_weight: u64,
+	pub fees: MempoolEntryFees,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MempoolEntryFees {
+	/// Fees of the tx's chunk, `prioritisetransaction` deltas included.
+	#[serde(with = "bitcoin::amount::serde::as_btc")]
+	pub chunk: Amount,
+}
+
+/// The chunk feerate of a mempool tx: its fees plus those of the txs
+/// bitcoind mines it with, over their weight, rounded down so the tx is
+/// never reported to pay more than it does. `Ok(None)` if the tx is not
+/// in the mempool.
+pub async fn chunk_fee_rate(
 	client: &Client, txid: Txid,
 ) -> Result<Option<FeeRate>, ClientError> {
-	let entry: rpc::json::GetMempoolEntryResult = match client.call_raw(
+	let entry: MempoolEntry = match client.call_raw(
 		"getmempoolentry", &[json_arg(txid)?],
 	).await {
 		Ok(e) => e,
 		Err(e) if e.is_not_found() => return Ok(None),
 		Err(e) => return Err(e),
 	};
-
-	let entry_feerate = |e: &rpc::json::GetMempoolEntryResult| -> Result<FeeRate, ClientError> {
-		ancestor_feerate(e.fees.ancestor, e.ancestor_size).ok_or_else(|| {
-			ClientError::Parse("invalid ancestor fee/size from getmempoolentry".to_owned())
-		})
-	};
-
-	let mut feerate = entry_feerate(&entry)?;
-	for descendant_txid in &entry.spent_by {
-		let desc: Result<rpc::json::GetMempoolEntryResult, _> = client.call_raw(
-			"getmempoolentry", &[json_arg(descendant_txid)?],
-		).await;
-		if let Ok(desc) = desc {
-			feerate = std::cmp::max(feerate, entry_feerate(&desc)?);
-		}
-	}
+	let weight = Weight::from_wu(entry.chunk_weight);
+	let feerate = entry.fees.chunk.div_by_weight_floor(weight).ok_or_else(|| {
+		ClientError::Parse("invalid chunk fee/weight from getmempoolentry".to_owned())
+	})?;
 	Ok(Some(feerate))
-}
-
-/// Effective feerate for a mempool entry given its ancestor fee total and
-/// ancestor package size (in vbytes, as returned by `getmempoolentry`).
-/// Returns `None` if the size is zero or the math overflows.
-fn ancestor_feerate(ancestor_fee: Amount, ancestor_size_vb: u64) -> Option<FeeRate> {
-	let weight = Weight::from_vb(ancestor_size_vb)?;
-	FeeRate::from_amount_and_weight_ceil(ancestor_fee, weight)
 }
 
 pub async fn submit_package<T: Borrow<Transaction>>(
@@ -239,7 +239,7 @@ pub async fn require_version(client: &Client) -> anyhow::Result<()> {
 	let res: Response = client.call_raw("getnetworkinfo", &[]).await
 		.context("failed to get version from bitcoind")?;
 	if res.version < MIN_BITCOIND_VERSION {
-		bail!("Old bitcoind version detected. Please upgrade to v29 or later");
+		bail!("Old bitcoind version detected. Please upgrade to v31 or later");
 	}
 	Ok(())
 }
@@ -248,36 +248,14 @@ pub async fn require_version(client: &Client) -> anyhow::Result<()> {
 mod test {
 	use super::*;
 
-	// Regression: a previous implementation computed
-	// `sat * (250 / ancestor_size)` due to integer-division precedence,
-	// returning feerate 0 for any tx with `ancestor_size > 250` vbytes.
-
 	#[test]
-	fn ancestor_feerate_above_250_vbytes_is_nonzero() {
-		// 1000 vbytes is well above the buggy threshold.
-		// sat/kwu = ceil(10_000 * 1000 / (1000 * 4)) = 2_500
-		let fr = ancestor_feerate(Amount::from_sat(10_000), 1_000).unwrap();
-		assert_eq!(fr.to_sat_per_kwu(), 2_500);
-	}
-
-	#[test]
-	fn ancestor_feerate_just_above_threshold() {
-		// 251 vbytes - one above where the old code started returning 0.
-		// sat/kwu = ceil(10_000 * 1000 / 1004) = ceil(9960.16) = 9_961
-		let fr = ancestor_feerate(Amount::from_sat(10_000), 251).unwrap();
-		assert_eq!(fr.to_sat_per_kwu(), 9_961);
-	}
-
-	#[test]
-	fn ancestor_feerate_below_250_no_precision_loss() {
-		// 100 vbytes - old code gave sat * 2 instead of sat * 2.5 (20% off).
-		// sat/kwu = ceil(1_000 * 1000 / 400) = 2_500
-		let fr = ancestor_feerate(Amount::from_sat(1_000), 100).unwrap();
-		assert_eq!(fr.to_sat_per_kwu(), 2_500);
-	}
-
-	#[test]
-	fn ancestor_feerate_zero_size_is_none() {
-		assert_eq!(ancestor_feerate(Amount::from_sat(1_000), 0), None);
+	fn mempool_entry_parses_chunk_fields() {
+		let entry: MempoolEntry = serde_json::from_str(r#"{
+			"vsize": 141, "ancestorsize": 141, "chunkweight": 998,
+			"fees": {"base": 0.00000141, "ancestor": 0.00000141, "chunk": 0.00025100},
+			"spentby": []
+		}"#).unwrap();
+		assert_eq!(entry.chunk_weight, 998);
+		assert_eq!(entry.fees.chunk, Amount::from_sat(25_100));
 	}
 }
