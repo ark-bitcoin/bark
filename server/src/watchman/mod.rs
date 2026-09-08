@@ -473,11 +473,21 @@ impl Watchman {
 			return;
 		}
 
-		let Ok(Some(feerate)) = bcd::chunk_fee_rate(
-			&self.bitcoind, spending_txid,
-		).await else {
-			self.mempool_spends.write().remove(&vtxo_id);
-			return;
+		let feerate = match bcd::chunk_fee_rate(&self.bitcoind, spending_txid).await {
+			Ok(Some(feerate)) => feerate,
+			// The spend left the mempool between the two calls.
+			Ok(None) => {
+				self.mempool_spends.write().remove(&vtxo_id);
+				return;
+			},
+			// Any cached entry is a previous spender's, so it is stale; drop it.
+			Err(e) => {
+				warn!("Failed to fetch feerate of mempool spend {} of vtxo {}: {:#}",
+					spending_txid, vtxo_id, e,
+				);
+				self.mempool_spends.write().remove(&vtxo_id);
+				return;
+			},
 		};
 
 		// Detect spend kind
