@@ -1355,7 +1355,9 @@ pub fn set_postgres_connection_pool_metrics(state: bb8::State) {
 /// `le` boundaries for the by-expiry pool histogram, in ascending
 /// blocks-until-expiry. Fine granularity across 144-250 is deliberate: 144 is
 /// the default `vtxo_refresh_expiry_threshold` in `bark/src/config.rs`, so
-/// this is the band where operators need to react. Anything past 288 (~48h)
+/// this is the band where operators need to react. Coarser multiples of 144
+/// out to 1008 (~7d) catch a wallet whose delta is drifting down toward the
+/// refresh threshold before it enters the danger zone. Anything past 1008
 /// collapses into the `+Inf` bucket. Emitted metrics are gauges shaped like a
 /// Prom native histogram (see the builders in [Metrics::build]), so
 /// `_bucket{le="144"}` reads directly as "past refresh threshold"; because
@@ -1363,12 +1365,14 @@ pub fn set_postgres_connection_pool_metrics(state: bb8::State) {
 /// used with `rate()` will not work.
 const EXPIRY_HISTOGRAM_BOUNDARIES: &[u32] = &[
 	6, 72, 144, 150, 160, 170, 180, 190, 200, 225, 250, 288,
+	432, 576, 720, 864, 1008,
 ];
 
 /// String forms for the `le` label, parallel to
 /// [EXPIRY_HISTOGRAM_BOUNDARIES] plus the catch-all `+Inf` slot at the end.
 const EXPIRY_HISTOGRAM_LE_LABELS: &[&str] = &[
-	"6", "72", "144", "150", "160", "170", "180", "190", "200", "225", "250", "288", "+Inf",
+	"6", "72", "144", "150", "160", "170", "180", "190", "200", "225", "250", "288",
+	"432", "576", "720", "864", "1008", "+Inf",
 ];
 
 const _: () = assert!(
@@ -1677,7 +1681,7 @@ mod tests {
 			(tip + 140, 300, 1),   // le=144: 1 VTXO,     300 sat
 			(tip + 148, 400, 1),   // le=150: 1 VTXO,     400 sat
 			(tip + 260, 500, 1),   // le=288: 1 VTXO,     500 sat
-			(tip + 1000, 999, 2),  // le=+Inf: 2 VTXOs,   999+999 = 1998 sat
+			(tip + 2000, 999, 2),  // le=+Inf: 2 VTXOs,   999+999 = 1998 sat
 		];
 		let pool = build_pool(&entries);
 		let hist = compute_expiry_histogram(&pool, tip);
