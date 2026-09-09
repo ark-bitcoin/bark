@@ -932,8 +932,8 @@ async fn hark_vtxo_swap(
 	for vtxo in output_vtxos.iter_mut() {
 		if !vtxo.provide_unlock_preimage(preimage) {
 			return Err(HarkForfeitError::SentForfeits(anyhow!(
-				"invalid preimage {} for vtxo {} with supposed unlock hash {}",
-				preimage.as_hex(), vtxo.id(), unlock_hash,
+				"invalid preimage for vtxo {} with supposed unlock hash {}",
+				vtxo.id(), unlock_hash,
 			)));
 		}
 

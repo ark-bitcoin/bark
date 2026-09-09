@@ -449,7 +449,7 @@ impl LightningManager {
 		if attempt.status == LightningPaymentStatus::Succeeded {
 			let preimage = self.settler.is_settled(payment_hash).await?
 				.context("missing preimage on payment success")?;
-			debug!(payment_hash = %payment_hash, preimage = %preimage, "CheckLightningPayment responding with success");
+			debug!(payment_hash = %payment_hash, "CheckLightningPayment responding with success");
 			return Ok(PaymentStatus::Success(preimage));
 		}
 

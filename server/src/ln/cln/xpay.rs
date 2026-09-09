@@ -105,12 +105,10 @@ impl ClnXpayClient {
 		match call_xpay(
 			&mut rpc, &invoice, payment_amount, max_routing_fee, max_cltv_expiry_delta, retry_for,
 		).await {
-			Ok(preimage) => {
+			Ok(_preimage) => {
 				// NB we don't do db stuff when it's succesful, because
 				// it will happen in the sendpay stream of the monitor process
-				trace!("Payment successful, preimage: {} for payment hash {}",
-					preimage.as_hex(), payment_hash.as_hex(),
-				);
+				trace!("Payment successful for payment hash {}", payment_hash.as_hex());
 			},
 			// Fetch and store the attempt as failed.
 			Err(pay_err) => {

@@ -218,16 +218,17 @@ lightning_test!(server_settles_invoice_from_on_chain_htlc_preimage, watchmand, |
 });
 
 /// The server must refuse `request_lightning_pay_htlc_revocation` for a
-/// payment that has already settled, returning the preimage in the
-/// error message so the caller can recover.
+/// payment that has already settled.
 ///
 /// 1. An external invoice is created.
 /// 2. bark pays it normally; the payment settles and the preimage is
 ///    persisted as a paid invoice.
 /// 3. We build a fresh revocation request against the (now-spent) HTLC
 ///    vtxos and call the server's revocation RPC directly. The server
-///    must refuse with `InvalidArgument` and surface the preimage in
-///    the error message.
+///    must refuse with `InvalidArgument`. The preimage is never included
+///    in the error message (it's a bearer secret; per the policy in
+///    server-log/src/msgs/lightning.rs it must not appear in log output
+///    or RPC responses).
 #[tokio::test]
 async fn reject_revocation_on_successful_lightning_payment() {
 	require_bark_version!(> "0.5.0");
@@ -263,8 +264,12 @@ async fn reject_revocation_on_successful_lightning_payment() {
 
 	assert_eq!(status.code(), tonic::Code::InvalidArgument);
 	assert!(
-		status.message().contains("invoice has already been paid, preimage"),
+		status.message().contains("invoice has already been paid"),
 		"unexpected server response: {status:?}",
+	);
+	assert!(
+		!status.message().to_lowercase().contains("preimage"),
+		"preimage must not appear in the error message",
 	);
 }
 
@@ -327,8 +332,12 @@ async fn reject_revocation_when_settled_but_status_regressed() {
 
 	assert_eq!(status.code(), tonic::Code::InvalidArgument);
 	assert!(
-		status.message().contains("invoice has already been paid, preimage"),
+		status.message().contains("invoice has already been paid"),
 		"unexpected server response: {status:?}",
+	);
+	assert!(
+		!status.message().to_lowercase().contains("preimage"),
+		"preimage must not appear in the error message",
 	);
 }
 

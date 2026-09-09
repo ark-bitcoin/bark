@@ -602,10 +602,7 @@ pub(crate) async fn settle_lightning_send_payment(
 	if preimage.compute_payment_hash() != payment_hash {
 		bail!("preimage does not match payment hash {}", payment_hash);
 	}
-	info!(
-		"Lightning payment succeeded! Preimage: {}. Payment hash: {}",
-		preimage.as_hex(), payment_hash.as_hex(),
-	);
+	info!("Lightning payment succeeded! Payment hash: {}", payment_hash.as_hex());
 
 	wallet.inner.db.record_paid_invoice(payment_hash, preimage).await?;
 	wallet.mark_vtxos_as_spent(&htlcs.vtxo_ids).await?;
