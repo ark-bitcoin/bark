@@ -33,7 +33,7 @@ use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::persist::models::SettledLightningReceive;
 use crate::subsystem::{LightningMovement, LightningReceiveMovement, Subsystem};
-use crate::vtxo::{validate_vtxo_tree_params, VtxoLockHolder};
+use crate::vtxo::{validate_vtxo_tree_params, VtxoLockHolder, VtxoState};
 
 const LN_RECV_NAMESPACE: &str = "ln_recv";
 
@@ -705,8 +705,13 @@ async fn claim_lightning_receive_htlcs(
 		}));
 	}
 
-	wallet.store_spendable_vtxos(&outputs).await?;
+	if let Err(e) = wallet.post_recovery_vtxo_ids(outputs.iter().map(|v| v.id())).await {
+		error!("Failed to post recovery vtxo IDs to server: {:#}", e);
+	}
+	// Spend the inputs first: these two writes can't be atomic, and counting
+	// the receive in neither balance for a moment beats counting it in both.
 	wallet.mark_vtxos_as_spent(&htlcs.vtxo_ids).await?;
+	wallet.store_vtxos(&outputs, &VtxoState::Spendable).await?;
 
 	wallet.inner.movements.finish_movement_with_update(
 		htlcs.movement_id,
