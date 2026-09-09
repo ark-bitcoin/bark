@@ -110,7 +110,7 @@ async fn recovered_wallet_finds_scheduled_delegated_refresh_output() {
 	recovered.onchain_sync().await;
 	recovered.sync().await;
 
-	let after = recovered.vtxos(Some(true)).await;
+	let after = recovered.vtxos(None).await;
 	assert_eq!(after.len(), 1,
 		"recovered wallet should hold the round-output VTXO, got {:?}", after);
 	assert_ne!(after[0].vtxo.id, board_id,

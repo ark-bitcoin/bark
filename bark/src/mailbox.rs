@@ -409,22 +409,24 @@ impl Wallet {
 	/// Process a single mailbox message and report whether the caller should
 	/// keep consuming the mailbox.
 	///
-	/// Returns [`ControlFlow::Break`] when an arkoor package failed to process
-	/// and its checkpoint was therefore not advanced. Because checkpoints are
-	/// monotonic, the caller must stop before a later message stores a higher
-	/// checkpoint and buries the unprocessed one; the next sync/resubscribe
-	/// re-fetches from the unadvanced checkpoint and retries.
+	/// Returns [`ControlFlow::Break`] when a message failed to process on a
+	/// transient error and its checkpoint was therefore not advanced. Because
+	/// checkpoints are monotonic, the caller must stop before a later message
+	/// stores a higher checkpoint and buries the unprocessed one; the next
+	/// sync/resubscribe re-fetches from the unadvanced checkpoint and retries.
 	pub(crate) async fn process_mailbox_message(
 		&self,
 		mailbox_msg: MailboxMessage,
 	) -> ControlFlow<()> {
 		use protos::mailbox_server::mailbox_message::Message;
 
-		// Each arm returns whether the checkpoint should advance. Only
-		// arkoor returns false on processing error so the server
-		// redelivers and we retry. Every other arm advances regardless,
-		// either because the work is idempotent and re-done on every
-		// wallet sync, or because the message is informational/ignored.
+		// Each arm returns whether the checkpoint should advance. Arkoor
+		// and round participation return false on a transient processing
+		// error so the server redelivers and we retry; their handlers
+		// absorb invalid server data, since retrying can't fix that.
+		// Every other arm advances regardless, either because the work is
+		// idempotent and re-done on every wallet sync, or because the
+		// message is informational/ignored.
 		let advance = match mailbox_msg.message {
 			Some(Message::Arkoor(msg)) => {
 				match self.process_received_arkoor_package(msg.vtxos).await {
@@ -435,14 +437,16 @@ impl Wallet {
 					}
 				}
 			}
-			Some(Message::RoundParticipationCompleted(m)) => {
-				info!("Server informed that round participation is ready, unlock_hash:{:?}",
-					UnlockHash::from_slice(&m.unlock_hash).ok(),
-				);
-				if let Err(e) = self.sync_pending_rounds().await {
-					error!("Error syncing pending rounds: {:#}", e);
+			Some(Message::RoundParticipationCompleted(msg)) => {
+				match self.handle_round_participation_completed(msg).await {
+					Ok(()) => true,
+					Err(e) => {
+						error!("Error handling round participation completed \
+							message: {:#}", e,
+						);
+						false
+					}
 				}
-				true
 			},
 			Some(Message::IncomingLightningPayment(msg)) => {
 				if let Err(e) = self.handle_lightning_receive_notification(msg).await {
@@ -473,7 +477,7 @@ impl Wallet {
 			}
 			ControlFlow::Continue(())
 		} else {
-			// An arkoor package didn't process and its checkpoint wasn't
+			// The message didn't process and its checkpoint wasn't
 			// advanced. Stop here so a later message can't store a higher
 			// checkpoint and bury it.
 			ControlFlow::Break(())
@@ -560,6 +564,34 @@ impl Wallet {
 
 		info!("Received arkoor (movement {}) for {}", movement_id, balance);
 
+		Ok(())
+	}
+
+	/// Handle a mailbox notice that a delegated round participation completed.
+	///
+	/// Only returns an error when the recovery failed on something transient,
+	/// so the caller can leave the checkpoint unadvanced and retry on
+	/// redelivery. Invalid message content is logged and dropped.
+	async fn handle_round_participation_completed(
+		&self,
+		msg: protos::mailbox_server::RoundParticipationCompleted,
+	) -> anyhow::Result<()> {
+		match UnlockHash::from_slice(&msg.unlock_hash) {
+			Ok(unlock_hash) => {
+				info!("Server informed that round participation is ready, \
+					unlock_hash: {}", unlock_hash,
+				);
+				self.recover_delegated_participation(unlock_hash).await.with_context(||
+					format!("error recovering delegated round participation {}", unlock_hash),
+				)?;
+			},
+			Err(e) => warn!("Received round participation completed message \
+				with invalid unlock hash: {}", e,
+			),
+		}
+		if let Err(e) = self.sync_pending_rounds().await {
+			error!("Error syncing pending rounds: {:#}", e);
+		}
 		Ok(())
 	}
 
