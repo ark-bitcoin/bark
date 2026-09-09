@@ -499,6 +499,7 @@ mod test {
 	use ark::test_util::VTXO_VECTORS;
 
 	use crate::{persist::sqlite::helpers::in_memory_db, vtxo::VtxoState};
+	use crate::persist::test_suite::bark_persister_tests;
 
 	use super::*;
 
@@ -597,13 +598,10 @@ mod test {
 		conn.close().unwrap();
 	}
 
-	#[tokio::test]
-	async fn differential_bark_persister_suite() {
-		let (cs, _conn) = helpers::in_memory_db();
-		let sqlite = SqliteClient::open(cs).unwrap();
-		let memory = crate::persist::adaptor::StorageAdaptorWrapper::new(
-			crate::persist::adaptor::memory::MemoryStorageAdaptor::new(),
-		);
-		crate::persist::test_suite::run_all(&sqlite, &memory).await;
+	async fn setup(_test: &str) -> (Connection, SqliteClient) {
+		let (path, conn) = helpers::in_memory_db();
+		(conn, SqliteClient::open(path).unwrap())
 	}
+
+	bark_persister_tests!(setup);
 }
