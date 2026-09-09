@@ -424,8 +424,8 @@ impl Server {
 			htlc_vtxo_ids: htlc_vtxo_ids.clone(),
 		);
 
-		if let Some(preimage) = self.htlc_settler.is_settled(payment_hash).await? {
-			return badarg!("invoice has already been paid, preimage: {}", preimage);
+		if self.htlc_settler.is_settled(payment_hash).await?.is_some() {
+			return badarg!("invoice has already been paid");
 		}
 
 		let cosign_request = cosign_request.set_vtxos(htlc_vtxos)?;
@@ -453,9 +453,8 @@ impl Server {
 				_ if tip > input_policy.htlc_expiry => {
 					// Check one last time to see if it completed
 					let res = self.lightning_manager.get_payment_status(payment_hash).await;
-					if let Ok(PaymentStatus::Success(preimage)) = res {
-						return badarg!("This lightning payment has completed. preimage: {}",
-							preimage.as_hex());
+					if let Ok(PaymentStatus::Success(_)) = res {
+						return badarg!("This lightning payment has completed");
 					}
 				},
 				_ => return badarg!("This lightning payment is not eligible for revocation yet")
@@ -545,8 +544,8 @@ impl Server {
 
 		// A recorded settlement means the preimage is already known, so it is
 		// public and anyone can claim an HTLC to this hash.
-		if let Some(preimage) = self.htlc_settler.is_settled(payment_hash).await? {
-			return badarg!("invoice has already been paid, preimage: {}", preimage);
+		if self.htlc_settler.is_settled(payment_hash).await?.is_some() {
+			return badarg!("invoice has already been paid");
 		}
 
 		if amount == Amount::ZERO {
