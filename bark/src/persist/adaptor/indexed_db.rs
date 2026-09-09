@@ -269,10 +269,22 @@ impl StorageAdaptor for IndexedDbClient {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::persist::adaptor::StorageAdaptorWrapper;
 	use crate::persist::adaptor::test_suite;
+	use crate::persist::test_suite::bark_persister_tests;
 	use wasm_bindgen_test::wasm_bindgen_test;
 
 	wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+	async fn setup(test: &str) -> ((), StorageAdaptorWrapper<IndexedDbClient>) {
+		// IndexedDB databases are named and persistent, so every test
+		// gets its own database.
+		let client = IndexedDbClient::open(&format!("bark_persister_{}", test)).await
+			.expect("failed to open IndexedDB");
+		((), StorageAdaptorWrapper::new(client))
+	}
+
+	bark_persister_tests!(setup);
 
 	/// Run the full test suite against IndexedDbClient.
 	#[wasm_bindgen_test]
