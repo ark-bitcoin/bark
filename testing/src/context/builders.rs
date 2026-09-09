@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,7 +8,7 @@ use bark::movement::MovementStatus;
 use bark::onchain::{OnchainWallet, OnchainWalletTrait};
 use bark::persist::BarkPersister;
 use bark::persist::sqlite::SqliteClient;
-use bark::subsystem::Subsystem;
+use bark::movement::MovementId;
 use bitcoin::Amount;
 use futures::StreamExt;
 use log::warn;
@@ -612,36 +613,37 @@ impl<'a> BarkSdkBuilder<'a> {
 		}
 
 		if !self.board_amounts.is_empty() {
-			// Subscribe before issuing so we can watch each board's
-			// terminal transition instead of polling `wallet.vtxos()`
-			// between re-syncs. `run_register` in bark::actions::board
-			// calls `finish_movement(_, Successful)` once a board is
-			// registered and its VTXO is Spendable, which dispatches
-			// a `MovementUpdated`. One sync kicks off progression;
-			// notifications drive the wait.
+			// Subscribe before issuing so we can watch each board's terminal
+			// transition. Match on the specific `movement_id` each board
+			// returned so we don't count an unrelated Board movement's
+			// notification as one of ours.
 			let mut movements = wallet.subscribe_notifications().movements();
 
+			let mut pending: HashSet<MovementId> = HashSet::new();
 			for amount in &self.board_amounts {
 				let b = wallet.board_amount(*amount).await.context("board_amount")?;
 				self.ctx.await_transaction(b.funding_tx.compute_txid()).await;
+				pending.insert(b.movement_id);
 			}
 			self.ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 			wallet.sync().await;
 
-			let expected = self.board_amounts.len();
-			let mut done = 0;
-			while done < expected {
+			// One deadline for the whole wait — a per-`next()` timeout would
+			// be reset by unrelated movements and never fire.
+			let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+			while !pending.is_empty() {
+				let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
 				let m = movements.next()
-					.try_wait(Duration::from_secs(10)).await
+					.try_wait(remaining).await
 					.context("boards did not all complete before deadline")?
 					.context("wallet notification stream ended before all boards completed")?;
-				if !m.subsystem.is_subsystem(Subsystem::BOARD) {
+				if !pending.contains(&m.id) {
 					continue;
 				}
 				match m.status {
 					MovementStatus::Pending => continue,
-					MovementStatus::Successful => done += 1,
+					MovementStatus::Successful => { pending.remove(&m.id); },
 					other => bail!("board movement {} entered terminal status {:?}", m.id, other),
 				}
 			}
