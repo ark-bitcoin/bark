@@ -8,6 +8,7 @@ use ark::{ProtocolEncoding, Vtxo, VtxoPolicy};
 use ark::vtxo::Full;
 
 use ark_testing::{TestContext, sat};
+use bark::vtxo::VtxoState;
 use server::database::Db;
 
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
@@ -120,4 +121,61 @@ async fn recovery_leaves_regular_mailbox_checkpoint_untouched() {
 	assert_eq!(checkpoint, 0,
 		"recovery must not advance the regular mailbox checkpoint (got {checkpoint})",
 	);
+}
+
+/// An arkoor delivery outlives the VTXO it delivered: it stays in the mailbox
+/// until its checkpoint advances, and a wallet restored from the same seed
+/// starts from checkpoint 0 (see
+/// [recovery_leaves_regular_mailbox_checkpoint_untouched]), so it reads every
+/// delivery again. Nothing local tells that replay apart from a fresh receive,
+/// so the receive used to store an already-spent VTXO back into the spendable
+/// set, undoing the correct verdict recovery had just reached about it.
+#[tokio::test]
+async fn arkoor_receive_replay_does_not_restore_a_spent_vtxo() {
+	let ctx = TestContext::new("bark_sdk/arkoor_receive_replay_does_not_restore_a_spent_vtxo").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let source = ctx.bark_sdk("source", &srv).boarded(sat(400_000)).create().await;
+	let target = ctx.bark_sdk("target", &srv).create().await;
+
+	// Deliver an arkoor vtxo to the target and let it consume the delivery,
+	// so the mailbox holds a message for a vtxo the target owns.
+	let target_address = target.new_address().await.expect("new address");
+	source.send_arkoor_payment(&target_address, sat(100_000)).await.expect("arkoor send");
+	target.sync().await;
+	let received = target.spendable_vtxos().await.expect("list target vtxos");
+	assert_eq!(received.len(), 1, "target should hold the arkoor-received vtxo");
+	let received_id = received[0].id();
+
+	// Spend it, so the server now reports it as spent. The delivery for it is
+	// still in the mailbox: only the target's checkpoint moved past it.
+	let source_address = source.new_address().await.expect("new address");
+	target.send_arkoor_payment(&source_address, sat(20_000)).await.expect("arkoor send back");
+	assert!(
+		!target.spendable_vtxos().await.expect("list target vtxos").iter()
+			.any(|v| v.id() == received_id),
+		"the spent vtxo should be gone from the target's spendable set",
+	);
+
+	// Restore from the same seed. Recovery decides correctly on the spent
+	// vtxo (it asks the server), then the mailbox sync replays the delivery.
+	let target_mnemonic = fs::read_to_string(ctx.datadir.join("target/mnemonic")).await
+		.expect("target mnemonic file");
+	let mnemonic = bip39::Mnemonic::from_str(target_mnemonic.trim()).expect("parse mnemonic");
+	let recovered = ctx.bark_sdk("recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.sync().await;
+
+	assert!(
+		!recovered.spendable_vtxos().await.expect("list recovered vtxos").iter()
+			.any(|v| v.id() == received_id),
+		"replaying the delivery must not restore the spent vtxo {received_id}",
+	);
+
+	// The replay is recorded rather than dropped, so the wallet keeps an
+	// accurate history and the next replay is a no-op.
+	let stored = recovered.get_vtxo_by_id(received_id).await
+		.expect("the replayed vtxo should be stored");
+	assert_eq!(stored.state, VtxoState::Spent);
 }

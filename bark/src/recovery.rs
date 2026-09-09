@@ -388,10 +388,20 @@ impl Wallet {
 		// explicit decision rather than being silently skipped.
 		match spend_state {
 			Ok(VtxoSpendState::Spendable) => return Ok(false),
-			// Decided not to belong in the spendable set.
+			// Persist spent VTXOs to avoid issues arising from the mailbox being replayed after
+			// the recovery process.
+			Ok(VtxoSpendState::Spent) => {
+				debug!("Recovery vtxo {vtxo_id} already spent, skipping");
+				self.store_vtxos([vtxo], &VtxoState::Spent).await
+					.context("Failed to record spent recovery vtxo")?;
+				report.push_skipped(vtxo);
+			},
+			// Not spent, but not spendable either: the server is still waiting
+			// on a preimage or on the VTXO's tx chain. Deliberately left
+			// unrecorded, since storing it in any state would misreport it and
+			// finishing that flow is what decides where it belongs.
 			Ok(state @ (
-				VtxoSpendState::Spent
-				| VtxoSpendState::Unclaimed
+				VtxoSpendState::Unclaimed
 				| VtxoSpendState::Unregistered
 				| VtxoSpendState::HtlcRecvUnclaimed
 			)) => {
@@ -505,6 +515,8 @@ impl Wallet {
 			// A descendant we already processed marks this one as spent.
 			if spent.contains(&id) {
 				debug!("Skipping recovery vtxo {id}: spent into a newer recovered vtxo");
+				self.store_vtxos([&o.vtxo], &VtxoState::Spent).await
+					.context("Failed to record previously spent vtxo")?;
 				report.push_skipped(&o.vtxo);
 				continue;
 			}
