@@ -107,14 +107,15 @@ impl rpc::server::NurseryAdminService for Server {
 		let txs = self.tx_nursery.list_txs(req.include_confirmed, req.include_abandoned).await
 			.to_status()?;
 		Ok(tonic::Response::new(protos::ListNurseryTxsResponse {
-			txs: txs.into_iter().map(|(tx, in_mempool)| protos::NurseryTxInfo {
-				txid: tx.txid.to_string(),
-				kind: tx.kind.name().into(),
-				in_mempool,
-				confirm_target_height: tx.confirm_target_height,
-				confirmed_at_height: tx.confirmed_at_height,
-				created_at: tx.created_at.timestamp() as u64,
-				abandoned_at: tx.abandoned_at.map(|t| t.timestamp() as u64),
+			txs: txs.into_iter().map(|r| protos::NurseryTxInfo {
+				txid: r.tx.txid.to_string(),
+				kind: r.tx.kind.name().into(),
+				in_mempool: r.in_mempool,
+				chunk_fee_rate_kwu: r.chunk_fee_rate.map(|f| f.to_sat_per_kwu()),
+				confirm_target_height: r.tx.confirm_target_height,
+				confirmed_at_height: r.tx.confirmed_at_height,
+				created_at: r.tx.created_at.timestamp() as u64,
+				abandoned_at: r.tx.abandoned_at.map(|t| t.timestamp() as u64),
 			}).collect(),
 		}))
 	}

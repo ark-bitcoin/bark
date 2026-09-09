@@ -23,7 +23,7 @@
 use std::collections::HashSet;
 
 use anyhow::Context;
-use bitcoin::{Transaction, Txid};
+use bitcoin::{FeeRate, Transaction, Txid};
 use bitcoin::consensus::encode::serialize;
 use bitcoind_async_client::Client as BitcoindClient;
 use bitcoind_async_client::traits::Reader;
@@ -80,6 +80,14 @@ impl std::fmt::Display for NurseryTxKind {
 	}
 }
 
+/// A nursery tx in the operator's report.
+pub struct NurseryTxReport {
+	pub tx: NurseryTx,
+	pub in_mempool: bool,
+	/// See [TxNursery::chunk_fee_rate].
+	pub chunk_fee_rate: Option<FeeRate>,
+}
+
 #[derive(Clone)]
 pub struct TxNursery {
 	db: Db,
@@ -120,26 +128,44 @@ impl TxNursery {
 		Ok(())
 	}
 
-	/// List nursery txs with their current mempool presence, for the
-	/// operator's report. By default only unconfirmed, non-abandoned
-	/// txs are returned.
+	/// List nursery txs for the operator's report. By default only
+	/// unconfirmed, non-abandoned txs are returned.
 	pub async fn list_txs(
 		&self,
 		include_confirmed: bool,
 		include_abandoned: bool,
-	) -> anyhow::Result<Vec<(NurseryTx, bool)>> {
+	) -> anyhow::Result<Vec<NurseryTxReport>> {
 		let txs = self.db.read(async |t| {
 			t.list_nursery_txs(include_confirmed, include_abandoned).await
 		}).await?;
 		let mempool = self.bitcoind.get_raw_mempool().await
 			.context("failed to fetch mempool")?
 			.0.into_iter().collect::<HashSet<_>>();
-		Ok(txs.into_iter()
-			.map(|tx| {
-				let in_mempool = mempool.contains(&tx.txid);
-				(tx, in_mempool)
-			})
-			.collect())
+		// TODO: this is one getmempoolentry call per tx in the mempool.
+		// Batch them if the list ever grows beyond a handful.
+		let mut ret = Vec::with_capacity(txs.len());
+		for tx in txs {
+			let in_mempool = mempool.contains(&tx.txid);
+			let chunk_fee_rate = if in_mempool {
+				self.chunk_fee_rate(tx.txid).await
+			} else {
+				None
+			};
+			ret.push(NurseryTxReport { tx, in_mempool, chunk_fee_rate });
+		}
+		Ok(ret)
+	}
+
+	/// See [bcd::chunk_fee_rate]. None if the tx is not in the mempool
+	/// or the lookup failed, which logs [NurseryTxFeerateError].
+	async fn chunk_fee_rate(&self, txid: Txid) -> Option<FeeRate> {
+		match bcd::chunk_fee_rate(&self.bitcoind, txid).await {
+			Ok(feerate) => feerate,
+			Err(e) => {
+				slog!(NurseryTxFeerateError, txid, error: e.to_string());
+				None
+			},
+		}
 	}
 
 	/// Abandon a nursery tx: stop following it up and stop warning the
@@ -180,9 +206,10 @@ impl TxNursery {
 			{
 				// Keep warning the operator, once per block, until either
 				// the tx confirms or the operator abandons it.
+				let chunk_fee_rate = self.chunk_fee_rate(tx.txid).await;
 				slog!(NurseryTxMissedTarget, txid: tx.txid,
 					confirm_target_height: tx.confirm_target_height,
-					current_height: tip_height,
+					current_height: tip_height, chunk_fee_rate,
 				);
 			}
 		}

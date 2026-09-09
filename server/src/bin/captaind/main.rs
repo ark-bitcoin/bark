@@ -744,8 +744,12 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 							"abandoned".to_string()
 						} else if let Some(h) = tx.confirmed_at_height {
 							format!("confirmed at {}", h)
+						} else if let Some(kwu) = tx.chunk_fee_rate_kwu {
+							format!("in mempool, chunk feerate {:.2} sat/vB", kwu as f64 / 250.0)
 						} else if tx.in_mempool {
-							"in mempool".to_string()
+							// The tx was in getrawmempool but getmempoolentry failed
+							// on it. That should not happen; the log has the error.
+							"in mempool, CHUNK FEERATE UNKNOWN, check the captaind log".to_string()
 						} else {
 							"MISSING FROM MEMPOOL".to_string()
 						};

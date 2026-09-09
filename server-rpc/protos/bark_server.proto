@@ -630,6 +630,9 @@ message NurseryTxInfo {
 	// Unix timestamps in seconds.
 	uint64 created_at = 6;
 	optional uint64 abandoned_at = 7;
+	// Chunk feerate bitcoind reports for the tx, in sat/kwu. Unset if the
+	// tx is not in the mempool or the lookup failed.
+	optional uint64 chunk_fee_rate_kwu = 8;
 }
 
 message ListNurseryTxsResponse {
