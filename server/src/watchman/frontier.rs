@@ -158,7 +158,7 @@ impl VtxoExitFrontier {
 	///
 	/// Each item is a reference to a VTXO paired with its confirmation height
 	/// (None if unconfirmed).
-	pub fn get(&self) -> impl Iterator<Item = (&ServerVtxo, Option<BlockHeight>)> {
+	pub fn iter(&self) -> impl Iterator<Item = (&ServerVtxo, Option<BlockHeight>)> {
 		self.frontier.values().map(|(h, v)| (v, *h))
 	}
 

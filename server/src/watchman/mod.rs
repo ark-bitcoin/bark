@@ -313,7 +313,7 @@ impl Watchman {
 			bitcoind: &self.bitcoind,
 			chain_tip_height: self.sync_height().height,
 		};
-		for (vtxo, confirmed_at) in frontier.get() {
+		for (vtxo, confirmed_at) in frontier.iter() {
 			match ctx.get_action(vtxo, confirmed_at).await {
 				Action::Wait => {
 					wait_volume += vtxo.amount();
