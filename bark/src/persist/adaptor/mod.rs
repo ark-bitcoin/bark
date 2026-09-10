@@ -1175,6 +1175,8 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::persist::adaptor::memory::MemoryStorageAdaptor;
+	use crate::persist::test_suite::bark_persister_tests;
 
 	#[test]
 	fn storage_query_builder() {
@@ -1184,6 +1186,12 @@ mod tests {
 		assert_eq!(query.limit, Some(10));
 		assert_eq!(query.range, ..);
 	}
+
+	async fn setup(_test: &str) -> ((), StorageAdaptorWrapper<MemoryStorageAdaptor>) {
+		((), StorageAdaptorWrapper::new(MemoryStorageAdaptor::new()))
+	}
+
+	bark_persister_tests!(setup);
 }
 
 /// This module provides comprehensive tests for all four methods of the
@@ -2112,3 +2120,4 @@ pub mod test_suite {
 		assert!(!has_deleted, "deleted record should not appear");
 	}
 }
+
