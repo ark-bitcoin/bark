@@ -1,0 +1,6 @@
+- The server ensures that transactions confirm onchain more reliably
+  A funding transaction paying insufficient fees will be correctly
+  fee-bumped by its descendants.
+  [#2503](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2503)
+  - **BREAKING:** `min_trusted_confs` must be at least 1. At 0 an
+    unconfirmed third-party deposit counted as trusted.
