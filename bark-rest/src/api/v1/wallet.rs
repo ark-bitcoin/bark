@@ -13,6 +13,7 @@ use ark::VtxoId;
 use ark::lightning::{Bolt11Invoice, Offer};
 use ark::ProtocolEncoding;
 
+use bark::ImportVtxoError;
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::lnurllib::lnurl::LnUrl;
 use bark::payment_request::ArkAddressType;
@@ -22,7 +23,7 @@ use bark::vtxo::VtxoFilter;
 use bark_json::web::PendingRoundInfo;
 
 use crate::{ServerState, ServerWallet, error};
-use crate::error::{ContextExt, HandlerResult, badarg, not_found};
+use crate::error::{ContextExt, HandlerResult, badarg, not_found, unprocessable};
 
 pub fn router() -> Router<Arc<ServerState>> {
 	#[allow(deprecated)]
@@ -1153,13 +1154,26 @@ pub async fn sync_mailbox(
 	request_body = bark_json::web::ImportVtxoRequest,
 	responses(
 		(status = 200, description = "VTXO imported successfully", body = Vec<bark_json::primitives::WalletVtxoInfo>),
-		(status = 400, description = "Invalid VTXO hex or VTXO not owned by wallet", body = error::BadRequestError),
+		(status = 400, description = "Invalid VTXO hex, a VTXO that does not match the chain, or a VTXO whose user pubkey is not derivable from this seed within the gap limit", body = error::BadRequestError),
+		(status = 422, description = "The VTXO is neither spendable nor spent, so it cannot be imported yet", body = error::UnprocessableEntityError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Imports hex-encoded serialized VTXOs into the wallet. Validates that \
-		each VTXO is anchored on-chain, owned by this wallet, and has not expired. \
-		Useful for restoring VTXOs after database loss or re-importing from the \
-		server mailbox. The operation is idempotent.",
+	description = "Imports the hex-encoded serialized VTXOs in the request body into \
+		the wallet; it does not read them from the server mailbox. Validates that each \
+		VTXO is anchored on-chain and owned by this wallet. Useful for restoring VTXOs \
+		after database loss, or for re-importing ones obtained elsewhere. Ownership is \
+		resolved by scanning the seed-derived key space, bounded by `gap_limit` or the \
+		wallet's configured gap limit; a key the scan does not reach is a 400. Only \
+		VTXOs the server reports as spendable or spent are stored, in that state, so \
+		one that has already been spent is recorded as spent rather than rejected. A \
+		VTXO still in flight (unclaimed, unregistered, or awaiting a preimage) is \
+		rejected with a 422, because it becomes importable once that flow finishes. \
+		Pass `skip_status_check` to store them as spendable without asking the server. \
+		Expiry is not checked. The VTXOs are imported together, in one key scan and \
+		one transaction, so a rejected VTXO leaves none of them stored; pass \
+		`allow_partial` to keep the VTXOs that did import, and the response then \
+		lists only those. Already-imported VTXOs are skipped, so the operation is \
+		idempotent and a failed request can be retried.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -1173,13 +1187,47 @@ pub async fn import_vtxo(
 		badarg!("No VTXOs provided");
 	}
 
-	let mut imported = Vec::with_capacity(body.vtxos.len());
+	// Caught here too so an out-of-range limit is a bad request rather than the
+	// 500 the wallet's own guard would surface.
+	if let Some(gap_limit) = body.gap_limit {
+		if gap_limit > bark::MAX_VTXO_KEY_GAP_LIMIT {
+			badarg!("gap_limit {} is above the maximum of {}",
+				gap_limit, bark::MAX_VTXO_KEY_GAP_LIMIT);
+		}
+	}
 
-	for vtxo_hex in body.vtxos {
-		let vtxo = ark::Vtxo::deserialize_hex(&vtxo_hex).badarg("invalid vtxo hex")?;
-		let vtxo_id = vtxo.id();
-		wallet.import_vtxo(&vtxo).await.context("Failed to import VTXO")?;
-		let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await.context("Failed to get imported VTXO")?;
+	let vtxos = body.vtxos.iter()
+		.map(|hex| ark::Vtxo::deserialize_hex(hex))
+		.collect::<Result<Vec<_>, _>>()
+		.badarg("invalid vtxo hex")?;
+
+	let args = bark::ImportVtxoArgs {
+		gap_limit: body.gap_limit,
+		skip_status_check: body.skip_status_check,
+		allow_partial: body.allow_partial,
+	};
+
+	// One key scan covers the batch, so import them together rather than one at
+	// a time.
+	let ids = match wallet.import_vtxos(&vtxos, args).await {
+		Ok(ids) => ids,
+		Err(e) => {
+			match &e {
+				ImportVtxoError::Invalid { .. }
+					| ImportVtxoError::KeyNotFound { .. } => badarg!("{}", e),
+				// Not a bad request: the vtxo becomes importable once the server
+				// finishes the flow it is in.
+				ImportVtxoError::InFlight { .. } => unprocessable!("{}", e),
+				ImportVtxoError::Transient(..) => {},
+			}
+			return Err(anyhow::Error::new(e).context("Failed to import VTXOs").into());
+		},
+	};
+
+	let mut imported = Vec::with_capacity(ids.len());
+	for id in ids {
+		let wallet_vtxo = wallet.get_vtxo_by_id(id).await
+			.context("Failed to get imported VTXO")?;
 		imported.push((&wallet_vtxo).into());
 	}
 

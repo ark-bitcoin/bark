@@ -178,6 +178,7 @@ docs/SignMessageRequest.md
 docs/SignedMessage.md
 docs/TipResponse.md
 docs/TransactionInfo.md
+docs/UnprocessableEntityError.md
 docs/UtxoInfo.md
 docs/VerifyMessageRequest.md
 docs/VtxoInfo.md
@@ -380,6 +381,7 @@ src/models/sign_message_request.rs
 src/models/signed_message.rs
 src/models/tip_response.rs
 src/models/transaction_info.rs
+src/models/unprocessable_entity_error.rs
 src/models/utxo_info.rs
 src/models/verify_message_request.rs
 src/models/vtxo_info.rs

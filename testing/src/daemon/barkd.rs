@@ -20,8 +20,8 @@ use bark_json::primitives::{UtxoInfo, WalletTxInfo, WalletVtxoInfo};
 use bark_json::web::{
 	BarkNetwork, Bip321UriRequest, Bip321UriResponse, BitcoindAuth, ChainSourceConfig,
 	ConnectedResponse, CreateWalletRequest, EncodedVtxoResponse, ExitStartResponse,
-	FeeEstimateResponse, MailboxSyncResponse, OnchainFeeRatesResponse, PendingRoundInfo,
-	TipResponse,
+	FeeEstimateResponse, ImportVtxoRequest, MailboxSyncResponse, OnchainFeeRatesResponse,
+	PendingRoundInfo, TipResponse,
 };
 use bark_rest::auth::AuthToken;
 use bark_rest_client::apis::configuration::Configuration;
@@ -44,6 +44,19 @@ use crate::util::{poll_interval, resolve_path};
 pub type Barkd = Daemon<BarkdHelper>;
 
 const AUTH_TOKEN_FILE: &str = "auth_token";
+
+/// Render a generated-client error including the response body.
+///
+/// The generated `Error`'s own `Display` reports only the status code, which
+/// hides the message barkd actually returned.
+fn rest_error<T>(e: bark_rest_client::apis::Error<T>) -> String {
+	match e {
+		bark_rest_client::apis::Error::ResponseError(r) => {
+			format!("status {}: {}", r.status, r.content)
+		},
+		other => other.to_string(),
+	}
+}
 
 /// Chain source configuration for barkd.
 pub enum BarkdChainSource {
@@ -170,6 +183,7 @@ impl Barkd {
 			mnemonic,
 			network: BarkNetwork::Regtest,
 			birthday_height,
+			gap_limit: None,
 			force: false,
 		};
 
@@ -178,11 +192,12 @@ impl Barkd {
 		Ok(())
 	}
 
-	/// Create the barkd wallet from explicit Ark server and chain source
-	/// arguments instead of the datadir config.toml.
+	/// Build the request [`Barkd::create_wallet_from_args`] takes.
 	///
-	/// Needed after a wallet delete, which wipes the config file.
-	pub async fn create_wallet_from_args(&self) -> anyhow::Result<()> {
+	/// Fills in the Ark server and chain source the harness holds privately.
+	/// Modify a field to exercise a create-time config option.
+	#[allow(deprecated)]
+	pub fn create_wallet_request(&self) -> CreateWalletRequest {
 		let chain_source = match &self.inner.chain_source {
 			BarkdChainSource::Esplora(url) => ChainSourceConfig::Esplora { url: url.clone() },
 			BarkdChainSource::Bitcoind { url, cookie } => ChainSourceConfig::Bitcoind {
@@ -193,17 +208,24 @@ impl Barkd {
 			},
 		};
 
-		#[allow(deprecated)]
-		let req = CreateWalletRequest {
+		CreateWalletRequest {
 			ark_server: Some(self.inner.ark_server_url.clone()),
 			ark_server_access_token: None,
 			chain_source: Some(chain_source),
 			mnemonic: None,
 			network: BarkNetwork::Regtest,
 			birthday_height: None,
+			gap_limit: None,
 			force: false,
-		};
+		}
+	}
 
+	/// Create the barkd wallet from an explicit request instead of the datadir
+	/// config.toml.
+	///
+	/// Needed after a wallet delete, which wipes the config file. Build `req`
+	/// with [`Barkd::create_wallet_request`].
+	pub async fn create_wallet_from_args(&self, req: CreateWalletRequest) -> anyhow::Result<()> {
 		let config = self.client_config();
 		wallet_api::create_wallet(&config, req).await?;
 		Ok(())
@@ -433,12 +455,31 @@ impl Barkd {
 			.expect("failed to get encoded barkd vtxo")
 	}
 
-	/// Import VTXOs from hex-encoded strings.
-	pub async fn import_vtxo(&self, vtxo_hexes: Vec<String>) -> Vec<WalletVtxoInfo> {
+	/// Build the request [`Barkd::import_vtxo`] takes.
+	///
+	/// Modify a field to exercise one of the import options.
+	pub fn import_vtxo_request(&self, vtxo_hexes: Vec<String>) -> ImportVtxoRequest {
+		ImportVtxoRequest {
+			vtxos: vtxo_hexes,
+			gap_limit: None,
+			skip_status_check: false,
+			allow_partial: false,
+		}
+	}
+
+	/// Import VTXOs, panicking if barkd refuses.
+	pub async fn import_vtxo(&self, req: ImportVtxoRequest) -> Vec<WalletVtxoInfo> {
+		self.try_import_vtxo(req).await.expect("failed to import barkd vtxos")
+	}
+
+	/// Import VTXOs, surfacing the REST error if it fails.
+	pub async fn try_import_vtxo(
+		&self,
+		req: ImportVtxoRequest,
+	) -> anyhow::Result<Vec<WalletVtxoInfo>> {
 		let config = self.client_config();
-		let req = bark_json::web::ImportVtxoRequest { vtxos: vtxo_hexes };
 		wallet_api::import_vtxo(&config, req).await
-			.expect("failed to import barkd vtxos")
+			.map_err(|e| anyhow::anyhow!("barkd import_vtxo failed: {}", rest_error(e)))
 	}
 
 	/// Board all on-chain funds into Ark.

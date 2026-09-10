@@ -397,6 +397,7 @@ mod board;
 mod config;
 mod daemon;
 mod fees;
+mod import;
 mod lightning;
 mod mailbox;
 mod notification;
@@ -411,15 +412,18 @@ pub use self::arkoor::{ArkoorCreateResult, ArkoorAddressError};
 pub use self::payment_request::{
 	AvailablePaymentMethod, PaymentInitOutput, PaymentMethodParsingError, PaymentRequest,
 };
-pub use self::config::{BarkNetwork, Config};
+pub use self::config::{
+	BarkNetwork, Config, DEFAULT_VTXO_KEY_GAP_LIMIT, MAX_VTXO_KEY_GAP_LIMIT,
+};
 pub use self::daemon::{tip_watcher, DaemonHandle};
 pub use self::fees::FeeEstimate;
+pub use self::import::{ImportVtxoArgs, ImportVtxoError};
 pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::recovery::{RecoveryReport, RecoveryReportEntry, RecoveryStatus};
 pub use self::vtxo::WalletVtxo;
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -434,6 +438,7 @@ use log::{debug, error, info, trace, warn};
 use tokio_stream::StreamExt;
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::attestations::VtxoStatusAttestation;
 use ark::address::VtxoDelivery;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::rounds::{RoundAttempt, RoundEvent};
@@ -441,6 +446,7 @@ use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef, VTXO_DUST};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
 use server_rpc::{protos, ServerConnection};
+use server_rpc::protos::VtxoSpendState;
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
@@ -1031,6 +1037,69 @@ impl Wallet {
 		}
 	}
 
+	/// Map each key in `wanted` we can derive from our seed to its keypair.
+	///
+	/// Keys the wallet already revealed come from the database. The rest are
+	/// matched by one scan of the unrevealed key space, which tolerates a run of
+	/// `gap_limit` indices that do not match and extends that window on every
+	/// match. Only keys at or below a match are stored, so a scan that matches
+	/// nothing leaves the key index unchanged. Keys that never match are absent
+	/// from the result.
+	///
+	/// Errors if `gap_limit` is above [MAX_VTXO_KEY_GAP_LIMIT].
+	pub(crate) async fn find_vtxo_keypairs(
+		&self,
+		wanted: impl IntoIterator<Item = PublicKey>,
+		gap_limit: u32,
+	) -> anyhow::Result<HashMap<PublicKey, Keypair>> {
+		// Disallow unreasonable gap limits to avoid allocating enormous amounts of memory.
+		if gap_limit > MAX_VTXO_KEY_GAP_LIMIT {
+			bail!("vtxo key gap limit {gap_limit} is above the maximum of {}",
+				MAX_VTXO_KEY_GAP_LIMIT);
+		}
+
+		// A revealed key is already on record, so only scan for what is left.
+		let mut found = HashMap::new();
+		let mut unrevealed = HashSet::new();
+		for pubkey in wanted {
+			match self.pubkey_keypair(&pubkey).await? {
+				Some((_idx, keypair)) => { found.insert(pubkey, keypair); },
+				None => { unrevealed.insert(pubkey); },
+			}
+		}
+		if unrevealed.is_empty() {
+			return Ok(found);
+		}
+
+		// We should derive unrevealed keys, so we add one to the last key index.
+		let start_idx = self.inner.db.get_last_vtxo_key_index().await?.map(|i| i + 1).unwrap_or(0);
+		let mut frontier = start_idx.saturating_add(gap_limit);
+		let mut idx = start_idx;
+		let mut gap = Vec::<(u32, PublicKey)>::new();
+		while idx <= frontier && !unrevealed.is_empty() {
+			let keypair = self.inner.seed.derive_vtxo_keypair(idx);
+			let pubkey = keypair.public_key();
+			if unrevealed.remove(&pubkey) {
+				// Reveal this key and the unmatched keys below it, because the
+				// wallet issues keys in sequence.
+				for (i, pk) in gap.drain(..) {
+					self.inner.db.store_vtxo_key(i, pk).await?;
+				}
+				self.inner.db.store_vtxo_key(idx, pubkey).await?;
+				found.insert(pubkey, keypair);
+
+				// `frontier` is the last index the scan tests. This index matched,
+				// so the next run of unused indices starts at idx + 1.
+				frontier = idx.saturating_add(1).saturating_add(gap_limit);
+			} else {
+				gap.push((idx, pubkey));
+			}
+			let Some(next_idx) = idx.checked_add(1) else { break };
+			idx = next_idx;
+		}
+
+		Ok(found)
+	}
 
 	/// Retrieves the [Keypair] for a provided [PublicKey]
 	///
@@ -1550,36 +1619,25 @@ impl Wallet {
 		vtxo.validate(&tx).map_err(VtxoValidationError::Invalid)
 	}
 
-	/// Manually import a VTXO into the wallet.
+	/// Ask the server for `vtxo_id`'s spend state.
 	///
-	/// # Arguments
-	/// * `vtxo` - The VTXO to import
-	///
-	/// # Errors
-	/// Returns an error if:
-	/// - The VTXO's chain anchor is not found or invalid
-	/// - The wallet doesn't own a signable clause for the VTXO
-	pub async fn import_vtxo(&self, vtxo: &Vtxo<Full>) -> anyhow::Result<()> {
-		if self.inner.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
-			info!("VTXO {} already exists in wallet, skipping import", vtxo.id());
-			return Ok(());
-		}
+	/// `keypair` must be the VTXO's private key so we can prove ownership.
+	pub(crate) async fn fetch_vtxo_spend_state(
+		&self,
+		vtxo_id: VtxoId,
+		keypair: &Keypair,
+	) -> anyhow::Result<VtxoSpendState> {
+		let (mut srv, _) = self.require_server().await?;
+		let attestation = VtxoStatusAttestation::new(vtxo_id, keypair);
+		let resp = srv.client.get_vtxo_status(protos::GetVtxoStatusRequest {
+			vtxo_id: vtxo_id.to_bytes().to_vec(),
+			attestation: attestation.serialize(),
+		}).await.with_context(|| format!("error fetching status for vtxo {vtxo_id}"))?.into_inner();
 
-		self.validate_vtxo(vtxo).await.context("VTXO validation failed")?;
-
-		if self.find_signable_clause(vtxo).await.is_none() {
-			bail!("VTXO {} is not owned by this wallet (no signable clause found)", vtxo.id());
-		}
-
-		let current_height = self.inner.chain.tip().await?;
-		if vtxo.expiry_height() <= current_height {
-			bail!("Vtxo {} has expired", vtxo.id());
-		}
-
-		self.store_spendable_vtxos([vtxo]).await.context("failed to store imported VTXO")?;
-
-		info!("Successfully imported VTXO {}", vtxo.id());
-		Ok(())
+		VtxoSpendState::try_from(resp.spend_state).map_err(|_| anyhow::anyhow!(
+			"server returned unknown spend state {} for vtxo {vtxo_id}; this wallet may \
+			need updating", resp.spend_state,
+		))
 	}
 
 	/// Retrieves the full state of a [Vtxo] for a given [VtxoId] if it exists in the database.

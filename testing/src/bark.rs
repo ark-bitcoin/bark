@@ -881,10 +881,23 @@ impl Bark {
 	}
 
 	pub async fn try_import_vtxos(&self, vtxo_hexes: &[&str]) -> anyhow::Result<Vec<bark_json::primitives::WalletVtxoInfo>> {
+		self.try_import_vtxos_with_gap_limit(vtxo_hexes, None).await
+	}
+
+	pub async fn try_import_vtxos_with_gap_limit(
+		&self,
+		vtxo_hexes: &[&str],
+		gap_limit: Option<u32>,
+	) -> anyhow::Result<Vec<bark_json::primitives::WalletVtxoInfo>> {
 		let mut args: Vec<&str> = vec!["dev", "vtxo", "import"];
 		for hex in vtxo_hexes {
 			args.push("--vtxo");
 			args.push(hex);
+		}
+		let gap_limit = gap_limit.map(|g| g.to_string());
+		if let Some(ref g) = gap_limit {
+			args.push("--gap-limit");
+			args.push(g);
 		}
 		self.try_run_json(args).await
 	}

@@ -9,9 +9,11 @@
 //! that mode would silently test the current code under a "compat" label.
 
 mod arkoor;
+mod import;
 mod lightning;
 mod mailbox;
 mod offboard;
 mod payment_request;
+mod recovery;
 mod round;
 mod vtxo_lock;

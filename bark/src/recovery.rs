@@ -9,11 +9,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::Context;
 use bitcoin::Amount;
-use bitcoin::secp256k1::{Keypair, PublicKey};
+use bitcoin::secp256k1::Keypair;
 use log::{debug, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
-use ark::attestations::VtxoStatusAttestation;
 use ark::mailbox::MailboxAuthorization;
 use ark::vtxo::Full;
 use bitcoin_ext::BlockHeight;
@@ -23,9 +22,6 @@ use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 use crate::Wallet;
 use crate::vtxo::VtxoState;
-
-/// Consecutive unused key indices we tolerate before concluding a VTXO isn't ours.
-const STOP_GAP: u32 = 50;
 
 #[derive(Debug, Default, Clone)]
 pub struct RecoveryReportEntry(HashMap<VtxoId, Option<Amount>>);
@@ -78,8 +74,8 @@ pub struct RecoveryReport {
 	failed: RecoveryReportEntry,
 	/// VTXOs found in the mailbox whose key we could not derive within the gap
 	/// limit. Only the seed owner can post here, so these are most likely our own
-	/// VTXOs whose key sits beyond [`STOP_GAP`]; their presence means funds may be
-	/// missing and the scan can't be reported complete.
+	/// VTXOs whose key sits beyond the gap limit; their presence means funds may
+	/// be missing and the scan can't be reported complete.
 	foreign: RecoveryReportEntry,
 	/// VTXOs that have been fully exited on-chain.
 	exited: RecoveryReportEntry,
@@ -211,9 +207,12 @@ impl Wallet {
 		}
 	}
 
-	async fn fetch_valid_owned_vtxos(&self, report: &mut RecoveryReport, ids: &[VtxoId]) ->
-		anyhow::Result<Vec<OwnedVtxo>>
-	{
+	async fn fetch_valid_owned_vtxos(
+		&self,
+		report: &mut RecoveryReport,
+		ids: &[VtxoId],
+		gap_limit: u32,
+	) -> anyhow::Result<Vec<OwnedVtxo>> {
 		// Drain the whole mailbox into a candidate set. The mailbox isn't
 		// de-duplicated, so track the ids we've fetched and skip any repeats.
 		let mut candidates = HashMap::new();
@@ -232,7 +231,7 @@ impl Wallet {
 
 		// Resolve ownership over the complete candidate set in one pass.
 		let candidates = candidates.into_values().collect();
-		let owned = self.resolve_owned_vtxos(candidates, report).await?;
+		let owned = self.resolve_owned_vtxos(candidates, gap_limit, report).await?;
 
 		// Order by (expiry, arkoor chain length) so the caller can walk newest-first.
 		let mut vtxos = BTreeMap::<ChainOrder, Vec<OwnedVtxo>>::new();
@@ -370,18 +369,10 @@ impl Wallet {
 		vtxo: &Vtxo<Full>,
 		keypair: &Keypair,
 	) -> anyhow::Result<bool> {
-		let (mut srv, _) = self.require_server().await?;
 		let vtxo_id = vtxo.id();
-		let attestation = VtxoStatusAttestation::new(vtxo_id, keypair);
-		let resp = srv.client.get_vtxo_status(protos::GetVtxoStatusRequest {
-			vtxo_id: vtxo_id.to_bytes().to_vec(),
-			attestation: attestation.serialize(),
-		}).await.with_context(|| format!("error fetching status for vtxo {vtxo_id}"))?.into_inner();
-
-		let spend_state = protos::VtxoSpendState::try_from(resp.spend_state)
-			.map_err(|_| anyhow::anyhow!(
-				"server returned unknown spend state {} for vtxo {vtxo_id}", resp.spend_state,
-			));
+		// NB an error here (rpc or an unknown state) is a non-decision, so it
+		// lands in `failed` for the retry loop rather than aborting the scan.
+		let spend_state = self.fetch_vtxo_spend_state(vtxo_id, keypair).await;
 
 		// The server is the authority on whether it was spent elsewhere.
 		// Matched exhaustively (no catch-all) so a new spend state forces an
@@ -426,60 +417,31 @@ impl Wallet {
 	/// Work out which of `vtxos` this wallet owns, pairing each with its owner
 	/// keypair and persisting the keys revealed along the way.
 	///
-	/// Order-independent: VTXOs whose key was already revealed match directly;
-	/// the rest are matched by walking the unrevealed key space once. Each match
-	/// reveals every key up to it and extends the [`STOP_GAP`] window, so a later
-	/// match can pull in an earlier VTXO a single forward pass would miss.
+	/// Order-independent: every user pubkey goes into one
+	/// [`Wallet::find_vtxo_keypairs`] call, which tolerates a run of `gap_limit`
+	/// unused indices and extends that window on every match.
 	///
-	/// Idempotent: only keys at or below a match are persisted, so an unmatched
-	/// probe leaves no trace and a retry can't ratchet the key index. Owned VTXOs
-	/// that fail validation go to `report.failed`; unmatched ones to `report.foreign`.
+	/// Owned VTXOs that fail validation go to `report.failed`; unmatched ones to
+	/// `report.foreign`.
 	async fn resolve_owned_vtxos(
 		&self,
 		vtxos: Vec<Vtxo<Full>>,
+		gap_limit: u32,
 		report: &mut RecoveryReport,
 	) -> anyhow::Result<Vec<OwnedVtxo>> {
-		// VTXOs we still need to match, indexed by owner pubkey. A pubkey can back
-		// more than one VTXO, so keep a list per key.
-		let mut pending = HashMap::<PublicKey, Vec<Vtxo<Full>>>::new();
+		// Collected before the await: a closure held across it is not general
+		// enough over lifetimes for the callers' Send bounds.
+		let user_pubkeys = vtxos.iter().map(|v| v.user_pubkey()).collect::<Vec<_>>();
+		let keypairs = self.find_vtxo_keypairs(user_pubkeys, gap_limit).await?;
+
+		// A pubkey can back more than one VTXO, so look each one up rather than
+		// walking the keys. Anything unmatched is not ours.
 		let mut matched = Vec::<(Vtxo<Full>, Keypair)>::new();
-
 		for vtxo in vtxos {
-			match self.pubkey_keypair(&vtxo.user_pubkey()).await? {
-				Some((_idx, keypair)) => matched.push((vtxo, keypair)),
-				None => pending.entry(vtxo.user_pubkey()).or_default().push(vtxo),
+			match keypairs.get(&vtxo.user_pubkey()) {
+				Some(keypair) => matched.push((vtxo, *keypair)),
+				None => report.push_foreign(&vtxo),
 			}
-		}
-
-		// Walk the unrevealed key space once, extending the window on every match.
-		let start_idx = self.inner.db.get_last_vtxo_key_index().await?.map(|i| i + 1).unwrap_or(0);
-		let mut frontier = start_idx.saturating_add(STOP_GAP);
-		let mut gap = Vec::<(u32, PublicKey)>::new();
-		let mut idx = start_idx;
-		while idx <= frontier && !pending.is_empty() {
-			let keypair = self.inner.seed.derive_vtxo_keypair(idx);
-			let pubkey = keypair.public_key();
-			if let Some(owned_vtxos) = pending.remove(&pubkey) {
-				// Reveal this key and the unmatched gap keys below it, mirroring the
-				// wallet's sequential key issuance.
-				for (i, pk) in gap.drain(..) {
-					self.inner.db.store_vtxo_key(i, pk).await?;
-				}
-				self.inner.db.store_vtxo_key(idx, pubkey).await?;
-				frontier = idx.saturating_add(STOP_GAP);
-				matched.extend(owned_vtxos.into_iter().map(|v| (v, keypair)));
-			} else {
-				gap.push((idx, pubkey));
-			}
-			// Stop at the end of the key space rather than overflowing; reaching it
-			// would mean scanning the entire u32 range, far beyond any real wallet.
-			let Some(next_idx) = idx.checked_add(1) else { break };
-			idx = next_idx;
-		}
-
-		// Anything still pending never matched within the gap limit, so it's not ours.
-		for vtxo in pending.into_values().flatten() {
-			report.push_foreign(&vtxo);
 		}
 
 		// Validate the matched VTXOs. A validation error (anchor not yet visible,
@@ -501,9 +463,10 @@ impl Wallet {
 		&self,
 		report: &mut RecoveryReport,
 		ids: impl IntoIterator<Item = VtxoId>,
+		gap_limit: u32,
 	) -> anyhow::Result<()> {
 		let ids = ids.into_iter().collect::<Vec<_>>();
-		let owned = self.fetch_valid_owned_vtxos(report, &ids).await?;
+		let owned = self.fetch_valid_owned_vtxos(report, &ids, gap_limit).await?;
 
 		// Ancestor ids of the (newer) VTXOs we've already processed, so we can
 		// skip any older recovered VTXO that was spent into a newer one.
@@ -551,11 +514,18 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub async fn recover_vtxos(&self, ids: impl IntoIterator<Item = VtxoId>)
-		-> anyhow::Result<RecoveryReport>
-	{
+	/// Recover the given VTXOs into this wallet's spendable set.
+	///
+	/// `gap_limit` overrides [`crate::Config::vtxo_key_gap_limit`] for the key
+	/// scan that decides which of `ids` this wallet owns.
+	pub async fn recover_vtxos(
+		&self,
+		ids: impl IntoIterator<Item = VtxoId>,
+		gap_limit: Option<u32>,
+	) -> anyhow::Result<RecoveryReport> {
 		let mut report = RecoveryReport::default();
-		self.inner_recover_vtxos(&mut report, ids).await?;
+		let gap_limit = gap_limit.unwrap_or(self.inner.config.vtxo_key_gap_limit);
+		self.inner_recover_vtxos(&mut report, ids, gap_limit).await?;
 		Ok(report)
 	}
 
@@ -572,12 +542,13 @@ impl Wallet {
 	/// to a third party).
 	pub(crate) async fn recover_from_mailbox(&self) -> anyhow::Result<RecoveryReport> {
 		let mut report = RecoveryReport::default();
+		let gap_limit = self.inner.config.vtxo_key_gap_limit;
 
 		// Read all owned vtxos, de-duplicated
 		let ids = self.read_mailbox_recovery_vtxo_ids().await?;
 		debug!("Found {} distinct vtxo ids in the recovery mailbox", ids.len());
 
-		self.inner_recover_vtxos(&mut report, ids).await?;
+		self.inner_recover_vtxos(&mut report, ids, gap_limit).await?;
 
 		// Unmatched ids in our own seed-derived mailbox are suspicious: most
 		// likely an owned VTXO whose key sits beyond the gap limit (funds may be
@@ -586,7 +557,7 @@ impl Wallet {
 		if !report.foreign.is_empty() {
 			warn!(
 				"Recovery mailbox held {} vtxo(s) not derivable from this seed within the \
-				gap limit ({STOP_GAP}); if any are ours they were not recovered: {:?}",
+				gap limit ({gap_limit}); if any are ours they were not recovered: {:?}",
 				report.foreign.len(), report.foreign,
 			);
 		}
@@ -605,7 +576,7 @@ impl Wallet {
 			}
 
 			let ids = report.failed.ids().collect::<Vec<_>>();
-			self.inner_recover_vtxos(&mut report, ids).await?;
+			self.inner_recover_vtxos(&mut report, ids, gap_limit).await?;
 		}
 
 		if !report.failed.is_empty() {
