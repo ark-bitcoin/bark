@@ -23,6 +23,7 @@ use bitcoin_ext::bdk::{TrustedBalance, TrustedCanonicalization, WalletExt, KEYCH
 
 use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::bitcoind as bcd;
+use crate::utils::{InstrumentedLock, InstrumentedOwnedLockGuard};
 use crate::{database, fs_perms, SECP};
 
 
@@ -251,12 +252,6 @@ impl PersistedWallet {
 			.collect::<Vec<_>>()
 	}
 
-	pub fn unavailable_outputs(&self, min_confs: u32) -> Vec<OutPoint> {
-		self.untrusted_utxos(min_confs).into_iter()
-			.chain(self.locked_outputs.utxos())
-			.collect::<Vec<_>>()
-	}
-
 	pub fn lock_wallet_utxo(
 		&self,
 		utxo: OutPoint,
@@ -311,6 +306,29 @@ impl PersistedWallet {
 			);
 		}
 		Ok(psbt)
+	}
+}
+
+impl InstrumentedLock<PersistedWallet> {
+	/// Take the wallet lock and run `build` on the blocking pool, then
+	/// hand both the lock and the result back. bdk's coin selection
+	/// blocks the thread it runs on, so a tx must never be built on an
+	/// async worker.
+	///
+	/// The lock is held for the whole build. Drop the returned guard as
+	/// soon as the caller is done with the wallet.
+	pub async fn build_blocking<T: Send + 'static>(
+		&self,
+		build: impl FnOnce(&mut PersistedWallet) -> anyhow::Result<T> + Send + 'static,
+	) -> anyhow::Result<(InstrumentedOwnedLockGuard<PersistedWallet>, T)> {
+		let mut wallet = self.lock_owned().await;
+		// The guard is returned with the result, so a failed build still
+		// hands the lock back to the caller.
+		let (wallet, built) = tokio::task::spawn_blocking(move || {
+			let built = build(&mut wallet);
+			(wallet, built)
+		}).await.context("wallet build task panicked")?;
+		Ok((wallet, built?))
 	}
 }
 

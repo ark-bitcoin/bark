@@ -25,12 +25,8 @@ use crate::wallet::{PersistedWallet, WalletUtxoGuard, WalletUtxosGuard};
 pub struct FundingTxSpec {
 	/// The output in which the vtxo tree will be rooted.
 	pub tree_output: TxOut,
-	/// Fee rate for the funding tx.
+	/// Feerate for the funding tx.
 	pub fee_rate: FeeRate,
-	/// Confirmation threshold for trust: a UTXO is trusted once it (or any
-	/// ancestor) reaches this many confirmations. Only trusted UTXOs are
-	/// eligible as inputs for the funding tx.
-	pub min_trusted_confs: u32,
 	/// If `Some`, the wallet is forced to include this input in the new tx.
 	/// `None` on the first attempt.
 	pub pinned_input: Option<WalletUtxoGuard>,
@@ -38,19 +34,14 @@ pub struct FundingTxSpec {
 
 impl FundingTxSpec {
 	/// Build the funding tx, offloading the blocking work to the tokio
-	/// blocking pool. Acquires the wallet lock internally and returns the
-	/// guard alongside the resulting [`FundingTx`] so the caller can keep
-	/// using the wallet (e.g. to sign and broadcast).
+	/// blocking pool. Takes the wallet lock internally and releases it
+	/// before it returns.
 	pub async fn build(
 		self,
 		wallet: &InstrumentedLock<PersistedWallet>,
 	) -> anyhow::Result<UnsignedFundingTx> {
-		let mut wallet_lock = wallet.lock_owned().await;
-		tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-			let funding_tx = self.compute_build(&mut wallet_lock)?;
-			Ok(funding_tx)
-		}).await
-			.context("funding tx build task panicked")?
+		let (_, funding_tx) = wallet.build_blocking(move |w| self.compute_build(w)).await?;
+		Ok(funding_tx)
 	}
 
 	/// Build the funding tx synchronously. Blocks the calling thread on
@@ -59,28 +50,21 @@ impl FundingTxSpec {
 	fn compute_build(self, wallet: &mut PersistedWallet) -> anyhow::Result<UnsignedFundingTx> {
 		let start = std::time::Instant::now();
 
-
-		let unavailable_outputs = wallet.unavailable_outputs(self.min_trusted_confs);
-
-		let psbt = {
-			// Confirmed inputs first: a funding tx without unconfirmed
-			// ancestors can't be dragged down by a low-fee parent.
-			let selection = WithGuaranteedChange(
-				PreferConfirmedCoinSelection(DefaultCoinSelectionAlgorithm::default()),
-			);
-			let mut b = wallet.build_tx().coin_selection(selection);
+		// Confirmed inputs first: they cost no extra fee.
+		let selection = WithGuaranteedChange(
+			PreferConfirmedCoinSelection(DefaultCoinSelectionAlgorithm::default()),
+		);
+		let psbt = wallet.build_tx_at_chunk_feerate(selection, self.fee_rate, |b| {
 			// `Untouched` keeps insertion order: `tree_output` is added first, so
 			// it lands at vout `ROUND_TX_VTXO_TREE_VOUT` (0), as the round tx requires.
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
-			b.unspendable(unavailable_outputs);
-			// NB: manual selection overrides unspendable
+			// NB: manual selection overrides the wallet's unspendable outputs
 			if let Some(ref pinned) = self.pinned_input {
 				b.add_utxo(pinned.utxo()).context("pinned input not in wallet")?;
 			}
-			b.add_recipient(self.tree_output.script_pubkey, self.tree_output.value);
-			b.fee_rate(self.fee_rate);
-			b.finish().context("bdk failed to build funding tx")?
-		};
+			b.add_recipient(self.tree_output.script_pubkey.clone(), self.tree_output.value);
+			Ok(())
+		}).context("failed to build funding tx")?;
 
 		// Determine the pinned input and collect the extras.
 		let (pinned_input, extra_outpoints) = match self.pinned_input {
