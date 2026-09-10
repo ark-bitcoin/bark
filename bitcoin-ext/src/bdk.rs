@@ -116,10 +116,16 @@ impl TrustedCanonicalization {
 		Self { txs, unspent }
 	}
 
+	/// The canonical tx for `txid`, or `None` when this view does not
+	/// hold it.
+	pub fn get(&self, txid: Txid) -> Option<&LocalTransaction> {
+		self.txs.get(&txid)
+	}
+
 	/// Trust verdict for `txid`. Unknown txids (not in the wallet's
 	/// canonical view) are treated as untrusted.
 	pub fn is_trusted(&self, txid: Txid) -> bool {
-		self.txs.get(&txid).map(|e| e.is_trusted).unwrap_or(false)
+		self.get(txid).map(|e| e.is_trusted).unwrap_or(false)
 	}
 
 	/// Iterate this wallet's unspent outputs in canonical view, each
