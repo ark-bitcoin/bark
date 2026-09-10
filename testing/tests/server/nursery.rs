@@ -46,6 +46,7 @@ async fn nursery_confirms_round_funding_tx() {
 		let confirmed = log_confirmed.recv().wait(Duration::from_secs(30)).await
 			.expect("timed out waiting for nursery to confirm the funding tx");
 		if confirmed.txid == funding_txid {
+			assert_eq!(confirmed.kind, "round");
 			break;
 		}
 	}
@@ -93,6 +94,7 @@ async fn nursery_warns_until_tx_is_abandoned() {
 		let missed = log_missed.recv().wait(Duration::from_secs(30)).await
 			.expect("timed out waiting for missed-target warning");
 		assert_eq!(missed.txid, funding_txid);
+		assert_eq!(missed.kind, "round");
 		assert!(missed.current_height >= missed.confirm_target_height);
 		assert!(missed.chunk_fee_rate.is_some(), "feerate of an in-mempool tx is unknown");
 	}

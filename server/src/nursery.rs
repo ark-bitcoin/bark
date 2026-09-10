@@ -114,16 +114,11 @@ impl TxNursery {
 		kind: NurseryTxKind,
 		confirm_target: BlockHeight,
 	) -> anyhow::Result<()> {
-		let txid = tx.compute_txid();
 		self.db.write(async |t| {
 			t.upsert_nursery_tx(&tx, kind, confirm_target).await
 		}).await.context("failed to store tx in nursery")?;
 
-		slog!(BroadcastingTx, txid, raw_tx: serialize(&tx));
-		if let Err(e) = bcd::broadcast_tx(&self.bitcoind, &tx).await {
-			// The nursery will keep retrying on every mempool update.
-			slog!(TxBroadcastError, txid, raw_tx: serialize(&tx), error: e.to_string());
-		}
+		self.broadcast(&tx, kind).await;
 
 		Ok(())
 	}
@@ -147,7 +142,7 @@ impl TxNursery {
 		for tx in txs {
 			let in_mempool = mempool.contains(&tx.txid);
 			let chunk_fee_rate = if in_mempool {
-				self.chunk_fee_rate(tx.txid).await
+				self.chunk_fee_rate(tx.txid, tx.kind).await
 			} else {
 				None
 			};
@@ -158,13 +153,28 @@ impl TxNursery {
 
 	/// See [bcd::chunk_fee_rate]. None if the tx is not in the mempool
 	/// or the lookup failed, which logs [NurseryTxFeerateError].
-	async fn chunk_fee_rate(&self, txid: Txid) -> Option<FeeRate> {
+	async fn chunk_fee_rate(&self, txid: Txid, kind: NurseryTxKind) -> Option<FeeRate> {
 		match bcd::chunk_fee_rate(&self.bitcoind, txid).await {
 			Ok(feerate) => feerate,
 			Err(e) => {
-				slog!(NurseryTxFeerateError, txid, error: e.to_string());
+				slog!(NurseryTxFeerateError, txid, kind: kind.name().into(),
+					error: e.to_string(),
+				);
 				None
 			},
+		}
+	}
+
+	/// Broadcast a nursery tx, logging the attempt and any error. The
+	/// caller can't act on a failure anyway: the nursery retries on the
+	/// next mempool update.
+	async fn broadcast(&self, tx: &Transaction, kind: NurseryTxKind) {
+		let txid = tx.compute_txid();
+		slog!(BroadcastingTx, txid, kind: kind.name().into(), raw_tx: serialize(tx));
+		if let Err(e) = bcd::broadcast_tx(&self.bitcoind, tx).await {
+			slog!(TxBroadcastError, txid, kind: kind.name().into(),
+				raw_tx: serialize(tx), error: e.to_string(),
+			);
 		}
 	}
 
@@ -174,11 +184,11 @@ impl TxNursery {
 	/// Returns false when the txid is not in the nursery, was already
 	/// abandoned or has confirmed.
 	pub async fn abandon(&self, txid: Txid) -> anyhow::Result<bool> {
-		let abandoned = self.db.write(async |t| t.abandon_nursery_tx(txid).await).await?;
-		if abandoned {
-			slog!(NurseryTxAbandoned, txid);
+		let kind = self.db.write(async |t| t.abandon_nursery_tx(txid).await).await?;
+		if let Some(kind) = kind {
+			slog!(NurseryTxAbandoned, txid, kind: kind.name().into());
 		}
-		Ok(abandoned)
+		Ok(kind.is_some())
 	}
 
 	/// Record the confirmations found in the new block and warn about
@@ -200,14 +210,14 @@ impl TxNursery {
 
 		for tx in &txs {
 			if block_txids.contains(&tx.txid) {
-				self.register_confirmation(tx.txid, tip_height).await?;
+				self.register_confirmation(tx.txid, tx.kind, tip_height).await?;
 			} else if tx.confirmed_at_height.is_none()
 				&& tip_height >= tx.confirm_target_height
 			{
 				// Keep warning the operator, once per block, until either
 				// the tx confirms or the operator abandons it.
-				let chunk_fee_rate = self.chunk_fee_rate(tx.txid).await;
-				slog!(NurseryTxMissedTarget, txid: tx.txid,
+				let chunk_fee_rate = self.chunk_fee_rate(tx.txid, tx.kind).await;
+				slog!(NurseryTxMissedTarget, txid: tx.txid, kind: tx.kind.name().into(),
 					confirm_target_height: tx.confirm_target_height,
 					current_height: tip_height, chunk_fee_rate,
 				);
@@ -220,16 +230,16 @@ impl TxNursery {
 	/// Rebroadcast all unconfirmed nursery txs that are missing from the
 	/// mempool.
 	async fn process_mempool(&self, mempool: &RawMempool) -> anyhow::Result<()> {
-		let txids = self.db.read(async |t| t.get_unconfirmed_nursery_txids().await).await
+		let unconfirmed = self.db.read(async |t| t.get_unconfirmed_nursery_txs().await).await
 			.context("failed to fetch unconfirmed nursery txs")?;
 
-		if txids.is_empty() {
+		if unconfirmed.is_empty() {
 			return Ok(());
 		}
 
 		let mempool_txids = mempool.txids.iter().collect::<HashSet<_>>();
 
-		for txid in txids {
+		for (txid, kind) in unconfirmed {
 			if mempool_txids.contains(&txid) {
 				continue;
 			}
@@ -240,10 +250,7 @@ impl TxNursery {
 				.with_context(|| format!("failed to fetch raw tx {}", txid))?
 				.with_context(|| format!("corrupt db: missing raw tx {}", txid))?;
 
-			slog!(BroadcastingTx, txid, raw_tx: serialize(&tx));
-			if let Err(e) = bcd::broadcast_tx(&self.bitcoind, &tx).await {
-				slog!(TxBroadcastError, txid, raw_tx: serialize(&tx), error: e.to_string());
-			}
+			self.broadcast(&tx, kind).await;
 		}
 
 		Ok(())
@@ -252,13 +259,14 @@ impl TxNursery {
 	async fn register_confirmation(
 		&self,
 		txid: Txid,
+		kind: NurseryTxKind,
 		height: BlockHeight,
 	) -> anyhow::Result<()> {
 		let updated = self.db.write(async |t| {
 			t.set_nursery_tx_confirmed(txid, height).await
 		}).await?;
 		if updated {
-			slog!(NurseryTxConfirmed, txid, blockheight: height);
+			slog!(NurseryTxConfirmed, txid, kind: kind.name().into(), blockheight: height);
 		}
 		Ok(())
 	}
@@ -281,8 +289,8 @@ impl ChainEventListener for TxNursery {
 			t.clear_nursery_confirmations_after(block_ref.height).await
 		}).await.context("failed to clear reorged nursery confirmations")?;
 
-		for (txid, previous_height) in reorged {
-			slog!(NurseryTxReorged, txid, previous_height);
+		for (txid, kind, previous_height) in reorged {
+			slog!(NurseryTxReorged, txid, kind: kind.name().into(), previous_height);
 		}
 		Ok(())
 	}

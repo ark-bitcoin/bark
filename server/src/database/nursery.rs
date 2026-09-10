@@ -23,6 +23,11 @@ fn height_from_sql(height: i32) -> BlockHeight {
 	BlockHeight::try_from(height).expect("corrupt db: negative block height")
 }
 
+/// Convert a `kind::TEXT` column from postgres into a [NurseryTxKind].
+fn kind_from_sql(kind: &str) -> NurseryTxKind {
+	NurseryTxKind::from_str(kind).expect("corrupt db: invalid nursery tx kind")
+}
+
 /// A transaction the TxNursery is following up on.
 #[derive(Debug, Clone)]
 pub struct NurseryTx {
@@ -38,8 +43,7 @@ impl NurseryTx {
 	fn from_row(row: &tokio_postgres::Row) -> NurseryTx {
 		let txid = Txid::from_str(row.get("txid"))
 			.expect("corrupt db: invalid txid");
-		let kind = NurseryTxKind::from_str(row.get("kind"))
-			.expect("corrupt db: invalid nursery tx kind");
+		let kind = kind_from_sql(row.get("kind"));
 		let confirm_target_height =
 			height_from_sql(row.get("confirm_target_height"));
 		let confirmed_at_height = row.get::<_, Option<i32>>("confirmed_at_height")
@@ -113,19 +117,22 @@ impl<'t> Tx<'t> {
 		Ok(rows.iter().map(NurseryTx::from_row).collect())
 	}
 
-	/// Get the txids of all unconfirmed nursery txs. Only txids, to keep
-	/// the memory footprint small; fetch the (rare) tx that needs a
-	/// rebroadcast with [get_nursery_raw_tx](Self::get_nursery_raw_tx).
-	pub async fn get_unconfirmed_nursery_txids(&self) -> anyhow::Result<Vec<Txid>> {
+	/// Get the txid and kind of all unconfirmed nursery txs. No raw txs,
+	/// to keep the memory footprint small; fetch the (rare) tx that needs
+	/// a rebroadcast with [get_nursery_raw_tx](Self::get_nursery_raw_tx).
+	pub async fn get_unconfirmed_nursery_txs(
+		&self,
+	) -> anyhow::Result<Vec<(Txid, NurseryTxKind)>> {
 		let stmt = self.prepare("
-			SELECT txid FROM nursery_tx
+			SELECT txid, kind::TEXT FROM nursery_tx
 			WHERE abandoned_at IS NULL AND confirmed_at_height IS NULL
 			ORDER BY id
 		").await?;
 
 		let rows = self.query(&stmt, &[]).await?;
 		Ok(rows.into_iter().map(|row| {
-			Txid::from_str(row.get("txid")).expect("corrupt db: invalid txid")
+			let txid = Txid::from_str(row.get("txid")).expect("corrupt db: invalid txid");
+			(txid, kind_from_sql(row.get("kind")))
 		}).collect())
 	}
 
@@ -152,28 +159,28 @@ impl<'t> Tx<'t> {
 	}
 
 	/// Clear the confirmations of all nursery txs confirmed after the
-	/// given height, whose blocks a reorg evicted. Returns the txid and
-	/// cleared confirmation height of each.
+	/// given height, whose blocks a reorg evicted. Returns the txid, kind
+	/// and cleared confirmation height of each.
 	pub async fn clear_nursery_confirmations_after(
 		&self,
 		height: BlockHeight,
-	) -> anyhow::Result<Vec<(Txid, BlockHeight)>> {
+	) -> anyhow::Result<Vec<(Txid, NurseryTxKind, BlockHeight)>> {
 		let stmt = self.prepare_typed("
 			WITH reorged AS (
-				SELECT id, txid, confirmed_at_height FROM nursery_tx
+				SELECT id, txid, kind::TEXT AS kind, confirmed_at_height FROM nursery_tx
 				WHERE confirmed_at_height > $1
 			)
 			UPDATE nursery_tx
 			SET confirmed_at_height = NULL, updated_at = NOW()
 			FROM reorged WHERE nursery_tx.id = reorged.id
-			RETURNING reorged.txid, reorged.confirmed_at_height
+			RETURNING reorged.txid, reorged.kind, reorged.confirmed_at_height
 		", &[Type::INT4]).await?;
 
 		let rows = self.query(&stmt, &[&height_to_sql(height)?]).await?;
 		Ok(rows.into_iter().map(|row| {
 			let txid = Txid::from_str(row.get(0))
 				.expect("corrupt db: invalid txid");
-			(txid, height_from_sql(row.get(1)))
+			(txid, kind_from_sql(row.get(1)), height_from_sql(row.get(2)))
 		}).collect())
 	}
 
@@ -196,17 +203,22 @@ impl<'t> Tx<'t> {
 		Ok(rows.iter().map(NurseryTx::from_row).collect())
 	}
 
-	/// Abandon a nursery tx: give up on it and stop warning.
-	/// Returns false when the txid is unknown, already abandoned or
-	/// confirmed. A confirmed tx must stay active: if a reorg evicts
-	/// its confirmation, the nursery has to follow it up again.
-	pub async fn abandon_nursery_tx(&self, txid: Txid) -> anyhow::Result<bool> {
+	/// Abandon a nursery tx: give up on it and stop warning. Returns the
+	/// kind of the abandoned tx, or None when the txid is unknown,
+	/// already abandoned or confirmed. A confirmed tx must stay active:
+	/// if a reorg evicts its confirmation, the nursery has to follow it
+	/// up again.
+	pub async fn abandon_nursery_tx(
+		&self,
+		txid: Txid,
+	) -> anyhow::Result<Option<NurseryTxKind>> {
 		let stmt = self.prepare_typed("
 			UPDATE nursery_tx SET abandoned_at = NOW(), updated_at = NOW()
 			WHERE txid = $1 AND abandoned_at IS NULL AND confirmed_at_height IS NULL
-			RETURNING id
+			RETURNING kind::TEXT
 		", &[Type::TEXT]).await?;
 
-		Ok(self.query_opt(&stmt, &[&txid.to_string()]).await?.is_some())
+		Ok(self.query_opt(&stmt, &[&txid.to_string()]).await?
+			.map(|row| kind_from_sql(row.get(0))))
 	}
 }
