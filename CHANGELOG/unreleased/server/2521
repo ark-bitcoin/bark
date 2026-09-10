@@ -1,4 +1,0 @@
-- Price a 2-in-3-out tx in the default offboard `fixed_additional_vb`
-  Offboard txs now always carry a change output. Operators who copied the old
-  default of 212 should raise it to 221.
-  [#2521](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2521)

@@ -1,5 +1,0 @@
-- Stuck nursery txs report their mempool chunk feerate
-  Read from `getmempoolentry`, shown in the missed-target warning and
-  `captaind rpc nursery list`.
-  [#2526](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2526)
-  - **BREAKING:** captaind requires Bitcoin Core v31 or later

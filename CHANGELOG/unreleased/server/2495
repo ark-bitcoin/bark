@@ -1,4 +1,0 @@
-- Introduced the `htlc_vtxo`-table.
-  Operator note: existing deployments MUST backfill the table once with
-  `captaind data backfill-htlc-vtxos`.
-  [#2495](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2495)
