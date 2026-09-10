@@ -341,15 +341,6 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		TrustedBalance { trusted, untrusted }
 	}
 
-	/// Return all UTXOs that are untrusted.
-	fn untrusted_utxos(&self, min_confs: u32) -> Vec<OutPoint> {
-		TrustedCanonicalization::from_wallet(self.borrow(), min_confs)
-			.list_unspent()
-			.filter(|u| !u.is_trusted)
-			.map(|u| u.outpoint)
-			.collect()
-	}
-
 	/// Check if a transaction is fully owned by the wallet (all inputs spend
 	/// wallet-owned outputs).
 	fn is_fully_owned_tx(&self, txid: Txid) -> bool {
