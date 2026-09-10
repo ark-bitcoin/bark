@@ -18,6 +18,8 @@ use bark_json::exit::ExitState;
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt};
 use bitcoin_ext::rpc::BitcoinRpcExt;
+use server::database::Db;
+use server::database::htlc_vtxo::{self, HtlcResolution};
 use server_rpc::protos::{self, lightning_payment_status};
 
 use ark_testing::{
@@ -754,7 +756,12 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10))
+		.watchmand_cfg(|cfg| {
+			// The watchmand must watch blocks without racing the exit below.
+			cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+			cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
+		}).create().await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -890,6 +897,15 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	assert_eq!(exit_movement.exited_vtxos.len(), 0);
 	assert_eq!(exit_movement.time.completed_at.is_some(), true);
 	assert_eq!(exit_movement.metadata.is_none(), true);
+
+	// The server flags the htlc revoked once it sees the user's timeout claim on-chain.
+	let tip = ctx.generate_blocks(1).await;
+	srv.watchmand().wait_for_sync_height(tip).await;
+	let postgres = srv.config().postgres.clone();
+	let db = Db::connect(&postgres).await.unwrap();
+	let htlc = db.read(async |t| htlc_vtxo::get_htlc_vtxo(t, htlc_vtxos[0]).await).await
+		.unwrap().expect("htlc vtxo present");
+	assert_eq!(htlc.htlc.chain_resolution, Some(HtlcResolution::Revoked));
 }
 
 #[tokio::test]
@@ -902,7 +918,12 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10))
+		.watchmand_cfg(|cfg| {
+			// The watchmand must watch blocks without racing the exit below.
+			cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+			cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
+		}).create().await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -1050,6 +1071,15 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	assert_eq!(exit_movement.exited_vtxos.len(), 0);
 	assert_eq!(exit_movement.time.completed_at.is_some(), true);
 	assert_eq!(exit_movement.metadata.is_none(), true);
+
+	// The server flags the htlc revoked once it sees the user's timeout claim on-chain.
+	let tip = ctx.generate_blocks(1).await;
+	srv.watchmand().wait_for_sync_height(tip).await;
+	let postgres = srv.config().postgres.clone();
+	let db = Db::connect(&postgres).await.unwrap();
+	let htlc = db.read(async |t| htlc_vtxo::get_htlc_vtxo(t, htlc_vtxos[0]).await).await
+		.unwrap().expect("htlc vtxo present");
+	assert_eq!(htlc.htlc.chain_resolution, Some(HtlcResolution::Revoked));
 }
 
 #[tokio::test]
@@ -1288,7 +1318,12 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.captaind("srv").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	let srv = ctx.captaind("srv").lightningd(&lightning.internal).funded(btc(10))
+		.watchmand_cfg(|cfg| {
+			// The watchmand must watch blocks without racing the exit below.
+			cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+			cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
+		}).create().await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -1412,6 +1447,15 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	assert_eq!(exit_movement.exited_vtxos.len(), 0);
 	assert_eq!(exit_movement.time.completed_at.is_some(), true);
 	assert_eq!(exit_movement.metadata.is_none(), true);
+
+	// The server flags the htlc fulfilled once it sees the user's preimage claim on-chain.
+	let tip = ctx.generate_blocks(1).await;
+	srv.watchmand().wait_for_sync_height(tip).await;
+	let postgres = srv.config().postgres.clone();
+	let db = Db::connect(&postgres).await.unwrap();
+	let htlc = db.read(async |t| htlc_vtxo::get_htlc_vtxo(t, htlc_vtxos[0]).await).await
+		.unwrap().expect("htlc vtxo present");
+	assert_eq!(htlc.htlc.chain_resolution, Some(HtlcResolution::Fulfilled));
 }
 
 /// Once a VTXO is queued for exit but before the chain has broadcast, the wallet should
