@@ -1789,11 +1789,11 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 
 	// Find the htlc subscription (should be in Created state)
 	let payment_hash: ark::lightning::PaymentHash = (&bolt11).into();
-	let subs = db.read(async |t| t.get_htlc_subscriptions_by_payment_hash(payment_hash).await).await.unwrap();
-	assert_eq!(subs.len(), 1);
-	assert_eq!(subs[0].status, LightningHtlcSubscriptionStatus::Created);
+	let sub = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
+		.await.unwrap().expect("subscription stored");
+	assert_eq!(sub.status, LightningHtlcSubscriptionStatus::Created);
 
-	let sub_id = subs[0].id;
+	let sub_id = sub.id;
 
 	// Update status to Accepted
 	db.write(async |t| t.store_lightning_htlc_subscription_status(

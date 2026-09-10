@@ -576,34 +576,29 @@ impl Server {
 			}
 		}
 
-		let subscriptions = self.db.read(async |t| t.get_htlc_subscriptions_by_payment_hash(payment_hash).await).await?;
-
-		let subscriptions_by_status = subscriptions.iter()
-			.fold::<HashMap<_, Vec<_>>, _>(HashMap::new(), |mut acc, sub| {
-				acc.entry(sub.status).or_default().push(sub);
-				acc
-			});
-
-		if subscriptions_by_status.contains_key(&LightningHtlcSubscriptionStatus::Settled) {
-			bail!("invoice already settled");
-		}
-
-		if subscriptions_by_status.contains_key(&LightningHtlcSubscriptionStatus::Accepted) {
-			bail!("invoice already accepted");
-		}
-
-		if subscriptions_by_status.contains_key(&LightningHtlcSubscriptionStatus::HtlcsReady) {
-			bail!("invoice already has htlcs ready");
-		}
-
-		if let Some(created) = subscriptions_by_status.get(&LightningHtlcSubscriptionStatus::Created) {
-			if let Some(subscription) = created.first() {
-				trace!("Found existing created subscription, returning invoice: {}",
-					subscription.invoice.to_string(),
-				);
-				return Ok(protos::StartLightningReceiveResponse {
-					bolt11: subscription.invoice.to_string()
-				})
+		// A payment hash carries at most one subscription.
+		let subscription = self.db.read(async |t|
+			t.get_htlc_subscription_by_payment_hash(payment_hash).await
+		).await?;
+		if let Some(subscription) = subscription {
+			match subscription.status {
+				LightningHtlcSubscriptionStatus::Created => {
+					trace!("Found existing created subscription, returning invoice: {}",
+						subscription.invoice.to_string(),
+					);
+					return Ok(protos::StartLightningReceiveResponse {
+						bolt11: subscription.invoice.to_string()
+					})
+				},
+				LightningHtlcSubscriptionStatus::Accepted =>
+					return badarg!("invoice already accepted"),
+				LightningHtlcSubscriptionStatus::HtlcsReady =>
+					return badarg!("invoice already has htlcs ready"),
+				LightningHtlcSubscriptionStatus::Settled =>
+					return badarg!("invoice already settled"),
+				LightningHtlcSubscriptionStatus::Canceled => return badarg!(
+					"the invoice for payment hash {} was canceled", payment_hash,
+				),
 			}
 		}
 
