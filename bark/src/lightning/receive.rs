@@ -15,6 +15,7 @@ use crate::actions::lightning::receive::{
 };
 use crate::movement::MovementStatus;
 use crate::movement::update::MovementUpdate;
+use crate::vtxo::VtxoStateKind;
 
 impl Wallet {
 	/// Returns every in-progress lightning receive checkpoint, newest first.
@@ -31,6 +32,10 @@ impl Wallet {
 	/// Calculates how much balance can currently be claimed via inbound
 	/// lightning payments. Invoices that have not yet been paid (and so hold
 	/// no HTLC vtxos) are not included.
+	///
+	/// HTLC vtxos already spent into their claim arkoor are skipped: the
+	/// checkpoint outlives the spend, so counting them would double up with
+	/// [`crate::Balance::spendable`].
 	pub async fn claimable_lightning_receive_balance(&self) -> anyhow::Result<Amount> {
 		let mut total = Amount::ZERO;
 		for recv in self.pending_lightning_receives().await? {
@@ -42,7 +47,10 @@ impl Wallet {
 				Progress::Delivering(_) => continue,
 			};
 			for id in vtxo_ids {
-				total += self.get_vtxo_by_id(*id).await?.vtxo.amount();
+				let vtxo = self.get_vtxo_by_id(*id).await?;
+				if VtxoStateKind::UNSPENT_STATES.contains(&vtxo.state.kind()) {
+					total += vtxo.vtxo.amount();
+				}
 			}
 		}
 		Ok(total)

@@ -241,6 +241,11 @@ async fn recovered_wallet_finds_lightning_receive() {
 		wait_for_spendable(&barkd, amount),
 	);
 
+	// A spendable receive means the HTLC vtxo is gone: the claim output stands
+	// alone and the amount is no longer counted as claimable too.
+	let balance = barkd.bark_balance().await;
+	assert_eq!(balance.claimable_lightning_receive, Amount::ZERO,
+		"claimed receive is still counted as claimable: {:?}", balance);
 	let before = barkd.vtxos(None).await;
 	assert_eq!(before.len(), 1, "should hold one lightning-receive VTXO after claim");
 	let recv_id = before[0].vtxo.id;
