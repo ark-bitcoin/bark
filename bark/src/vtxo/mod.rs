@@ -48,7 +48,7 @@ pub(crate) fn validate_vtxo_tree_params(
 
 #[derive(Debug, thiserror::Error)]
 pub enum VtxoValidationError {
-	#[error("chain error: {0}")]
+	#[error("chain error: {0:#}")]
 	Chain(anyhow::Error),
 	#[error("anchor not found")]
 	AnchorNotFound,
