@@ -6,12 +6,12 @@ use std::time::Duration;
 
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::Transaction;
-use chrono::Local;
+use chrono::{Local, TimeDelta};
 
 use ark::{ServerVtxo, VtxoPolicy, VtxoRequest};
 use ark::offboard::OffboardForfeitResult;
 use ark::integration::{TokenStatus, TokenType};
-use ark::lightning::{AsPaymentHash, Invoice, Preimage};
+use ark::lightning::{AsPaymentHash, Invoice, PaymentHash, Preimage};
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::rounds::RoundId;
 use ark::test_util::VTXO_VECTORS;
@@ -27,6 +27,7 @@ use server::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution};
 use server::database::tree::VtxoTreeUpdate;
 use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
+use server::database::xpay::{self, ClnXpayOutcome, ClnXpayStatus, NewClnXpay};
 use server::filters;
 use server::filters::Filters;
 use server::ln::LightningFailureKind;
@@ -1927,6 +1928,179 @@ async fn lightning_payment_attempt_stores_protocol_fee() {
 	assert_eq!(latest.user_fee, Some(expected_user_fee));
 	assert_eq!(latest.user_agent.as_deref(), Some(expected_user_agent));
 	assert_eq!(latest.retry_for, Some(expected_retry_for));
+}
+
+/// A new attempt on a payment hash, as `start_payment` stores it.
+fn new_cln_xpay(node_id: i64, payment_hash: PaymentHash) -> NewClnXpay {
+	NewClnXpay {
+		lightning_node_id: node_id,
+		payment_amount_msat: 2000,
+		max_routing_fee_msat: Some(100),
+		attempt_expiry: Local::now() + TimeDelta::seconds(60),
+		partial_msat: None,
+		htlc_expiry: Some(BlockHeight::new(900)),
+		label: None,
+		payment_hash,
+		user_fee_msat: Some(1000),
+		user_agent: None,
+	}
+}
+
+#[tokio::test]
+async fn cln_xpay_success_ends_the_attempt() {
+	let mut ctx = TestContext::new_minimal("postgresd/cln_xpay_success").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+
+	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
+	let new = new_cln_xpay(node_id, PaymentHash::from(&bolt11));
+
+	let attempt = db.write(async |t| xpay::create_xpay(&**t, &new).await).await.unwrap();
+	assert_eq!(attempt.status, ClnXpayStatus::Pending);
+
+	let pending = db.read(async |t| xpay::get_pending_xpays(&**t, node_id).await).await.unwrap();
+	assert_eq!(pending.len(), 1);
+	assert_eq!(pending[0].payment_amount_msat, 2000);
+
+	let ended = db.write(async |t| xpay::mark_xpay_success(&**t, attempt.id, Some(7)).await)
+		.await.unwrap().expect("the attempt was still pending");
+	assert_eq!(ended.status, ClnXpayStatus::Success);
+	assert_eq!(ended.routing_fee_msat, Some(7));
+
+	let pending = db.read(async |t| xpay::get_pending_xpays(&**t, node_id).await).await.unwrap();
+	assert!(pending.is_empty(), "an ended attempt is no longer pending");
+}
+
+/// Two writers can race for the one outcome the attempt can have; the loser
+/// gets `None` back.
+#[tokio::test]
+async fn cln_xpay_ends_only_once() {
+	let mut ctx = TestContext::new_minimal("postgresd/cln_xpay_ends_once").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+
+	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
+	let new = new_cln_xpay(node_id, PaymentHash::from(&bolt11));
+
+	let attempt = db.write(async |t| xpay::create_xpay(&**t, &new).await).await.unwrap();
+	db.write(async |t| xpay::mark_xpay_fail(&**t, attempt.id, Some(203)).await)
+		.await.unwrap().expect("the attempt was still pending");
+
+	let second = db.write(async |t| xpay::mark_xpay_success(&**t, attempt.id, Some(7)).await)
+		.await.unwrap();
+	assert!(second.is_none(), "an attempt that has ended cannot end again");
+
+	let stored = db.read(async |t| xpay::get_xpay_by_id(&**t, attempt.id).await)
+		.await.unwrap().expect("the attempt is stored");
+	assert_eq!(stored.status, ClnXpayStatus::Fail);
+	assert_eq!(stored.error_code, Some(203));
+}
+
+/// One payment hash carries at most one unconcluded attempt.
+#[tokio::test]
+async fn one_pending_xpay_per_payment_hash() {
+	let mut ctx = TestContext::new_minimal("postgresd/one_pending_xpay").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+
+	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
+	let new = new_cln_xpay(node_id, PaymentHash::from(&bolt11));
+
+	let attempt = db.write(async |t| xpay::create_xpay(&**t, &new).await).await.unwrap();
+	db.write(async |t| xpay::create_xpay(&**t, &new).await).await
+		.expect_err("a second pending attempt on the same hash is refused");
+
+	db.write(async |t| xpay::mark_xpay_fail(&**t, attempt.id, None).await)
+		.await.unwrap().expect("the attempt was still pending");
+	db.write(async |t| xpay::create_xpay(&**t, &new).await).await
+		.expect("the payment can be attempted again once the first attempt ended");
+}
+
+/// The payment handler only knows the payment hash of the attempt it ends, and
+/// the pending attempt on a hash is unique, so the hash is enough to end it.
+#[tokio::test]
+async fn end_pending_xpay_by_payment_hash() {
+	let mut ctx = TestContext::new_minimal("postgresd/end_pending_xpay_by_hash").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+
+	let payment_hash = Preimage::random().compute_payment_hash();
+
+	// Nothing pending yet: the payment predates the table or already ended.
+	let none = db.write(async |t| xpay::end_pending_xpay_by_payment_hash(
+		&**t, payment_hash, ClnXpayOutcome::Fail { error_code: None },
+	).await).await.unwrap();
+	assert!(none.is_none());
+
+	let new = new_cln_xpay(node_id, payment_hash);
+	let attempt = db.write(async |t| xpay::create_xpay(&**t, &new).await).await.unwrap();
+
+	let ended = db.write(async |t| xpay::end_pending_xpay_by_payment_hash(
+		&**t, payment_hash, ClnXpayOutcome::Success { routing_fee_msat: Some(-5) },
+	).await).await.unwrap().expect("the attempt was pending");
+	assert_eq!(ended.id, attempt.id);
+	assert_eq!(ended.status, ClnXpayStatus::Success);
+	assert_eq!(ended.routing_fee_msat, Some(-5), "a subsidized payment keeps its sign");
+
+	let again = db.write(async |t| xpay::end_pending_xpay_by_payment_hash(
+		&**t, payment_hash, ClnXpayOutcome::Fail { error_code: None },
+	).await).await.unwrap();
+	assert!(again.is_none(), "an ended attempt is not pending any more");
+
+	let all = db.read(async |t| xpay::get_xpays_by_payment_hash(&**t, payment_hash).await)
+		.await.unwrap();
+	assert_eq!(all.len(), 1);
+	assert_eq!(all[0].status, ClnXpayStatus::Success);
+}
+
+/// The initiating client is stored on the attempt so that a reader off the
+/// initiating RPC task can still tell which client made the payment.
+#[tokio::test]
+async fn cln_xpay_stores_the_user_agent() {
+	let mut ctx = TestContext::new_minimal("postgresd/cln_xpay_user_agent").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+
+	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
+	let mut new = new_cln_xpay(node_id, PaymentHash::from(&bolt11));
+	new.user_agent = Some("bark-wasm/0.7.1".into());
+
+	let attempt = db.write(async |t| xpay::create_xpay(&**t, &new).await).await.unwrap();
+	assert_eq!(attempt.user_agent.as_deref(), Some("bark-wasm/0.7.1"));
+
+	let stored = db.read(async |t| xpay::get_xpay_by_id(&**t, attempt.id).await)
+		.await.unwrap().expect("the attempt is stored");
+	assert_eq!(stored.user_agent.as_deref(), Some("bark-wasm/0.7.1"));
 }
 
 #[tokio::test]

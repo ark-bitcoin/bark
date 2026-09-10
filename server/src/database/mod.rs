@@ -19,6 +19,7 @@ pub mod nursery;
 pub mod rounds;
 pub mod tree;
 pub mod vtxopool;
+pub mod xpay;
 
 mod model;
 mod query;
