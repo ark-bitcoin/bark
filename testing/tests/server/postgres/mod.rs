@@ -671,8 +671,8 @@ async fn nursery_txs() {
 	assert_eq!(active[0].kind, NurseryTxKind::Round);
 	assert_eq!(active[0].confirm_target_height, 100);
 	assert_eq!(active[0].confirmed_at_height, None);
-	let unconfirmed = db.read(async |t| t.get_unconfirmed_nursery_txids().await).await.unwrap();
-	assert_eq!(unconfirmed, vec![txid]);
+	let unconfirmed = db.read(async |t| t.get_unconfirmed_nursery_txs().await).await.unwrap();
+	assert_eq!(unconfirmed, vec![(txid, NurseryTxKind::Round)]);
 
 	// Upserting again keeps the original target.
 	db.write(async |t| t.upsert_nursery_tx(&tx, NurseryTxKind::Round, 200).await).await.unwrap();
@@ -686,37 +686,39 @@ async fn nursery_txs() {
 	assert_eq!(active.len(), 1);
 	assert_eq!(active[0].confirmed_at_height, Some(105));
 	assert!(db.read(async |t| t.get_active_nursery_txs(105).await).await.unwrap().is_empty());
-	assert!(db.read(async |t| t.get_unconfirmed_nursery_txids().await).await.unwrap().is_empty());
+	assert!(db.read(async |t| t.get_unconfirmed_nursery_txs().await).await.unwrap().is_empty());
 
 	// Recording the same confirmation again reports no change.
 	assert!(!db.write(async |t| t.set_nursery_tx_confirmed(txid, 105).await).await.unwrap());
 
 	// A confirmed tx can't be abandoned: it has to stay active in case
 	// a reorg evicts its confirmation.
-	assert!(!db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap());
+	assert!(db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap().is_none());
 
 	// A reorg unconfirms all txs confirmed after the fork point.
 	assert!(db.write(async |t| t.clear_nursery_confirmations_after(105).await).await.unwrap().is_empty());
 	let reorged = db.write(async |t| t.clear_nursery_confirmations_after(104).await).await.unwrap();
-	assert_eq!(reorged, vec![(txid, 105)]);
+	assert_eq!(reorged, vec![(txid, NurseryTxKind::Round, 105)]);
 	let active = db.read(async |t| t.get_active_nursery_txs(105).await).await.unwrap();
 	assert_eq!(active.len(), 1);
 	assert_eq!(active[0].confirmed_at_height, None);
 
-	// Abandoning the tx removes it from the active set.
-	assert!(db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap());
+	// Abandoning the tx removes it from the active set, and reports the
+	// kind of the tx that was abandoned.
+	let abandoned = db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap();
+	assert_eq!(abandoned, Some(NurseryTxKind::Round));
 	assert!(db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap().is_empty());
-	assert!(db.read(async |t| t.get_unconfirmed_nursery_txids().await).await.unwrap().is_empty());
+	assert!(db.read(async |t| t.get_unconfirmed_nursery_txs().await).await.unwrap().is_empty());
 
 	// Abandoning twice or abandoning an unknown txid reports failure.
-	assert!(!db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap());
+	assert!(db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap().is_none());
 	let unknown = Transaction {
 		version: bitcoin::transaction::Version::non_standard(43),
 		lock_time: bitcoin::absolute::LockTime::ZERO,
 		input: vec![],
 		output: vec![],
 	}.compute_txid();
-	assert!(!db.write(async |t| t.abandon_nursery_tx(unknown).await).await.unwrap());
+	assert!(db.write(async |t| t.abandon_nursery_tx(unknown).await).await.unwrap().is_none());
 }
 
 #[tokio::test]

@@ -1,4 +1,8 @@
 
+//! Nursery messages. The `kind` field of each one is the kind of the tx
+//! the nursery is following up on: round, offboard, vtxopool or
+//! internal.
+
 use bitcoin::{FeeRate, Txid};
 use bitcoin_ext::BlockHeight;
 
@@ -6,6 +10,7 @@ use bitcoin_ext::BlockHeight;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BroadcastingTx {
 	pub txid: Txid,
+	pub kind: String,
 	#[serde(with = "crate::serde_utils::hex")]
 	pub raw_tx: Vec<u8>,
 }
@@ -15,6 +20,7 @@ impl_slog!(BroadcastingTx, TRACE, "marked tx for broadcast");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxBroadcastError {
 	pub txid: Txid,
+	pub kind: String,
 	#[serde(with = "crate::serde_utils::hex")]
 	pub raw_tx: Vec<u8>,
 	pub error: String,
@@ -25,6 +31,7 @@ impl_slog!(TxBroadcastError, ERROR, "Error broadcasting one of our txs");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NurseryTxConfirmed {
 	pub txid: Txid,
+	pub kind: String,
 	pub blockheight: BlockHeight,
 }
 impl_slog!(NurseryTxConfirmed, DEBUG, "nursery tx confirmed");
@@ -33,6 +40,7 @@ impl_slog!(NurseryTxConfirmed, DEBUG, "nursery tx confirmed");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NurseryTxReorged {
 	pub txid: Txid,
+	pub kind: String,
 	pub previous_height: BlockHeight,
 }
 impl_slog!(NurseryTxReorged, WARN, "nursery tx was unconfirmed by a reorg");
@@ -43,6 +51,7 @@ impl_slog!(NurseryTxReorged, WARN, "nursery tx was unconfirmed by a reorg");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NurseryTxMissedTarget {
 	pub txid: Txid,
+	pub kind: String,
 	pub confirm_target_height: BlockHeight,
 	pub current_height: BlockHeight,
 	/// Chunk feerate bitcoind reports for the tx, in sat/kvb. None if the
@@ -58,6 +67,7 @@ impl_slog!(NurseryTxMissedTarget, WARN,
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NurseryTxFeerateError {
 	pub txid: Txid,
+	pub kind: String,
 	pub error: String,
 }
 impl_slog!(NurseryTxFeerateError, WARN, "failed to fetch the mempool feerate of a nursery tx");
@@ -66,6 +76,7 @@ impl_slog!(NurseryTxFeerateError, WARN, "failed to fetch the mempool feerate of 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NurseryTxAbandoned {
 	pub txid: Txid,
+	pub kind: String,
 }
 impl_slog!(NurseryTxAbandoned, WARN,
 	"operator abandoned a nursery tx; it will no longer be followed up"
