@@ -1,0 +1,7 @@
+- Exit responses can report the `vtxo-swept` state
+  Exits now report a `vtxo-swept` state, with a `spent_inputs` field listing the
+  exit transaction inputs that were taken, when they end because an output the
+  exit chain needed was spent on chain. Fee
+  estimation returns a distinct error for such a VTXO rather than reporting it
+  as already spent, and suggests attempting a refresh.
+  [#2542](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2542)

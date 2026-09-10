@@ -7,7 +7,8 @@ use utoipa::ToSchema;
 
 use crate::exit::states::{
 	ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
-	ExitClaimedState, ExitStartState, ExitTx, ExitVtxoAlreadySpentState, ExitCanceledState,
+	ExitClaimedState, ExitStartState, ExitTx, ExitVtxoAlreadySpentState, ExitVtxoSweptState,
+	ExitCanceledState,
 };
 
 /// A utility type to wrap ExitState children so they can be easily serialized. This also helps with
@@ -23,6 +24,7 @@ pub enum ExitState {
 	ClaimInProgress(ExitClaimInProgressState),
 	Claimed(ExitClaimedState),
 	VtxoAlreadySpent(ExitVtxoAlreadySpentState),
+	VtxoSwept(ExitVtxoSweptState),
 	Canceled(ExitCanceledState),
 }
 
@@ -59,6 +61,12 @@ impl From<bark::exit::ExitState> for ExitState {
 			bark::exit::ExitState::VtxoAlreadySpent(s) => ExitState::VtxoAlreadySpent(
 				ExitVtxoAlreadySpentState { tip_height: s.tip_height },
 			),
+			bark::exit::ExitState::VtxoSwept(s) => ExitState::VtxoSwept(
+				ExitVtxoSweptState {
+					tip_height: s.tip_height,
+					spent_inputs: s.spent_inputs,
+				},
+			),
 			bark::exit::ExitState::Canceled(s) => ExitState::Canceled(
 				ExitCanceledState { tip_height: s.tip_height },
 			),
@@ -79,6 +87,7 @@ pub enum ExitStateKind {
 	ClaimInProgress,
 	Claimed,
 	VtxoAlreadySpent,
+	VtxoSwept,
 	Canceled,
 }
 
@@ -92,6 +101,7 @@ impl From<bark::exit::ExitStateKind> for ExitStateKind {
 			bark::exit::ExitStateKind::ClaimInProgress => ExitStateKind::ClaimInProgress,
 			bark::exit::ExitStateKind::Claimed => ExitStateKind::Claimed,
 			bark::exit::ExitStateKind::VtxoAlreadySpent => ExitStateKind::VtxoAlreadySpent,
+			bark::exit::ExitStateKind::VtxoSwept => ExitStateKind::VtxoSwept,
 			bark::exit::ExitStateKind::Canceled => ExitStateKind::Canceled,
 		}
 	}
@@ -107,6 +117,7 @@ impl std::fmt::Display for ExitStateKind {
 			ExitStateKind::ClaimInProgress => "claim-in-progress",
 			ExitStateKind::Claimed => "claimed",
 			ExitStateKind::VtxoAlreadySpent => "vtxo-already-spent",
+			ExitStateKind::VtxoSwept => "vtxo-swept",
 			ExitStateKind::Canceled => "canceled",
 		};
 		f.write_str(s)

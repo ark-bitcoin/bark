@@ -74,6 +74,7 @@ docs/ExitErrorOneOf30.md
 docs/ExitErrorOneOf31.md
 docs/ExitErrorOneOf32.md
 docs/ExitErrorOneOf33.md
+docs/ExitErrorOneOf34.md
 docs/ExitErrorOneOf4.md
 docs/ExitErrorOneOf5.md
 docs/ExitErrorOneOf6.md
@@ -97,6 +98,7 @@ docs/ExitStateOneOf4.md
 docs/ExitStateOneOf5.md
 docs/ExitStateOneOf6.md
 docs/ExitStateOneOf7.md
+docs/ExitStateOneOf8.md
 docs/ExitStatusRequest.md
 docs/ExitTransactionPackage.md
 docs/ExitTransactionStatus.md
@@ -112,6 +114,7 @@ docs/ExitTxStatusOneOf2.md
 docs/ExitTxStatusOneOf3.md
 docs/ExitTxStatusOneOf4.md
 docs/ExitVtxoAlreadySpentState.md
+docs/ExitVtxoSweptState.md
 docs/ExitsApi.md
 docs/FeeEstimateQuery.md
 docs/FeeEstimateResponse.md
@@ -284,6 +287,7 @@ src/models/exit_error_one_of_30.rs
 src/models/exit_error_one_of_31.rs
 src/models/exit_error_one_of_32.rs
 src/models/exit_error_one_of_33.rs
+src/models/exit_error_one_of_34.rs
 src/models/exit_error_one_of_4.rs
 src/models/exit_error_one_of_5.rs
 src/models/exit_error_one_of_6.rs
@@ -307,6 +311,7 @@ src/models/exit_state_one_of_4.rs
 src/models/exit_state_one_of_5.rs
 src/models/exit_state_one_of_6.rs
 src/models/exit_state_one_of_7.rs
+src/models/exit_state_one_of_8.rs
 src/models/exit_status_request.rs
 src/models/exit_transaction_package.rs
 src/models/exit_transaction_status.rs
@@ -322,6 +327,7 @@ src/models/exit_tx_status_one_of_2.rs
 src/models/exit_tx_status_one_of_3.rs
 src/models/exit_tx_status_one_of_4.rs
 src/models/exit_vtxo_already_spent_state.rs
+src/models/exit_vtxo_swept_state.rs
 src/models/fee_estimate_query.rs
 src/models/fee_estimate_response.rs
 src/models/fee_info.rs

@@ -11,6 +11,7 @@
 | ClaimInProgress | claim-in-progress |
 | Claimed | claimed |
 | VtxoAlreadySpent | vtxo-already-spent |
+| VtxoSwept | vtxo-swept |
 | Canceled | canceled |
 
 

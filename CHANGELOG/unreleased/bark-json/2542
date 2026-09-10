@@ -1,0 +1,7 @@
+- Add the `vtxo-swept` exit state and error
+  `ExitState` and `ExitStateKind` gained a `VtxoSwept` variant, reported when an
+  exit ends because an output its chain needed was spent on chain. It carries
+  the exit transaction inputs that were taken. `ExitError` gained a matching
+  `VtxoSwept` variant, kept apart from `VtxoAlreadySpent` because the cause
+  differs.
+  [#2542](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2542)

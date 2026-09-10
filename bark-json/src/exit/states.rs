@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use bitcoin::Txid;
+use bitcoin::{OutPoint, Txid};
 
 use bitcoin_ext::BlockHeight;
 use crate::primitives::BlockRef;
@@ -162,6 +162,16 @@ pub struct ExitClaimedState {
 pub struct ExitVtxoAlreadySpentState {
 	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub tip_height: BlockHeight,
+}
+
+/// JSON mirror of [bark::exit::ExitVtxoSweptState].
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct ExitVtxoSweptState {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
+	pub tip_height: BlockHeight,
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
+	pub spent_inputs: Vec<OutPoint>,
 }
 
 /// JSON mirror of [bark::exit::ExitCanceledState].

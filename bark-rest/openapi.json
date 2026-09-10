@@ -5000,6 +5000,24 @@
           {
             "type": "object",
             "required": [
+              "vtxo",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "vtxo-swept"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "error",
               "type"
             ],
@@ -5317,6 +5335,27 @@
           {
             "allOf": [
               {
+                "$ref": "#/components/schemas/ExitVtxoSweptState"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "vtxo-swept"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
                 "$ref": "#/components/schemas/ExitCanceledState"
               },
               {
@@ -5349,6 +5388,7 @@
           "claim-in-progress",
           "claimed",
           "vtxo-already-spent",
+          "vtxo-swept",
           "canceled"
         ]
       },
@@ -5611,6 +5651,27 @@
           "tip_height"
         ],
         "properties": {
+          "tip_height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "ExitVtxoSweptState": {
+        "type": "object",
+        "description": "JSON mirror of [bark::exit::ExitVtxoSweptState].",
+        "required": [
+          "tip_height",
+          "spent_inputs"
+        ],
+        "properties": {
+          "spent_inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "tip_height": {
             "type": "integer",
             "format": "int32",

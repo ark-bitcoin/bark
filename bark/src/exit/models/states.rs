@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use bitcoin::Txid;
+use bitcoin::{OutPoint, Txid};
 
 use bitcoin_ext::{BlockHeight, BlockRef};
 
@@ -144,6 +144,19 @@ pub struct ExitVtxoAlreadySpentState {
 	pub tip_height: BlockHeight,
 }
 
+/// Terminal state for an exit whose chain was spent on chain by someone else, in practice the
+/// server sweeping a VTXO that expired mid-exit. No exit transaction can confirm any more; a
+/// refresh may still be possible, depending on what took the output.
+///
+/// `spent_inputs` records which of the exit transaction's inputs were taken. The exit only
+/// reaches this state once those spends are buried deep enough that a reorg is not expected to
+/// undo them, so the spending transactions themselves aren't kept.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExitVtxoSweptState {
+	pub tip_height: BlockHeight,
+	pub spent_inputs: Vec<OutPoint>,
+}
+
 /// Resumable state for the current exit attempt: the user explicitly canceled the exit while
 /// it was still in its abortable window (before any exit transaction was broadcast).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -190,6 +203,12 @@ impl Into<ExitState> for ExitClaimedState {
 impl Into<ExitState> for ExitVtxoAlreadySpentState {
 	fn into(self) -> ExitState {
 		ExitState::VtxoAlreadySpent(self)
+	}
+}
+
+impl Into<ExitState> for ExitVtxoSweptState {
+	fn into(self) -> ExitState {
+		ExitState::VtxoSwept(self)
 	}
 }
 

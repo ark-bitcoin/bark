@@ -6,10 +6,11 @@ use crate::chain::BroadcastError;
 use crate::exit::models::{
 	ExitError, ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
 	ExitClaimedState, ExitState, ExitStartState, ExitTx, ExitTxStatus, ExitVtxoAlreadySpentState,
+	ExitVtxoSweptState,
 	ExitCanceledState,
 };
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
-use crate::exit::progress::util::{count_broadcast, count_confirmed};
+use crate::exit::progress::util::{count_broadcast, count_confirmed, format_outpoints};
 use crate::vtxo::VtxoStateKind;
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -39,6 +40,7 @@ impl ExitStateProgress for ExitState {
 			ExitState::ClaimInProgress(s) => s.progress(ctx).await,
 			ExitState::Claimed(s) => s.progress(ctx).await,
 			ExitState::VtxoAlreadySpent(s) => s.progress(ctx).await,
+			ExitState::VtxoSwept(s) => s.progress(ctx).await,
 			ExitState::Canceled(s) => s.progress(ctx).await,
 		}
 	}
@@ -91,6 +93,24 @@ impl ExitStateProgress for ExitProcessingState {
 					}
 					return Err(e.into());
 				},
+			}
+		}
+
+		// Check whether the vtxo was swept, or its exit chain otherwise spent, out from under us.
+		// Only the frontier tx is worth checking: a confirmed tx proves its own inputs, and the
+		// txs below the frontier spend outputs that aren't on chain yet. A frontier with a CPFP
+		// in the mempool demonstrably still has unspent inputs, so only check it without one.
+		// Runs after the pass above so it sees the statuses we just refreshed.
+		if let Some(frontier) = transactions.iter().find(|tx| tx.status.confirmed_in().is_none()) {
+			if matches!(frontier.status, ExitTxStatus::AwaitingCpfpBroadcast) {
+				let spent_inputs = ctx.tx_manager.find_conflicting_spend(tip, frontier.txid).await?;
+				if !spent_inputs.is_empty() {
+					warn!("Exit tx {} for VTXO {} can never confirm: its inputs {} were spent, \
+						aborting the exit",
+						frontier.txid, ctx.vtxo.id(), format_outpoints(&spent_inputs),
+					);
+					return Ok(ExitState::new_vtxo_swept(tip, spent_inputs));
+				}
 			}
 		}
 
@@ -380,6 +400,20 @@ impl ExitStateProgress for ExitVtxoAlreadySpentState {
 		ctx: &mut ProgressContext<'_>,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		trace!("Exit for VTXO {} cannot proceed: VTXO was already spent.", ctx.vtxo.id());
+		Ok(self.into())
+	}
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl ExitStateProgress for ExitVtxoSweptState {
+	async fn progress(
+		self,
+		ctx: &mut ProgressContext<'_>,
+	) -> anyhow::Result<ExitState, ExitProgressError> {
+		trace!("Exit for VTXO {} cannot proceed: its chain was swept on inputs {}.",
+			ctx.vtxo.id(), format_outpoints(&self.spent_inputs),
+		);
 		Ok(self.into())
 	}
 }

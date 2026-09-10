@@ -89,6 +89,7 @@ impl Exit {
 	/// - [ExitError::DustLimit] if a VTXO is below the dust limit (it can't be exited).
 	/// - [ExitError::VtxoAlreadyExited] if a VTXO has already completed its exit.
 	/// - [ExitError::VtxoAlreadySpent] if a VTXO was already spent (e.g. forfeited in a round).
+	/// - [ExitError::VtxoSwept] if an output a VTXO's exit chain needs was spent on chain.
 	pub async fn estimate_emergency_exit_fee(
 		&self,
 		vtxos: &[VtxoId],

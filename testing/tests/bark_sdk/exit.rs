@@ -115,8 +115,24 @@ async fn watchman_sweeps_funding_tx_during_exit() {
 		swept {:?}", anchor, vtxo, swept,
 	);
 
-	// Give the client every chance to finish the exit and take the money.
 	wallet.exit_mgr().start_exit_for_entire_wallet().await.expect("starting the exit");
+
+	// Confirm the sweep, but only just. Ending an exit can't be undone, so a spend a reorg could
+	// still take back must not end one: the exit has to keep going until the sweep is buried.
+	// Progressing repeatedly without new blocks keeps it one deep while the exit reaches the
+	// state that does the checking, so this can't pass by never getting that far.
+	ctx.generate_blocks(1).await;
+	let mut shallow = None;
+	for _ in 0..3 {
+		wallet.sync_onchain().await.expect("onchain sync");
+		let _ = wallet.progress_exits().await;
+		shallow = wallet.exit_mgr().get_exit_vtxo(vtxo).await.map(|e| e.state().clone());
+	}
+	assert!(matches!(shallow, Some(ExitState::Processing(_))),
+		"a sweep one block deep must leave the exit running, was {:?}", shallow,
+	);
+
+	// Give the client every chance to finish the exit and take the money.
 	let mut claimable = false;
 	let mut state = None;
 	for _ in 0..15 {
@@ -128,8 +144,8 @@ async fn watchman_sweeps_funding_tx_during_exit() {
 		ctx.generate_blocks(1).await;
 	}
 
-	assert!(matches!(state, Some(ExitState::VtxoAlreadySpent(_))),
-		"exit of a swept vtxo must terminate as VtxoAlreadySpent, was {:?}", state,
+	assert!(matches!(state, Some(ExitState::VtxoSwept(_))),
+		"exit of a swept vtxo must terminate as VtxoSwept, was {:?}", state,
 	);
 	// A swept output can never be claimed, so the exit must never have offered it.
 	assert!(!claimable, "the exit of a swept vtxo must never become claimable");
@@ -275,8 +291,8 @@ async fn watchman_sweeps_vtxo_chain_during_exit() {
 		ctx.generate_blocks(1).await;
 	}
 
-	assert!(matches!(state, Some(ExitState::VtxoAlreadySpent(_))),
-		"exit whose chain was swept must terminate as VtxoAlreadySpent, was {:?}", state,
+	assert!(matches!(state, Some(ExitState::VtxoSwept(_))),
+		"exit whose chain was swept must terminate as VtxoSwept, was {:?}", state,
 	);
 	// A swept output can never be claimed, so the exit must never have offered it.
 	assert!(!claimable, "the exit of a swept vtxo must never become claimable");
