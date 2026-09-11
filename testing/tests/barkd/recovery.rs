@@ -121,6 +121,56 @@ async fn recovered_wallet_finds_scheduled_delegated_refresh_output() {
 	recovered.send(&recipient.ark_address().await, sat(50_000)).await;
 }
 
+/// Wallet recovery of a scheduled delegated refresh whose round-output VTXO is
+/// already expired by the time the wallet recovers from seed.
+#[tokio::test]
+#[ignore] // currently fails
+async fn recovered_wallet_finds_delegated_refresh_output_expired_output() {
+	require_bark_version!(> "0.7.1");
+
+	let ctx = TestContext::new("barkd/recovered_wallet_finds_delegated_refresh_output_expired_output").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
+	let board_id = barkd.vtxos(None).await[0].vtxo.id;
+	let mnemonic = barkd.mnemonic().await;
+
+	// Schedule a delegated refresh a few blocks in the future.
+	let tip = ctx.bitcoind().tip_watcher().tip().height;
+	let scheduled_height = tip + 6;
+	barkd.refresh_delegated(vec![board_id.to_string()], Some(scheduled_height)).await;
+
+	// Delete the wallet. From here on the server acts alone.
+	barkd.stop().await.expect("failed to stop barkd");
+
+	// Mine to the scheduled height; the server completes the participation in
+	// the next round.
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	ctx.generate_blocks(scheduled_height - tip).await;
+	srv.wait_for_sync_height(scheduled_height).await;
+	srv.trigger_round().await;
+	let finished = log_round_finished.recv().wait(secs(60)).await
+		.expect("server should complete the scheduled delegated refresh in a round");
+	assert!(finished.nb_input_vtxos >= 1,
+		"the delegated refresh should forfeit the board VTXO");
+
+	// Mine past the round-output VTXO's expiry before recovering.
+	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+
+	// Recover from the seed.
+	let recovered = ctx.barkd("bark_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(None).await;
+	assert_eq!(after.len(), 1,
+		"recovered wallet should hold the expired round-output VTXO, got {:?}", after);
+	assert_ne!(after[0].vtxo.id, board_id,
+		"the board VTXO was forfeited in the round; only the round output should recover");
+}
+
 /// Wallet recovery from seed after a round refresh.
 ///
 /// Board a VTXO, then refresh it into a round: the board VTXO is spent as the
