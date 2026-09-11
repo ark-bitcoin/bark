@@ -72,7 +72,6 @@ async fn recovered_wallet_finds_boarded_vtxo() {
 /// Wallet recovery of a scheduled delegated refresh completed while the
 /// wallet was gone.
 #[tokio::test]
-#[ignore] // currently fails
 async fn recovered_wallet_finds_scheduled_delegated_refresh_output() {
 	require_bark_version!(> "0.7.1");
 
@@ -124,7 +123,6 @@ async fn recovered_wallet_finds_scheduled_delegated_refresh_output() {
 /// Wallet recovery of a scheduled delegated refresh whose round-output VTXO is
 /// already expired by the time the wallet recovers from seed.
 #[tokio::test]
-#[ignore] // currently fails
 async fn recovered_wallet_finds_delegated_refresh_output_expired_output() {
 	require_bark_version!(> "0.7.1");
 
