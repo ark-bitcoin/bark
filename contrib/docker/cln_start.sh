@@ -27,6 +27,8 @@ export BITCOIN_RPCPASSWORD=${BITCOIN_RPCPASSWORD:=ark}
 echo " - bitcoin.rpcpassword: ***"
 export CLN_BIND_ADDR=${CLN_BIND_ADDR:=0.0.0.0:9735}
 echo " - bind.addr: ${CLN_BIND_ADDR}"
+export CLN_PROMETHEUS_LISTEN=${CLN_PROMETHEUS_LISTEN:=0.0.0.0:9750}
+echo " - prometheus.listen: ${CLN_PROMETHEUS_LISTEN}"
 
 if [ -n "${CLN_ANNOUNCE_ADDR}" ]; then
     echo " - announce.addr: ${CLN_ANNOUNCE_ADDR}"
@@ -55,7 +57,8 @@ echo "Booting"
 lightningd --${NETWORK} --alias="${CLN_ALIAS}" --log-level=${CLN_LOG_LEVEL} \
 	--grpc-port=${CLN_GRPC_PORT} --grpc-host=${CLN_GRPC_HOST} \
 	--bitcoin-rpcconnect=${BITCOIN_RPCCONNECT} --bitcoin-rpcuser=${BITCOIN_RPCUSER} --bitcoin-rpcpassword=${BITCOIN_RPCPASSWORD} \
-	--important-plugin=/hold/target/debug/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
+	--important-plugin=/plugins/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
+	--plugin=/plugins/cln-prometheus --prometheus-listen=${CLN_PROMETHEUS_LISTEN} \
 	--bind-addr=${CLN_BIND_ADDR} ${ANNOUNCE_ARG} ${WALLET_ARG} ${BOOKKEEPER_ARG} &
 LIGHTNINGD_PID=$!
 
@@ -130,7 +133,8 @@ EOF
 	lightningd --${NETWORK} --alias="${CLN_ALIAS}" --log-level=${CLN_LOG_LEVEL} \
 		--grpc-port=${CLN_GRPC_PORT} --grpc-host=${CLN_GRPC_HOST} \
 		--bitcoin-rpcconnect=${BITCOIN_RPCCONNECT} --bitcoin-rpcuser=${BITCOIN_RPCUSER} --bitcoin-rpcpassword=${BITCOIN_RPCPASSWORD} \
-		--important-plugin=/hold/target/debug/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
+		--important-plugin=/plugins/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
+		--plugin=/plugins/cln-prometheus --prometheus-listen=${CLN_PROMETHEUS_LISTEN} \
 		--bind-addr=${CLN_BIND_ADDR} ${ANNOUNCE_ARG} ${WALLET_ARG} ${BOOKKEEPER_ARG}
 else
 	wait ${LIGHTNINGD_PID}
