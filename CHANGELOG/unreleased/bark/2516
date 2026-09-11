@@ -1,7 +1,0 @@
-- Lock the inputs of a delegated refresh once a round is created
-  VTXOs are spendable even after submitting a delegate refresh request
-  to the server, however once the request is included in a round they
-  are marked as spent by the server. Bark will now correctly lock
-  these VTXOs so they aren't included by coin selection when making
-  payments.
-  [#2516](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2516)

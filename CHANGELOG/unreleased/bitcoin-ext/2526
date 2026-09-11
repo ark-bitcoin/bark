@@ -1,6 +1,0 @@
-- Drop the sync `BitcoinRpcExt::estimate_mempool_feerate`
-  It scored a mempool tx by its ancestor feerate, which mis-ranks a tx
-  with a high-fee unconfirmed parent or a bump from a grandchild. The
-  server now reads the chunk feerate from Core v31's `getmempoolentry`.
-  [#2526](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2526)
-  - **BREAKING:** `BitcoinRpcExt::estimate_mempool_feerate` is removed

@@ -6,6 +6,119 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.7.1
+
+- `bark`
+  - Make the VTXO key gap limit configurable
+    Recovery gave up after 50 unused key indices with no way to ask for more, so
+    a wallet that handed out many addresses without receiving into them could not
+    find its VTXOs. The limit now lives in `Config`, so it can be set in
+    `config.toml`, and the default is 250 rather than 50.
+    [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+    - **BREAKING:** `Config` gained the `vtxo_key_gap_limit` field
+    - **BREAKING:** `Wallet::recover_vtxos` takes a `gap_limit` override
+    - A limit above `MAX_VTXO_KEY_GAP_LIMIT` (100,000) is refused when the config
+      loads, since a scan derives a keypair per index it crosses
+  - Overhaul the VTXO import system
+    A variety of changes have been made to how VTXOs are imported. Previously
+    we only scanned revealed keys to check if the wallet owns a VTXO, now we
+    scan up to the configured gap limit. By default we also request the spent
+    state from the server to avoid importing a previously-spent VTXO as
+    spendable which can leave the wallet in an inconsistent state.
+    [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+    - **BREAKING:** `Wallet::import_vtxo` takes an `ImportVtxoArgs` and returns a
+      typed `ImportVtxoError`, so a caller can tell the outcomes apart
+    - **BREAKING:** `Wallet::import_vtxo` no longer refuses an expired VTXO, and
+      fails on a VTXO the server reports as neither spendable nor spent
+    - `Wallet::import_vtxos` imports a batch under one key scan and one
+      transaction, so a rejected VTXO leaves none of them stored. Set
+      `ImportVtxoArgs::allow_partial` to keep the VTXOs that did import instead
+  - Lock the inputs of a delegated refresh once a round is created
+    VTXOs are spendable even after submitting a delegate refresh request
+    to the server, however once the request is included in a round they
+    are marked as spent by the server. Bark will now correctly lock
+    these VTXOs so they aren't included by coin selection when making
+    payments.
+    [#2516](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2516)
+  - Store spent VTXOs during seed-based recovery.
+    Replaying the mailbox after performing a seed-only recovery could lead to
+    previously spent VTXOs being stored as spendable. This should no longer occur
+    as we now store spent VTXOs found during the recovery process.
+    [#2531](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2531)
+    - Spent VTXOs are not part of any balance, but they do show up in a
+      listing that includes spent VTXOs
+  - Don't re-store received VTXOs the wallet already holds
+    An arkoor package that repeated a VTXO already in the wallet reset its state
+    to spendable.
+    [#2531](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2531)
+
+- `bark-cli`
+  - Deprecate the `--vtxo` argument of `bark dev vtxo import` in favor of a
+    bare argument
+    [#2524](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2524)
+
+- `bark-json`
+  - Add `gap_limit` to `CreateWalletRequest`
+    Allows for the number of keys scanned during VTXO recovery/import to be
+    configured when necessary.
+    [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+  - Add `gap_limit`, `skip_status_check` and `allow_partial` to
+    `ImportVtxoRequest`
+    `gap_limit` overrides the wallet-wide gap limit for this specific import.
+    `skip_status_check` imports as spendable without asking the server for
+    each VTXO's state. `allow_partial` keeps the VTXOs that import successfully
+    even when another one in the request fails.
+    [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+
+- `bark-rest`
+  - Accept a VTXO key gap limit when creating a wallet
+    `POST /wallet/create` takes a `gap_limit`, which barkd writes to the config
+    it creates for the new wallet, so it applies to later imports too.
+    [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+  - Overhaul the VTXO import endpoint
+    `POST /wallet/import-vtxo` follows the wallet's new import behaviour.
+    Previously we only scanned revealed keys to check ownership, now we scan up
+    to the configured gap limit, and `gap_limit` widens it for a single request.
+    By default we also request the spent state from the server, so a
+    previously-spent VTXO is recorded as spent rather than rejected;
+    `skip_status_check` skips that query. An expired VTXO is no longer refused.
+    One VTXO that cannot be imported discards the whole request, unless it
+    passes `allow_partial`, which keeps the VTXOs that did import; the response
+    then lists only those.
+    [#2510](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2510)
+    - Answers 400 for a VTXO it cannot validate, and for one whose user pubkey
+      it cannot derive within the gap limit
+    - Answers 422 for a VTXO that is neither spendable nor spent, since it
+      becomes importable once the server finishes its flow
+
+- `bitcoin-ext`
+  - Drop the sync `BitcoinRpcExt::estimate_mempool_feerate`
+    It scored a mempool tx by its ancestor feerate, which mis-ranks a tx
+    with a high-fee unconfirmed parent or a bump from a grandchild. The
+    server now reads the chunk feerate from Core v31's `getmempoolentry`.
+    [#2526](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2526)
+    - **BREAKING:** `BitcoinRpcExt::estimate_mempool_feerate` is removed
+
+- `server`
+  - Introduced the `htlc_vtxo`-table.
+    Operator note: existing deployments MUST backfill the table once with
+    `captaind data backfill-htlc-vtxos`.
+    [#2495](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2495)
+  - Price a 2-in-3-out tx in the default offboard `fixed_additional_vb`
+    Offboard txs now always carry a change output. Operators who copied the old
+    default of 212 should raise it to 221.
+    [#2521](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2521)
+  - Stuck nursery txs report their mempool chunk feerate
+    Read from `getmempoolentry`, shown in the missed-target warning and
+    `captaind rpc nursery list`.
+    [#2526](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2526)
+    - **BREAKING:** captaind requires Bitcoin Core v31 or later
+  - Captaind uses checkpoints when issuing htlcs from the vtxopool
+    [#2528](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2528)
+  - Watchmand will not attempt to progress non-standard vtxos if the value is
+    not economical
+    [#2528](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2528)
+
 # v0.7.0
 
 - `ark-lib`

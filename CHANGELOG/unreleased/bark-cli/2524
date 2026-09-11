@@ -1,2 +1,0 @@
-- deprecate `--vtxo` argument in favor of bare arg in `bark dev vtxo import` command
-  [PR #2524](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2524)
