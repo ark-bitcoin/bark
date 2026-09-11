@@ -114,6 +114,11 @@ impl Watchmand {
 		self.get_watchman_admin_rpc().await.trigger_sweep(protos::Empty {}).await.unwrap();
 	}
 
+	pub async fn reindex_frontier(&self) -> protos::ReindexFrontierResponse {
+		self.get_watchman_admin_rpc().await.reindex_frontier(protos::Empty {}).await
+			.unwrap().into_inner()
+	}
+
 	pub fn add_slog_handler<L: SlogHandler>(&self, handler: L) {
 		self.inner.slog_handler_tx.lock().as_ref().expect("not started yet")
 			.try_send(Box::new(handler)).expect("too many slog handlers pending");
