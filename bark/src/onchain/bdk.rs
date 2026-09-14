@@ -523,12 +523,34 @@ impl OnchainWallet {
 		self.list_unspent().into_iter().map(|o| Utxo::Local(o.into())).collect()
 	}
 
+	/// Sign a psbt. Wallet-graph application is deferred to
+	/// [`Self::record_broadcast_tx`].
+	async fn sign_psbt(&mut self, mut psbt: Psbt) -> anyhow::Result<Psbt> {
+		#[allow(deprecated)]
+		let opts = bdk_wallet::SignOptions {
+			trust_witness_utxo: true,
+			..Default::default()
+		};
+		let finalized = self.inner.sign(&mut psbt, opts).context("signing error")?;
+		ensure!(finalized, "failed to succesfully sign the tx");
+		Ok(psbt)
+	}
+
+	async fn record_broadcast_tx(&mut self, tx: Transaction) -> anyhow::Result<()> {
+		self.inner.apply_unconfirmed_txs([(tx, bark_runtime::timestamp_secs())]);
+		self.persist().await
+	}
+
 	pub async fn send(&mut self, chain: &ChainSource, dest: Address, amount: Amount, fee_rate: FeeRate
 	)	-> anyhow::Result<Txid> {
 		let psbt = self.prepare_tx(&[(dest, amount)], fee_rate).await?;
-		let tx = self.finish_psbt(psbt).await?.extract_tx()?;
-		chain.broadcast_tx(&tx).await?;
-		Ok(tx.compute_txid())
+		let tx = self.sign_psbt(psbt).await?.extract_tx()?;
+		let txid = tx.compute_txid();
+		self.record_broadcast_tx(tx.clone()).await?;
+		if let Err(e) = chain.broadcast_tx(&tx).await {
+			warn!("broadcast for {txid} returned error, will retry on next sync: {e:#}");
+		}
+		Ok(txid)
 	}
 
 	pub async fn send_many(
@@ -538,9 +560,13 @@ impl OnchainWallet {
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
 		let pbst = self.prepare_tx(destinations, fee_rate).await?;
-		let tx = self.finish_psbt(pbst).await?.extract_tx()?;
-		chain.broadcast_tx(&tx).await?;
-		Ok(tx.compute_txid())
+		let tx = self.sign_psbt(pbst).await?.extract_tx()?;
+		let txid = tx.compute_txid();
+		self.record_broadcast_tx(tx.clone()).await?;
+		if let Err(e) = chain.broadcast_tx(&tx).await {
+			warn!("broadcast for {txid} returned error, will retry on next sync: {e:#}");
+		}
+		Ok(txid)
 	}
 
 
@@ -551,9 +577,13 @@ impl OnchainWallet {
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
 		let psbt = self.prepare_drain_tx(destination, fee_rate).await?;
-		let tx = self.finish_psbt(psbt).await?.extract_tx()?;
-		chain.broadcast_tx(&tx).await?;
-		Ok(tx.compute_txid())
+		let tx = self.sign_psbt(psbt).await?.extract_tx()?;
+		let txid = tx.compute_txid();
+		self.record_broadcast_tx(tx.clone()).await?;
+		if let Err(e) = chain.broadcast_tx(&tx).await {
+			warn!("broadcast for {txid} returned error, will retry on next sync: {e:#}");
+		}
+		Ok(txid)
 	}
 
 	pub fn build_tx(&mut self) -> TxBuilder<'_, DefaultCoinSelectionAlgorithm> {
