@@ -11,7 +11,7 @@ use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
 use ark::vtxo::policy::clause::{HashDelaySignClause, HashDelaySignClause_v0, TapScriptClause};
 use bitcoin_ext::BlockHeight;
 
-use crate::database::Db;
+use crate::database::{Db, Tx};
 use crate::database::htlc_vtxo::{self, HtlcResolution};
 use crate::ln::settler::HtlcSettler;
 use crate::sync::{BlockData, ChainEventListener, RawMempool};
@@ -21,6 +21,12 @@ use crate::sync::{BlockData, ChainEventListener, RawMempool};
 ///
 /// All VTXOs consist of off-chain transactions. This structure tracks when
 /// any of these transactions got confirmed onchain.
+///
+/// Every change is made both in memory and in the database. The `_in_tx`
+/// methods write through a caller-provided db tx, so that several changes
+/// can be committed together; the in-memory side is changed right away, so
+/// a caller whose tx is rolled back must [Self::reload] the frontier from
+/// the database afterwards.
 pub struct VtxoExitFrontier {
 	db: Db,
 	htlc_settler: Arc<HtlcSettler>,
@@ -64,16 +70,24 @@ impl VtxoExitFrontier {
 		vtxo: ServerVtxo,
 		confirmed_height: Option<BlockHeight>,
 	) -> anyhow::Result<()> {
+		let db = self.db.clone();
+		db.write(async |t| self.register_in_tx(t, vtxo, confirmed_height).await).await
+	}
+
+	/// Like [Self::register], but writing through the given db tx.
+	pub async fn register_in_tx(
+		&mut self,
+		tx: &Tx<'_>,
+		vtxo: ServerVtxo,
+		confirmed_height: Option<BlockHeight>,
+	) -> anyhow::Result<()> {
 		let vtxo_id = vtxo.id();
 		if !self.frontier.contains_key(&vtxo_id) {
 			self.frontier.insert(vtxo_id, (confirmed_height, vtxo));
-			self.db.write(async |t| {
-				t.add_vtxo_to_frontier(vtxo_id).await?;
-				if let Some(height) = confirmed_height {
-					t.register_vtxo_confirmation(vtxo_id, height).await?;
-				}
-				Ok(())
-			}).await?;
+			tx.add_vtxo_to_frontier(vtxo_id).await?;
+			if let Some(height) = confirmed_height {
+				tx.register_vtxo_confirmation(vtxo_id, height).await?;
+			}
 
 			slog!(WatchmanAddedVtxo, id: vtxo_id);
 		}
@@ -81,6 +95,9 @@ impl VtxoExitFrontier {
 		Ok(())
 	}
 
+	/// Remove a vtxo from the frontier because its output was spent on-chain.
+	///
+	/// Returns whether the vtxo was in the frontier.
 	pub async fn spend(
 		&mut self,
 		vtxo_id: VtxoId,
@@ -88,38 +105,48 @@ impl VtxoExitFrontier {
 		spent_txid: Txid,
 		witness: &Witness,
 	) -> anyhow::Result<bool> {
-		if let Some((_height, vtxo)) = self.frontier.remove(&vtxo_id) {
-			// Try to extract a preimage from the spending witness if this is an HTLC vtxo.
-			// This must succeed before we proceed — if persisting the preimage fails,
-			// block processing will error and the sync manager will retry. On retry the
-			// in-memory frontier is rebuilt from the DB, restoring this VTXO entry.
-			// If the HTLC tx gets unconfirmed and re-confirmed in a reorg, settle()
-			// is called again but the DB insert is idempotent (ON CONFLICT DO NOTHING).
-			if let Some(preimage) = try_extract_preimage(&vtxo, witness) {
-				self.htlc_settler.settle(preimage).await
-					.context("failed to record HTLC settlement from on-chain spend")?;
-			}
+		let db = self.db.clone();
+		db.write(async |t| {
+			self.spend_in_tx(t, vtxo_id, spent_height, spent_txid, witness).await
+		}).await
+	}
 
-			let chain_resolution = classify_htlc_spend(&vtxo, witness);
-			self.db.write(async |t| {
-				t.register_vtxo_spend(vtxo_id, spent_height, spent_txid).await?;
-				if let Some(resolution) = chain_resolution {
-					htlc_vtxo::set_htlc_vtxo_chain_resolution(
-						&t, vtxo_id, resolution, spent_height,
-					).await?;
-				}
-				Ok(())
-			}).await?;
-
-			if let Some(resolution) = chain_resolution {
-				slog!(HtlcVtxoResolvedOnChain, vtxo_id, height: spent_height,
-					resolution: resolution.as_str().to_owned(),
-				);
-			}
-			Ok(true)
-		} else {
-			Ok(false)
+	/// Like [Self::spend], but writing through the given db tx.
+	pub async fn spend_in_tx(
+		&mut self,
+		tx: &Tx<'_>,
+		vtxo_id: VtxoId,
+		spent_height: BlockHeight,
+		spent_txid: Txid,
+		witness: &Witness,
+	) -> anyhow::Result<bool> {
+		let Some((_height, vtxo)) = self.frontier.get(&vtxo_id) else {
+			return Ok(false);
+		};
+		// Try to extract a preimage from the spending witness if this is an HTLC vtxo.
+		// This must succeed before we proceed — if persisting the preimage fails,
+		// block processing will error and the sync manager will retry. On retry the
+		// in-memory frontier is rebuilt from the DB, restoring this VTXO entry.
+		// If the HTLC tx gets unconfirmed and re-confirmed in a reorg, settle()
+		// is called again but the DB insert is idempotent (ON CONFLICT DO NOTHING).
+		if let Some(preimage) = try_extract_preimage(vtxo, witness) {
+			self.htlc_settler.settle(preimage).await
+				.context("failed to record HTLC settlement from on-chain spend")?;
 		}
+
+		let chain_resolution = classify_htlc_spend(vtxo, witness);
+		tx.register_vtxo_spend(vtxo_id, spent_height, spent_txid).await?;
+		if let Some(resolution) = chain_resolution {
+			htlc_vtxo::set_htlc_vtxo_chain_resolution(tx, vtxo_id, resolution, spent_height).await?;
+		}
+		self.frontier.remove(&vtxo_id);
+
+		if let Some(resolution) = chain_resolution {
+			slog!(HtlcVtxoResolvedOnChain, vtxo_id, height: spent_height,
+				resolution: resolution.as_str().to_owned(),
+			);
+		}
+		Ok(true)
 	}
 
 	/// Mark all VTXOs with the given txid in their point as confirmed on this height
@@ -149,6 +176,7 @@ impl VtxoExitFrontier {
 		Ok(())
 	}
 
+	/// Replace the in-memory frontier with the one in the database.
 	pub async fn reload(&mut self) -> anyhow::Result<()> {
 		self.frontier = self.db.read(async |t| t.get_frontier().await).await?;
 		Ok(())
