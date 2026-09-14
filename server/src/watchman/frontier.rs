@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Context;
-use bitcoin::{OutPoint, Txid, Witness};
+use bitcoin::{Amount, OutPoint, Txid, Witness};
 use bitcoin::taproot::LeafVersion;
 use tokio::sync::RwLock;
 use tracing::{error, trace};
@@ -30,6 +30,8 @@ use crate::sync::{BlockData, ChainEventListener, RawMempool};
 pub struct VtxoExitFrontier {
 	db: Db,
 	htlc_settler: Arc<HtlcSettler>,
+	/// Set of VTXOs with their confirmation height. Confirmation can be
+	/// None for funding txs that have not confirmed yet.
 	frontier: BTreeMap<VtxoId, (Option<BlockHeight>, ServerVtxo)>,
 	/// Timestamp of the last sync from the DB frontier table.
 	/// Used to query only recently-added entries on each block.
@@ -65,11 +67,13 @@ impl VtxoExitFrontier {
 	///
 	/// The DB insert in register() is idempotent (ON CONFLICT DO NOTHING), so this
 	/// is safe to call even if the vtxo was pre-inserted by finish_round.
+	///
+	/// Returns whether the vtxo was newly added.
 	pub async fn register(
 		&mut self,
 		vtxo: ServerVtxo,
 		confirmed_height: Option<BlockHeight>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<bool> {
 		let db = self.db.clone();
 		db.write(async |t| self.register_in_tx(t, vtxo, confirmed_height).await).await
 	}
@@ -80,7 +84,7 @@ impl VtxoExitFrontier {
 		tx: &Tx<'_>,
 		vtxo: ServerVtxo,
 		confirmed_height: Option<BlockHeight>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<bool> {
 		let vtxo_id = vtxo.id();
 		if !self.frontier.contains_key(&vtxo_id) {
 			self.frontier.insert(vtxo_id, (confirmed_height, vtxo));
@@ -90,9 +94,14 @@ impl VtxoExitFrontier {
 			}
 
 			slog!(WatchmanAddedVtxo, id: vtxo_id);
+			Ok(true)
+		} else {
+			// The entry can be in memory while the DB row lost its frontier
+			// marker; re-run the guarded insert so the row is repaired
+			// either way. This is a no-op UPDATE in the normal case.
+			tx.add_vtxo_to_frontier(vtxo_id).await?;
+			Ok(false)
 		}
-
-		Ok(())
 	}
 
 	/// Remove a vtxo from the frontier because its output was spent on-chain.
@@ -176,13 +185,85 @@ impl VtxoExitFrontier {
 		Ok(())
 	}
 
+	/// Set the confirmation height of a single frontier VTXO, repairing a
+	/// missed or incorrect confirmation, writing through the given db tx.
+	///
+	/// Unlike [Self::confirm_txid], this is a no-op when the stored height
+	/// already matches, so it is safe to use from a repair pass. Returns
+	/// whether anything changed.
+	///
+	/// Unlike [Self::confirm_txid], this doesn't fire the unilateral exit
+	/// telemetry; the caller should do so once the tx is committed.
+	pub async fn set_confirmed_in_tx(
+		&mut self,
+		tx: &Tx<'_>,
+		vtxo_id: VtxoId,
+		height: BlockHeight,
+	) -> anyhow::Result<bool> {
+		let Some((h, _vtxo)) = self.frontier.get_mut(&vtxo_id) else {
+			return Ok(false);
+		};
+		if *h == Some(height) {
+			return Ok(false);
+		}
+		// Persist first, then mirror in memory, for the same reason as in
+		// confirm_txid.
+		tx.register_vtxo_confirmation(vtxo_id, height).await?;
+		*h = Some(height);
+		Ok(true)
+	}
+
+	/// Clear the confirmation height of all VTXOs created by a tx that is
+	/// no longer confirmed, writing through the given db tx.
+	///
+	/// This includes the tx's VTXOs outside the frontier. Returns the
+	/// cleared VTXOs with their stale height.
+	pub async fn clear_confirmed_txid_in_tx(
+		&mut self,
+		tx: &Tx<'_>,
+		txid: Txid,
+	) -> anyhow::Result<Vec<(VtxoId, BlockHeight)>> {
+		// Persist first, then mirror in memory, for the same reason as in
+		// confirm_txid.
+		let cleared = tx.clear_vtxo_confirmations_by_txid(txid).await?;
+		let first = VtxoId::from(OutPoint::new(txid, 0));
+		let last = VtxoId::from(OutPoint::new(txid, u32::MAX));
+		for (_id, (h, _vtxo)) in self.frontier.range_mut(first..=last) {
+			*h = None;
+		}
+		Ok(cleared)
+	}
+
+	/// Put the VTXOs spent by a tx that is no longer confirmed back into
+	/// the frontier, writing through the given db tx.
+	///
+	/// The reverse of [Self::spend_in_tx]. A preimage already settled from
+	/// the spend stays settled. Returns each restored VTXO with its
+	/// confirmation height and its stale spend height.
+	pub async fn restore_spent_in_tx(
+		&mut self,
+		tx: &Tx<'_>,
+		spending_txid: Txid,
+	) -> anyhow::Result<Vec<(VtxoId, Option<BlockHeight>, Amount, BlockHeight)>> {
+		let cleared = tx.clear_vtxo_spends_by_txid(spending_txid).await?;
+		let mut restored = Vec::with_capacity(cleared.len());
+		for (vtxo, confirmed_height, spent_height) in cleared {
+			let (id, amount) = (vtxo.id(), vtxo.amount());
+			htlc_vtxo::clear_htlc_vtxo_chain_resolution(tx, id).await?;
+			self.register_in_tx(tx, vtxo, confirmed_height).await?;
+			restored.push((id, confirmed_height, amount, spent_height));
+		}
+		Ok(restored)
+	}
+
 	/// Replace the in-memory frontier with the one in the database.
 	pub async fn reload(&mut self) -> anyhow::Result<()> {
 		self.frontier = self.db.read(async |t| t.get_frontier().await).await?;
 		Ok(())
 	}
 
-	/// Returns an iterator over the current frontier with confirmation heights.
+	/// Returns an iterator over the current frontier with confirmation heights,
+	/// ordered by VTXO ID.
 	///
 	/// Each item is a reference to a VTXO paired with its confirmation height
 	/// (None if unconfirmed).
@@ -334,12 +415,14 @@ impl ChainEventListener for Arc<RwLock<VtxoExitFrontier>> {
 				}
 			}
 
-			// Find new vtxos originating from this tx and add to frontier
+			// Find new vtxos originating from this tx and add to frontier;
+			// register() skips vtxos already in the frontier, and a vtxo
+			// with a recorded spend was already advanced past (this block
+			// is being replayed), so it must not re-enter the frontier.
 			if removed_any {
 				let new_vtxos = frontier.db.read(async |t| t.get_vtxos_by_txid(txid).await).await?;
-				for vtxo in new_vtxos {
-					// Only add if not already in frontier
-					if !frontier.frontier.contains_key(&vtxo.id()) {
+				for (vtxo, spent_height, _) in new_vtxos {
+					if spent_height.is_none() {
 						frontier.register(vtxo, Some(height)).await?;
 					}
 				}

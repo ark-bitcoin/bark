@@ -95,6 +95,26 @@ impl rpc::server::WatchmanAdminService for crate::watchman::Daemon {
 		self.watchman_handle().trigger_sweep();
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
+
+	#[tracing::instrument(skip(self, _req))]
+	async fn reindex_frontier(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::ReindexFrontierResponse>, tonic::Status> {
+		let stats = self.watchman_handle().reindex_frontier().await.to_status()?;
+		Ok(tonic::Response::new(protos::ReindexFrontierResponse {
+			entries_checked: stats.entries_checked as u64,
+			confirmations_repaired: stats.confirmations_repaired as u64,
+			spends_repaired: stats.spends_repaired as u64,
+			vtxos_added: stats.vtxos_added as u64,
+			funding_txs_added: stats.funding_txs_added as u64,
+			funding_vtxos_added: stats.funding_vtxos_added as u64,
+			unresolved_spends: stats.unresolved_spends as u64,
+			blocks_scanned: stats.blocks_scanned as u64,
+			confirmations_cleared: stats.confirmations_cleared as u64,
+			spends_cleared: stats.spends_cleared as u64,
+		}))
+	}
 }
 
 async fn reload_blocklist(
