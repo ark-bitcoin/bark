@@ -275,9 +275,9 @@ impl Wallet {
 
 			let prev_checkpoint = checkpoint;
 			for msg in &resp.messages {
+				checkpoint = checkpoint.max(msg.checkpoint);
 				match &msg.message {
 					Some(Message::RecoveryVtxoIds(m)) => {
-						checkpoint = checkpoint.max(msg.checkpoint);
 						for raw in &m.vtxo_ids {
 							let Ok(id) = VtxoId::from_bytes(raw.clone()) else {
 								warn!("Ignoring undecodable recovery vtxo id: {raw:?}");
@@ -287,7 +287,6 @@ impl Wallet {
 						}
 					},
 					Some(Message::Arkoor(m)) => {
-						checkpoint = checkpoint.max(msg.checkpoint);
 						for raw in &m.vtxos {
 							let Ok(vtxo) = Vtxo::<Full>::from_bytes(raw.clone()) else {
 								warn!("Ignoring undecodable vtxo: {raw:?}");
