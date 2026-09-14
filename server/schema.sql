@@ -2403,10 +2403,10 @@ CREATE INDEX integration_token_type_status_integration_expires_at_ix ON public.i
 
 
 --
--- Name: lightning_htlc_subscription_payment_hash_ix; Type: INDEX; Schema: public; Owner: -
+-- Name: lightning_htlc_subscription_payment_hash_uix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX lightning_htlc_subscription_payment_hash_ix ON public.lightning_htlc_subscription USING btree (payment_hash);
+CREATE UNIQUE INDEX lightning_htlc_subscription_payment_hash_uix ON public.lightning_htlc_subscription USING btree (payment_hash);
 
 
 --

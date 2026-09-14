@@ -475,19 +475,6 @@ impl<'t> Tx<'t> {
 	}
 
 	/// Stores a htlc subscription for lightning receive in the database
-	pub async fn store_lightning_htlc_subscription(
-		&self,
-		node_id: LightningNodeId,
-		payment_hash: PaymentHash,
-		invoice: &Bolt11Invoice,
-	) -> anyhow::Result<()> {
-		self.inner_store_lightning_htlc_subscription(
-			node_id, &payment_hash.to_string(), &invoice.to_string(), None, None,
-		).await?;
-		Ok(())
-	}
-
-	/// Stores a htlc subscription for lightning receive in the database
 	///
 	/// - id: A unique identifier for the subscription
 	/// - status: A status for the subscription
@@ -550,8 +537,6 @@ impl<'t> Tx<'t> {
 		let select = self.prepare("
 			SELECT id, status FROM lightning_htlc_subscription
 			WHERE payment_hash = $1
-			ORDER BY created_at DESC
-			LIMIT 1
 			FOR UPDATE;
 		").await?;
 		let Some(row) = self.query_opt(&select, &[&payment_hash.to_string()]).await? else {
@@ -642,32 +627,9 @@ impl<'t> Tx<'t> {
 		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
 	}
 
-	/// Retrieves all htlc subscriptions for the provided payment hash
+	/// Retrieve the htlc subscription for the provided payment hash
 	///
-	/// This method DOES NOT retrieve the htlc vtxos for the subscriptions.
-	pub async fn get_htlc_subscriptions_by_payment_hash(
-		&self,
-		payment_hash: PaymentHash,
-	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
-		let stmt = self.prepare("
-			SELECT id, lightning_node_id, payment_hash, invoice,
-				status, lowest_incoming_htlc_expiry, accepted_at,
-				created_at, updated_at
-			FROM lightning_htlc_subscription
-			WHERE payment_hash = $1
-			ORDER BY created_at DESC;
-		").await?;
-
-		let rows = self.query(
-			&stmt, &[&payment_hash.to_string()]
-		).await?;
-
-		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
-	}
-
-	/// Retrieve the latest htlc subscriptions for the provided payment hash
-	///
-	/// This method DOES retrieve the htlc vtxos for the subscriptions.
+	/// This method DOES retrieve the htlc vtxos for the subscription.
 	pub async fn get_htlc_subscription_by_payment_hash(
 		&self,
 		payment_hash: PaymentHash,
@@ -688,9 +650,7 @@ impl<'t> Tx<'t> {
 				lhs.status,
 				lhs.accepted_at,
 				lhs.created_at,
-				lhs.updated_at
-			ORDER BY lhs.created_at DESC
-			LIMIT 1;
+				lhs.updated_at;
 		").await?;
 
 		let rows = self.query(&stmt, &[&payment_hash.to_string()]).await?;

@@ -501,8 +501,7 @@ impl LightningManager {
 		}
 	}
 
-	/// Generate (or, when a prior subscription exists, reuse) a bolt-11 invoice
-	/// on the highest-priority hold-capable node.
+	/// Generate a bolt-11 invoice on the highest-priority hold-capable node.
 	pub async fn generate_invoice(
 		&self,
 		payment_hash: PaymentHash,
@@ -513,25 +512,6 @@ impl LightningManager {
 	) -> anyhow::Result<Bolt11Invoice> {
 		let node = self.hold_active_node().context("no active hold-compatible cln node")?;
 		let mut hold_client = node.hold_rpc.clone().expect("hold-active node has hold_rpc");
-
-		// Reuse the invoice from any prior subscription (e.g. from a previous
-		// canceled attempt) so the payer can settle to the same payment hash.
-		let existing_subs = self.db.read(async |t|
-			t.get_htlc_subscriptions_by_payment_hash(payment_hash).await
-		).await?;
-		if let Some(existing) = existing_subs.first() {
-			trace!("Found existing subscription, creating new one with same invoice");
-
-			hold_client.inject(hold_plugin::InjectRequest {
-				invoice: existing.invoice.to_string(),
-				min_cltv_expiry: None,
-			}).await?;
-
-			self.db.write(async |t|
-				t.store_lightning_htlc_subscription(node.id, payment_hash, &existing.invoice).await
-			).await?;
-			return Ok(existing.invoice.clone())
-		}
 
 		let res = hold_client.invoice(hold_plugin::InvoiceRequest {
 			payment_hash: payment_hash.to_vec(),
