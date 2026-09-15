@@ -164,6 +164,7 @@ impl Daemon {
 		if let Some(list) = bitcoin_address_blocklist.clone() {
 			watchman_wallet.set_address_blocklist(list);
 		}
+		telemetry::set_wallet_balance(WalletKind::Watchman, watchman_wallet.balance());
 		let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
 
 		// The settler writes preimages to the htlc_settlement WAL table but
