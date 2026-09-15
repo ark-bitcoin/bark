@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use ark::rounds::RoundEvent;
 use ark::tree::signed::HashlockVersion;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::persist::models::{StoredRoundState, Unlocked};
-use bark::round::RoundParticipation;
+use bark::round::{RoundFlowKind, RoundParticipation};
 use bark::subsystem::RoundMovement;
 use bark::vtxo::{VtxoLockHolder, VtxoState};
 use server::database::Db;
@@ -772,6 +773,92 @@ async fn stepwise_round() {
 	//TODO(stevenroose) test new vtxo state and movement
 }
 
+
+#[tokio::test]
+async fn interactive_round_redelegates_the_inputs_it_did_not_take() {
+	//! An interactive registration leaves a pending delegated participation
+	//! alone even when they share inputs: nothing locally decides which of
+	//! the two a round will pick. The round settles it, taking the shared
+	//! input, and the inputs it did not take are re-delegated.
+
+	// Unlike the other round participation tests, this one drives its
+	// refreshes through the CLI, so it exercises the bark binary under test
+	// rather than the current bark-wallet crate. It needs a binary that
+	// re-delegates a participation that lost inputs instead of failing it
+	// wholesale.
+	require_bark_version!(> "0.7.0");
+
+	let ctx = TestContext::new("bark/interactive_round_redelegates_the_inputs_it_did_not_take").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	let [a] = bark.board_and_confirm_and_register(&ctx, sat(200_000)).await
+		.try_into().expect("one vtxo per board");
+	let [b] = bark.board_and_confirm_and_register(&ctx, sat(200_000)).await
+		.try_into().expect("one vtxo per board");
+	let [c] = bark.board_and_confirm_and_register(&ctx, sat(200_000)).await
+		.try_into().expect("one vtxo per board");
+
+	// Delegate a refresh of A and B to the server.
+	bark.run([
+		"refresh", "--delegated", "--vtxo", &a.to_string(), "--vtxo", &b.to_string(),
+	]).await;
+
+	{
+		let wallet = bark.client().await;
+		let pending = wallet.pending_round_states().await.unwrap();
+		assert_eq!(pending.len(), 1, "only the delegated participation should be pending");
+		assert_eq!(pending[0].state().flow_kind(), RoundFlowKind::DelegatedPending);
+		let inputs = pending[0].state().participation().inputs.iter()
+			.map(|v| v.id()).collect::<HashSet<_>>();
+		assert_eq!(inputs, HashSet::from([a, b]), "the delegated participation holds A and B");
+	}
+
+	// Refresh B and C interactively. B is shared with the delegated
+	// participation, which must be left untouched until the round settles it.
+	let (b_id, c_id) = (b.to_string(), c.to_string());
+	tokio::join!(
+		srv.trigger_round(),
+		bark.run(["refresh", "--vtxo", &b_id, "--vtxo", &c_id]),
+	);
+
+	// The round took B and C, so the delegated participation lost B and is
+	// resubmitted with only A. The inputs are only marked spent once the
+	// round tx is deeply confirmed, so the sync that settles the round is
+	// the one that records the re-delegation; the next one carries it out.
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark.sync().await;
+	bark.sync().await;
+
+	// The interactive participation stays around until the round tx confirms,
+	// so look for the delegated one specifically.
+	let wallet = bark.client().await;
+	let pending = wallet.pending_round_states().await.unwrap();
+	let delegated = pending.iter()
+		.filter(|p| p.state().flow_kind() == RoundFlowKind::DelegatedPending)
+		.collect::<Vec<_>>();
+	assert_eq!(delegated.len(), 1,
+		"exactly one delegated participation should be pending, got {:?}",
+		pending.iter().map(|p| p.state().flow_kind()).collect::<Vec<_>>(),
+	);
+	let inputs = delegated[0].state().participation().inputs.iter()
+		.map(|v| v.id()).collect::<HashSet<_>>();
+	assert_eq!(inputs, HashSet::from([a]),
+		"only A should be left in the re-delegated participation (A={}, B={}, C={})",
+		a, b, c,
+	);
+
+	// B and C were consumed by the interactive round; A is still untouched.
+	let spendable = wallet.spendable_vtxos().await.unwrap().into_iter()
+		.map(|v| v.vtxo.id()).collect::<HashSet<_>>();
+	assert!(spendable.contains(&a), "A must not have been touched by the round");
+	assert!(!spendable.contains(&b), "B must have been refreshed interactively");
+	assert!(!spendable.contains(&c), "C must have been refreshed interactively");
+}
+
+
 #[tokio::test]
 async fn multiple_round_participations_dont_race() {
 	require_bark_version!(> "0.5.0");
@@ -790,7 +877,7 @@ async fn multiple_round_participations_dont_race() {
 		.try_into().expect("should have exactly one spendable vtxo");
 	let old_vtxo_id = old_vtxo.vtxo.id();
 
-	// Build participation and join the round once, locking the vtxo.
+	// Build participation and join the round once.
 	let participation = wallet.build_refresh_participation(vec![old_vtxo_id]).await
 		.unwrap().expect("should build participation");
 	wallet.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
@@ -921,7 +1008,7 @@ async fn participate_round_and_progress_pending_dont_race() {
 		.try_into().expect("should have exactly one spendable vtxo");
 	let old_vtxo_id = old_vtxo.vtxo.id();
 
-	// Build participation and join the round once, locking the vtxo.
+	// Build participation and join the round once.
 	let participation = wallet.build_refresh_participation(vec![old_vtxo_id]).await
 		.unwrap().expect("should build participation");
 	wallet.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
@@ -1004,7 +1091,7 @@ async fn participate_round_and_event_stream_processing_dont_race() {
 		.try_into().expect("should have exactly one spendable vtxo");
 	let old_vtxo_id = old_vtxo.vtxo.id();
 
-	// Build participation and join the round once, locking the vtxo.
+	// Build participation and join the round once.
 	let participation = wallet.build_refresh_participation(vec![old_vtxo_id]).await
 		.unwrap().expect("should build participation");
 	wallet.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();

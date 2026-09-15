@@ -6,9 +6,10 @@ mod state;
 pub use self::selection::{FilterVtxos, RefreshStrategy, VtxoFilter};
 pub use self::state::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
 
+use anyhow::Context;
 use bitcoin::secp256k1::PublicKey;
 use log::{debug, error, trace};
-use ark::{ProtocolEncoding, Vtxo};
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::{Full, VtxoRef};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
@@ -82,6 +83,84 @@ impl Wallet {
 		self.set_vtxo_states(
 			vtxos, &VtxoState::Locked { holder }, &[VtxoStateKind::Spendable],
 		).await
+	}
+
+	/// Whether `holder` can still use this VTXO: it is spendable, or already
+	/// locked by `holder` itself. Anything else — locked by someone else,
+	/// spent, exited, or absent from the wallet — is unavailable.
+	///
+	/// The shared predicate behind [Wallet::unavailable_vtxos] and
+	/// [Wallet::lock_available_vtxos], so the two cannot disagree.
+	///
+	/// # Errors
+	/// - If a database error occurs.
+	async fn vtxo_available_for(
+		&self,
+		vtxo: &Vtxo<Full>,
+		holder: &Option<VtxoLockHolder>,
+	) -> anyhow::Result<bool> {
+		let stored = self.inner.db.get_wallet_vtxo(vtxo.id()).await
+			.with_context(|| format!("error querying vtxo {}", vtxo.id()))?;
+		Ok(match stored {
+			Some(v) => match v.state {
+				VtxoState::Spendable => true,
+				VtxoState::Locked { holder: ref h } => h == holder,
+				_ => false,
+			},
+			None => false,
+		})
+	}
+
+	/// The VTXOs of `vtxos` that are no longer available to `holder`, without
+	/// touching any of them.
+	///
+	/// The read-only counterpart of [Wallet::lock_available_vtxos]: use this
+	/// to find out what an operation lost while it held no lock, and
+	/// [Wallet::lock_available_vtxos] when it is time to claim what is left.
+	///
+	/// # Errors
+	/// - If a database error occurs.
+	pub async fn unavailable_vtxos(
+		&self,
+		vtxos: &[Vtxo<Full>],
+		holder: Option<VtxoLockHolder>,
+	) -> anyhow::Result<Vec<VtxoId>> {
+		let mut unavailable = Vec::new();
+		for vtxo in vtxos.iter() {
+			if !self.vtxo_available_for(vtxo, &holder).await? {
+				unavailable.push(vtxo.id());
+			}
+		}
+		Ok(unavailable)
+	}
+
+	/// Locks the VTXOs still available to `holder` as one atomic batch, and
+	/// returns the ones that are not.
+	///
+	/// The locking counterpart of [Wallet::unavailable_vtxos].
+	/// [Wallet::lock_vtxos] is all-or-nothing; this is for operations that
+	/// can continue with fewer VTXOs than they started with.
+	///
+	/// # Errors
+	/// - If an available VTXO stopped being available before it was locked.
+	/// - If a database error occurs.
+	pub async fn lock_available_vtxos(
+		&self,
+		vtxos: &[Vtxo<Full>],
+		holder: Option<VtxoLockHolder>,
+	) -> anyhow::Result<Vec<VtxoId>> {
+		let mut available = Vec::with_capacity(vtxos.len());
+		let mut unavailable = Vec::new();
+		for vtxo in vtxos.iter() {
+			if self.vtxo_available_for(vtxo, &holder).await? {
+				available.push(vtxo.id());
+			} else {
+				unavailable.push(vtxo.id());
+			}
+		}
+
+		self.lock_vtxos(&available, holder).await?;
+		Ok(unavailable)
 	}
 
 	/// Marks VTXOs as [VtxoState::Spent].

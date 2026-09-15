@@ -24,9 +24,10 @@ use futures::future::join_all;
 use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
-use ark::{ArkInfo, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
-use ark::vtxo::Full;
+use ark::{ArkInfo, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
+use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoPolicy};
 use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
+use ark::fees::FeeValidationError;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
@@ -40,7 +41,7 @@ use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 use crate::subsystem::{RoundMovement, Subsystem};
-use crate::vtxo::{validate_vtxo_tree_params, VtxoLockHolder, VtxoState};
+use crate::vtxo::{validate_vtxo_tree_params, VtxoLockHolder, VtxoStateKind, VtxoState};
 
 /// How long [`Wallet::lock_wait_round_state`] waits for a contended
 /// round lock before giving up. Long enough to outlast a normal round.
@@ -232,6 +233,7 @@ impl RoundState {
 	pub fn flow_kind(&self) -> RoundFlowKind {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. } => RoundFlowKind::DelegatedPending,
+			RoundFlowState::Redelegating { .. } => RoundFlowKind::DelegatedPending,
 			RoundFlowState::InteractivePending => RoundFlowKind::Pending,
 			RoundFlowState::InteractiveOngoing { .. } => RoundFlowKind::Ongoing,
 			RoundFlowState::Finished { .. } => RoundFlowKind::AwaitingConfirmations,
@@ -244,6 +246,7 @@ impl RoundState {
 	pub fn scheduled_height(&self) -> Option<BlockHeight> {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { scheduled_height, .. } => scheduled_height,
+			RoundFlowState::Redelegating { scheduled_height } => scheduled_height,
 			_ => None,
 		}
 	}
@@ -252,6 +255,7 @@ impl RoundState {
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { unlock_hash, .. } => Some(unlock_hash),
+			RoundFlowState::Redelegating { .. } => None,
 			RoundFlowState::InteractivePending => None,
 			RoundFlowState::InteractiveOngoing { .. } => None,
 			RoundFlowState::Failed { .. } => None,
@@ -263,6 +267,7 @@ impl RoundState {
 	pub fn funding_tx(&self) -> Option<&Transaction> {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. } => None,
+			RoundFlowState::Redelegating { .. } => None,
 			RoundFlowState::InteractivePending => None,
 			RoundFlowState::InteractiveOngoing { .. } => None,
 			RoundFlowState::Failed { .. } => None,
@@ -272,9 +277,13 @@ impl RoundState {
 	}
 
 	/// Whether the interactive part of the round is still ongoing
+	///
+	/// Includes the wait for the round to start. For an attempt in flight,
+	/// use [RoundState::ongoing_attempt].
 	pub fn ongoing_participation(&self) -> bool {
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. } => false,
+			RoundFlowState::Redelegating { .. } => false,
 			RoundFlowState::InteractivePending => true,
 			RoundFlowState::InteractiveOngoing { .. } => true,
 			RoundFlowState::Failed { .. } => false,
@@ -283,11 +292,21 @@ impl RoundState {
 		}
 	}
 
+	/// Whether an attempt is currently running with the server
+	///
+	/// Excludes a participation that only waits for its round, which a sync
+	/// still has work to do on.
+	pub fn ongoing_attempt(&self) -> bool {
+		matches!(self.flow, RoundFlowState::InteractiveOngoing { .. })
+	}
+
 	/// Tries to cancel the round and returns whether it was succesfully canceled
 	/// or if it was already canceled or failed
 	pub async fn try_cancel(&mut self, wallet: &Wallet) -> anyhow::Result<bool> {
 		let ret = match self.flow {
-			RoundFlowState::NonInteractivePending { .. } => {
+			RoundFlowState::NonInteractivePending { .. }
+				| RoundFlowState::Redelegating { .. }
+			=> {
 				//TODO(stevenroose) we have to cancel with server
 				bail!("it is currently not yet possible to cancel pending delegated rounds");
 			},
@@ -306,6 +325,207 @@ impl RoundState {
 		Ok(ret)
 	}
 
+	/// Build this participation without the given inputs, and rebuild the
+	/// refresh output from the ones that remain.
+	///
+	/// Nothing is mutated or persisted, so an already submitted
+	/// participation can reach the server before the wallet commits to the
+	/// new shape. Use [RoundState::adopt_participation] to take it on.
+	///
+	/// Returns `None` when the participation cannot be shrunk: too little
+	/// value remains to pay the refresh fee and a non-dust output, or it pays
+	/// an output this wallet does not own. Cancel or fail it instead.
+	async fn try_shrink_participation(
+		&self,
+		wallet: &Wallet,
+		remove: &[VtxoId],
+	) -> anyhow::Result<Option<RoundParticipation>> {
+		let remaining = self.participation.inputs.iter()
+			.filter(|v| !remove.contains(&v.id()))
+			.cloned()
+			.collect::<Vec<_>>();
+		if remaining.len() == self.participation.inputs.len() {
+			return Ok(Some(self.participation.clone()));
+		}
+		if !self.is_self_refresh(wallet).await? {
+			warn!("Round participation pays an output this wallet doesn't own; \
+				refusing to shrink it, as that would redirect the payment",
+			);
+			return Ok(None);
+		}
+
+		let nb_remaining = remaining.len();
+		let participation = match self.scheduled_height() {
+			Some(scheduled_height) => {
+				wallet.build_scheduled_refresh_participation(remaining, scheduled_height).await
+			},
+			None => {
+				wallet.build_refresh_participation(remaining).await
+			},
+		};
+
+		let built = match participation {
+			Ok(p) => p,
+			// A remainder that cannot pay the refresh fee and still leave a
+			// non-dust output cannot be refreshed on its own.
+			Err(e) if matches!(e.downcast_ref::<FeeValidationError>(),
+				Some(FeeValidationError::AmountAfterFeeBelowDust { .. })
+					| Some(FeeValidationError::FeeExceedsAmount { .. }),
+			) => {
+				info!("Round participation's {} remaining input(s) cannot cover the \
+					refresh fee: {}", nb_remaining, e,
+				);
+				return Ok(None);
+			},
+			Err(e) => return Err(e),
+		};
+
+		// No inputs left to refresh, so there is nothing to shrink to.
+		let Some(mut participation) = built else {
+			debug!("Round participation lost every input; it cannot be shrunk");
+			return Ok(None);
+		};
+
+		debug!("Shrinking round participation from {} to {} inputs",
+			self.participation.inputs.len(), nb_remaining,
+		);
+		participation.unblinded_mailbox_id = self.participation.unblinded_mailbox_id.clone();
+		Ok(Some(participation))
+	}
+
+	/// Whether every output of this participation pays back into this wallet,
+	/// the only shape [RoundState::try_shrink_participation] can rebuild.
+	async fn is_self_refresh(&self, wallet: &Wallet) -> anyhow::Result<bool> {
+		for output in self.participation.outputs.iter() {
+			let user_pubkey = match output.policy {
+				VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => user_pubkey,
+				VtxoPolicy::ServerHtlcSend(_) |
+				VtxoPolicy::ServerHtlcSend_v0(_) |
+				VtxoPolicy::ServerHtlcRecv(_) |
+				VtxoPolicy::ServerHtlcRecv_v0(_) => return Ok(false),
+			};
+			if wallet.inner.db.get_public_key_idx(&user_pubkey).await?.is_none() {
+				return Ok(false);
+			}
+		}
+		Ok(true)
+	}
+
+	/// Take on a participation built by
+	/// [RoundState::try_shrink_participation], and keep the movement's
+	/// consumed VTXOs and amounts in sync with it.
+	///
+	/// The caller must persist the updated state.
+	async fn adopt_participation(
+		&mut self,
+		wallet: &Wallet,
+		participation: RoundParticipation,
+	) -> anyhow::Result<()> {
+		if let Some(id) = self.movement_id {
+			wallet.sync_movement_to_participation(id, &participation).await?;
+		}
+		self.participation = participation;
+		Ok(())
+	}
+
+	/// Replace this participation with a fresh submission of the inputs it
+	/// has left, and hand the movement over. It ends up canceled, not
+	/// failed: it is replaced, not abandoned.
+	///
+	/// Runs from the persisted [RoundFlowState::Redelegating], so a crash can
+	/// enter it twice. It then skips the submission when a replacement
+	/// already holds our movement.
+	async fn finish_redelegation(
+		&mut self,
+		wallet: &Wallet,
+		scheduled_height: Option<BlockHeight>,
+	) -> anyhow::Result<RoundStatus> {
+		let submitted = match self.movement_id {
+			Some(mid) => {
+				// Check if the round participation was already replaced by a new one.
+				// If so, we just need to drop the current one.
+				let pending_rounds = wallet.pending_round_states().await?;
+				pending_rounds.iter().any(|stored| {
+					let state = stored.state();
+					state.movement_id == Some(mid)
+						&& matches!(state.flow, RoundFlowState::NonInteractivePending { .. })
+				})
+			},
+			None => false,
+		};
+
+		if submitted {
+			info!("Re-delegated round participation was already submitted; dropping the \
+				participation it replaced",
+			);
+		} else {
+			// Shrink against the inputs as they are now: more may have gone.
+			// Read-only: the replacement locks at its own attempt start.
+			let holder = self.movement_id.map(VtxoLockHolder::from);
+			let lost = wallet.unavailable_vtxos(&self.participation.inputs, holder).await?;
+			let shrunk = match self.try_shrink_participation(wallet, &lost).await? {
+				Some(p) => p,
+				None => {
+					info!("Delegated round participation cannot be shrunk after losing \
+						{} input(s); dropping it", lost.len(),
+					);
+					self.flow = RoundFlowState::Canceled;
+					persist_round_failure(wallet, &self.participation, self.movement_id).await
+						.context("failed to persist dropped delegated round failure")?;
+					return Ok(RoundStatus::Canceled);
+				},
+			};
+
+			let resubmitted = wallet.join_delegated_round_inner(
+				shrunk, self.movement_id, scheduled_height,
+			).await.context("failed to re-delegate round participation")?;
+			info!("Re-delegated round participation as #{} without its {} lost input(s)",
+				resubmitted.id(), lost.len(),
+			);
+
+			if let Some(mid) = self.movement_id {
+				wallet.sync_movement_to_participation(
+					mid, resubmitted.state().participation(),
+				).await?;
+			}
+		}
+
+		// The replacement owns the movement now, so drop our claim. A later
+		// sync must not fail a movement that is no longer ours.
+		self.movement_id = None;
+		self.flow = RoundFlowState::Canceled;
+		Ok(RoundStatus::Canceled)
+	}
+
+	/// Lock the inputs this participation can still claim for a starting round
+	/// attempt, shrinking it to them when others took some.
+	///
+	/// Returns false when nothing usable remains.
+	async fn lock_inputs_and_shrink(&mut self, wallet: &Wallet) -> anyhow::Result<bool> {
+		let holder = self.movement_id.map(VtxoLockHolder::from);
+		let unavailable = wallet.lock_available_vtxos(
+			&self.participation.inputs, holder.clone(),
+		).await?;
+		if unavailable.is_empty() {
+			return Ok(true);
+		}
+
+		// The shrunk participation only holds inputs we just locked.
+		let res = match self.try_shrink_participation(wallet, &unavailable).await {
+			Ok(Some(shrunk)) => self.adopt_participation(wallet, shrunk).await.map(|_| true),
+			Ok(None) => Ok(false),
+			Err(e) => Err(e),
+		};
+
+		// We locked above, so release on every way out but success without waiting for next sync.
+		if !matches!(res, Ok(true)) {
+			if let Err(e) = wallet.unlock_vtxos(&self.participation.inputs, holder).await {
+				warn!("Failed to release round inputs after a failed shrink: {:#}", e);
+			}
+		}
+		res
+	}
+
 	async fn try_start_attempt(
 		&mut self,
 		wallet: &Wallet,
@@ -320,6 +540,28 @@ impl RoundState {
 			if let Some(k) = cosign_keys.first() {
 				wallet.inner.round_secret_nonces.forget(&k.public_key());
 			}
+		}
+
+		// Inputs are only locked from attempt start. A re-attempt re-locks
+		// what this movement already holds.
+		match self.lock_inputs_and_shrink(wallet).await {
+			Ok(true) => {},
+			Ok(false) => {
+				warn!("No usable inputs left for round attempt {}:{}",
+					attempt.round_seq, attempt.attempt_seq,
+				);
+				self.flow = RoundFlowState::Canceled;
+				return;
+			},
+			Err(e) => {
+				warn!("Failed to lock inputs for round attempt {}:{}: {:#}",
+					attempt.round_seq, attempt.attempt_seq, e,
+				);
+				self.flow = RoundFlowState::Failed {
+					error: format!("failed to lock input VTXOs: {:#}", e),
+				};
+				return;
+			},
 		}
 
 		match start_attempt(wallet, &self.participation, attempt).await {
@@ -420,6 +662,7 @@ impl RoundState {
 				};
 			},
 			RoundFlowState::NonInteractivePending { .. }
+				| RoundFlowState::Redelegating { .. }
 				| RoundFlowState::Finished { .. }
 				| RoundFlowState::Failed { .. }
 				| RoundFlowState::Canceled => return false,
@@ -438,7 +681,32 @@ impl RoundState {
 				})
 			},
 
-			RoundFlowState::InteractivePending | RoundFlowState::InteractiveOngoing { .. } => {
+			RoundFlowState::InteractiveOngoing { .. } => Ok(RoundStatus::Pending),
+
+			RoundFlowState::Redelegating { scheduled_height } => {
+				self.finish_redelegation(wallet, scheduled_height).await
+			},
+
+			RoundFlowState::InteractivePending => {
+				// A pending participation does not lock its inputs, so another
+				// operation can have taken one while it waited. Read-only: it
+				// only claims what is left once its attempt starts.
+				let holder = self.movement_id.map(VtxoLockHolder::from);
+				let lost = wallet.unavailable_vtxos(&self.participation.inputs, holder).await?;
+				if !lost.is_empty() {
+					match self.try_shrink_participation(wallet, &lost).await? {
+						Some(shrunk) => self.adopt_participation(wallet, shrunk).await?,
+						None => {
+							info!("Pending round participation cannot be shrunk; canceling it");
+							self.flow = RoundFlowState::Canceled;
+							persist_round_failure(
+								wallet, &self.participation, self.movement_id,
+							).await.context("failed to persist round cancelation")?;
+							return Ok(RoundStatus::Canceled);
+						},
+					}
+				}
+
 				Ok(RoundStatus::Pending)
 			},
 			RoundFlowState::Failed { ref error } => {
@@ -453,6 +721,28 @@ impl RoundState {
 			},
 
 			RoundFlowState::NonInteractivePending { unlock_hash, scheduled_height } => {
+				// A pending participation does not lock its inputs either, and
+				// the server drops one as soon as one input is consumed, which
+				// kills the refresh of the others. Resubmit them before we ask
+				// about a participation the server no longer holds.
+				//
+				// NB: only while some inputs remain. Losing every input is
+				// indistinguishable from this participation's own round
+				// consuming them, so progress_delegated handles that case.
+				//
+				// Only record the decision here; the next sync carries it out.
+				// Read-only: a pending participation must not claim an input
+				// an interactive registration can still take.
+				let holder = self.movement_id.map(VtxoLockHolder::from);
+				let lost = wallet.unavailable_vtxos(&self.participation.inputs, holder).await?;
+				if !lost.is_empty() && lost.len() < self.participation.inputs.len() {
+					info!("Delegated round participation lost {} of its {} input(s); \
+						re-delegating the rest", lost.len(), self.participation.inputs.len(),
+					);
+					self.flow = RoundFlowState::Redelegating { scheduled_height };
+					return Ok(RoundStatus::Pending);
+				}
+
 				match progress_delegated(
 					wallet, &self.participation, self.movement_id, unlock_hash, scheduled_height,
 					self.sent_forfeit_sigs,
@@ -577,7 +867,13 @@ impl RoundState {
 	pub fn locked_pending_inputs(&self) -> &[Vtxo<Full>] {
 		//TODO(stevenroose) consider if we can't just drop the state after forfeit exchange
 		match self.flow {
+			// These are candidates, not a claim that the inputs are locked: a
+			// participation awaiting its round holds no lock until an attempt
+			// starts, or until the server issues a delegated round.
+			// pending_round_input_vtxos keeps only the ones locked by this
+			// round's movement.
 			RoundFlowState::NonInteractivePending { .. }
+				| RoundFlowState::Redelegating { .. }
 				| RoundFlowState::InteractivePending
 				| RoundFlowState::InteractiveOngoing { .. }
 			=> {
@@ -608,6 +904,7 @@ impl RoundState {
 
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. }
+				| RoundFlowState::Redelegating { .. }
 				| RoundFlowState::InteractivePending
 				| RoundFlowState::InteractiveOngoing { .. }
 				| RoundFlowState::Finished { .. }
@@ -633,6 +930,16 @@ pub enum RoundFlowState {
 		/// The block height we asked the server to schedule this participation
 		/// for, if any. We use it to verify the server honoured our schedule:
 		/// the new VTXOs must not expire before this height.
+		scheduled_height: Option<BlockHeight>,
+	},
+
+	/// A delegated participation that lost inputs and replaces itself with a
+	/// fresh submission of the ones it has left
+	///
+	/// Persisted before that submission, so a crash in between recovers:
+	/// this record still owns the movement until it is done.
+	Redelegating {
+		/// The block height the replacement is scheduled for, if any
 		scheduled_height: Option<BlockHeight>,
 	},
 
@@ -1499,6 +1806,8 @@ async fn persist_round_failure(
 	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
 	debug!("Attempting to persist the failure of a round with the movement ID {:?}", movement_id);
+	// Inputs the round never locked, or that another operation holds by now,
+	// are skipped: `unlock_vtxos` only releases what this holder locked.
 	let unlock_result = wallet.unlock_vtxos(
 		&participation.inputs, movement_id.map(|m| m.into()),
 	).await;
@@ -1594,6 +1903,24 @@ impl Wallet {
 		Ok(None)
 	}
 
+	/// Load and lock one round state by id, without waiting.
+	///
+	/// Returns `None` when the state is gone or another holder has it, which
+	/// a caller making opportunistic progress skips.
+	async fn try_lock_round_state(
+		&self,
+		id: RoundStateId,
+	) -> anyhow::Result<Option<StoredRoundState>> {
+		let guard = match self.inner.lock_manager.try_lock(
+			&format!("{}.round.{}", self.fingerprint(), id),
+		).await {
+			Some(g) => g,
+			None => return Ok(None),
+		};
+
+		Ok(self.inner.db.get_round_state_by_id(id).await?.map(|s| s.lock(guard)))
+	}
+
 	/// Ask the server when the next round is scheduled to start
 	pub async fn next_round_start_time(&self) -> anyhow::Result<SystemTime> {
 		let (mut srv, _) = self.require_server().await?;
@@ -1601,9 +1928,38 @@ impl Wallet {
 		Ok(UNIX_EPOCH.checked_add(Duration::from_secs(ts)).context("invalid timestamp")?)
 	}
 
+	/// Point a round movement at the inputs and amounts of the participation
+	/// it now stands for, after that participation was shrunk.
+	async fn sync_movement_to_participation(
+		&self,
+		movement_id: MovementId,
+		participation: &RoundParticipation,
+	) -> anyhow::Result<()> {
+		let update = participation.to_movement_update()?
+			.replace_consumed_vtxos(&participation.inputs);
+		self.inner.movements.update_movement(movement_id, update).await
+			.context("failed to update movement after shrinking participation")?;
+		Ok(())
+	}
+
+	async fn check_inputs_spendable(&self, inputs: &[VtxoId]) -> anyhow::Result<()> {
+		for input in inputs.iter() {
+			let vtxo = self.get_vtxo_by_id(*input).await
+				.context("error loading round input VTXO")?;
+			if vtxo.state.kind() != VtxoStateKind::Spendable {
+				bail!("input VTXO {} is not spendable (state: {})",
+					input, vtxo.state.kind(),
+				);
+			}
+		}
+		Ok(())
+	}
+
 	/// Start a new round participation
 	///
-	/// This function will store the state in the db and mark the VTXOs as locked.
+	/// Stores the participation intent in the db. The input VTXOs are only
+	/// locked once a round attempt starts, so an abandoned participation
+	/// never leaves VTXOs locked.
 	///
 	/// ### Return
 	///
@@ -1614,6 +1970,12 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
+		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+
+		// The inputs are only locked at attempt start; here they must just
+		// be spendable.
+		self.check_inputs_spendable(&input_ids).await?;
+
 		let movement = if let Some(kind) = movement_kind {
 			Some(self.inner.movements.new_guarded_movement_with_update(
 				Subsystem::ROUND,
@@ -1625,11 +1987,7 @@ impl Wallet {
 			None
 		};
 		let movement_id = movement.as_ref().map(|m| m.id());
-		let input_vtxos = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 		let state = RoundState::new_interactive(participation, movement_id);
-
-		self.lock_vtxos(&input_vtxos, movement_id.map(|m| m.into())).await
-			.context("failed to lock input VTXOs")?;
 
 		match (async || {
 			let id = self.inner.db.store_round_state(&state).await?;
@@ -1643,8 +2001,6 @@ impl Wallet {
 				Ok(state)
 			},
 			Err(e) => {
-				self.unlock_vtxos(&input_vtxos, movement_id.map(|m| m.into())).await
-					.context("failed to unlock input VTXOs")?;
 				if let Some(mut m) = movement {
 					m.fail().await.context("failed to mark movement as failed")?;
 				}
@@ -1664,6 +2020,14 @@ impl Wallet {
 		movement_kind: Option<RoundMovement>,
 		scheduled_height: Option<BlockHeight>,
 	) -> anyhow::Result<StoredRoundState<Unlocked>> {
+		// The inputs are only locked once an attempt starts, so like an
+		// interactive registration this one just needs them spendable.
+		// Pending participations over the same inputs stand: the server drops
+		// the ones it holds when it stores this submission, and they notice
+		// on their next sync.
+		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+		self.check_inputs_spendable(&input_ids).await?;
+
 		let movement = if let Some(kind) = movement_kind {
 			Some(self.inner.movements.new_guarded_movement_with_update(
 				Subsystem::ROUND,
@@ -1766,6 +2130,10 @@ impl Wallet {
 			(and has sufficient confirmations).",
 		);
 
+		// NB: the server dropped any older pending participation over one of
+		// these inputs when it accepted this one. Those records stay in place
+		// and settle on their own sync, which keeps this function callable
+		// from a state that is itself being synced.
 		let id = self.inner.db.store_round_state(&state).await?;
 		Ok(StoredRoundState::new(id, state))
 	}
@@ -1901,12 +2269,21 @@ impl Wallet {
 		tokio_stream::iter(states).for_each_concurrent(10, |state| {
 			let ret = ret.clone();
 			async move {
-				// not processing events here
-				if state.state().ongoing_participation() {
+				// Round events drive an attempt; one only waiting for its
+				// round is ours to sync.
+				if state.state().ongoing_attempt() {
 					return;
 				}
 
-				let mut state = match self.lock_wait_round_state(state.id()).await {
+				// drive_round_state holds that one's lock for the whole wait,
+				// so skip it when contended rather than time out. The rest is
+				// held briefly and worth waiting for.
+				let locked = if state.state().ongoing_participation() {
+					self.try_lock_round_state(state.id()).await
+				} else {
+					self.lock_wait_round_state(state.id()).await
+				};
+				let mut state = match locked {
 					Ok(Some(state)) => state,
 					Ok(None) => return,
 					Err(e) => {
