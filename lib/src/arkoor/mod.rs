@@ -63,6 +63,43 @@
 //! to construct a builder. The [ArkoorBuilder::server_cosign]
 //! will construct the [ArkoorCosignResponse] which is sent to the client.
 //!
+//! # Dust isolation
+//!
+//! The bitcoin network considers any output below 330 sat dust.
+//! A transaction with a dust output is considered non-standard and
+//! will not be relayed to miners. The transaction is still valid,
+//! but it is hard to get it onchain. We don't want clients or the
+//! server to face these difficulties.
+//!
+//! We accept the limitations of the bitcoin network. Exiting a
+//! dust-valued vtxo is hard.
+//!
+//! However, we do not want these problems to escalate to other
+//! (and potentially larger) vtxos.
+//!
+//! The key idea of dust-isolation: we don't want a transaction to
+//! mix large and dust outputs. We split dust outputs out into a
+//! dust-isolation transaction.
+//!
+//! E.g. a client who has a 100_000 sat vtxo and pays 160 sat.
+//! The checkpoint tx has two outputs:
+//! - 99_670 sat (change vtxo)
+//! - 330 sat (to the dust-isolation tx)
+//!
+//! The dust-isolation tx has:
+//! - 170 sat (dust change)
+//! - 160 sat (payment amount)
+//!
+//! In the dust-isolation transaction we allow outputs below twice
+//! the dust limit. And when every output of a spend stays below
+//! that, we skip the dust-isolation tx entirely: there is no large
+//! output to protect.
+//!
+//! E.g. a user with a 600 sat vtxo pays 100 sat. Splitting
+//! [230, 100] sat into dust-isolation would leave 270 sat as
+//! change, which is dust again. So the checkpoint just carries
+//! [500, 100] directly.
+//!
 
 pub mod package;
 
@@ -96,6 +133,8 @@ pub enum ArkoorConstructionError {
 	},
 	#[error("An output is below the dust threshold")]
 	Dust,
+	#[error("Dust isolation is used but not needed")]
+	IsolationNotNeeded,
 	#[error("At least one output is required")]
 	NoOutputs,
 	#[error("An output has zero value")]
@@ -299,10 +338,16 @@ pub struct ArkoorBuilder<S: state::BuilderState> {
 	/// The input vtxo to be spent
 	input: Vtxo<Full>,
 	/// Regular output vtxos
+	///
+	/// Each one gets its own checkpoint output. Sub-dust amounts are allowed
+	/// here only when there are no isolated outputs and every normal output
+	/// stays below twice [P2TR_DUST]. See the dust isolation section in the
+	/// module docs.
 	outputs: Vec<ArkoorDestination>,
 	/// Isolated outputs that will go through an isolation tx
 	///
-	/// This is meant to isolate dust outputs from non-dust ones.
+	/// Each one must be below twice [P2TR_DUST]. See the dust isolation
+	/// section in the module docs.
 	isolated_outputs: Vec<ArkoorDestination>,
 
 	/// Data on the checkpoint tx, if checkpoints are enabled
@@ -1017,13 +1062,45 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			return Err(ArkoorConstructionError::TooManyOutputs)
 		}
 
-		// If isolation is provided, the sum must be over dust threshold
+		// The isolated outputs are reachable through a single combined
+		// checkpoint output, which has to be standard to keep the
+		// checkpoint tx relayable.
 		if !isolation_outputs.is_empty() {
 			let isolation_sum: Amount = isolation_outputs.iter()
 				.map(|o| o.total_amount).sum();
 			if isolation_sum < P2TR_DUST {
 				return Err(ArkoorConstructionError::Dust)
 			}
+		}
+
+		// An output of 660 sat or more can be split into two standard outputs,
+		// so it never needs isolation.
+		if isolation_outputs.iter().any(|o| o.total_amount >= P2TR_DUST * 2) {
+			return Err(ArkoorConstructionError::IsolationNotNeeded)
+		}
+
+		// Dust isolation must contain at least one dust output. Standard
+		// outputs alone can simply be normal outputs.
+		if !isolation_outputs.is_empty()
+			&& isolation_outputs.iter().all(|o| o.total_amount >= P2TR_DUST)
+		{
+			return Err(ArkoorConstructionError::IsolationNotNeeded)
+		}
+
+		// Once dust isolation is used, all dust belongs there.
+		if !isolation_outputs.is_empty()
+			&& outputs.iter().any(|o| o.total_amount < P2TR_DUST)
+		{
+			return Err(ArkoorConstructionError::Dust)
+		}
+
+		// A dust output makes the zero-fee checkpoint (or arkoor) tx
+		// unrelayable. Then nobody can bring the other outputs onchain. We
+		// accept this for small outputs, but not for outputs of 660 sat or more.
+		if outputs.iter().any(|o| o.total_amount < P2TR_DUST)
+			&& outputs.iter().any(|o| o.total_amount >= P2TR_DUST * 2)
+		{
+			return Err(ArkoorConstructionError::Dust)
 		}
 
 		Ok(())
@@ -1074,8 +1151,9 @@ impl ArkoorBuilder<state::Initial> {
 
 	/// Create builder with checkpoint and automatic dust isolation
 	///
-	/// This constructor takes a single list of outputs and automatically
-	/// determines the best strategy for handling dust.
+	/// This constructor takes a single list of outputs and spreads them over
+	/// the normal and isolated lists. See the dust isolation section in the
+	/// module docs.
 	pub fn new_with_checkpoint_isolate_dust(
 		input: Vtxo<Full>,
 		outputs: Vec<ArkoorDestination>,
@@ -1633,6 +1711,7 @@ mod test {
 	use bitcoin::Amount;
 	use bitcoin::secp256k1::Keypair;
 	use bitcoin::secp256k1::rand;
+	use bitcoin::secp256k1::rand::{Rng, SeedableRng};
 
 	use crate::SECP;
 	use crate::test_util::dummy::DummyTestVtxoSpec;
@@ -2143,56 +2222,6 @@ mod test {
 	}
 
 	#[test]
-	fn build_checkpointed_arkoor_dust_sum_too_small() {
-		// Test that dust_sum < P2TR_DUST is now allowed after removing validation
-		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
-		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
-		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
-
-		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
-			amount: Amount::from_sat(100_330),
-			fee: Amount::from_sat(330),
-			expiry_height: 1000,
-			exit_delta : 128,
-			user_keypair: alice_keypair.clone(),
-			server_keypair: server_keypair.clone()
-		}.build();
-
-		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
-
-		// Non-dust outputs
-		let outputs = vec![
-			ArkoorDestination {
-				total_amount: Amount::from_sat(99_900),
-				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
-			},
-		];
-
-		// dust outputs with combined sum < P2TR_DUST (330)
-		let dust_outputs = vec![
-			ArkoorDestination {
-				total_amount: Amount::from_sat(50),
-				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
-			},
-			ArkoorDestination {
-				total_amount: Amount::from_sat(50),
-				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
-			}
-		];
-
-		// This should fail because isolation sum (100) < P2TR_DUST (330)
-		let result = ArkoorBuilder::new_with_checkpoint(
-			alice_vtxo.clone(),
-			outputs.clone(),
-			dust_outputs.clone(),
-		);
-		match result {
-			Err(ArkoorConstructionError::Dust) => {},
-			_ => panic!("Expected Dust error for isolation sum < 330"),
-		}
-	}
-
-	#[test]
 	fn spend_dust_vtxo() {
 		// Test the "all dust" case: create a 200 sat vtxo and split into two 100 sat outputs
 		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
@@ -2682,5 +2711,114 @@ mod test {
 
 		let result = ArkoorBuilder::new_with_checkpoint(alice_vtxo, outputs, vec![]);
 		assert_eq!(result.err(), Some(ArkoorConstructionError::Overflow));
+	}
+
+	/// This is a test helper. It checks the output placement rules for the
+	/// given normal and isolated output amounts. The server cosign path
+	/// enforces the same rules: [ArkoorBuilder::from_cosign_request] funnels
+	/// into [ArkoorBuilder::new].
+	fn verify_isolation_rules(
+		normal_amounts: &[u64],
+		isolation_amounts: &[u64],
+	) -> Result<(), ArkoorConstructionError> {
+		let user_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		// A vtxo can't be worth nothing, so the empty case gets a single sat.
+		let total = normal_amounts.iter().chain(isolation_amounts).sum::<u64>();
+		let (_funding_tx, vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(total.max(1)),
+			fee: Amount::ZERO,
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: user_keypair.clone(),
+			server_keypair,
+		}.build();
+
+		let dest = |amount: &u64| ArkoorDestination {
+			total_amount: Amount::from_sat(*amount),
+			policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
+		};
+		let outputs = normal_amounts.iter().map(dest).collect::<Vec<_>>();
+		let isolated_outputs = isolation_amounts.iter().map(dest).collect::<Vec<_>>();
+
+		ArkoorBuilder::new_with_checkpoint(vtxo, outputs, isolated_outputs).map(|_| ())
+	}
+
+	#[test]
+	fn output_placement_rules() {
+		verify_isolation_rules(&[], &[]).expect_err("no outputs");
+		verify_isolation_rules(&[100], &[]).expect("all-dust spend stays in normal outputs");
+		verify_isolation_rules(&[200, 200], &[])
+			.expect("no dust-isolation tx needed when everything is dust");
+		verify_isolation_rules(&[200, 400], &[]).expect("dust may mix with sub-660 outputs");
+		verify_isolation_rules(&[200, 500], &[]).expect("dust may mix with small outputs");
+		verify_isolation_rules(&[], &[100, 200])
+			.expect_err("no spurious dust-isolation without normal outputs");
+		verify_isolation_rules(&[500], &[100])
+			.expect_err("isolation sum below the dust limit next to normal outputs");
+		verify_isolation_rules(&[10_000], &[100, 100])
+			.expect_err("isolation sum must reach the dust limit");
+		verify_isolation_rules(&[500], &[200, 200]).expect("isolation sum reaches the dust limit");
+		verify_isolation_rules(&[], &[660]).expect_err("no normal outputs");
+		verify_isolation_rules(&[], &[659]).expect_err("no normal outputs");
+		verify_isolation_rules(&[400], &[660])
+			.expect_err("660 sat can be split and does not need isolation");
+		verify_isolation_rules(&[400], &[659])
+			.expect_err("dust-isolation must contain at least one dust output");
+		verify_isolation_rules(&[400], &[659, 100]).expect("just below the split threshold");
+		verify_isolation_rules(&[330], &[]).expect("the dust limit itself is a valid normal output");
+		verify_isolation_rules(&[10_000], &[100_000])
+			.expect_err("large outputs never need isolation");
+		verify_isolation_rules(&[10_000], &[100, 10_000])
+			.expect_err("isolated outputs cannot be large");
+		verify_isolation_rules(&[200], &[400, 100])
+			.expect_err("dust in the normal outputs while dust-isolation is used");
+		verify_isolation_rules(&[100, 10_000], &[])
+			.expect_err("dust must not share the checkpoint with a large output");
+
+		// The dust rule rejects it, and not a malformed request.
+		assert_eq!(
+			verify_isolation_rules(&[200, 10_000], &[]).unwrap_err(),
+			ArkoorConstructionError::Dust,
+			"dust must not share the checkpoint with a large output",
+		);
+	}
+
+	#[test]
+	#[ignore = "slow; run on demand with --run-ignored all"]
+	fn isolate_dust_fuzz() {
+		// new_with_checkpoint_isolate_dust must find a placement that satisfies
+		// the dust isolation rules for every list of non-zero outputs.
+		// Self::new validates the placement, so Ok means the rules hold.
+		let mut rng = rand::rngs::StdRng::seed_from_u64(1105);
+
+		let user_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		for nb_outputs in 1..=4 {
+			for _ in 0..2_500 {
+				let amounts = (0..nb_outputs)
+					.map(|_| rng.gen_range(1..10_000u64))
+					.collect::<Vec<u64>>();
+
+				let (_funding_tx, vtxo) = DummyTestVtxoSpec {
+					amount: Amount::from_sat(amounts.iter().sum()),
+					fee: Amount::ZERO,
+					expiry_height: 1000,
+					exit_delta: 128,
+					user_keypair: user_keypair.clone(),
+					server_keypair: server_keypair.clone(),
+				}.build();
+
+				let outputs = amounts.iter().map(|a| ArkoorDestination {
+					total_amount: Amount::from_sat(*a),
+					policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
+				}).collect::<Vec<_>>();
+
+				let result = ArkoorBuilder::new_with_checkpoint_isolate_dust(vtxo, outputs);
+				assert!(result.is_ok(), "amounts {:?}: {:?}", amounts, result.err());
+			}
+		}
 	}
 }
