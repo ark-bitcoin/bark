@@ -83,9 +83,10 @@ impl Default for Config {
 			vtxo_target_issue_threshold: 80,
 			vtxo_lifetime: 144 * 3,
 			vtxo_pre_expiry: 144,
-			// A checkpointed allocation adds two txs to the chain, so this
-			// allows the same three chained allocations as before checkpoints.
-			max_vtxo_exit_depth: 6,
+			// The server refuses to cosign arkoors past `max_vtxo_exit_depth`
+			// in the top-level config, which is higher. This field here is
+			// only for the pool of VTXO.
+			max_vtxo_exit_depth: 50,
 		}
 	}
 }
