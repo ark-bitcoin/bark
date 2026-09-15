@@ -19,7 +19,7 @@ use std::fmt::{self, Write};
 use std::sync::atomic::{self, AtomicBool};
 
 use tokio::sync::oneshot;
-use tracing::trace;
+use tracing::{trace, warn};
 
 use server_rpc::{pver, RequestExt};
 
@@ -104,6 +104,9 @@ impl ToStatus for anyhow::Error {
 		} else if let Some(_) = self.downcast_ref::<BadArgument>() {
 			tonic::Status::invalid_argument(format!("{:#}", self))
 		} else {
+			// Without rich errors the client only sees "internal error",
+			// so this is the only place that records the cause.
+			warn!("RPC internal error: {:#}", self);
 			if RPC_RICH_ERRORS.load(atomic::Ordering::Relaxed) {
 				tonic::Status::internal(format!("{:#}", self))
 			} else {

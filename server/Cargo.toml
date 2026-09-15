@@ -98,3 +98,4 @@ tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }
+bdk_wallet = { workspace = true, features = ["test-utils"] }

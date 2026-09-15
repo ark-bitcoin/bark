@@ -124,7 +124,10 @@ async fn utxos_unlock_after_pending_offboard_expiry() {
 	let err = wallet.offboard_vtxos([vtxo2.id()], address).await
 		.expect_err("the second offboard should fail while the wallet UTXOs are locked");
 	let err = format!("{err:#}");
-	assert!(err.contains("bdk failed to create offboard tx"), "unexpected error: {err}");
+	assert!(err.contains("failed to build offboard tx"), "unexpected error: {err}");
+	// The lock leaves nothing to select. The build must fail because the
+	// wallet has no coins, not for another reason.
+	assert!(err.contains("Insufficient funds"), "unexpected error: {err}");
 	assert!(!err.contains(ABANDON_ERROR), "the error should come from the server: {err}");
 
 	// Once the abandoned session expires, the same offboard must be

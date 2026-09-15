@@ -277,25 +277,27 @@ impl Server {
 		);
 		let connector_amt = P2TR_DUST * input_vtxos.len() as u64;
 
-		let mut wallet_guard = self.rounds_wallet.lock().await;
-		let offboard_tx = {
-			let unavailable = wallet_guard.unavailable_outputs(self.config.min_trusted_confs);
-			let mut b = wallet_guard.build_tx()
-				.coin_selection(WithGuaranteedChange(SingleRandomDraw));
-			b.ordering(bdk_wallet::TxOrdering::Untouched);
-			b.current_height(tip);
-			b.unspendable(unavailable);
-			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
-			b.add_recipient(request.script_pubkey.clone(), net_amount);
-			b.add_recipient(connector_spk, connector_amt);
-			b.fee_rate(request.fee_rate);
-			b.finish().context("bdk failed to create offboard tx")?
-		};
-		// we need to lock the inputs
-		let wallet_input_guard = wallet_guard.lock_wallet_utxos(
-			offboard_tx.unsigned_tx.input.iter().map(|i| i.previous_output),
-		).context("bdk selected unavailable UTXOs")?;
-		drop(wallet_guard);
+		let script_pubkey = request.script_pubkey.clone();
+		let fee_rate = request.fee_rate;
+		// The `_` releases the wallet lock here: nothing below needs it.
+		let (_, (offboard_tx, wallet_input_guard)) = self.rounds_wallet.build_blocking(
+			move |wallet| {
+				let selection = WithGuaranteedChange(SingleRandomDraw);
+				let psbt = wallet.build_tx_at_chunk_feerate(selection, fee_rate, |b| {
+					b.ordering(bdk_wallet::TxOrdering::Untouched);
+					b.current_height(tip);
+					// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
+					b.add_recipient(script_pubkey.clone(), net_amount);
+					b.add_recipient(connector_spk.clone(), connector_amt);
+					Ok(())
+				})?;
+				// Lock the inputs before we release the wallet lock.
+				let inputs = wallet.lock_wallet_utxos(
+					psbt.unsigned_tx.input.iter().map(|i| i.previous_output),
+				).context("bdk selected unavailable UTXOs")?;
+				Ok((psbt, inputs))
+			},
+		).await.context("failed to build offboard tx")?;
 
 		let (forfeit_sec_nonces, forfeit_pub_nonces) = (0..input_vtxos.len()).map(|_| {
 			musig::nonce_pair(self.server_key.leak_ref())

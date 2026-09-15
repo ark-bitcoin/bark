@@ -11,6 +11,7 @@ use serde_json::json;
 use bitcoin_ext::FeeRateExt;
 use bitcoin_ext::rpc::RpcApi;
 use server::bitcoind::MempoolEntry;
+use server::vtxopool::VtxoTarget;
 use server_log::{NurseryTxConfirmed, NurseryTxMissedTarget, RoundFinished};
 
 use ark_testing::{btc, sat, TestContext};
@@ -300,4 +301,77 @@ async fn assert_has_wallet_change(srv: &Captaind, txid: Txid) {
 		.chain(rounds.unconfirmed_utxos.iter())
 		.any(|utxo| utxo.txid == txid);
 	assert!(has_change, "tx {} must keep a change output", txid);
+}
+
+/// A round tx built on the wallet's own unconfirmed change pays for
+/// that parent, and bitcoind agrees: the chunk it reports for the two
+/// meets the target even though the parent alone paid less.
+///
+/// The `builder_test` unit tests in `server/src/wallet/mod.rs` cover the
+/// fee arithmetic against our own model of a chunk. This one reads the
+/// chunk bitcoind formed, so it catches a model that disagrees with
+/// Core's chunking, and a round that stops funding at the chunk feerate.
+#[tokio::test]
+async fn wallet_tx_pays_for_unconfirmed_ancestors() {
+	let ctx = TestContext::new("server/wallet_tx_pays_for_unconfirmed_ancestors").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+		// The pool issuance pays a low rate and spends the wallet's only
+		// coin, so the round that follows must build on its change.
+		cfg.fee_estimator.fallback_fee_rate_slow = FeeRate::from_sat_per_vb(2).unwrap();
+		cfg.fee_estimator.fallback_fee_rate_fast = FeeRate::from_sat_per_vb(20).unwrap();
+		cfg.vtxopool.vtxo_targets = vec![VtxoTarget { count: 3, amount: btc(1) }];
+	}).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+	let issuance_txid = srv.vtxopool_last_issuance().expect("pool issued a funding tx");
+
+	// Keep the issuance out of the blocks the board needs. Both nodes
+	// mine during the test: the central one for the board, the server's
+	// for the round trigger.
+	const DELTA_SAT: i64 = 10_000_000_000;
+	for node in [ctx.bitcoind(), srv.bitcoind()] {
+		node.sync_client().call::<bool>("prioritisetransaction", &[
+			json!(issuance_txid.to_string()), json!(0), json!(-DELTA_SAT),
+		]).expect("prioritisetransaction failed");
+	}
+
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	ctx.refresh_all(&srv, &[&bark]).await;
+	let funding_txid = log_round_finished.recv().wait(Duration::from_secs(30)).await
+		.expect("timed out waiting for the round").txid;
+	srv.bitcoind().await_transaction(funding_txid).await;
+
+	// The reported chunk fees include the delta, so remove it before we
+	// read them.
+	srv.bitcoind().sync_client().call::<bool>("prioritisetransaction", &[
+		json!(issuance_txid.to_string()), json!(0), json!(DELTA_SAT),
+	]).expect("prioritisetransaction failed");
+
+	let entry = srv.bitcoind().sync_client().call::<serde_json::Value>(
+		"getmempoolentry", &[json!(funding_txid)],
+	).expect("server bitcoind has the round tx");
+	let depends = entry["depends"].as_array().unwrap();
+	assert!(depends.iter().any(|d| d.as_str() == Some(&issuance_txid.to_string())),
+		"the round tx must spend the issuance",
+	);
+
+	// The issuance alone paid 2 sat/vB. The round tx covers the rest, so
+	// both land in one chunk at the 20 sat/vB target: no less, and not
+	// much more, or the round tx overpaid.
+	let target_kwu = FeeRate::from_sat_per_vb(20).unwrap().to_sat_per_kwu();
+	let issuance_chunk_kwu = chunk_fee_rate_kwu(&srv, issuance_txid);
+	assert!(issuance_chunk_kwu >= target_kwu,
+		"issuance chunk pays {} sat/kwu, expected at least {}", issuance_chunk_kwu, target_kwu,
+	);
+	assert!(issuance_chunk_kwu < target_kwu * 11 / 10,
+		"issuance chunk pays {} sat/kwu, well over the {} target", issuance_chunk_kwu, target_kwu,
+	);
+	assert_eq!(issuance_chunk_kwu, chunk_fee_rate_kwu(&srv, funding_txid),
+		"the issuance and the round tx must share a chunk",
+	);
 }

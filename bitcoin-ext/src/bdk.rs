@@ -116,10 +116,16 @@ impl TrustedCanonicalization {
 		Self { txs, unspent }
 	}
 
+	/// The canonical tx for `txid`, or `None` when this view does not
+	/// hold it.
+	pub fn get(&self, txid: Txid) -> Option<&LocalTransaction> {
+		self.txs.get(&txid)
+	}
+
 	/// Trust verdict for `txid`. Unknown txids (not in the wallet's
 	/// canonical view) are treated as untrusted.
 	pub fn is_trusted(&self, txid: Txid) -> bool {
-		self.txs.get(&txid).map(|e| e.is_trusted).unwrap_or(false)
+		self.get(txid).map(|e| e.is_trusted).unwrap_or(false)
 	}
 
 	/// Iterate this wallet's unspent outputs in canonical view, each
@@ -333,15 +339,6 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			}
 		}
 		TrustedBalance { trusted, untrusted }
-	}
-
-	/// Return all UTXOs that are untrusted.
-	fn untrusted_utxos(&self, min_confs: u32) -> Vec<OutPoint> {
-		TrustedCanonicalization::from_wallet(self.borrow(), min_confs)
-			.list_unspent()
-			.filter(|u| !u.is_trusted)
-			.map(|u| u.outpoint)
-			.collect()
 	}
 
 	/// Check if a transaction is fully owned by the wallet (all inputs spend

@@ -553,16 +553,16 @@ impl Process {
 
 		let funding_txout = builder.funding_txout();
 
-		let mut wallet = self.srv.rounds_wallet.lock().await;
-		let funding_psbt = {
-			let unavailable = wallet.unavailable_outputs(self.srv.config.min_trusted_confs);
-			let mut b = wallet.build_tx()
-				.coin_selection(WithGuaranteedChange(SingleRandomDraw));
-			b.unspendable(unavailable);
-			b.add_recipient(funding_txout.script_pubkey.clone(), funding_txout.value);
-			b.fee_rate(fee_rate);
-			b.finish().context("failed to build signed tree funding tx")?
-		};
+		let txout = funding_txout.clone();
+		let (mut wallet, funding_psbt) = self.srv.rounds_wallet.build_blocking(
+			move |wallet| {
+				let selection = WithGuaranteedChange(SingleRandomDraw);
+				wallet.build_tx_at_chunk_feerate(selection, fee_rate, |b| {
+					b.add_recipient(txout.script_pubkey.clone(), txout.value);
+					Ok(())
+				}).context("failed to build signed tree funding tx")
+			},
+		).await?;
 
 		let funding_txid = funding_psbt.unsigned_tx.compute_txid();
 		let total_amount = builder.total_required_value();

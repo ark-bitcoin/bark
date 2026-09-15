@@ -68,3 +68,19 @@ pub struct WalletReceivedBlockedAddress {
 }
 impl_slog!(WalletReceivedBlockedAddress, WARN, "our wallet received funds from a blocked address");
 
+/// The tx pays more than its own target fee. The extra amount covers
+/// the unconfirmed ancestors that paid less, so the chunk they are
+/// mined in meets the target.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletBumpedAncestors {
+	pub wallet: Cow<'static, str>,
+	pub txid: Txid,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub fee: Amount,
+	/// Number of unconfirmed ancestors.
+	pub ancestors: usize,
+	/// The part of the fee that covers the ancestors.
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub shortfall: Amount,
+}
+impl_slog!(WalletBumpedAncestors, INFO, "Wallet tx pays extra fee for its unconfirmed ancestors");

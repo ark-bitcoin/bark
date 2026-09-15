@@ -534,6 +534,15 @@ impl Config {
 			);
 		}
 
+		// At 0 the wallet trusts every unconfirmed tx, including deposits
+		// from third parties, so coin selection would spend outputs that
+		// a double-spend can still invalidate.
+		if self.min_trusted_confs == 0 {
+			bail!("Invalid configuration: min_trusted_confs must be at least 1, \
+				otherwise unconfirmed deposits from third parties count as trusted.",
+			);
+		}
+
 		if self.network == bitcoin::Network::Bitcoin && !self.require_board_funding_tx {
 			bail!("Cannot turn off require_board_funding_tx on mainnet");
 		}
@@ -789,6 +798,19 @@ mod test {
 
 		cfg.offboard_check_interval = Duration::from_secs(31);
 		cfg.validate().expect_err("Invalid because sessions would outlive their timeout");
+	}
+
+	#[test]
+	fn validate_min_trusted_confs() {
+		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+		cfg.bitcoind.cookie = Some(".cookie".into());
+
+		cfg.min_trusted_confs = 0;
+		let err = cfg.validate().expect_err("trusting unconfirmed deposits is invalid");
+		assert!(err.to_string().contains("min_trusted_confs"), "{}", err);
+
+		cfg.min_trusted_confs = 1;
+		cfg.validate().expect("one confirmation is valid");
 	}
 
 	#[test]
