@@ -315,11 +315,17 @@ impl LightningManager {
 		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?;
 		let lightning_htlc_subscription_id = sub.as_ref().map(|s| s.id);
 
+		// Read here, while we are still on the user's RPC task: every later
+		// status transition of this attempt is emitted by the xpay monitor,
+		// which reads the client back from the stored row. Raw, not the bucketed
+		// label: the column has no cardinality budget.
+		let user_agent = telemetry::current_user_agent();
+
 		self.db.write(async |t|
 			t.store_lightning_payment_start(
 				node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids,
 				lightning_htlc_subscription_id,
-				attempt_block_height, user_fee,
+				attempt_block_height, user_fee, user_agent.as_deref(),
 			).await
 		).await?;
 
@@ -525,9 +531,14 @@ impl LightningManager {
 		}).await?.into_inner();
 
 		let invoice = Bolt11Invoice::from_str(&res.bolt11)?;
+
+		// Raw agent, not the bucketed label -- see start_lightning_payment.
+		let user_agent = telemetry::current_user_agent();
+
 		self.db.write(async |t|
 			t.store_generated_lightning_receive(
 				node.id, &invoice, amount.to_msat(), receiver_mailbox_id.as_ref(),
+				user_agent.as_deref(),
 			).await
 		).await?;
 
@@ -610,6 +621,7 @@ impl LightningManager {
 				telemetry::LightningPaymentMetricStatus::Succeeded,
 				telemetry::LightningDirection::Receive,
 				is_self_payment,
+				htlc_subscription.user_agent.as_deref(),
 			);
 		}
 
@@ -652,6 +664,7 @@ impl LightningManager {
 				telemetry::LightningPaymentMetricStatus::Canceled,
 				telemetry::LightningDirection::Receive,
 				is_self_payment,
+				subscription.user_agent.as_deref(),
 			);
 		}
 

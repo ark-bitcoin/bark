@@ -58,6 +58,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 				telemetry::LightningPaymentMetricStatus::Failed,
 				telemetry::LightningDirection::Send,
 				attempt.is_self_payment(),
+				attempt.user_agent.as_deref(),
 			);
 		}
 
@@ -151,6 +152,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 					metric_status,
 					telemetry::LightningDirection::Send,
 					attempt.is_self_payment(),
+					attempt.user_agent.as_deref(),
 				);
 			}
 		}

@@ -130,7 +130,7 @@ impl<'t> Tx<'t> {
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
-				lpa.lightning_htlc_subscription_id,
+				lpa.user_agent, lpa.lightning_htlc_subscription_id,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.status != $1 AND lpa.status != $2 AND lpa.lightning_node_id = $3
@@ -154,7 +154,7 @@ impl<'t> Tx<'t> {
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
-				lpa.lightning_htlc_subscription_id,
+				lpa.user_agent, lpa.lightning_htlc_subscription_id,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1 AND
@@ -193,7 +193,7 @@ impl<'t> Tx<'t> {
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
-				lpa.lightning_htlc_subscription_id,
+				lpa.user_agent, lpa.lightning_htlc_subscription_id,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.lightning_htlc_subscription_id = $1 AND
@@ -223,6 +223,12 @@ impl<'t> Tx<'t> {
 	/// `lightning_htlc_subscription_id` records the subscription the payment
 	/// was initiated against, making it an intra-Ark self-payment. This is
 	/// decided at initiation time and stored; it is never re-derived.
+	///
+	/// `user_agent` is the raw `x-user-agent` of the initiating client
+	/// ([`crate::telemetry::current_user_agent`]), not the bucketed metric
+	/// label. It has to be read on the RPC task and passed in: the later status
+	/// transitions are emitted by the xpay monitor, which reads it back from
+	/// this row.
 	pub async fn store_lightning_payment_start(
 		&self,
 		node_id: LightningNodeId,
@@ -233,6 +239,7 @@ impl<'t> Tx<'t> {
 		lightning_htlc_subscription_id: Option<i64>,
 		block_height: BlockHeight,
 		user_fee: Amount,
+		user_agent: Option<&str>,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 
@@ -263,10 +270,11 @@ impl<'t> Tx<'t> {
 				status,
 				block_height,
 				user_fee_sat,
+				user_agent,
 				created_at,
 				updated_at,
 				lightning_htlc_subscription_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), $9)
 			RETURNING id, updated_at;
 		").await?;
 
@@ -279,7 +287,7 @@ impl<'t> Tx<'t> {
 			&[
 				&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64),
 				&mailbox_str, &requested_status,
-				&block_height_i32, &user_fee_sat_i64,
+				&block_height_i32, &user_fee_sat_i64, &user_agent,
 				&lightning_htlc_subscription_id,
 			],
 		).await?;
@@ -393,7 +401,7 @@ impl<'t> Tx<'t> {
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
-				lpa.lightning_htlc_subscription_id,
+				lpa.user_agent, lpa.lightning_htlc_subscription_id,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1
@@ -418,13 +426,14 @@ impl<'t> Tx<'t> {
 		invoice: &Bolt11Invoice,
 		amount_msat: u64,
 		receiver_mailbox_id: Option<&MailboxIdentifier>,
+		user_agent: Option<&str>,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 		let mailbox_str = receiver_mailbox_id.map(|id| id.to_string());
 
 		self.inner_store_lightning_htlc_subscription(
 			node_id, &payment_hash.to_string(), &invoice.to_string(),
-			Some(amount_msat), mailbox_str.as_deref(),
+			Some(amount_msat), mailbox_str.as_deref(), user_agent,
 		).await?;
 
 		Ok(())
@@ -440,6 +449,7 @@ impl<'t> Tx<'t> {
 		invoice: &str,
 		final_amount_msat: Option<u64>,
 		receiver_mailbox_id: Option<&str>,
+		user_agent: Option<&str>,
 	) -> anyhow::Result<(i64, DateTime<Local>)> {
 		let requested_status = LightningHtlcSubscriptionStatus::Created;
 
@@ -451,16 +461,20 @@ impl<'t> Tx<'t> {
 				final_amount_msat,
 				receiver_mailbox_id,
 				status,
+				user_agent,
 				created_at,
 				updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 			RETURNING id, updated_at;
 		").await?;
 
 		let final_amount = final_amount_msat.map(|u| u as i64);
 		let row = self.query_one(
 			&stmt,
-			&[&node_id, &payment_hash, &invoice, &final_amount, &receiver_mailbox_id, &requested_status],
+			&[
+				&node_id, &payment_hash, &invoice, &final_amount, &receiver_mailbox_id,
+				&requested_status, &user_agent,
+			],
 		).await?;
 
 		let id = row.get("id");
@@ -609,7 +623,7 @@ impl<'t> Tx<'t> {
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
 		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
-				status, lowest_incoming_htlc_expiry, accepted_at,
+				status, lowest_incoming_htlc_expiry, accepted_at, user_agent,
 				created_at, updated_at
 			FROM lightning_htlc_subscription
 			WHERE status NOT IN ($1, $2) AND lightning_node_id = $3
@@ -634,7 +648,7 @@ impl<'t> Tx<'t> {
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
 		let stmt = self.prepare("
 			SELECT lhs.id, lhs.lightning_node_id, lhs.payment_hash, lhs.invoice,
-				lhs.status, lhs.lowest_incoming_htlc_expiry, lhs.accepted_at,
+				lhs.status, lhs.lowest_incoming_htlc_expiry, lhs.accepted_at, lhs.user_agent,
 				lhs.created_at, lhs.updated_at,
 				COALESCE(array_agg(vtxo.vtxo_id::text), ARRAY[]::text[]) AS htlc_vtxos
 			FROM lightning_htlc_subscription lhs
@@ -665,7 +679,7 @@ impl<'t> Tx<'t> {
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
 		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
-				status, lowest_incoming_htlc_expiry, accepted_at,
+				status, lowest_incoming_htlc_expiry, accepted_at, user_agent,
 				created_at, updated_at
 			FROM lightning_htlc_subscription
 			WHERE id = $1
@@ -749,7 +763,7 @@ impl<'t> Tx<'t> {
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
 		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
-				status, lowest_incoming_htlc_expiry, accepted_at,
+				status, lowest_incoming_htlc_expiry, accepted_at, user_agent,
 				created_at, updated_at
 			FROM lightning_htlc_subscription
 			WHERE payment_hash = $1

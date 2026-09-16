@@ -102,6 +102,12 @@ pub struct LightningPaymentAttempt {
 	/// Fee quoted to the user at initiation (`base_fee + expiry_fee`).
 	/// `None` for pre-V57 rows.
 	pub user_fee: Option<Amount>,
+	/// Raw `x-user-agent` of the client that initiated the payment, verbatim.
+	/// Only the initiating RPC task knows it, so it is stored here for the
+	/// status transitions the xpay monitor emits later, which bucket it into
+	/// the metric label at emission time. `None` when the client sent no
+	/// header, and for pre-V66 rows.
+	pub user_agent: Option<String>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
 }
@@ -140,6 +146,7 @@ impl TryFrom<Row> for LightningPaymentAttempt {
 			block_height: row.get::<_, Option<i32>>("block_height").map(|i| BlockHeight::try_from(i).expect("invalid block height in db")),
 			user_fee: row.get::<_, Option<i64>>("user_fee_sat")
 				.map(|f| Amount::from_sat(u64::try_from(f).expect("negative user_fee_sat in db row"))),
+			user_agent: row.get("user_agent"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})
@@ -210,6 +217,7 @@ pub struct LightningHtlcSubscription {
 	pub status: LightningHtlcSubscriptionStatus,
 	pub lowest_incoming_htlc_expiry: Option<BlockHeight>,
 	pub accepted_at: Option<DateTime<Local>>,
+	pub user_agent: Option<String>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
 	/// NB this field is not always provided by all queries
@@ -240,6 +248,7 @@ impl <'a>TryFrom<&'a Row> for LightningHtlcSubscription {
 			lowest_incoming_htlc_expiry: row.get::<_, Option<i64>>("lowest_incoming_htlc_expiry")
 				.map(|i| BlockHeight::try_from(i).expect("invalid block height in db")),
 			accepted_at: row.try_get("accepted_at").ok(),
+			user_agent: row.try_get("user_agent").ok().flatten(),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 			htlc_vtxos: if let Some(raw) = row.try_get::<_, Vec<&str>>("htlc_vtxos").ok() {
