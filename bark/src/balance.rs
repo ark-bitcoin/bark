@@ -4,7 +4,8 @@
 use std::collections::HashMap;
 
 use bitcoin::Amount;
-use log::warn;
+use bitcoin_ext::BlockHeight;
+use log::{debug, warn};
 
 use crate::Wallet;
 use crate::exit::ExitStateKind;
@@ -15,6 +16,12 @@ use crate::vtxo::{VtxoState, VtxoStateKind};
 pub struct Balance {
 	/// Coins that are spendable in the Ark, either in-round or out-of-round.
 	pub spendable: Amount,
+	/// Sats in VTXOs that can no longer be sent in an arkoor payment because
+	/// they have expired or their exit depth has reached the server's limit.
+	/// Nothing holds them, and they can still be offboarded, exited or
+	/// refreshed, but they are kept out of [Balance::spendable] until
+	/// maintenance has refreshed them. See [crate::WalletVtxo::needs_refresh].
+	pub needs_refresh: Amount,
 	/// Coins that are in the process of being sent over Lightning.
 	pub pending_lightning_send: Amount,
 	/// Coins that are in the process of being received over Lightning.
@@ -35,15 +42,37 @@ impl Wallet {
 	///
 	/// When not running the daemon, make sure you sync before calling this method.
 	pub async fn balance(&self) -> anyhow::Result<Balance> {
+		let tip = match self.inner.chain.tip().await {
+			Ok(tip) => Some(tip),
+			Err(e) => {
+				debug!("Chain tip unavailable for the balance, using the last one seen: {:#}", e);
+				self.inner.chain.last_observed_tip().await
+			},
+		};
+		let max_exit_depth = match self.ark_info().await {
+			Ok(info) => info.map(|i| i.max_vtxo_exit_depth),
+			Err(e) => {
+				debug!("Server info unavailable for the balance, judging expiry only: {:#}", e);
+				None
+			},
+		};
+
 		// Every VTXO the balance can count, read once.
 		let vtxos = self.inner.db.get_vtxos_by_state(
 			&[VtxoStateKind::Spendable, VtxoStateKind::Exited],
 		).await?.into_iter().map(|v| (v.id(), v)).collect::<HashMap<_, _>>();
 
-		let spendable = vtxos.values()
-			.filter(|v| v.state == VtxoState::Spendable)
-			.map(|v| v.amount())
-			.sum::<Amount>();
+		let mut spendable = Amount::ZERO;
+		let mut needs_refresh = Amount::ZERO;
+		for vtxo in vtxos.values().filter(|v| v.state == VtxoState::Spendable) {
+			// Without a tip only the depth can be judged; a tip of zero
+			// expires nothing.
+			if vtxo.needs_refresh(tip.unwrap_or(BlockHeight::ZERO), max_exit_depth) {
+				needs_refresh += vtxo.amount();
+			} else {
+				spendable += vtxo.amount();
+			}
+		}
 
 		let pending_lightning_send = self.pending_lightning_send_vtxos().await?.iter()
 			.map(|v| v.amount())
@@ -79,6 +108,7 @@ impl Wallet {
 
 		Ok(Balance {
 			spendable,
+			needs_refresh,
 			pending_in_round,
 			pending_lightning_send,
 			claimable_lightning_receive,
