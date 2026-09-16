@@ -1799,14 +1799,16 @@ async fn persist_round_success(
 	// we first try all actions that need to happen and only afterwards return errors
 	// so that we achieve maximum success
 
-	let store_result = wallet.store_spendable_vtxos(new_vtxos).await
-		.context("failed to store new VTXOs");
+	// Spend the inputs before storing the outputs: in between, the balance
+	// misses these sats for a moment rather than counting them twice.
 	// The server completed the round, so the inputs are forfeited whatever
 	// state the wallet has for them locally. A recovered wallet can hold
 	// them in any state.
 	let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 	let spent_result = wallet.inner.db.steal_lock_to_spent(&input_ids).await
 		.context("failed to mark input VTXOs as spent");
+	let store_result = wallet.store_spendable_vtxos(new_vtxos).await
+		.context("failed to store new VTXOs");
 	let update_result = if let Some(mid) = movement_id {
 		wallet.inner.movements.finish_movement_with_update(
 			mid,
