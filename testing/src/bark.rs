@@ -21,6 +21,8 @@ use tokio::sync::Mutex;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 use bark::{BarkNetwork, Config, OpenWalletArgs, WalletSeed};
+use bark::actions::{WalletActionCheckpoint as Cp, arkoor_send, board, offboard};
+use bark::actions::lightning::{pay, receive};
 use bark::lock_manager::memory::MemoryLockManager;
 use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
@@ -288,6 +290,54 @@ impl Bark {
 		};
 
 		Ok(db)
+	}
+
+	/// Steps this wallet has checkpointed, sorted. Lets a test assert where it
+	/// parked instead of inferring it from the end state. The matches take no
+	/// wildcard, so a new step fails to compile here until it is named.
+	pub async fn checkpoint_steps(&self) -> Vec<String> {
+		let checkpoints = self.db_client().await
+			.expect("failed to open the wallet database")
+			.get_all_wallet_action_checkpoints().await
+			.expect("failed to read wallet action checkpoints");
+
+		let mut steps = checkpoints.into_iter().map(|cp| match cp {
+			Cp::Board(b) => format!("board.{}", match b.progress {
+				board::Progress::Broadcasting { .. } => "Broadcasting",
+				board::Progress::Confirming { .. } => "Confirming",
+			}),
+			Cp::ArkoorSend(s) => format!("arkoor.{}", match s.progress {
+				arkoor_send::Progress::Cosigning => "Cosigning",
+				arkoor_send::Progress::Registration { .. } => "Registration",
+				arkoor_send::Progress::Delivery { .. } => "Delivery",
+				arkoor_send::Progress::Finalizing { .. } => "Finalizing",
+			}),
+			Cp::Offboard(o) => format!("offboard.{}", match o.progress {
+				offboard::Progress::Start => "Start",
+				offboard::Progress::SplitWithArkoor => "SplitWithArkoor",
+				offboard::Progress::ArkoorRegistrationRequired { .. } =>
+					"ArkoorRegistrationRequired",
+				offboard::Progress::ReadyForOffboard { .. } => "ReadyForOffboard",
+				offboard::Progress::OffboardTxPrepared { .. } => "OffboardTxPrepared",
+				offboard::Progress::ReadyForBroadcast { .. } => "ReadyForBroadcast",
+				offboard::Progress::AwaitingConfirmations { .. } => "AwaitingConfirmations",
+			}),
+			Cp::LightningSend(s) => format!("ln_send.{}", match s.progress {
+				pay::Progress::Start => "Start",
+				pay::Progress::HtlcReceived(_) => "HtlcReceived",
+				pay::Progress::PaymentInitiated(_) => "PaymentInitiated",
+				pay::Progress::RevocableHtlcs { .. } => "RevocableHtlcs",
+				pay::Progress::RevocationStuck { .. } => "RevocationStuck",
+			}),
+			Cp::LightningReceive(r) => format!("ln_recv.{}", match r.progress {
+				receive::Progress::AwaitingPayment => "AwaitingPayment",
+				receive::Progress::HtlcsReady(_) => "HtlcsReady",
+				receive::Progress::PreimageRevealed(_) => "PreimageRevealed",
+				receive::Progress::Delivering(_) => "Delivering",
+			}),
+		}).collect::<Vec<_>>();
+		steps.sort();
+		steps
 	}
 
 	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet> {
