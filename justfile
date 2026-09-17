@@ -152,8 +152,16 @@ test-unit-codecov TEST="":
 
 test-integration TEST="": ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
-		-E 'not binary(tor)' {{TEST}}
+		-E 'not binary(tor) and not binary(server-migrations)' {{TEST}}
 alias int := test-integration
+
+# Run the server upgrade/migration tests. Requires OLD_CAPTAIND_EXEC to
+# point at a previous captaind release binary, e.g.:
+#   OLD_CAPTAIND_EXEC=/opt/second/captaind-0.7.0 just int-server-migrations
+test-integration-server-migrations TEST="": ensure-build-bins docker-pull
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+		--test server-migrations {{TEST}}
+alias int-server-migrations := test-integration-server-migrations
 
 # run integration tests for bark and barkd test files only
 test-integration-bark: ensure-build-bins docker-pull
@@ -209,6 +217,10 @@ test-integration-bark-int-prebuilt: docker-pull
 	RUST_MIN_STACK=33554432 \
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
 		-E 'binary(bark) + binary(barkd) + binary(=bark-sdk)'
+
+test-integration-server-migrations-prebuilt: docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
+		-E 'binary(=server-migrations)'
 
 test-integration-codecov TEST="": docker-pull
 	#!/usr/bin/env bash

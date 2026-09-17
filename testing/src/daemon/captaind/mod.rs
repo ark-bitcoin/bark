@@ -24,7 +24,7 @@ use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcP
 use crate::daemon::watchmand::Watchmand;
 use crate::{Bitcoind, Daemon, DaemonHelper, TestContext};
 use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
-use crate::constants::env::CAPTAIND_EXEC;
+use crate::constants::env::{CAPTAIND_EXEC, OLD_CAPTAIND_EXEC};
 use crate::ports::pick_port;
 use crate::util::{poll_interval, resolve_path};
 
@@ -134,6 +134,9 @@ pub struct CaptaindHelper {
 	/// The watchmand process accompanying this captaind,
 	/// attached by the builder right after startup.
 	watchmand: std::sync::OnceLock<Watchmand>,
+	/// Path to the captaind binary to run. When None, the
+	/// CAPTAIND_EXEC env var is used.
+	exec: parking_lot::Mutex<Option<PathBuf>>,
 }
 
 impl Captaind {
@@ -172,6 +175,14 @@ impl Captaind {
 		Command::new(exec)
 	}
 
+	/// The path to a previous captaind release binary, from the
+	/// OLD_CAPTAIND_EXEC env var. Used by the server-migrations tests
+	/// to start a server on the old version and upgrade it mid-test.
+	pub fn old_exec() -> PathBuf {
+		let e = env::var(OLD_CAPTAIND_EXEC).expect("OLD_CAPTAIND_EXEC env not set");
+		resolve_path(e).expect("failed to resolve OLD_CAPTAIND_EXEC")
+	}
+
 	/// Creates server with a bitcoind daemon.
 	pub fn new(name: impl AsRef<str>, bitcoind: Arc<Bitcoind>, cfg: Config) -> Self {
 		let helper = CaptaindHelper {
@@ -181,9 +192,17 @@ impl Captaind {
 			slog_handler_tx: parking_lot::Mutex::new(None),
 			state: Arc::new(parking_lot::Mutex::new(State::default())),
 			watchmand: std::sync::OnceLock::new(),
+			exec: parking_lot::Mutex::new(None),
 		};
 
 		Daemon::wrap(helper)
+	}
+
+	/// Override the captaind binary this instance runs, e.g. an old
+	/// release from [Captaind::old_exec]. Takes effect on the next
+	/// (re)start; pass None to return to the CAPTAIND_EXEC binary.
+	pub fn set_exec(&self, exec: Option<PathBuf>) {
+		*self.inner.exec.lock() = exec;
 	}
 
 	pub async fn get_custom_command(&self, args: &[&str]) -> anyhow::Result<Command> {
@@ -495,7 +514,7 @@ impl DaemonHelper for CaptaindHelper {
 	async fn get_command(&self) -> anyhow::Result<Command> {
 		let config_file = self.get_config_file().await;
 
-		let mut cmd = Captaind::base_cmd();
+		let mut cmd = self.cmd();
 		let args = vec![
 			"start",
 			"--config",
@@ -575,10 +594,19 @@ impl DaemonHelper for CaptaindHelper {
 }
 
 impl CaptaindHelper {
+	/// The command for this instance's binary: the per-instance exec
+	/// override when set, the CAPTAIND_EXEC binary otherwise.
+	fn cmd(&self) -> Command {
+		match self.exec.lock().as_ref() {
+			Some(exec) => Command::new(exec),
+			None => Captaind::base_cmd(),
+		}
+	}
+
 	async fn get_custom_command(&self, args: &[&str]) -> anyhow::Result<Command> {
 		let config_file = self.get_config_file().await;
 
-		let mut cmd = Captaind::base_cmd();
+		let mut cmd = self.cmd();
 		let mut new_args = args.to_vec();
 		new_args.push("--config");
 		new_args.push(config_file.to_str().unwrap());
@@ -631,7 +659,7 @@ impl CaptaindHelper {
 	async fn create(&self) -> anyhow::Result<()> {
 		let config_file = self.get_config_file().await;
 
-		let mut cmd = Captaind::base_cmd();
+		let mut cmd = self.cmd();
 		let args = vec![
 			"create",
 			"--config",

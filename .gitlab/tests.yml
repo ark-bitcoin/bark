@@ -449,7 +449,50 @@ bark-int-action-reentrancy:
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-int-prebuilt
 
+# Verifies the server database migrations: starts captaind on the
+# previous server release, creates in-flight lightning payments, swaps
+# to the current binary (migrations run on startup) and asserts the
+# payments keep succeeding.
 # REMINDER: update `tar-and-print-test-data` job when adding/removing compat jobs
+server-migrations-0.7.1:
+  interruptible: true
+  allow_failure: false
+  stage: test
+  tags:
+    - integration
+    - datastore
+  extends: .test-rules-no-tags
+  needs:
+    - prechecks
+    - check-commits
+    - build
+    - build-test-archives
+  variables:
+    TEST_DIRECTORY: ./test/server-migrations-0.7.1
+    NEXTEST_TEST_THREADS: "4"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT_MILLIS: "30000"
+    OLD_CAPTAIND_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/server-0.7.1/downloads/captaind-0.7.1-linux-x86_64
+    OLD_CAPTAIND_RELEASE_SHA256: 38881e672f06751180f485e4d927487c4bd90363da69449ffee4ba57fde7212a
+  cache:
+    key: captaind-0.7.1
+    paths:
+      - .captaind-release-cache/
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - >-
+      export OLD_CAPTAIND_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
+      --url "$OLD_CAPTAIND_RELEASE_URL"
+      --sha256 "$OLD_CAPTAIND_RELEASE_SHA256"
+      --name captaind
+      --cache-dir "${CI_PROJECT_DIR}/.captaind-release-cache")
+    - bash ./contrib/ci-run-test.sh test-integration-server-migrations-prebuilt
+
 compat-bark-0.5.0:
   interruptible: true
   allow_failure: false
@@ -626,6 +669,8 @@ tar-and-print-test-data:
     - job: compat-bark-0.6.2
       optional: true
     - job: compat-bark-0.7.0
+      optional: true
+    - job: server-migrations-0.7.1
       optional: true
   script:
     - |

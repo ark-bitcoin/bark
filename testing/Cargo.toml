@@ -28,6 +28,10 @@ path = "tests/barkd/mod.rs"
 name = "core"
 path = "tests/core/mod.rs"
 
+[[test]]
+name = "server-migrations"
+path = "tests/server-migrations/mod.rs"
+
 [features]
 slow_test = []
 
