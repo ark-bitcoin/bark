@@ -10,7 +10,6 @@ use ark::arkoor::state::{ServerCanCosign, ServerSigned};
 use ark::arkoor::package::{
 	ArkoorPackageCosignRequest, ArkoorPackageCosignResponse, ArkoorPackageBuilder,
 };
-use bitcoin_ext::P2TR_DUST;
 
 use crate::database::htlc_vtxo::{self, HtlcResolution};
 use crate::database::tree::VtxoTreeUpdate;
@@ -22,8 +21,6 @@ pub(crate) struct ArkoorCosignRequestValidationParams {
 	pub use_checkpoints: bool,
 	/// maximum number of outputs from a single input
 	pub max_outputs_per_input: usize,
-	/// Don't allow mixing dust and non-dust outputs when not necessary
-	pub disallow_unnecessary_dust: bool,
 	/// maximum allowed exit depth (genesis items) of each input VTXO;
 	/// requests where any input exceeds this are rejected to prevent
 	/// unbounded genesis chain growth.
@@ -85,27 +82,6 @@ impl Server {
 				bail!("too many outputs for input {} (#{}) ({} > {})",
 					b.input().id(), idx, nb_outputs, params.max_outputs_per_input,
 				);
-			}
-
-			if params.disallow_unnecessary_dust {
-				let non_dust_limit = P2TR_DUST * 2;
-				if b.normal_outputs().iter().any(|o| o.total_amount < P2TR_DUST)
-					&& b.normal_outputs().iter().any(|o| o.total_amount >= non_dust_limit)
-				{
-					bail!(
-						"invalid mix of dust and non-dust outputs for input {} (#{})",
-						b.input().id(), idx,
-					);
-				}
-
-				if b.isolated_outputs().iter().any(|o| o.total_amount < P2TR_DUST)
-					&& b.isolated_outputs().iter().any(|o| o.total_amount >= non_dust_limit)
-				{
-					bail!(
-						"invalid mix of dust and non-dust isolated outputs for input {} (#{})",
-						b.input().id(), idx,
-					);
-				}
 			}
 		}
 
@@ -188,7 +164,6 @@ impl Server {
 		let validation = ArkoorCosignRequestValidationParams {
 			use_checkpoints: true,
 			max_outputs_per_input: self.config.max_arkoor_fanout,
-			disallow_unnecessary_dust: true,
 			max_input_exit_depth: Some(self.config.max_vtxo_exit_depth),
 		};
 		let builder = self.validate_cosign_request(validation, request)
