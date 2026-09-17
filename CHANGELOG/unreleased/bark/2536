@@ -1,0 +1,4 @@
+- Implement recovery for delegated rounds
+  Wallets recovered from seed can now recover the outputs of delegated round
+  participations that completed while the wallet was deleted.
+  [#2536](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2536)

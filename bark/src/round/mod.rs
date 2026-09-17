@@ -35,6 +35,7 @@ use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
 use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
 use server_rpc::{protos, ServerConnection, TryFromBytes, MAX_NB_FORFEIT_NONCE_IDS};
 
+use crate::import::ImportVtxoArgs;
 use crate::movement::manager::OnDropStatus;
 use crate::{Wallet, WalletVtxo, SECP, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::movement::{MovementId, MovementStatus};
@@ -51,6 +52,12 @@ const ROUND_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 /// advertised lifetime when doing interactive rounds.
 const VTXO_EXPIRY_HEIGHT_BUFFER: BlockHeight = 6;
 
+/// The most a recovered delegated round participation may lose to fees,
+/// in percent of its input value. A hard-coded bound: the wallet that
+/// created the participation is gone, so this is the only thing standing
+/// between a recovered wallet and a server claiming excessive fees.
+const MAX_RECOVERED_PARTICIPATION_FEE_PERCENT: u64 = 5;
+
 
 /// Struct to communicate your specific participation for an Ark round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,9 +73,23 @@ pub struct RoundParticipation {
 }
 
 impl RoundParticipation {
+	/// Total value of the input VTXOs
+	///
+	/// `None` on overflow: the amounts can come from an untrusted server.
+	pub fn total_in(&self) -> Option<Amount> {
+		self.inputs.iter().try_fold(Amount::ZERO, |acc, i| acc.checked_add(i.amount()))
+	}
+
+	/// Total value of the requested output VTXOs
+	///
+	/// `None` on overflow: the amounts can come from an untrusted server.
+	pub fn total_out(&self) -> Option<Amount> {
+		self.outputs.iter().try_fold(Amount::ZERO, |acc, r| acc.checked_add(r.amount))
+	}
+
 	pub fn to_movement_update(&self) -> anyhow::Result<MovementUpdate> {
-		let input_amount = self.inputs.iter().map(|i| i.amount()).sum::<Amount>();
-		let output_amount = self.outputs.iter().map(|r| r.amount).sum::<Amount>();
+		let input_amount = self.total_in().context("input value overflow")?;
+		let output_amount = self.total_out().context("output value overflow")?;
 		let fee = input_amount - output_amount;
 		Ok(MovementUpdate::new()
 			.consumed_vtxos(&self.inputs)
@@ -1499,8 +1520,11 @@ async fn progress_delegated(
 
 	// The server has issued the round and its funding tx is in our mempool or a
 	// block: the server no longer accepts these inputs, so hold them like the
-	// inputs of an interactive round before we forfeit them below.
-	wallet.lock_vtxos(&participation.inputs, movement_id.map(|m| m.into())).await
+	// inputs of an interactive round before we forfeit them below. The lock
+	// is forced: a recovered wallet can hold the inputs in any state, even
+	// imported as Spent.
+	let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+	wallet.inner.db.steal_lock(&input_ids, movement_id.map(|m| m.into())).await
 		.context("failed to lock inputs of issued delegated round")
 		.map_err(HarkForfeitError::Err)?;
 
@@ -1779,7 +1803,11 @@ async fn persist_round_success(
 
 	let store_result = wallet.store_spendable_vtxos(new_vtxos).await
 		.context("failed to store new VTXOs");
-	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs).await
+	// The server completed the round, so the inputs are forfeited whatever
+	// state the wallet has for them locally. A recovered wallet can hold
+	// them in any state.
+	let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+	let spent_result = wallet.inner.db.steal_lock_to_spent(&input_ids).await
 		.context("failed to mark input VTXOs as spent");
 	let update_result = if let Some(mid) = movement_id {
 		wallet.inner.movements.finish_movement_with_update(
@@ -2136,6 +2164,158 @@ impl Wallet {
 		// from a state that is itself being synced.
 		let id = self.inner.db.store_round_state(&state).await?;
 		Ok(StoredRoundState::new(id, state))
+	}
+
+	/// Rebuild a delegated round participation the wallet has no local state
+	/// for, e.g. after a recovery from seed, and store it so the next sync
+	/// continues it.
+	///
+	/// Only returns an error on transient failures (server, chain or
+	/// database), so retrying can succeed. Invalid participation data from
+	/// the server is logged and the recovery abandoned without error,
+	/// because a retry would receive the same data again.
+	pub(crate) async fn recover_delegated_participation(
+		&self,
+		unlock_hash: UnlockHash,
+	) -> anyhow::Result<()> {
+		for state in self.pending_round_states().await? {
+			if state.state().unlock_hash() == Some(unlock_hash) {
+				return Ok(());
+			}
+		}
+
+		let (mut srv, ark_info) = self.require_server().await?;
+		let resp = match srv.client.round_participation_status(
+			protos::RoundParticipationStatusRequest {
+				unlock_hash: unlock_hash.to_byte_array().to_vec(),
+			},
+		).await {
+			Ok(resp) => resp.into_inner(),
+			Err(err) if err.code() == tonic::Code::NotFound => {
+				info!("Server has no round participation with unlock hash {}; \
+					nothing to recover", unlock_hash);
+				return Ok(());
+			},
+			Err(err) => return Err(anyhow::Error::from(err)
+				.context("error fetching round participation from server")),
+		};
+
+		if resp.input_vtxo_ids.is_empty() {
+			error!("Participation {} must have at least a single input", unlock_hash);
+			return Ok(());
+		}
+		if resp.output_vtxos.is_empty() {
+			error!("Participation {} must have at least a single output", unlock_hash);
+			return Ok(());
+		}
+
+		let mut output_vtxos = Vec::with_capacity(resp.output_vtxos.len());
+		for raw in resp.output_vtxos.iter() {
+			match <Vtxo<Full>>::deserialize(raw) {
+				Ok(vtxo) => output_vtxos.push(vtxo),
+				Err(e) => {
+					error!("Not recovering round participation {}: \
+						invalid output vtxo from server: {}", unlock_hash, e,
+					);
+					return Ok(());
+				},
+			}
+		}
+
+		// The participation was already completed by an earlier sync: the
+		// state is removed once its outputs are in the wallet, so a replayed
+		// completion message must not resurrect it.
+		for vtxo in output_vtxos.iter() {
+			if self.inner.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
+				return Ok(());
+			}
+		}
+
+		info!("Recovering delegated round participation with unlock hash {}", unlock_hash);
+
+		// The keys of the participation were derived by the wallet that
+		// created it, so they may be past what this wallet has revealed.
+		let output_pubkeys = output_vtxos.iter().map(|v| v.user_pubkey()).collect::<Vec<_>>();
+		self.find_vtxo_keypairs(output_pubkeys, self.inner.config.vtxo_key_gap_limit).await?;
+		for vtxo in output_vtxos.iter() {
+			if self.pubkey_keypair(&vtxo.user_pubkey()).await?.is_none() {
+				error!("Not recovering round participation {}: \
+					output vtxo {} is not ours", unlock_hash, vtxo.id(),
+				);
+				return Ok(());
+			}
+			if vtxo.server_pubkey() != ark_info.server_pubkey {
+				error!("Not recovering round participation {}: output vtxo {} \
+					commits to a foreign server pubkey {}",
+					unlock_hash, vtxo.id(), vtxo.server_pubkey(),
+				);
+				return Ok(());
+			}
+		}
+
+		let mut inputs = Vec::with_capacity(resp.input_vtxo_ids.len());
+		for raw in resp.input_vtxo_ids {
+			let id = match VtxoId::from_bytes(raw) {
+				Ok(id) => id,
+				Err(e) => {
+					error!("Not recovering round participation {}: \
+						invalid input vtxo id from server: {}", unlock_hash, e,
+					);
+					return Ok(());
+				},
+			};
+			if self.inner.db.get_wallet_vtxo(id).await?.is_none() {
+				let vtxo = self.fetch_vtxo(id).await?;
+				// The server holds the input already, so its reported spend
+				// state says nothing useful here; the round state machine marks
+				// it spent once the participation completes.
+				self.import_vtxo(&vtxo, ImportVtxoArgs {
+					skip_status_check: true,
+					..Default::default()
+				}).await.with_context(|| format!(
+					"failed to import input vtxo {} of round participation {}", id, unlock_hash,
+				))?;
+			}
+			inputs.push(self.get_full_vtxo(id).await?);
+		}
+
+		let outputs = output_vtxos.iter().map(|vtxo| VtxoRequest {
+			amount: vtxo.amount(),
+			policy: vtxo.policy().clone(),
+		}).collect();
+
+		let participation = RoundParticipation {
+			inputs,
+			outputs,
+			unblinded_mailbox_id: Some(self.mailbox_identifier()),
+		};
+
+		// The participation is rebuilt from server data, so nothing else bounds
+		// what the server claims we agreed to pay in fees.
+		let (Some(total_in), Some(total_out)) =
+			(participation.total_in(), participation.total_out())
+		else {
+			error!("Not recovering round participation {}: value overflow", unlock_hash);
+			return Ok(());
+		};
+		let fee = total_in.checked_sub(total_out).unwrap_or(Amount::ZERO);
+		let (Some(in_scaled), Some(fee_scaled)) = (
+			total_in.checked_mul(MAX_RECOVERED_PARTICIPATION_FEE_PERCENT),
+			fee.checked_mul(100),
+		) else {
+			error!("Not recovering round participation {}: value overflow", unlock_hash);
+			return Ok(());
+		};
+		if fee_scaled > in_scaled {
+			error!("Not recovering round participation {}: it pays {} in fees, \
+				more than {}% of its {} input value",
+				unlock_hash, fee, MAX_RECOVERED_PARTICIPATION_FEE_PERCENT, total_in,
+			);
+			return Ok(());
+		}
+		let state = RoundState::new_delegated(participation, unlock_hash, None, None);
+		self.inner.db.store_round_state(&state).await?;
+		Ok(())
 	}
 
 	/// Join an already-started round attempt interactively, submitting our

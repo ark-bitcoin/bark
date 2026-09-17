@@ -77,6 +77,8 @@ macro_rules! bark_persister_tests {
 			test_remove_vtxo,
 			test_has_spent_vtxo,
 			test_store_vtxos_idempotent,
+			test_steal_lock_to_spent,
+			test_steal_lock,
 
 			test_create_and_get_movement,
 			test_update_movement,
@@ -517,6 +519,76 @@ pub async fn test_store_vtxos_idempotent(db: &impl BarkPersister) {
 	assert_eq!(stored.state, VtxoState::Spendable, "the state survives a repeated store");
 	assert_eq!(db.get_all_vtxos().await.expect("get_all_vtxos").len(), 1,
 		"a repeated store must not insert a second row");
+}
+
+pub async fn test_steal_lock_to_spent(db: &impl BarkPersister) {
+	let spendable = &VTXO_VECTORS.round1_vtxo;
+	let locked = &VTXO_VECTORS.round2_vtxo;
+	let already_spent = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
+	let exited = &VTXO_VECTORS.arkoor2_vtxo;
+
+	db.store_vtxos(&[
+		(spendable, &VtxoState::Spendable),
+		(locked, &VtxoState::Locked { holder: Some(MovementId::new(1).into()) }),
+		(already_spent, &VtxoState::Spent),
+		(exited, &VtxoState::Exited),
+	]).await.expect("store_vtxos");
+
+	db.steal_lock_to_spent(&[spendable.id(), locked.id(), already_spent.id(), exited.id()]).await
+		.expect("steal_lock_to_spent");
+
+	let spendable_after = db.get_wallet_vtxo(spendable.id()).await.expect("get spendable").unwrap();
+	assert_eq!(spendable_after.state, VtxoState::Spent, "spendable vtxo is forced to spent");
+
+	let locked_after = db.get_wallet_vtxo(locked.id()).await.expect("get locked").unwrap();
+	assert_eq!(locked_after.state, VtxoState::Spent, "locked vtxo is forced to spent");
+
+	let spent_after = db.get_wallet_vtxo(already_spent.id()).await.expect("get spent").unwrap();
+	assert_eq!(spent_after.state, VtxoState::Spent, "already spent vtxo stays spent");
+
+	let exited_after = db.get_wallet_vtxo(exited.id()).await.expect("get exited").unwrap();
+	assert_eq!(exited_after.state, VtxoState::Exited, "exited vtxo is left untouched");
+
+	let unknown_id = VtxoId::from_slice(&[0u8; 36]).unwrap();
+	assert!(db.steal_lock_to_spent(&[unknown_id]).await.is_err(),
+		"steal_lock_to_spent errors on an unknown id");
+}
+
+pub async fn test_steal_lock(db: &impl BarkPersister) {
+	let spendable = &VTXO_VECTORS.round1_vtxo;
+	let locked = &VTXO_VECTORS.round2_vtxo;
+	let already_spent = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
+	let exited = &VTXO_VECTORS.arkoor2_vtxo;
+
+	db.store_vtxos(&[
+		(spendable, &VtxoState::Spendable),
+		(locked, &VtxoState::Locked { holder: Some(MovementId::new(1).into()) }),
+		(already_spent, &VtxoState::Spent),
+		(exited, &VtxoState::Exited),
+	]).await.expect("store_vtxos");
+
+	let holder = Some(MovementId::new(42).into());
+	db.steal_lock(&[spendable.id(), locked.id(), already_spent.id(), exited.id()], holder.clone()).await
+		.expect("steal_lock");
+
+	let spendable_after = db.get_wallet_vtxo(spendable.id()).await.expect("get spendable").unwrap();
+	assert_eq!(spendable_after.state, VtxoState::Locked { holder: holder.clone() },
+		"spendable vtxo is forced to locked");
+
+	let locked_after = db.get_wallet_vtxo(locked.id()).await.expect("get locked").unwrap();
+	assert_eq!(locked_after.state, VtxoState::Locked { holder: holder.clone() },
+		"locked vtxo has its holder overwritten");
+
+	let spent_after = db.get_wallet_vtxo(already_spent.id()).await.expect("get spent").unwrap();
+	assert_eq!(spent_after.state, VtxoState::Locked { holder: holder.clone() },
+		"spent vtxo is forced to locked");
+
+	let exited_after = db.get_wallet_vtxo(exited.id()).await.expect("get exited").unwrap();
+	assert_eq!(exited_after.state, VtxoState::Exited, "exited vtxo is left untouched");
+
+	let unknown_id = VtxoId::from_slice(&[0u8; 36]).unwrap();
+	assert!(db.steal_lock(&[unknown_id], holder).await.is_err(),
+		"steal_lock errors on an unknown id");
 }
 
 // ---------------------------------------------------------------------------

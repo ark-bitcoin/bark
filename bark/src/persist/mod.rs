@@ -665,6 +665,38 @@ pub trait BarkPersister: Send + Sync + 'static {
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<()>;
 
+	/// Force the given VTXOs to [VtxoState::Spent], whatever their current
+	/// state. Used when the server is seen to have acted on a vtxo and the
+	/// wallet state must follow. [VtxoState::Exited] vtxos are left
+	/// unaffected. Errors if any id is unknown.
+	async fn steal_lock_to_spent(&self, vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+		let vtxos = self.get_wallet_vtxos(vtxo_ids).await?;
+		let ids = vtxos.iter()
+			.filter(|v| v.state.kind() != VtxoStateKind::Exited)
+			.map(|v| v.vtxo.id())
+			.collect::<Vec<_>>();
+		let allowed = [VtxoStateKind::Spendable, VtxoStateKind::Locked, VtxoStateKind::Spent];
+		self.update_vtxo_states_checked(&ids, VtxoState::Spent, &allowed).await
+	}
+
+	/// Force the given VTXOs to [VtxoState::Locked] under `holder`, whatever
+	/// their current state. Used when the server is seen to hold a vtxo and
+	/// the wallet state must follow. [VtxoState::Exited] vtxos are left
+	/// unaffected. Errors if any id is unknown.
+	async fn steal_lock(
+		&self,
+		vtxo_ids: &[VtxoId],
+		holder: Option<VtxoLockHolder>,
+	) -> anyhow::Result<()> {
+		let vtxos = self.get_wallet_vtxos(vtxo_ids).await?;
+		let ids = vtxos.iter()
+			.filter(|v| v.state.kind() != VtxoStateKind::Exited)
+			.map(|v| v.vtxo.id())
+			.collect::<Vec<_>>();
+		let allowed = [VtxoStateKind::Spendable, VtxoStateKind::Locked, VtxoStateKind::Spent];
+		self.update_vtxo_states_checked(&ids, VtxoState::Locked { holder }, &allowed).await
+	}
+
 	/// Set [WalletVtxo::registered] on the given VTXOs, recording that their
 	/// recovery state (mailbox ID post + signed transaction chain) has been
 	/// asserted with the server so the sync-time catch-up can skip them.

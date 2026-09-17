@@ -326,7 +326,7 @@ impl Wallet {
 	///
 	/// The recovery mailbox only stores ids, so we ask the server for the full
 	/// VTXO data. The result is untrusted until validated by the caller.
-	async fn fetch_vtxo(&self, id: VtxoId) -> anyhow::Result<Vtxo<Full>> {
+	pub(crate) async fn fetch_vtxo(&self, id: VtxoId) -> anyhow::Result<Vtxo<Full>> {
 		let (mut srv, _) = self.require_server().await?;
 		let resp = srv.client.get_vtxo(protos::GetVtxoRequest {
 			vtxo_id: id.to_bytes().to_vec(),
