@@ -8,10 +8,11 @@ pub use self::state::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
 
 use anyhow::Context;
 use bitcoin::secp256k1::PublicKey;
-use log::{debug, error, trace};
+use log::{debug, error, info, trace, warn};
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::{Full, VtxoRef};
 use bitcoin_ext::{BlockDelta, BlockHeight};
+use server_rpc::protos::VtxoSpendState;
 
 use crate::Wallet;
 
@@ -45,6 +46,41 @@ pub(crate) fn validate_vtxo_tree_params(
 	);
 
 	Ok(())
+}
+
+/// Where the server's spend state puts a VTXO in this wallet.
+///
+/// The single translation of a [VtxoSpendState] into wallet terms, shared by
+/// the import and recovery paths so they cannot drift apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerStatusAdoption {
+	/// The server will let us spend the VTXO.
+	Spendable,
+	/// The server considers the VTXO spent.
+	Spent,
+	/// Neither spendable nor spent: the server is still waiting on a preimage
+	/// or on the VTXO's transaction chain. No wallet state describes this, and
+	/// finishing that flow is what decides where the VTXO belongs.
+	InFlight(VtxoSpendState),
+}
+
+impl ServerStatusAdoption {
+	/// Errors when the server gave no usable answer.
+	///
+	/// Matched exhaustively (no catch-all) so a new spend state forces an
+	/// explicit decision rather than being silently skipped.
+	pub fn from_spend_state(spend_state: VtxoSpendState) -> anyhow::Result<Self> {
+		Ok(match spend_state {
+			VtxoSpendState::Spendable => ServerStatusAdoption::Spendable,
+			VtxoSpendState::Spent => ServerStatusAdoption::Spent,
+			state @ (
+				VtxoSpendState::Unclaimed
+				| VtxoSpendState::Unregistered
+				| VtxoSpendState::HtlcRecvUnclaimed
+			) => ServerStatusAdoption::InFlight(state),
+			VtxoSpendState::Unspecified => bail!("server returned an unspecified spend state"),
+		})
+	}
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -320,6 +356,52 @@ impl Wallet {
 			trace!("New VTXO IDs: {:?}", vtxos.into_iter().map(|(v, _)| v.id()).collect::<Vec<_>>());
 			Ok(())
 		}
+	}
+
+	/// Ask the server for the status of `vtxo_id` and move the wallet's vtxo along
+	/// with it. Adoption only ever moves a vtxo towards spent or in-flight
+	/// resolution: a vtxo the wallet has as spent stays spent, even when the server
+	/// reports it spendable.
+	///
+	/// A locked vtxo is left alone and the server isn't asked at all: returns
+	/// `Ok(None)`. Unlock the vtxo first if you want its status adopted.
+	///
+	/// NOTE: Only call this method if you can trust the server.
+	pub async fn trust_and_adopt_server_vtxo_status(
+		&self,
+		vtxo_id: VtxoId,
+	) -> anyhow::Result<Option<ServerStatusAdoption>> {
+		let stored = self.inner.db.get_wallet_vtxo(vtxo_id).await
+			.with_context(|| format!("error querying vtxo {vtxo_id}"))?
+			.with_context(|| format!("vtxo {vtxo_id} is not in this wallet"))?;
+
+		if stored.state.kind() == VtxoStateKind::Locked {
+			warn!("Cannot trust and adopt server state for {vtxo_id}. \
+				The vtxo must be unlocked first");
+			return Ok(None);
+		}
+
+		let (_idx, keypair) = self.pubkey_keypair(&stored.vtxo.user_pubkey()).await?
+			.with_context(|| format!("no key for vtxo {vtxo_id} in this wallet"))?;
+
+		let spend_state = self.fetch_vtxo_spend_state(vtxo_id, &keypair).await?;
+		let adoption = ServerStatusAdoption::from_spend_state(spend_state)
+			.with_context(|| format!("cannot decide the state of vtxo {vtxo_id}"))?;
+
+		match adoption {
+			ServerStatusAdoption::Spendable => {
+				if stored.state.kind() == VtxoStateKind::Spent {
+					info!("Server reports vtxo {vtxo_id} spendable, but the wallet has it \
+						spent; keeping it spent");
+				}
+			},
+			ServerStatusAdoption::Spent => {
+				self.mark_vtxos_as_spent(&[vtxo_id]).await?;
+			},
+			ServerStatusAdoption::InFlight(_) => {},
+		}
+
+		Ok(Some(adoption))
 	}
 
 	/// Release `holder`'s lock on the given VTXOs, transitioning each one

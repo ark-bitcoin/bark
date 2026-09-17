@@ -46,7 +46,7 @@ use crate::utils::ReconnectBackoff;
 ///
 /// (Note that currently the server sends 100 messages per fetch, so this would
 /// only happen for users with more than 1000 pending items.)
-const MAX_MAILBOX_REQUEST_BURST: usize = 10;
+pub(crate) const MAX_MAILBOX_REQUEST_BURST: usize = 10;
 
 /// Key for the lock that serializes the arkoor receive dedup within a wallet.
 ///

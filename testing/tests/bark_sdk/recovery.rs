@@ -83,7 +83,6 @@ impl captaind::proxy::MailboxRpcProxy for SwallowRecoveryPosts {
 /// The target's ids never reach the recovery mailbox, so the vtxo it receives is
 /// only known to the regular mailbox. It spends that vtxo in full, and the
 /// wallet recovered from the same seed must still show it as spent.
-#[ignore = "known bug: the recovered wallet resurrects the spent vtxo as spendable"]
 #[tokio::test]
 async fn recovered_wallet_keeps_spent_vtxo_spent() {
 	let ctx = TestContext::new("bark_sdk/recovered_wallet_keeps_spent_vtxo_spent").await;
