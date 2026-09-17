@@ -14,7 +14,8 @@ use tokio::time::Instant;
 
 use crate::constants::DEFAULT_POLL_INTERVAL;
 use crate::constants::env::{
-	BARK_DOUBLE_DRIVE_ACTIONS, CHAIN_SOURCE, TEST_DIRECTORY, TEST_POLL_INTERVAL_MS,
+	BARK_DOUBLE_DRIVE_ACTIONS, BARK_UPGRADE_FROM_EXEC, CHAIN_SOURCE, TEST_DIRECTORY,
+	TEST_POLL_INTERVAL_MS,
 	TX_PROPAGATION_TIMEOUT_MILLIS,
 };
 use crate::daemon::electrs::ElectrsType;
@@ -204,6 +205,20 @@ pub fn poll_interval() -> Duration {
 /// must scale their expectations by this factor.
 pub fn action_drive_factor() -> usize {
 	if env::var_os(BARK_DOUBLE_DRIVE_ACTIONS).is_some() { 2 } else { 1 }
+}
+
+/// The released bark binary an upgrade test starts from. Panics rather than
+/// skipping when unset, so the job cannot go green while testing nothing.
+pub fn upgrade_from_exec() -> PathBuf {
+	let raw = env::var(BARK_UPGRADE_FROM_EXEC).unwrap_or_else(|_| panic!(
+		"{} is not set. The upgrade tests need a released bark binary to start \
+		 from; fetch one with contrib/fetch-bark-release.py and point this at it.",
+		BARK_UPGRADE_FROM_EXEC,
+	));
+	let path = resolve_path(&raw)
+		.unwrap_or_else(|e| panic!("failed to resolve {}={}: {:#}", BARK_UPGRADE_FROM_EXEC, raw, e));
+	assert!(path.exists(), "{}={} does not exist", BARK_UPGRADE_FROM_EXEC, path.display());
+	path
 }
 
 /// Extension trait for futures.

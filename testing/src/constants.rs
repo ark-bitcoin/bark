@@ -58,6 +58,9 @@ pub mod env {
 	/// When set, the wallet executor runs every action step twice to check
 	/// reentrancy (debug builds only). See `just int-bark-int-action-reentrancy`.
 	pub const BARK_DOUBLE_DRIVE_ACTIONS: &str = "BARK_DOUBLE_DRIVE_ACTIONS";
+	/// The released bark binary an upgrade test starts from, `BARK_EXEC` staying
+	/// the build under test. Required by the `upgrade` tests.
+	pub const BARK_UPGRADE_FROM_EXEC: &str = "BARK_UPGRADE_FROM_EXEC";
 	pub const TOR_EXEC: &str = "TOR_EXEC";
 }
 
