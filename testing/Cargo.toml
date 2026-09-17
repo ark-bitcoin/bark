@@ -32,6 +32,10 @@ path = "tests/core/mod.rs"
 name = "server-migrations"
 path = "tests/server-migrations/mod.rs"
 
+[[test]]
+name = "upgrade"
+path = "tests/upgrade/mod.rs"
+
 [features]
 slow_test = []
 
