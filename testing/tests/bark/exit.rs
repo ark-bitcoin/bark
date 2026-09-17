@@ -712,7 +712,7 @@ async fn bark_should_exit_a_pending_board() {
 	assert_eq!(bark.list_exits().await.len(), 1, "exit should be triggered");
 	assert_eq!(bark.pending_board_balance().await, board_amount,
 		"board entry should still be retried until the exit commits on-chain");
-	assert_eq!(bark.offchain_balance().await.pending_exit, Some(Amount::ZERO),
+	assert_eq!(bark.offchain_balance().await.pending_exit, Amount::ZERO,
 		"pending_exit is empty while the exit is still in its abortable window");
 
 	let movements = bark.history().await;
@@ -1601,7 +1601,7 @@ async fn exited_vtxo_is_not_spendable() {
 	assert_eq!(balance.spendable, Amount::ZERO,
 		"offchain spendable balance should be zero once the vtxo has exited");
 	// … and the amount surfaces under `pending_exit` instead.
-	assert_eq!(balance.pending_exit, Some(exit_amount),
+	assert_eq!(balance.pending_exit, exit_amount,
 		"pending_exit should reflect the exited (but not yet drained) vtxo");
 
 	// The exit movement is still in flight — drain hasn't happened.
@@ -1638,7 +1638,7 @@ async fn exited_vtxo_is_not_spendable() {
 	assert_eq!(bark.vtxos().await.len(), 0,
 		"exited vtxo should still be out of the spendable list after claim");
 	assert_eq!(balance.spendable, Amount::ZERO);
-	assert_eq!(balance.pending_exit, Some(Amount::ZERO),
+	assert_eq!(balance.pending_exit, Amount::ZERO,
 		"pending_exit should drop to zero once the drain has confirmed");
 
 	let exit_movement = bark.history().await.into_iter()

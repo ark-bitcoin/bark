@@ -22,8 +22,8 @@ use bark::actions::lightning::receive::{
 use crate::cli::fees::FeeSchedule;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
-use crate::exit::ExitState;
-use crate::primitives::{TransactionInfo, WalletVtxoInfo};
+use crate::exit::{ExitState, ExitStateKind};
+use crate::primitives::{TransactionInfo, VtxoStateInfo, WalletVtxoInfo};
 use crate::serde_utils;
 
 #[derive(Debug, Clone, Serialize)]
@@ -253,18 +253,13 @@ pub struct Balance {
 	#[serde(rename = "pending_board_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub pending_board: Amount,
-	/// Sats held in VTXOs whose unilateral exit chain is confirmed on-chain but which
-	/// haven't yet been drained to the onchain wallet. Equivalent to the sum of
-	/// `Exited` VTXOs whose exit state hasn't reached `Claimed`.
-	/// `null` if the exit subsystem is unavailable.
-	#[serde(
-		default,
-		rename = "pending_exit_sat",
-		with = "bitcoin::amount::serde::as_sat::opt",
-		skip_serializing_if = "Option::is_none",
-	)]
-	#[cfg_attr(feature = "utoipa", schema(value_type = u64, nullable=true))]
-	pub pending_exit: Option<Amount>,
+	/// Sats held in VTXOs whose unilateral exit has committed on-chain but which
+	/// haven't yet been drained to the onchain wallet: their state is
+	/// [`VtxoStateInfo::Exited`] and their exit has not reached
+	/// [`ExitStateKind::Claimed`].
+	#[serde(default, rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64, required))]
+	pub pending_exit: Amount,
 }
 
 impl From<bark::Balance> for Balance {

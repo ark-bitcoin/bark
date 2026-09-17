@@ -1,10 +1,14 @@
 //! The wallet balance: which sats can be spent right now and which are held
 //! by an operation in progress.
 
+use std::collections::HashMap;
+
 use bitcoin::Amount;
+use log::warn;
 
 use crate::Wallet;
-use crate::vtxo::{FilterVtxos, VtxoStateKind};
+use crate::exit::ExitStateKind;
+use crate::vtxo::{VtxoState, VtxoStateKind};
 
 /// The different balances of a Bark wallet.
 #[derive(Debug, Clone)]
@@ -17,12 +21,11 @@ pub struct Balance {
 	pub claimable_lightning_receive: Amount,
 	/// Coins locked in a round.
 	pub pending_in_round: Amount,
-	/// Coins held in VTXOs whose unilateral exit chain has confirmed onchain but which
-	/// haven't yet been drained back to the onchain wallet. While in this state the
-	/// VTXOs are [`crate::vtxo::VtxoStateKind::Exited`] and unusable in the Ark protocol; the
-	/// drain transaction moves them to spendable onchain output.
-	/// None if exit subsystem was unavailable
-	pub pending_exit: Option<Amount>,
+	/// Sats in VTXOs whose unilateral exit has committed on-chain but which
+	/// have not been claimed to the on-chain wallet yet. These VTXOs are
+	/// [`crate::vtxo::VtxoStateKind::Exited`] and unusable in the Ark protocol.
+	/// An exit that can still be canceled isn't counted here.
+	pub pending_exit: Amount,
 	/// Coins that are pending sufficient confirmations from board transactions.
 	pub pending_board: Amount,
 }
@@ -32,13 +35,15 @@ impl Wallet {
 	///
 	/// When not running the daemon, make sure you sync before calling this method.
 	pub async fn balance(&self) -> anyhow::Result<Balance> {
-		let vtxos = self.vtxos().await?;
+		// Every VTXO the balance can count, read once.
+		let vtxos = self.inner.db.get_vtxos_by_state(
+			&[VtxoStateKind::Spendable, VtxoStateKind::Exited],
+		).await?.into_iter().map(|v| (v.id(), v)).collect::<HashMap<_, _>>();
 
-		let spendable = {
-			let mut v = vtxos.iter().collect();
-			VtxoStateKind::Spendable.filter_vtxos(&mut v).await?;
-			v.into_iter().map(|v| v.amount()).sum::<Amount>()
-		};
+		let spendable = vtxos.values()
+			.filter(|v| v.state == VtxoState::Spendable)
+			.map(|v| v.amount())
+			.sum::<Amount>();
 
 		let pending_lightning_send = self.pending_lightning_send_vtxos().await?.iter()
 			.map(|v| v.amount())
@@ -52,7 +57,25 @@ impl Wallet {
 
 		let pending_in_round = self.pending_round_balance().await?;
 
-		let pending_exit = self.exit_mgr().try_pending_total();
+		// Read the exits from the database rather than the exit manager, whose
+		// lock may be held for a while by an exit in progress.
+		let exits = self.inner.db
+			.get_exit_vtxo_entries_with_states(ExitStateKind::LIVE_STATES).await?;
+		let mut pending_exit = Amount::ZERO;
+		for exit in exits {
+			if !exit.state.warrants_exited_vtxo() {
+				continue;
+			}
+			match vtxos.get(&exit.vtxo_id) {
+				Some(v) if v.state == VtxoState::Exited => pending_exit += v.amount(),
+				Some(v) => warn!("Exit of VTXO {} has committed but the VTXO is {:?}",
+					exit.vtxo_id, v.state,
+				),
+				None => warn!("Exit of VTXO {} has committed but the VTXO is spent or unknown",
+					exit.vtxo_id,
+				),
+			}
+		}
 
 		Ok(Balance {
 			spendable,
