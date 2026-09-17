@@ -2753,6 +2753,13 @@ mod test {
 			.expect("no dust-isolation tx needed when everything is dust");
 		verify_isolation_rules(&[200, 400], &[]).expect("dust may mix with sub-660 outputs");
 		verify_isolation_rules(&[200, 500], &[]).expect("dust may mix with small outputs");
+		// Both placements of [600, 200, 200] pass. The rules leave this open:
+		// no output reaches 660, so mixing is legal, and the dust sums to 400,
+		// so isolation is legal too.
+		verify_isolation_rules(&[600, 200, 200], &[])
+			.expect("dust may mix when no output reaches 660");
+		verify_isolation_rules(&[600], &[200, 200])
+			.expect("the same outputs may also use isolation");
 		verify_isolation_rules(&[], &[100, 200])
 			.expect_err("no spurious dust-isolation without normal outputs");
 		verify_isolation_rules(&[500], &[100])
