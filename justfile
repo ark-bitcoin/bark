@@ -154,8 +154,9 @@ test-unit-codecov TEST="":
 		--exclude ark-testing --no-report {{TEST}}
 
 test-integration TEST="": ensure-build-bins docker-pull
+	# `upgrade` is excluded like `tor`: it needs a release fetched up front.
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
-		-E 'not binary(tor) and not binary(server-migrations)' {{TEST}}
+		-E 'not binary(tor) and not binary(server-migrations) and not binary(upgrade)' {{TEST}}
 alias int := test-integration
 
 # Run the server upgrade/migration tests. Requires OLD_CAPTAIND_EXEC to
@@ -165,6 +166,24 @@ test-integration-server-migrations TEST="": ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
 		--test server-migrations {{TEST}}
 alias int-server-migrations := test-integration-server-migrations
+
+# Start an action on a released bark, finish it on this build, checking a new
+# migration doesn't strand an in-flight payment. See
+# contrib/agents/skills/upgrade-tests.md.
+#
+#   BARK_UPGRADE_FROM_EXEC=$(python3 contrib/fetch-bark-release.py --version 0.7.1) \
+#     just int-upgrade
+[doc("run the upgrade tests (needs BARK_UPGRADE_FROM_EXEC)")]
+test-integration-upgrade TEST="": ensure-build-bins docker-pull
+	#!/usr/bin/env bash
+	set -euo pipefail
+	if [[ -z "${BARK_UPGRADE_FROM_EXEC:-}" ]]; then
+		echo "BARK_UPGRADE_FROM_EXEC is not set; see the recipe comment" >&2
+		exit 1
+	fi
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+		--test upgrade {{TEST}}
+alias int-upgrade := test-integration-upgrade
 
 # run integration tests for bark and barkd test files only
 test-integration-bark: ensure-build-bins docker-pull
@@ -215,6 +234,10 @@ test-integration-bark-sdk-prebuilt: docker-pull
 test-integration-core-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
 		-E 'binary(core) + binary(server)'
+
+test-integration-upgrade-prebuilt: docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
+		-E 'binary(=upgrade)'
 
 test-integration-bark-int-prebuilt: docker-pull
 	RUST_MIN_STACK=33554432 \
