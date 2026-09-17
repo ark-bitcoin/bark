@@ -10,5 +10,6 @@ mod common;
 
 mod arkoor_send;
 mod board;
+mod lightning_receive;
 mod lightning_send;
 mod offboard;
