@@ -483,37 +483,33 @@ impl<'t> Tx<'t> {
 	///
 	/// # Idempotency
 	///
-	/// There is currently only idempotency for an Accepted status as we don't
-	/// want the `accepted_at` time to change on duplicate updates to `Accepted`.
+	/// A write of the status the row already has updates no rows. This keeps
+	/// `accepted_at` on a duplicate `Accepted`, and it keeps the cooperative
+	/// claim and the hold settler from tripping the update trigger's
+	/// `updated_at must be updated` check: both settle off the same preimage
+	/// and can write `Settled` concurrently, and the loser of that row-lock
+	/// race would otherwise re-run the trigger on an unchanged row.
 	pub async fn store_lightning_htlc_subscription_status(
 		&self,
 		id: i64,
 		status: LightningHtlcSubscriptionStatus,
 		lowest_incoming_htlc_expiry: Option<BlockHeight>,
 	) -> anyhow::Result<()> {
-		// Set accepted_at when transitioning to Accepted status
-		let set_accepted_at = status == LightningHtlcSubscriptionStatus::Accepted;
+		let accepted = status == LightningHtlcSubscriptionStatus::Accepted;
+		let expiry = lowest_incoming_htlc_expiry.map(|e| e as i64);
 
-		let accepted_at_clause = if set_accepted_at { ", accepted_at = NOW()" } else { "" };
-		let expiry_clause = if lowest_incoming_htlc_expiry.is_some() {
-			", lowest_incoming_htlc_expiry = $3"
-		} else {
-			""
-		};
-		let accepted_at_check = if set_accepted_at { " AND accepted_at IS NULL" } else { "" };
-
-		let query = format!(
-			"UPDATE lightning_htlc_subscription \
-			SET status = $2{expiry_clause}{accepted_at_clause}, updated_at = NOW() \
-			WHERE id = $1{accepted_at_check}",
-		);
-
-		let stmt = self.prepare(&query).await?;
-		if let Some(expiry) = lowest_incoming_htlc_expiry {
-			self.execute(&stmt, &[&id, &status, &(expiry as i64)]).await?;
-		} else {
-			self.execute(&stmt, &[&id, &status]).await?;
-		}
+		// `status != $2` makes a repeat of the status the row already has match
+		// no rows, so the update trigger never sees an `updated_at` that did
+		// not move. A null `$3` keeps the stored expiry.
+		let stmt = self.prepare("
+			UPDATE lightning_htlc_subscription
+			SET updated_at = NOW(),
+				status = $2,
+				lowest_incoming_htlc_expiry = COALESCE($3, lowest_incoming_htlc_expiry),
+				accepted_at = CASE WHEN $4 THEN NOW() ELSE accepted_at END
+			WHERE id = $1 AND status != $2;
+		").await?;
+		self.execute(&stmt, &[&id, &status, &expiry, &accepted]).await?;
 
 		Ok(())
 	}

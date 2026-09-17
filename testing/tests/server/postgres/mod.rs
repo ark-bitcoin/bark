@@ -1828,6 +1828,24 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 	// get_htlc_subscription_by_id
 	let by_id = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await).await.unwrap().unwrap();
 	assert_eq!(by_id.id, sub_id);
+
+	// The claim and the hold settler both write `Settled` for the same
+	// subscription, so the second write must be a no-op.
+	db.write(async |t| t.store_lightning_htlc_subscription_status(
+		sub_id, LightningHtlcSubscriptionStatus::Settled, None,
+	).await).await.unwrap();
+	let settled = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await)
+		.await.unwrap().unwrap();
+	assert_eq!(settled.status, LightningHtlcSubscriptionStatus::Settled);
+
+	db.write(async |t| t.store_lightning_htlc_subscription_status(
+		sub_id, LightningHtlcSubscriptionStatus::Settled, None,
+	).await).await.expect("duplicate Settled write must not error");
+	let settled2 = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await)
+		.await.unwrap().unwrap();
+	assert_eq!(settled2.status, LightningHtlcSubscriptionStatus::Settled);
+	assert_eq!(settled.updated_at, settled2.updated_at,
+		"duplicate status write must not touch the row");
 }
 
 #[tokio::test]
