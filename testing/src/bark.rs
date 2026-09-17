@@ -49,13 +49,16 @@ pub struct Bark {
 	timeout: Option<Duration>,
 	bitcoind: Option<Arc<Bitcoind>>,
 	command_log: Mutex<fs::File>,
+	/// Binary this instance drives. Defaults to `BARK_EXEC`; an upgrade test
+	/// points it at an older release so one wallet can be driven by two builds.
+	exec: PathBuf,
 }
 
 impl Bark {
-	pub fn cmd() -> TokioCommand {
+	/// The build under test, as named by `BARK_EXEC`.
+	fn bark_exec() -> PathBuf {
 		let e = env::var(BARK_EXEC).expect("BARK_EXEC env not set");
-		let exec = resolve_path(e).expect("failed to resolve BARK_EXEC");
-		TokioCommand::new(exec)
+		resolve_path(e).expect("failed to resolve BARK_EXEC")
 	}
 
 	pub fn try_cmd() -> Option<TokioCommand> {
@@ -67,26 +70,63 @@ impl Bark {
 		Some(TokioCommand::new(exec))
 	}
 
-	/// Extract the version from the BARK_EXEC binary.
-	///
-	/// Returns the version string, e.g. "0.1.0-beta.8" or "0.6.0-dev".
+	/// Version of the BARK_EXEC binary, e.g. `0.1.0-beta.8` or `0.6.0-dev`.
 	pub async fn version() -> String {
-		let output = Self::cmd()
+		let build = Self::build_of(&Self::bark_exec()).await;
+		build.strip_prefix("bark ")
+			.and_then(|rest| rest.split_whitespace().next())
+			.unwrap_or_else(|| panic!("unexpected bark --version output: {}", build))
+			.to_string()
+	}
+
+	/// Full `--version` line of this instance's binary, e.g.
+	/// `bark 0.7.1-dev (a1b2c3d)`. The hash is what separates two builds: every
+	/// build after a release tag reports the same `X.Y.Z-dev`.
+	pub async fn instance_build(&self) -> String {
+		Self::build_of(&self.exec).await
+	}
+
+	async fn build_of(exec: &Path) -> String {
+		let output = TokioCommand::new(exec)
 			.arg("--version")
 			.output()
 			.await
 			.expect("failed to run bark --version");
 		assert!(output.status.success(), "bark --version failed");
 
-		// Output format: "bark 0.1.0-beta.8 (hash)"
 		let stdout = String::from_utf8(output.stdout).expect("invalid utf8 in bark --version");
-		let version = stdout.trim()
-			.strip_prefix("bark ")
-			.expect("unexpected bark --version format")
-			.split_whitespace()
-			.next()
-			.expect("no version found in bark --version output");
-		version.to_string()
+		stdout.trim().to_string()
+	}
+
+	/// Command for this instance's binary.
+	fn command(&self) -> TokioCommand {
+		TokioCommand::new(&self.exec)
+	}
+
+	/// The same wallet driven by `BARK_EXEC`, which is the upgrade an
+	/// [`crate::util::old_bark_exec`] wallet is subjected to: opening the
+	/// datadir runs any new migration.
+	///
+	/// The datadir is shared, not copied, so only one of the two handles may be
+	/// used at a time; the counter and command log carry over.
+	pub async fn upgraded(&self) -> Bark {
+		let command_log = fs::OpenOptions::new()
+			.append(true)
+			.create(true)
+			.open(self.datadir.join(COMMAND_LOG_FILE))
+			.await
+			.expect("failed to open command log");
+
+		Bark {
+			name: self.name.clone(),
+			datadir: self.datadir.clone(),
+			config: self.config.clone(),
+			counter: AtomicUsize::new(self.counter.load(Ordering::Relaxed)),
+			timeout: self.timeout,
+			bitcoind: self.bitcoind.clone(),
+			command_log: Mutex::new(command_log),
+			exec: Self::bark_exec(),
+		}
 	}
 
 	/// Creates Bark client with an optional bitcoind daemon.
@@ -107,9 +147,14 @@ impl Bark {
 		config: Config,
 		bitcoind: Option<Arc<Bitcoind>>,
 	) -> anyhow::Result<Bark> {
-		Self::try_new_with_create_opts(name, datadir, network, config, bitcoind, None, None, false).await
+		Self::try_new_with_create_opts(
+			name, datadir, network, config, bitcoind, None, None, false, None,
+		).await
 	}
 
+	/// `exec` picks the binary that creates the wallet, defaulting to `BARK_EXEC`.
+	/// Creating with the older release is what puts the database at the schema
+	/// the newer one migrates.
 	pub async fn try_new_with_create_opts(
 		name: impl AsRef<str>,
 		datadir: impl AsRef<Path>,
@@ -119,6 +164,7 @@ impl Bark {
 		mnemonic: Option<String>,
 		birthday: Option<BlockHeight>,
 		force: bool,
+		exec: Option<PathBuf>,
 	) -> anyhow::Result<Bark> {
 		let datadir = datadir.as_ref().to_path_buf();
 
@@ -133,7 +179,8 @@ impl Bark {
 		fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).await
 			.with_context(|| format!("error writing bark config file to {}", config_path.display()))?;
 
-		let mut cmd = Self::cmd();
+		let exec = exec.unwrap_or_else(Self::bark_exec);
+		let mut cmd = TokioCommand::new(&exec);
 		cmd
 			.arg("create")
 			.arg(format!("--{}", network))
@@ -178,6 +225,7 @@ impl Bark {
 			timeout: None,
 			command_log: Mutex::new(fs::File::create(datadir.join(COMMAND_LOG_FILE)).await?),
 			datadir: datadir,
+			exec,
 		})
 	}
 
@@ -1043,7 +1091,7 @@ impl Bark {
 	{
 		let args: Vec<String> = args.into_iter().map(|x| x.as_ref().to_string()).collect();
 
-		let mut command = Bark::cmd();
+		let mut command = self.command();
 
 		if let Ok(nb) = env::var(BARK_TOKIO_WORKER_THREADS) {
 			command.env("TOKIO_WORKER_THREADS", nb);
@@ -1195,6 +1243,7 @@ impl Bark {
 					.expect("failed to create command log"),
 			),
 			datadir,
+			exec: self.exec.clone(),
 		}
 	}
 }

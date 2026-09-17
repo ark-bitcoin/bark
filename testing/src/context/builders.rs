@@ -379,6 +379,7 @@ pub struct BarkBuilder<'a> {
 	chain_address: Option<String>,
 	socks5_proxy: Option<String>,
 	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
+	exec: Option<PathBuf>,
 }
 
 impl<'a> BarkBuilder<'a> {
@@ -394,7 +395,15 @@ impl<'a> BarkBuilder<'a> {
 			chain_address: None,
 			socks5_proxy: None,
 			mod_cfg: None,
+			exec: None,
 		}
+	}
+
+	/// Create and drive this wallet with a specific bark binary rather than
+	/// `BARK_EXEC`, so an upgrade test can start from an older release.
+	pub fn exec(mut self, exec: impl Into<PathBuf>) -> Self {
+		self.exec = Some(exec.into());
+		self
 	}
 
 	pub fn own_bitcoind(mut self) -> Self {
@@ -468,7 +477,9 @@ impl<'a> BarkBuilder<'a> {
 		}
 
 		let datadir = self.ctx.datadir.join(&self.name);
-		let bark = Bark::try_new(&self.name, datadir, BarkNetwork::Regtest, cfg, bitcoind).await?;
+		let bark = Bark::try_new_with_create_opts(
+			&self.name, datadir, BarkNetwork::Regtest, cfg, bitcoind, None, None, false, self.exec,
+		).await?;
 
 		let fund_amount = self.fund_amount.or_else(|| {
 			if self.board_amounts.is_empty() {
