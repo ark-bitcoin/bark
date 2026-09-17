@@ -28,14 +28,20 @@ use crate::wallet::PersistedWallet;
 impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 	#[tracing::instrument(skip_all, fields(wallet = self.name(), height = block.block_ref.height))]
 	async fn on_block_added(&self, block: &BlockData) -> anyhow::Result<()> {
-		let mut wallet = self.lock().await;
+		let wallet = self.lock_owned().await;
 		let started = Instant::now();
 
 		let height = block.block_ref.height;
 		let wallet_name = wallet.kind.name();
 
-		let prev_height = wallet.latest_checkpoint().height();
-		let prev_balance = wallet.balance();
+		// bdk walks the entire tx graph for these, which takes seconds on a large
+		// wallet, so we run them on the blocking pool; the owned guard moves
+		// along and comes back with the result
+		let (mut wallet, prev_height, prev_balance) = tokio::task::spawn_blocking(move || {
+			let prev_height = wallet.latest_checkpoint().height();
+			let prev_balance = wallet.balance();
+			(wallet, prev_height, prev_balance)
+		}).await.context("wallet checkpoint and balance task panicked")?;
 
 		slog!(WalletSyncStarting, wallet: wallet_name.into(), block_height: prev_height);
 
@@ -45,10 +51,14 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 			hash: block.block.header.prev_blockhash,
 		};
 
-		wallet.wallet.apply_block_connected_to(&block.block, height, connected_to)
-			.with_context(|| format!(
-				"failed applying block {} to {} wallet", height, wallet_name,
-			))?;
+		let block_to_apply = block.block.clone();
+		let (mut wallet, apply_result) = tokio::task::spawn_blocking(move || {
+			let res = wallet.wallet.apply_block_connected_to(&block_to_apply, height, connected_to);
+			(wallet, res)
+		}).await.context("apply block task panicked")?;
+		apply_result.with_context(|| format!(
+			"failed applying block {} to {} wallet", height, wallet_name,
+		))?;
 
 		// BDK doesn't have a good mechanism for blocking UTXOs from our wallet
 		//
@@ -62,9 +72,9 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 		// included in the balance but won't be used because they are locked.
 		// After restart, they will disappear but there will be locked utxos that are
 		// no longer part of the wallet.
+		let mut blocked_txids = HashSet::new();
+		let mut blocked_points = HashSet::new();
 		if let Some(ref list) = wallet.address_blocklist {
-			let mut blocked_txids = HashSet::new();
-			let mut blocked_points = HashSet::new();
 			if let Some(cs) = wallet.wallet.staged() {
 				for tx in &cs.tx_graph.txs {
 					if list.check_tx(tx).await.is_blocked().context("error checking blocklist")? {
@@ -80,31 +90,36 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 					}
 				}
 			}
+		}
 
-			// Clean up the changeset to clean future state
-			if let Some(cs) = wallet.wallet.staged_mut() {
-				cs.tx_graph.txs.retain(|tx| !blocked_txids.contains(&tx.compute_txid()));
-				cs.tx_graph.anchors.retain(|(_, txid)| !blocked_txids.contains(txid));
-				cs.tx_graph.first_seen.retain(|txid, _| !blocked_txids.contains(txid));
-				cs.tx_graph.last_seen.retain(|txid, _| !blocked_txids.contains(txid));
-				cs.tx_graph.txouts.retain(|p, _| {
-					!blocked_points.contains(p) && !blocked_txids.contains(&p.txid)
-				});
-			}
-
-			// then lock all points we should block
-			for output in wallet.list_unspent() {
-				if blocked_txids.contains(&output.outpoint.txid) {
-					blocked_points.insert(output.outpoint);
+		if !blocked_txids.is_empty() || !blocked_points.is_empty() {
+			wallet = tokio::task::spawn_blocking(move || {
+				// Clean up the changeset to clean future state
+				if let Some(cs) = wallet.wallet.staged_mut() {
+					cs.tx_graph.txs.retain(|tx| !blocked_txids.contains(&tx.compute_txid()));
+					cs.tx_graph.anchors.retain(|(_, txid)| !blocked_txids.contains(txid));
+					cs.tx_graph.first_seen.retain(|txid, _| !blocked_txids.contains(txid));
+					cs.tx_graph.last_seen.retain(|txid, _| !blocked_txids.contains(txid));
+					cs.tx_graph.txouts.retain(|p, _| {
+						!blocked_points.contains(p) && !blocked_txids.contains(&p.txid)
+					});
 				}
-			}
-			for point in blocked_points {
-				wallet.lock_outpoint(point);
 
-				slog!(WalletReceivedBlockedAddress, wallet: wallet.kind.name().into(),
-					txid: point.txid, utxo: point,
-				);
-			}
+				// then lock all points we should block
+				for output in wallet.list_unspent() {
+					if blocked_txids.contains(&output.outpoint.txid) {
+						blocked_points.insert(output.outpoint);
+					}
+				}
+				for point in blocked_points {
+					wallet.lock_outpoint(point);
+
+					slog!(WalletReceivedBlockedAddress, wallet: wallet.kind.name().into(),
+						txid: point.txid, utxo: point,
+					);
+				}
+				wallet
+			}).await.context("blocklist cleanup task panicked")?;
 		}
 
 		wallet.persist().await
@@ -118,7 +133,10 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 			next_address: wallet.next_unused_address(KEYCHAIN).address.into_unchecked(),
 		);
 
-		let balance = wallet.balance();
+		let (wallet, balance) = tokio::task::spawn_blocking(move || {
+			let balance = wallet.balance();
+			(wallet, balance)
+		}).await.context("wallet balance task panicked")?;
 		if balance != prev_balance {
 			slog!(WalletBalanceUpdated, wallet: wallet_name.into(), balance: balance.clone(),
 				block_height: new_height,
@@ -155,15 +173,20 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 	/// created by this server will be added manually.
 	#[tracing::instrument(skip_all, fields(wallet = self.name()))]
 	async fn on_mempool_update(&self, mempool: &RawMempool) -> anyhow::Result<()> {
-		let mut wallet = self.lock().await;
+		let wallet = self.lock_owned().await;
 
 		// Find unconfirmed transactions in our wallet that are no longer in the mempool
 		// We will not evict fully owned transactions
-		let mempool_set = mempool.txids.iter().collect::<HashSet<_>>();
-		let evicted: Vec<_> = wallet.wallet.unconfirmed_txids()
-			.filter(|txid| !wallet.is_fully_owned_tx(*txid))
-			.filter(|txid| !mempool_set.contains(txid))
-			.collect();
+		let mempool_set = mempool.txids.iter().copied().collect::<HashSet<_>>();
+		// unconfirmed_txids canonicalizes the entire tx graph, so it runs on the
+		// blocking pool; the owned guard moves along and comes back with the result
+		let (mut wallet, evicted) = tokio::task::spawn_blocking(move || {
+			let evicted: Vec<_> = wallet.wallet.unconfirmed_txids()
+				.filter(|txid| !wallet.is_fully_owned_tx(*txid))
+				.filter(|txid| !mempool_set.contains(txid))
+				.collect();
+			(wallet, evicted)
+		}).await.context("unconfirmed txids task panicked")?;
 
 		if evicted.is_empty() {
 			return Ok(());
