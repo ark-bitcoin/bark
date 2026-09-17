@@ -173,6 +173,9 @@ alias int-server-migrations := test-integration-server-migrations
 #
 #   BARK_UPGRADE_FROM_EXEC=$(python3 contrib/fetch-bark-release.py --version 0.7.1) \
 #     just int-upgrade
+#
+# USE_FILESTORE=1 runs the same upgrades on the filestore backend. TEST is a
+# plain substring, not a nextest `-E` expression: it is interpolated unquoted.
 [doc("run the upgrade tests (needs BARK_UPGRADE_FROM_EXEC)")]
 test-integration-upgrade TEST="": ensure-build-bins docker-pull
 	#!/usr/bin/env bash
