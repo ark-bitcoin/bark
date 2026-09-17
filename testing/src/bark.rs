@@ -1087,23 +1087,19 @@ impl Bark {
 			}
 		});
 
-		// Take stdout out so we can drain it concurrently with `wait`. If the child
-		// produces enough output to fill the kernel pipe buffer (≈8 KiB on some
-		// container runtimes, 64 KiB on a typical desktop Linux) and we only read
-		// after `wait` returns, the child blocks on its next write and the wait
-		// deadlocks until the timeout fires. Joining a `read_to_string` future with
-		// `wait` keeps the pipe drained for the whole lifetime of the child.
+		// The child's stdout must be read while it runs: once the pipe buffer
+		// fills, the child blocks on its next write and never exits. The read
+		// goes on its own task because `read_to_string` ends only at EOF, which
+		// a hung child never reaches — awaiting it here would outlast the
+		// timeout below and never reach the kill.
 		let mut stdout = child.stdout.take().expect("stdout was piped");
-		let read_fut = async move {
+		let stdout_task = tokio::spawn(async move {
 			let mut buf = String::new();
 			stdout.read_to_string(&mut buf).await.unwrap();
 			buf
-		};
+		});
 
-		let (exit_result, read_result) = tokio::join!(
-			tokio::time::timeout(timeout, child.wait()),
-			read_fut,
-		);
+		let exit_result = tokio::time::timeout(timeout, child.wait()).await;
 
 		// on timeout, kill the child
 		if exit_result.is_err() {
@@ -1111,7 +1107,7 @@ impl Bark {
 			command_log.write_all("TIMED OUT\n".as_bytes()).await?;
 			child.kill().await.map_err(|e| anyhow!("can't kill timedout child: {}", e))?;
 		}
-		let out = read_result;
+		let out = stdout_task.await.expect("stdout reader panicked");
 		trace!("output of command '{}': {}", command_str, out);
 		let outfile = folder.join("stdout.log");
 		if let Err(e) = fs::write(&outfile, &out).await {
