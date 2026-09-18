@@ -920,6 +920,43 @@ async fn store_vtxo_ids_in_mailbox_duplicate() {
 	assert!(stored.contains(&vtxo2.id()));
 }
 
+/// A mailbox page never splits a batch post: the limit counts checkpoints, so
+/// a batch stored under one checkpoint is returned whole even at limit 1.
+#[tokio::test]
+async fn mailbox_page_returns_whole_batch() {
+	let mut ctx = TestContext::new_minimal("postgresd/mailbox_page_returns_whole_batch").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let mailbox_id = MailboxIdentifier::from_str(
+		"038f47dcd43ba6d97fc9ed2e3bba09b175a45fac55f0683e8cf771e8ced4572354"
+	).unwrap();
+
+	let vtxo1 = VTXO_VECTORS.board_vtxo.clone();
+	let vtxo2 = VTXO_VECTORS.round1_vtxo.clone();
+	db.write(async |t| t.upsert_vtxos(&[
+		ServerVtxo::from(vtxo1.clone()),
+		ServerVtxo::from(vtxo2.clone()),
+	]).await).await.unwrap();
+
+	db.write(async |t| t.store_vtxo_ids_in_mailbox(MailboxType::RecoveryVtxoId, mailbox_id.clone(), &[vtxo1.id(), vtxo2.id()]).await).await.unwrap()
+		.expect("should return a checkpoint");
+
+	// A page at limit 1 carries the whole two-id batch.
+	let page = db.read(async |t| t.get_mailbox_messages(mailbox_id.clone(), 0, 1).await).await.unwrap();
+	assert_eq!(page.len(), 1);
+	let ids = match &page[0].payload {
+		MailboxPayload::RecoveryVtxoIds { vtxo_ids } => vtxo_ids.clone(),
+		other => panic!("expected RecoveryVtxoIds payload, got {:?}", other),
+	};
+	assert_eq!(ids.len(), 2);
+	assert!(ids.contains(&vtxo1.id()));
+	assert!(ids.contains(&vtxo2.id()));
+}
+
 #[tokio::test]
 async fn vtxo_pool() {
 	use futures::TryStreamExt;
