@@ -255,6 +255,9 @@ pub struct Config {
 	pub required_board_confirmations: usize,
 	/// Minimum number of confirmations for a UTXO to be considered trusted.
 	pub min_trusted_confs: u32,
+	/// Whether server allows spending expired VTXOs in arkoor
+	#[serde(default)]
+	pub allow_expired_arkoor: bool,
 
 	#[serde(with = "utils::serde::duration")]
 	pub round_interval: Duration,
