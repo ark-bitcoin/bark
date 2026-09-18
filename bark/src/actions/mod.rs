@@ -208,7 +208,10 @@ impl AdvanceError {
 	pub fn is_server_rejection(&self) -> bool {
 		match self {
 			AdvanceError::Server(err) => err.is_rejection(),
-			_ => false,
+			AdvanceError::Vtxo(_) => false,
+			AdvanceError::Other(err) => err.downcast_ref::<tonic::Status>()
+				.map(|s| s.is_rejection())
+				.unwrap_or(false),
 		}
 	}
 }
