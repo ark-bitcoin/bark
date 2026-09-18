@@ -498,6 +498,13 @@ impl<'t> Tx<'t> {
 
 	/// Retrieve mailbox messages (both arkoor VTXOs and lightning receive
 	/// notifications) for a given mailbox, ordered by checkpoint.
+	///
+	/// `limit` counts checkpoints, not rows. A batch post stores all its rows
+	/// under one checkpoint and the reader's cursor can only resume between
+	/// checkpoints, so a row limit could cut a page inside a checkpoint group
+	/// and the reader would silently skip the group's remaining rows. Returning
+	/// the next `limit` checkpoints whole makes one returned entry per
+	/// checkpoint, so a caller may compare `len()` against `limit`.
 	pub async fn get_mailbox_messages(
 		&self,
 		mailbox_id: MailboxIdentifier,
@@ -505,13 +512,19 @@ impl<'t> Tx<'t> {
 		limit: usize,
 	) -> anyhow::Result<Vec<MailboxEntry>> {
 		let statement = self.prepare(&format!("
+			WITH checkpoints AS (
+				SELECT DISTINCT checkpoint FROM mailbox
+				WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
+				ORDER BY checkpoint ASC
+				LIMIT {limit}
+			)
 			SELECT
 				m.vtxo_id, m.vtxo, m.payment_hash, m.unlock_hash, m.preimage,
 				m.checkpoint, m.mailbox_type::TEXT AS entry_type, m.amount_sat
 			FROM mailbox m
-			WHERE m.unblinded_mailbox_id = $1 AND m.checkpoint > $2
-			ORDER BY m.checkpoint ASC, entry_type ASC
-			LIMIT {limit};
+			WHERE m.unblinded_mailbox_id = $1
+				AND m.checkpoint IN (SELECT checkpoint FROM checkpoints)
+			ORDER BY m.checkpoint ASC, entry_type ASC;
 		")).await?;
 
 		let checkpoint = checkpoint as i64;

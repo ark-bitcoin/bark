@@ -410,7 +410,10 @@ pub struct Config {
 	#[serde(with = "utils::serde::duration")]
 	pub offboard_acceptable_fee_rate_duration: Duration,
 
-	/// The maximum number of items we return to mailbox queries
+	/// The maximum number of messages we return to mailbox queries.
+	///
+	/// A message holds a whole batch post, so a page can carry more rows
+	/// than this.
 	#[serde(alias = "read_mailbox_max_items")]
 	pub max_read_mailbox_items: usize,
 
@@ -544,6 +547,11 @@ impl Config {
 			bail!("Invalid configuration: min_trusted_confs must be at least 1, \
 				otherwise unconfirmed deposits from third parties count as trusted.",
 			);
+		}
+
+		// At 0 mailbox pages are empty while have_more stays true, so readers page forever.
+		if self.max_read_mailbox_items == 0 {
+			bail!("Invalid configuration: max_read_mailbox_items must be at least 1");
 		}
 
 		if self.network == bitcoin::Network::Bitcoin && !self.require_board_funding_tx {
