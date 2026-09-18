@@ -1,4 +1,5 @@
 use anyhow::Context;
+use chrono::{DateTime, Local};
 use tokio::sync::broadcast;
 use tracing::{trace, warn};
 
@@ -28,25 +29,39 @@ impl<'a> PaymentAttemptHandler<'a> {
 		Self { db, mailbox_manager, payment_update_tx }
 	}
 
-	/// Update a lightning payment attempt's status, broadcast the update, and
-	/// post a send-finished notification to the sender's mailbox.
+	/// Mark a lightning payment attempt as failed.
+	///
+	/// Returns `None` if the optimistic-lock predicate missed.
 	pub async fn fail_payment_attempt(
 		&self, attempt: &LightningPaymentAttempt, error: Option<&str>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<Option<DateTime<Local>>> {
 		let new_status = LightningPaymentStatus::Failed;
-		self.db.write(async |t|
+		let updated_at = self.db.write(async |t|
 			t.update_lightning_payment_attempt_status(attempt, new_status, error).await
 		).await?;
 
-		trace!("Lightning payment attempt ({}): status updated to {} for payment hash {}.",
-			attempt.id, new_status, attempt.payment_hash,
-		);
+		if updated_at.is_some() {
+			trace!("Lightning payment attempt ({}): status updated to {} for payment hash {}.",
+				attempt.id, new_status, attempt.payment_hash,
+			);
 
-		self.payment_update_tx.send(attempt.payment_hash)
-			.context("payment update channel broken")?;
+			self.payment_update_tx.send(attempt.payment_hash)
+				.context("payment update channel broken")?;
 
-		self.post_lightning_send_finished(attempt.payment_hash, None).await;
-		Ok(())
+			self.post_lightning_send_finished(attempt.payment_hash, None).await;
+
+			// Attempted amount (not final_amount_msat) so failed/succeeded
+			// volumes stay comparable.
+			telemetry::add_lightning_payment(
+				attempt.lightning_node_id,
+				attempt.amount_msat,
+				telemetry::LightningPaymentMetricStatus::Failed,
+				telemetry::LightningDirection::Send,
+				attempt.is_self_payment(),
+			);
+		}
+
+		Ok(updated_at)
 	}
 
 	/// Verify and update a lightning payment attempt, broadcast the update, and
@@ -117,13 +132,26 @@ impl<'a> PaymentAttemptHandler<'a> {
 
 			// Record the fee only on the caller that actually transitioned
 			// the row to Succeeded (idempotent via `updated`). Failed
-			// attempts revoke without paying, so no recording. Pre-V56
+			// attempts revoke without paying, so no recording. Pre-V57
 			// rows have no stored fee and are silently skipped.
 			if status == LightningPaymentStatus::Succeeded {
 				if let Some(user_fee) = attempt.user_fee {
 					let routing_fee_sat = attempt.routing_fee_sat_from(final_amount_msat);
 					telemetry::record_ark_fee_lightning_send(user_fee.to_sat(), routing_fee_sat);
 				}
+
+			}
+
+			if let Some(metric_status) = telemetry::LightningPaymentMetricStatus::from_status(status) {
+				// Attempted amount (not final_amount_msat / CLN's amount_sent_msat)
+				// so failed/succeeded volumes stay comparable.
+				telemetry::add_lightning_payment(
+					attempt.lightning_node_id,
+					attempt.amount_msat,
+					metric_status,
+					telemetry::LightningDirection::Send,
+					attempt.is_self_payment(),
+				);
 			}
 		}
 

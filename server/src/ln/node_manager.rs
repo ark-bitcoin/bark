@@ -544,11 +544,16 @@ impl LightningManager {
 	) -> anyhow::Result<()> {
 		let payment_hash = preimage.compute_payment_hash();
 
+		let htlc_subscription = self.db
+			.read(async |t| t.get_htlc_subscription_by_id(subscription_id).await).await?
+			.expect("can only settle known invoice");
+
 		// If an open self-payment attempt exists for the payment hash, it is an
 		// intra-Ark lightning payment so we can mark it as succeeded,
 		// then skip hold invoice settlement.
 		let attempt = self.db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
 			.filter(|attempt| attempt.is_self_payment());
+		let is_self_payment = attempt.is_some();
 		if let Some(attempt) = attempt {
 			// NB: the xpay reconciliation loop may also post the mailbox notification
 			// for the same payment hash. The DB insert is idempotent (ON CONFLICT DO NOTHING).
@@ -564,9 +569,6 @@ impl LightningManager {
 			// subscription - that's where the HTLCs are locked. The user has
 			// already revealed the preimage, so if that node is now offline
 			// we cannot recover and the caller will surface the error.
-			let htlc_subscription = self.db
-				.read(async |t| t.get_htlc_subscription_by_id(subscription_id).await).await?
-				.expect("can only settle known invoice");
 			let mut hold_client = self.node_by_id(htlc_subscription.lightning_node_id)
 				.context("invoice cannot be settled: node is now offline")?
 				.hold_rpc.context("node doesn't support hold anymore")?;
@@ -590,12 +592,24 @@ impl LightningManager {
 		// Update the subscription status to settled and notify waiters.
 		// This covers both intra-ark (no CLN hook fires) and regular
 		// hold-invoice paths.
-		self.db.write(async |t| t.store_lightning_htlc_subscription_status(
+		let newly_settled = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			subscription_id,
 			LightningHtlcSubscriptionStatus::Settled,
 			None
 		).await).await?;
 		let _ = self.payment_update_tx.send(payment_hash);
+
+		// Only meter on the caller that actually flipped the row; retries
+		// (race, WAL replay) hit the same site with `newly_settled = false`.
+		if newly_settled {
+			telemetry::add_lightning_payment(
+				htlc_subscription.lightning_node_id,
+				htlc_subscription.amount().to_msat(),
+				telemetry::LightningPaymentMetricStatus::Succeeded,
+				telemetry::LightningDirection::Receive,
+				is_self_payment,
+			);
+		}
 
 		Ok(())
 
@@ -616,12 +630,28 @@ impl LightningManager {
 			payment_hash: payment_hash.to_vec(),
 		}).await?;
 
-		self.db.write(async |t| t.store_lightning_htlc_subscription_status(
+		let newly_canceled = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			id,
 			LightningHtlcSubscriptionStatus::Canceled,
 			None,
 		).await).await?;
 		self.notify_payment_update(payment_hash);
+
+		// Only meter cancels after HTLCs were accepted (bare invoice timeouts
+		// don't count) and only on the caller that actually flipped the row.
+		if newly_canceled && subscription.accepted_at.is_some() {
+			// Restrict to open attempts so a stale failed attempt can't mislabel as self.
+			let is_self_payment = self.db
+				.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
+				.is_some_and(|a| a.is_self_payment());
+			telemetry::add_lightning_payment(
+				subscription.lightning_node_id,
+				subscription.amount().to_msat(),
+				telemetry::LightningPaymentMetricStatus::Canceled,
+				telemetry::LightningDirection::Receive,
+				is_self_payment,
+			);
+		}
 
 		Ok(())
 	}
