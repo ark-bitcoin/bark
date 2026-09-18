@@ -786,7 +786,7 @@ async fn interactive_round_redelegates_the_inputs_it_did_not_take() {
 	// rather than the current bark-wallet crate. It needs a binary that
 	// re-delegates a participation that lost inputs instead of failing it
 	// wholesale.
-	require_bark_version!(> "0.7.0");
+	require_bark_version!(> "0.7.1");
 
 	let ctx = TestContext::new("bark/interactive_round_redelegates_the_inputs_it_did_not_take").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
