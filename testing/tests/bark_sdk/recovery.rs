@@ -124,3 +124,41 @@ async fn recovered_wallet_keeps_spent_vtxo_spent() {
 		"the spent vtxo must stay spent after recovery, got {states:?}",
 	);
 }
+
+/// A wallet recovered from its seed must show every input of a multi-input
+/// arkoor send as spent.
+#[tokio::test]
+async fn recovered_wallet_keeps_arkoor_batch_inputs_spent() {
+	let ctx = TestContext::new("bark_sdk/recovered_wallet_keeps_arkoor_batch_inputs_spent").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let source = ctx.bark_sdk("source", &srv).boarded(sat(400_000)).create().await;
+	let target = ctx.bark_sdk("target", &srv).create().await;
+
+	let target_address = target.new_address().await.expect("new address");
+	for _ in 0..10 {
+		source.send_arkoor_payment(&target_address, sat(1_000)).await.expect("arkoor send");
+	}
+	target.sync().await;
+
+	// Spend everything in a single arkoor send, leaving no change.
+	let back = source.new_address().await.expect("new address");
+	target.send_arkoor_payment(&back, sat(10_000)).await.expect("arkoor send back");
+
+	let mnemonic = fs::read_to_string(ctx.datadir.join("target/mnemonic")).await
+		.expect("target mnemonic file");
+	let mnemonic = bip39::Mnemonic::from_str(mnemonic.trim()).expect("parse mnemonic");
+	drop(target);
+
+	let recovered = ctx.bark_sdk("recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.sync().await;
+
+	let vtxos = recovered.all_vtxos().await.expect("list recovered vtxos");
+	// One arkoor receive might have been delivered as multiple vtxos.
+	assert!(vtxos.len() >= 10, "expected at least ten vtxos, got {}", vtxos.len());
+	for vtxo in vtxos {
+		assert_eq!(vtxo.state, VtxoState::Spent, "vtxo {} must be spent", vtxo.id());
+	}
+}
