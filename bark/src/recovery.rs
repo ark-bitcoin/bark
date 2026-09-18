@@ -5,7 +5,7 @@
 //! [`Wallet::post_recovery_vtxo_ids`]). Recovering the seed re-derives that key
 //! and reads back every posted id to rebuild the spendable VTXO set.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
 use bitcoin::Amount;
@@ -15,7 +15,6 @@ use log::{debug, info, warn};
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::mailbox::MailboxAuthorization;
 use ark::vtxo::Full;
-use bitcoin_ext::BlockHeight;
 use server_rpc::TryFromBytes;
 use server_rpc::protos::{self, VtxoSpendState};
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
@@ -175,25 +174,6 @@ impl OwnedVtxo {
 	}
 }
 
-/// Ordering key for recovered VTXOs: ascending by expiry height, then arkoor
-/// chain length ([`Vtxo::exit_depth`]).
-///
-/// Expiry is inherited within an arkoor chain, so `exit_depth` breaks the tie,
-/// ordering ancestors before descendants. [`Wallet::recover_from_mailbox`]
-/// walks the sorted set in reverse (descendants first) so a VTXO spent into a
-/// newer one is seen as already-spent and skipped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct ChainOrder {
-	expiry: BlockHeight,
-	depth: u16,
-}
-
-impl ChainOrder {
-	fn of(vtxo: &Vtxo<Full>) -> Self {
-		ChainOrder { expiry: vtxo.expiry_height(), depth: vtxo.exit_depth() }
-	}
-}
-
 impl Wallet {
 	fn mailbox_request(&self, checkpoint: u64) -> protos::mailbox_server::MailboxRequest {
 		let expiry = chrono::Local::now() + std::time::Duration::from_secs(60);
@@ -231,15 +211,7 @@ impl Wallet {
 
 		// Resolve ownership over the complete candidate set in one pass.
 		let candidates = candidates.into_values().collect();
-		let owned = self.resolve_owned_vtxos(candidates, gap_limit, report).await?;
-
-		// Order by (expiry, arkoor chain length) so the caller can walk newest-first.
-		let mut vtxos = BTreeMap::<ChainOrder, Vec<OwnedVtxo>>::new();
-		for owned in owned {
-			vtxos.entry(ChainOrder::of(&owned.vtxo)).or_default().push(owned);
-		}
-
-		Ok(vtxos.into_values().flatten().collect())
+		self.resolve_owned_vtxos(candidates, gap_limit, report).await
 	}
 
 
@@ -248,7 +220,7 @@ impl Wallet {
 	/// Reads the whole mailbox from checkpoint 0 (independent of the regular
 	/// mailbox checkpoint), taking ids from `RecoveryVtxoIds` and `Arkoor`
 	/// messages and de-duplicating them into a `HashSet`. Fetching the VTXOs,
-	/// validating them, resolving ownership, and ordering are left to the caller.
+	/// validating them and resolving ownership are left to the caller.
 	///
 	/// The internal paging checkpoint is discarded: the server allocates
 	/// checkpoints globally across all mailboxes, so persisting this cursor
@@ -467,24 +439,8 @@ impl Wallet {
 		let ids = ids.into_iter().collect::<Vec<_>>();
 		let owned = self.fetch_valid_owned_vtxos(report, &ids, gap_limit).await?;
 
-		// Ancestor ids of the (newer) VTXOs we've already processed, so we can
-		// skip any older recovered VTXO that was spent into a newer one.
-		let mut spent = HashSet::<VtxoId>::new();
-
 		for o in owned {
 			let id = o.vtxo.id();
-
-			// A descendant we already processed marks this one as spent.
-			if spent.contains(&id) {
-				debug!("Skipping recovery vtxo {id}: spent into a newer recovered vtxo");
-				self.store_vtxos([&o.vtxo], &VtxoState::Spent).await
-					.context("Failed to record previously spent vtxo")?;
-				report.push_skipped(&o.vtxo);
-				continue;
-			}
-
-			// Add all the ancestor VTXO ids to the spent set
-			spent.extend(o.vtxo.ancestor_ids());
 
 			if self.check_vtxo_onchain_status(report, &o.vtxo).await? {
 				continue;
@@ -534,11 +490,6 @@ impl Wallet {
 	/// Reads every posted id, fetches the full VTXOs, keeps the ones we own
 	/// (deriving their keys), then imports those still spendable. Returns a
 	/// [`RecoveryReport`] (see it for why recovered/skipped/failed matters).
-	///
-	/// VTXOs are consumed newest-first so one spent into a newer recovered VTXO
-	/// is seen as already-spent and skipped; the server is consulted for the rest,
-	/// since a VTXO can also be spent outside our set (round, offboard, or arkoor
-	/// to a third party).
 	pub(crate) async fn recover_from_mailbox(&self) -> anyhow::Result<RecoveryReport> {
 		let mut report = RecoveryReport::default();
 		let gap_limit = self.inner.config.vtxo_key_gap_limit;
