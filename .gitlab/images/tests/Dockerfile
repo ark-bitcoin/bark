@@ -44,7 +44,19 @@ RUN mkdir -p ~/.config/containers && \
 RUN sudo mkdir -p /etc/containers && \
 	echo '[storage]'      | sudo tee    /etc/containers/storage.conf && \
 	echo 'driver = "vfs"' | sudo tee -a /etc/containers/storage.conf
-RUN curl -L https://nixos.org/nix/install | bash -s -- --daemon && \
+# Pinned, not `curl https://nixos.org/nix/install | bash`: that URL 302s to
+# whatever release is current, so the image took an unreviewed script on every
+# rebuild. The installer self-verifies its tarball, but against a hash embedded
+# in the script -- so the script is the trust anchor and the one thing that was
+# unchecked. Holding the hash here makes a changed upstream file fail the build.
+# To bump: set NIX_VERSION, then
+#   curl -sL https://releases.nixos.org/nix/nix-$NIX_VERSION/install.sha256
+ARG NIX_VERSION=2.35.2
+ARG NIX_INSTALLER_SHA256=9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c
+RUN curl -fsSL -o /tmp/nix-install "https://releases.nixos.org/nix/nix-${NIX_VERSION}/install" && \
+	echo "${NIX_INSTALLER_SHA256}  /tmp/nix-install" | sha256sum -c - && \
+	bash /tmp/nix-install --daemon && \
+	rm -f /tmp/nix-install && \
 	sudo chown -R nixuser:nixbld /nix && \
 	. /etc/profile.d/nix.sh && \
 	nix-env --version
