@@ -130,7 +130,7 @@ impl Data {
 		let mut ret = Data { pool: BTreeMap::new() };
 		while let Some(v) = stream.try_next().await? {
 			if v.exit_depth() > max_exit_depth {
-				warn!("Not serving vtxo pool vtxo {}: exit depth {} exceeds \
+				debug!("Not serving vtxo pool vtxo {}: exit depth {} exceeds \
 					the maximum of {}", v.id(), v.exit_depth(), max_exit_depth,
 				);
 				continue;
