@@ -10,14 +10,14 @@ use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use log::{error, info, warn};
 
-use ark::{ProtocolEncoding, Vtxo};
 use ark::arkoor::ArkoorDestination;
-use ark::vtxo::{Full, VtxoId};
-use server_rpc::protos;
+use ark::vtxo::{Full, VtxoId, Vtxo};
 
 use crate::Wallet;
-use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId};
-use crate::arkoor::{ArkoorCreateError, DeliveryOutcome, post_arkoor_to_mailboxes, split_change_amount};
+use crate::actions::{
+	Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected, WalletAction, WalletActionId,
+};
+use crate::arkoor::{post_arkoor_to_mailboxes, split_change_amount, DeliveryOutcome};
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
@@ -93,17 +93,6 @@ pub enum Progress {
 	},
 }
 
-impl From<ArkoorCreateError> for AdvanceError {
-	fn from(e: ArkoorCreateError) -> Self {
-		match e {
-			// Keep the cosign status typed so `is_server_rejection` can tell a
-			// rejection (InvalidArgument/NotFound) from a transient failure.
-			ArkoorCreateError::Cosign(status) => AdvanceError::Server(status),
-			ArkoorCreateError::Other(err) => AdvanceError::Other(err),
-		}
-	}
-}
-
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl WalletAction for ArkoorSend {
@@ -115,9 +104,9 @@ impl WalletAction for ArkoorSend {
 			Progress::Registration {
 				movement_id, signed_destination_vtxos, signed_change_vtxos,
 			} => {
-				run_registration(
-					wallet, &signed_destination_vtxos, &signed_change_vtxos,
-				).await?;
+				let vtxos = signed_destination_vtxos.iter().chain(&signed_change_vtxos);
+				wallet.register_vtxo_transactions_with_server(vtxos).await
+					.retry_unless_rejected()?;
 				Progress::Delivery {
 					movement_id,
 					signed_destination_vtxos,
@@ -141,7 +130,7 @@ impl WalletAction for ArkoorSend {
 					}));
 				}
 
-				let (mut srv, _) = wallet.require_server().await?;
+				let (mut srv, _) = wallet.require_server().await.retry()?;
 				match post_arkoor_to_mailboxes(
 					&mut srv, self.destination.delivery(), &signed_destination_vtxos,
 				).await {
@@ -161,7 +150,7 @@ impl WalletAction for ArkoorSend {
 								..self
 							},
 							wake_after: Some(DELIVERY_RETRY_BACKOFF),
-							error: Some(AdvanceError::Other(anyhow!(summary))),
+							error: Some(anyhow!(summary)),
 						});
 					},
 				}
@@ -184,12 +173,11 @@ impl WalletAction for ArkoorSend {
 		self.input_vtxo_ids.clone()
 	}
 
-	async fn on_rejection(
-		self,
-		wallet: &Wallet,
-		error: AdvanceError,
-	) -> anyhow::Result<Advance<Self>> {
+	/// A step gave up on its current state: the server rejected the request
+	/// or the step can't be completed as-is.
+	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		match self.progress.clone() {
+			// Nothing happened server-side, so the inputs go back to spendable.
 			Progress::Cosigning => {
 				let id = self.id.clone();
 				error!("arkoor send {} rejected during cosign: {:?}", id, error);
@@ -199,7 +187,7 @@ impl WalletAction for ArkoorSend {
 						id, cancel_err,
 					);
 				}
-				Ok(Advance::Failed(error.into()))
+				Advance::Failed(error)
 			},
 			// Cosign already burned the inputs server-side and inserted the
 			// destination vtxos as `Unregistered`. Registration is what flips
@@ -211,7 +199,7 @@ impl WalletAction for ArkoorSend {
 			Progress::Registration {
 				movement_id, signed_destination_vtxos, signed_change_vtxos,
 			} => {
-				Ok(Advance::Next(ArkoorSend {
+				Advance::Next(ArkoorSend {
 					progress: Progress::Delivery {
 						movement_id,
 						signed_destination_vtxos,
@@ -219,28 +207,25 @@ impl WalletAction for ArkoorSend {
 						last_park_error: None,
 					},
 					..self
-				}))
+				})
 			},
 			Progress::Delivery { movement_id, signed_change_vtxos, .. } => {
-				// Defensive: `attempt_delivery` collects per-method failures into
-				// the park summary rather than returning `AdvanceError::Server`,
+				// Defensive: `post_arkoor_to_mailboxes` collects per-method
+				// failures into the park summary rather than aborting,
 				// so this arm is unreachable today. Kept as a safe fallback so
 				// that if a future change starts surfacing per-method rejections
 				// we still salvage the change instead of looping.
-				Ok(Advance::Next(ArkoorSend {
+				Advance::Next(ArkoorSend {
 					progress: Progress::Finalizing {
 						movement_id,
 						signed_change_vtxos,
 						delivery_succeeded: false,
 					},
 					..self
-				}))
+				})
 			},
-			Progress::Finalizing { .. } => {
-				// Finalizing only touches local state, so a server-rejection here
-				// would be a bug. Surface as Failed rather than loop.
-				Ok(Advance::Failed(error.into()))
-			},
+			// only touches local state
+			Progress::Finalizing { .. } => Advance::Failed(error),
 		}
 	}
 }
@@ -302,72 +287,45 @@ fn new_action_id() -> String {
 /// Cosigning -> Registration. Cosigns the arkoor with the server and
 /// records the movement.
 async fn run_cosign(wallet: &Wallet, send: &ArkoorSend) -> Result<Progress, AdvanceError> {
-	let _ = wallet.require_server().await?;
+	let _ = wallet.require_server().await.retry()?;
 
-	let inputs = wallet.inner.db.get_wallet_vtxos(&send.input_vtxo_ids).await?;
+	let inputs = wallet.inner.db.get_wallet_vtxos(&send.input_vtxo_ids).await.retry()?;
 	let change_keypair = wallet.peek_keypair(send.change_key_index).await
 		.with_context(|| format!(
 			"action {}: stored change_key_index {} not in keystore",
 			send.id, send.change_key_index,
-		))?;
+		)).retry()?;
 
 	let dest = ArkoorDestination {
 		total_amount: send.amount,
 		policy: send.destination.policy().clone(),
 	};
-	let neg_amount = -send.amount.to_signed().context("amount out-of-range")?;
+	let neg_amount = -send.amount.to_signed().context("amount out-of-range").abort()?;
 
-	// `?` converts via `From<ArkoorCreateError>` below: a cosign failure
-	// becomes `AdvanceError::Server` so the executor can route a genuine
-	// rejection to on_rejection instead of retrying forever.
 	let arkoor = wallet.create_checkpointed_arkoor_with_vtxos(
 		dest, inputs, change_keypair, send.change_pieces.clone(),
-	).await?;
+	).await.retry_unless_rejected()?;
 
 	let initial_update = MovementUpdate::new()
 		.intended_and_effective_balance(neg_amount)
 		.consumed_vtxos(&arkoor.inputs)
 		.sent_to([MovementDestination::ark(send.destination.clone(), send.amount)]);
 
+	// The server has cosigned by now, so from here on only retry: the cosign
+	// replays with the same change key and `abort` would release inputs
+	// the server considers spent.
 	let movement_id = wallet.inner.movements.get_or_create_movement_with_action(
 		Subsystem::ARKOOR,
 		ArkoorMovement::Send.to_string(),
 		&send.id,
 		initial_update,
-	).await.context("failed to create arkoor movement")?;
+	).await.context("failed to create arkoor movement").retry()?;
 
 	Ok(Progress::Registration {
 		movement_id,
 		signed_destination_vtxos: arkoor.created,
 		signed_change_vtxos: arkoor.change,
 	})
-}
-
-/// Registration -> Delivery. Push the signed transaction chains for the
-/// cosigned output vtxos to the server so receivers don't have to re-register
-/// them on receive and spends don't have to lazily retry the registration.
-async fn run_registration(
-	wallet: &Wallet,
-	signed_destination_vtxos: &[Vtxo<Full>],
-	signed_change_vtxos: &[Vtxo<Full>],
-) -> Result<(), AdvanceError> {
-	let serialized: Vec<Vec<u8>> = signed_destination_vtxos.iter()
-		.chain(signed_change_vtxos.iter())
-		.map(|v| v.serialize().to_vec())
-		.collect();
-	if serialized.is_empty() {
-		return Ok(());
-	}
-
-	let (mut srv, _) = wallet.require_server().await?;
-	// Call the RPC directly rather than going through
-	// `wallet.register_vtxo_transactions_with_server` so we preserve the typed
-	// `tonic::Status` for `is_server_rejection`, instead of letting it get
-	// wrapped in an opaque `anyhow::Error` that would always retry.
-	srv.client.register_vtxo_transactions(protos::RegisterVtxoTransactionsRequest {
-		vtxos: serialized,
-	}).await.map_err(AdvanceError::Server)?;
-	Ok(())
 }
 
 /// Finalize the send. All steps are idempotent.
@@ -378,17 +336,17 @@ async fn finalize_arkoor_send(
 	signed_change_vtxos: &[Vtxo<Full>],
 	delivery_succeeded: bool,
 ) -> Result<(), AdvanceError> {
-	wallet.mark_vtxos_as_spent(input_vtxo_ids).await?;
+	wallet.mark_vtxos_as_spent(input_vtxo_ids).await.retry()?;
 
 	if !signed_change_vtxos.is_empty() {
-		wallet.store_spendable_vtxos(signed_change_vtxos.iter()).await?;
+		wallet.store_spendable_vtxos(signed_change_vtxos.iter()).await.retry()?;
 		let change_ids = signed_change_vtxos.iter()
 			.map(|v| v.id())
 			.collect::<Vec<_>>();
 		wallet.inner.movements.update_movement(
 			movement_id,
 			MovementUpdate::new().produced_vtxos(&change_ids),
-		).await.context("failed to record arkoor change vtxos on movement")?;
+		).await.context("failed to record arkoor change vtxos on movement").retry()?;
 	}
 
 	let final_status = if delivery_succeeded {
@@ -397,7 +355,7 @@ async fn finalize_arkoor_send(
 		MovementStatus::Failed
 	};
 	wallet.inner.movements.finish_movement(movement_id, final_status).await
-		.context("failed to finalize arkoor movement")?;
+		.context("failed to finalize arkoor movement").retry()?;
 
 	if delivery_succeeded {
 		info!("Successfully sent arkoor vtxos");
@@ -441,35 +399,5 @@ mod test {
 		let send = dummy_send();
 		let json = serde_json::to_value(&send).unwrap();
 		assert_eq!(serde_json::from_value::<ArkoorSend>(json).unwrap(), send);
-	}
-
-	/// A cosign rejection must reach the executor as `AdvanceError::Server`
-	/// so `is_server_rejection` routes it to `on_rejection` instead of the
-	/// transient-retry path. Guards against regressing to a `.context(..)?`
-	/// that would flatten the status into `Other`.
-	#[test]
-	fn cosign_rejection_classified_as_server_rejection() {
-		let status = tonic::Status::new(tonic::Code::InvalidArgument, "vtxo already spent");
-		let advance: AdvanceError = ArkoorCreateError::Cosign(status).into();
-		assert!(matches!(advance, AdvanceError::Server(_)));
-		assert!(advance.is_server_rejection());
-	}
-
-	/// A transient cosign failure is still a `Server` error but must NOT be
-	/// classified as a rejection, so the executor retries it.
-	#[test]
-	fn transient_cosign_failure_is_not_a_rejection() {
-		let status = tonic::Status::new(tonic::Code::Unavailable, "server restarting");
-		let advance: AdvanceError = ArkoorCreateError::Cosign(status).into();
-		assert!(matches!(advance, AdvanceError::Server(_)));
-		assert!(!advance.is_server_rejection());
-	}
-
-	/// Non-cosign failures stay opaque `Other` (transient-retry path).
-	#[test]
-	fn other_create_error_is_not_a_rejection() {
-		let advance: AdvanceError = ArkoorCreateError::Other(anyhow!("db error")).into();
-		assert!(matches!(advance, AdvanceError::Other(_)));
-		assert!(!advance.is_server_rejection());
 	}
 }

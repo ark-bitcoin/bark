@@ -376,7 +376,7 @@ impl MovementManager {
 		id: MovementId,
 		new_status: MovementStatus,
 		update: MovementUpdate,
-	) -> anyhow::Result<(), MovementError> {
+	) -> Result<(), MovementError> {
 		if new_status == MovementStatus::Pending {
 			return Err(MovementError::IncorrectPendingStatus);
 		}

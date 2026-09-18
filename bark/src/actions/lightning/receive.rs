@@ -26,7 +26,8 @@ use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiv
 
 use crate::{Config, Wallet};
 use crate::actions::{
-	Advance, AdvanceError, BASE_RETRY_BACKOFF, WalletAction, WalletActionId, park_with_backoff,
+	abort, Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected,
+	WalletAction, WalletActionId, BASE_RETRY_BACKOFF,
 };
 use crate::arkoor::{DeliveryOutcome, post_arkoor_to_mailboxes};
 use crate::movement::update::MovementUpdate;
@@ -85,6 +86,11 @@ pub struct LightningReceive {
 
 	// Mutable state:
 	pub progress: Progress,
+	/// How often the claim has failed since the preimage was revealed, held
+	/// against [Config::lightning_receive_claim_retries]. Persisted, so the
+	/// budget spans restarts. `0` for checkpoints predating this field.
+	#[serde(default)]
+	pub claim_attempts: u32,
 }
 
 impl LightningReceive {
@@ -133,8 +139,8 @@ impl WalletAction for LightningReceive {
 			Progress::HtlcsReady(htlcs) => {
 				// Preimage not revealed yet: if we can no longer finish a
 				// unilateral claim in time, abandon rather than commit.
-				if is_htlc_claim_window_closed(wallet, &htlcs).await? {
-					abandon_lightning_receive(wallet, &self, &htlcs).await?;
+				if is_htlc_claim_window_closed(wallet, &htlcs).await.retry()? {
+					abandon_lightning_receive(wallet, &self, &htlcs).await.retry()?;
 					return Ok(Advance::Done);
 				}
 
@@ -190,34 +196,74 @@ impl WalletAction for LightningReceive {
 		}
 	}
 
-	async fn on_retry(self, wallet: &Wallet, retries: u32, error: AdvanceError)
-		-> anyhow::Result<Advance<Self>>
-	{
-		match self.progress.clone() {
-			// No money committed; just back off. Expiry reaping happens in advance.
-			Progress::AwaitingPayment => {
-				Ok(park_with_backoff(self, retries, Some(error)))
-			},
-			Progress::HtlcsReady(htlcs) => {
-				if is_htlc_claim_window_closed(wallet, &htlcs).await? {
-					abandon_lightning_receive(wallet, &self, &htlcs).await?;
-					let err = anyhow!("HTLC claim window closed, abandoning");
-					return Ok(Advance::Failed(err));
-				}
-				Ok(park_with_backoff(self, retries, Some(error)))
-			},
-			Progress::PreimageRevealed(_) | Progress::Delivering(_) => {
-				let budget = u32::from(wallet.config().lightning_receive_claim_retries);
-				if retries >= budget {
-					let err = anyhow!("lightning receive claim retry budget exhausted");
-					return Ok(Advance::Park { state: self, wake_after: None, error: Some(err.into()) });
-				}
-				Ok(park_with_backoff(self, retries, None))
+	/// A step failed transiently. Retry it, unless the claim window has
+	/// closed or the claim retry budget is spent.
+	async fn on_retry(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		let step_error = format!("{:#}", error);
+		match self.recover_from_retry(wallet, error).await {
+			Ok(advance) => advance,
+			// The recovery itself failed: keep the state and try again later.
+			Err(e) => Advance::Retry {
+				state: self,
+				error: e.context(format!("failed to recover from error: {}", step_error)),
 			},
 		}
 	}
 
-	async fn on_rejection(self, wallet: &Wallet, error: AdvanceError) -> anyhow::Result<Advance<Self>> {
+	/// A step gave up on its current state: the server rejected the request
+	/// or the step can't be completed as-is.
+	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		let step_error = format!("{:#}", error);
+		match self.recover_from_abort(wallet, error).await {
+			Ok(advance) => advance,
+			// The recovery itself failed: keep the state and try again later.
+			Err(e) => Advance::Retry {
+				state: self,
+				error: e.context(format!("failed to recover from error: {}", step_error)),
+			},
+		}
+	}
+}
+
+impl LightningReceive {
+	async fn recover_from_retry(
+		&self,
+		wallet: &Wallet,
+		error: anyhow::Error,
+	) -> anyhow::Result<Advance<Self>> {
+		match self.progress.clone() {
+			// No money committed; just back off. Expiry reaping happens in the step.
+			Progress::AwaitingPayment => {
+				Ok(Advance::Retry { state: self.clone(), error })
+			},
+			Progress::HtlcsReady(htlcs) => {
+				if is_htlc_claim_window_closed(wallet, &htlcs).await? {
+					abandon_lightning_receive(wallet, self, &htlcs).await?;
+					let err = error.context("HTLC claim window closed, abandoning");
+					return Ok(Advance::Failed(err));
+				}
+				Ok(Advance::Retry { state: self.clone(), error })
+			},
+			Progress::PreimageRevealed(_) | Progress::Delivering(_) => {
+				let budget = u32::from(wallet.config().lightning_receive_claim_retries);
+				let state = LightningReceive {
+					claim_attempts: self.claim_attempts.saturating_add(1),
+					..self.clone()
+				};
+				if state.claim_attempts >= budget {
+					let err = error.context("lightning receive claim retry budget exhausted");
+					return Ok(Advance::Park { state, wake_after: None, error: Some(err) });
+				}
+				Ok(Advance::Retry { state, error })
+			},
+		}
+	}
+
+	async fn recover_from_abort(
+		&self,
+		wallet: &Wallet,
+		error: anyhow::Error,
+	) -> anyhow::Result<Advance<Self>> {
 		match self.progress.clone() {
 			// Nothing committed server-side: drop the row ourselves and
 			// surface the original error to the caller.
@@ -227,17 +273,17 @@ impl WalletAction for LightningReceive {
 				if let Err(e) = wallet.stop_wallet_action(&id).await {
 					warn!("could not cancel awaiting-payment lightning receive {}: {:#}", id, e);
 				}
-				Ok(Advance::Failed(error.into()))
+				Ok(Advance::Failed(error))
 			},
 			// Preimage not revealed yet: abandon locally (the inbound HTLC
 			// times out and the sender is refunded).
 			Progress::HtlcsReady(htlcs) => {
 				error!("Server rejected lightning receive claim before preimage disclosure, abandoning");
-				abandon_lightning_receive(wallet, &self, &htlcs).await?;
-				Ok(Advance::Failed(error.into()))
+				abandon_lightning_receive(wallet, self, &htlcs).await?;
+				Ok(Advance::Failed(error))
 			},
 			Progress::PreimageRevealed(_) | Progress::Delivering(_) => {
-				Ok(Advance::Park { state: self, wake_after: None, error: Some(error) })
+				Ok(Advance::Park { state: self.clone(), wake_after: None, error: Some(error) })
 			},
 		}
 	}
@@ -390,6 +436,7 @@ pub(crate) async fn start_lightning_receive(
 		claim_destination,
 		key_index,
 		progress: Progress::AwaitingPayment,
+		claim_attempts: 0,
 	})
 }
 
@@ -423,18 +470,20 @@ pub(crate) async fn compute_lightning_receive_anti_dos(
 
 /// AwaitingPayment poll: ask the server whether an inbound payment has
 /// arrived without waiting.
-pub(crate) async fn check_incoming_lightning_payment(
+async fn check_incoming_lightning_payment(
 	wallet: &Wallet,
 	recv: &LightningReceive,
 ) -> Result<IncomingStatus, AdvanceError> {
-	let (mut srv, _) = wallet.require_server().await?;
+	let (mut srv, _) = wallet.require_server().await.retry()?;
 	let sub = srv.client.check_lightning_receive(protos::CheckLightningReceiveRequest {
 		hash: recv.payment_hash.to_byte_array().to_vec(),
 		wait: false,
-	}).await.map_err(AdvanceError::Server)?.into_inner();
+	}).await.retry_unless_rejected()?.into_inner();
 
+	// An unknown status is most likely a server we don't fully speak with yet;
+	// keep polling rather than drop a receive that may still get paid.
 	let status = protos::LightningReceiveStatus::try_from(sub.status)
-		.with_context(|| format!("unknown payment status: {}", sub.status))?;
+		.with_context(|| format!("unknown payment status: {}", sub.status)).retry()?;
 	debug!("Received status {:?} for {}", status, recv.payment_hash);
 
 	Ok(match status {
@@ -442,9 +491,9 @@ pub(crate) async fn check_incoming_lightning_payment(
 		protos::LightningReceiveStatus::HtlcsReady => IncomingStatus::Ready,
 		protos::LightningReceiveStatus::Created => IncomingStatus::Pending,
 		protos::LightningReceiveStatus::Canceled => IncomingStatus::Canceled,
-		protos::LightningReceiveStatus::Settled => {
-			return Err(anyhow!("payment already settled").into());
-		},
+		// We never claimed, yet the server has the preimage. Polling
+		// won't change that, so fail the receive and surface it.
+		protos::LightningReceiveStatus::Settled => abort!("payment already settled"),
 	})
 }
 
@@ -489,13 +538,13 @@ fn htlc_recv_tree_blocks_needed(config: &Config) -> BlockDelta {
 /// AwaitingPayment -> HtlcsReady. Asks the server to grant HTLC-recv
 /// vtxos for the inbound payment, validates them, creates the receive
 /// movement and stores the vtxos locked.
-pub(crate) async fn prepare_lightning_receive_htlcs(
+async fn prepare_lightning_receive_htlcs(
 	wallet: &Wallet,
 	recv: &LightningReceive,
 ) -> Result<Grant, AdvanceError> {
-	let (mut srv, ark_info) = wallet.require_server().await?;
+	let (mut srv, ark_info) = wallet.require_server().await.retry()?;
 	let config = wallet.config();
-	let current_height = wallet.inner.chain.tip().await?;
+	let current_height = wallet.inner.chain.tip().await.retry()?;
 	let payment_hash = recv.payment_hash;
 
 	let lightning_receive_anti_dos = match compute_lightning_receive_anti_dos(
@@ -509,7 +558,7 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 	};
 
 	let htlc_recv_expiry = htlc_recv_expiry(current_height, recv.htlc_recv_cltv_delta);
-	let keypair = wallet.peek_keypair(recv.key_index).await?;
+	let keypair = wallet.peek_keypair(recv.key_index).await.retry()?;
 	let req = protos::PrepareLightningReceiveClaimRequest {
 		payment_hash: payment_hash.to_vec(),
 		user_pubkey: keypair.public_key().serialize().to_vec(),
@@ -517,28 +566,33 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 		lightning_receive_anti_dos,
 	};
 	let res = srv.client.prepare_lightning_receive_claim(req).await
-		.map_err(AdvanceError::Server)?.into_inner();
+		.retry_unless_rejected()?.into_inner();
+
+	// The server hands back this very same grant on every later request for
+	// this payment hash, so a grant we can't accept aborts rather than
+	// retries: `abort` fails the receive while the preimage is still ours.
 	let vtxos = res.htlc_vtxos.into_iter()
 		.map(|b| Vtxo::deserialize(&b))
 		.collect::<Result<Vec<_>, _>>()
-		.context("invalid htlc vtxos from server")?;
+		.context("invalid htlc vtxos from server").abort()?;
 
 	// Sanity-check the vtxos.
 	let mut htlc_amount = Amount::ZERO;
 	for vtxo in &vtxos {
 		trace!("Received HTLC VTXO {} from server: {}", vtxo.id(), vtxo.serialize_hex());
+		//TODO(stevenroose) distinguish chain-source from invalid input
 		wallet.validate_vtxo(vtxo).await
-			.context("received invalid HTLC VTXO from server")?;
+			.context("received invalid HTLC VTXO from server").retry()?;
 		htlc_amount += vtxo.amount();
 
 		if let VtxoPolicy::ServerHtlcRecv(p) = vtxo.policy() {
 			if p.payment_hash != payment_hash {
-				return Err(anyhow!("invalid payment hash on HTLC VTXOs received from server: {}",
-					p.payment_hash).into());
+				abort!("invalid payment hash on HTLC VTXOs received from server: {}",
+					p.payment_hash,
+				);
 			}
 			if p.user_pubkey != keypair.public_key() {
-				return Err(anyhow!("invalid pubkey on HTLC VTXOs received from server: {}",
-					p.user_pubkey).into());
+				abort!("invalid pubkey on HTLC VTXOs received from server: {}", p.user_pubkey);
 			}
 			// NB: p.htlc_expiry isn't compared against the freshly computed
 			// htlc_recv_expiry: the server hands back the first attempt's
@@ -584,14 +638,14 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 				return Ok(Grant::Rejected(e));
 			}
 		} else {
-			return Err(anyhow!("invalid HTLC VTXO policy: {:?}", vtxo.policy()).into());
+			abort!("invalid HTLC VTXO policy: {:?}", vtxo.policy());
 		}
 	}
 
 	// We can't entirely trust the server-reported payment amount, so if there is a
 	// discrepancy, fall back to checking the invoice amount.
 	let invoice_amount = recv.invoice.get_payment_amount(None)
-		.context("ln receive invoice should have amount")?;
+		.context("ln receive invoice should have amount").abort()?;
 	let server_received_amount = res.receive.map(|r| Amount::from_sat(r.amount_sat));
 	let fee = {
 		let fee = server_received_amount
@@ -604,26 +658,29 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 	};
 	let received = htlc_amount + fee;
 	if received < invoice_amount {
-		return Err(anyhow!("Server didn't return enough VTXOs to cover invoice amount").into());
+		abort!("Server didn't return enough VTXOs to cover invoice amount");
 	}
 
+	// The grant is accepted; the bookkeeping below is local and retried.
 	let movement_id = wallet.inner.movements.get_or_create_movement_with_action(
 		Subsystem::LIGHTNING_RECEIVE,
 		LightningReceiveMovement::Receive.to_string(),
 		&recv.id(),
 		MovementUpdate::new()
-			.intended_balance(invoice_amount.to_signed().context("invoice amount out of range")?)
-			.effective_balance(htlc_amount.to_signed().context("htlc amount out of range")?)
+			.intended_balance(invoice_amount.to_signed()
+				.context("invoice amount out of range").retry()?)
+			.effective_balance(htlc_amount.to_signed()
+				.context("htlc amount out of range").retry()?)
 			.fee(fee)
 			.metadata(LightningMovement::metadata(
 				payment_hash, &vtxos, Some(recv.payment_preimage),
 			))
 			.received_on([MovementDestination::new(recv.invoice.clone().into(), received)]),
-	).await.context("failed to create lightning receive movement")?;
+	).await.context("failed to create lightning receive movement").retry()?;
 	wallet.store_locked_vtxos(
 		&vtxos,
 		Some(VtxoLockHolder::Action { id: recv.id() }),
-	).await?;
+	).await.retry()?;
 
 	// Sort for a deterministic checkpoint (the server may return them in any order).
 	let mut vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
@@ -650,32 +707,35 @@ async fn claim_lightning_receive_htlcs(
 	htlcs: &Htlcs,
 	preimage_revealed: &mut bool,
 ) -> Result<Option<Delivery>, AdvanceError> {
-	let (mut srv, _) = wallet.require_server().await?;
+	let (mut srv, _) = wallet.require_server().await.retry()?;
 
 	// Order inputs by vtxoid before generating nonces, then hydrate to
 	// full so the arkoor builder has the genesis chain.
 	let mut input_ids = htlcs.vtxo_ids.clone();
 	input_ids.sort();
 	let inputs = wallet.inner.db.get_full_vtxos(&input_ids).await
-		.context("failed to hydrate htlc input vtxos")?;
+		.context("failed to hydrate htlc input vtxos").retry()?;
 
 	let mut keypairs = Vec::with_capacity(inputs.len());
 	for v in &inputs {
-		keypairs.push(wallet.get_vtxo_key(v).await?);
+		keypairs.push(wallet.get_vtxo_key(v).await.retry()?);
 	}
 
 	let receive_policy = if let Some(destination) = recv.claim_destination.as_ref() {
 		destination.policy().clone()
 	} else {
-		let claim_key = wallet.peek_keypair(recv.key_index).await?.public_key();
+		let claim_key = wallet.peek_keypair(recv.key_index).await.retry()?.public_key();
 		VtxoPolicy::new_pubkey(claim_key)
 	};
 	trace!("ln claim arkoor params: inputs: {:?}; policy: {:?}", input_ids, receive_policy);
+	// The claim is built from our own stored vtxos, so failing to build it
+	// is deterministic: abort, which abandons the receive while the preimage
+	// is still ours.
 	let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
 		inputs, receive_policy,
-	).context("creating claim arkoor builder failed")?
+	).context("creating claim arkoor builder failed").abort()?
 		.generate_user_nonces(&keypairs)
-		.context("arkoor nonce generation for claim failed")?;
+		.context("arkoor nonce generation for claim failed").abort()?;
 
 	info!("Claiming arkoor against payment preimage for {}", recv.payment_hash);
 	*preimage_revealed = true;
@@ -684,24 +744,28 @@ async fn claim_lightning_receive_htlcs(
 		payment_hash: recv.payment_hash.to_byte_array().to_vec(),
 		payment_preimage: recv.payment_preimage.to_vec(),
 		cosign_request: Some(package_cosign_request),
-	}).await.map_err(AdvanceError::Server)?.into_inner();
-	let cosign_resp = resp.try_into().context("invalid cosign response")?;
+	}).await.retry_unless_rejected()?.into_inner();
+
+	// The preimage is out, so from here on only retry: the server's
+	// claim_lightning_receive is idempotent and hands out fresh cosign
+	// signatures for a re-driven claim.
+
+	let cosign_resp = resp.try_into().context("invalid cosign response").retry()?;
 
 	let mut outputs = builder.user_cosign(&keypairs, cosign_resp)
-		.context("claim arkoor cosign failed with user response")?
+		.context("claim arkoor cosign failed with user response").retry()?
 		.build_signed_vtxos();
 
 	// Register the claim outputs so they are spendable for any later flow.
-	wallet.register_vtxo_transactions_with_server(&outputs).await?;
+	wallet.register_vtxo_transactions_with_server(&outputs).await.retry()?;
 
 	let mut effective_balance = Amount::ZERO;
 	for vtxo in &outputs {
 		// NB: bailing here results in vtxos not being registered despite the
-		// preimage being revealed. The server's claim_lightning_receive is
-		// idempotent, so bark can retry and obtain fresh cosign signatures.
+		// preimage being revealed; see above on why a retry is fine.
 		trace!("Validating Lightning receive claim VTXO {}: {}", vtxo.id(), vtxo.serialize_hex());
 		wallet.validate_vtxo(vtxo).await
-			.context("invalid arkoor from lightning receive")?;
+			.context("invalid arkoor from lightning receive").retry()?;
 		effective_balance += vtxo.amount();
 	}
 
@@ -712,12 +776,12 @@ async fn claim_lightning_receive_htlcs(
 	// outputs are already keyed to one of our pubkeys.
 	let external_destination = match recv.claim_destination.as_ref() {
 		Some(destination) => wallet.pubkey_keypair(&destination.policy().user_pubkey())
-			.await?.is_none(),
+			.await.retry()?.is_none(),
 		None => false,
 	};
 
 	if external_destination {
-		wallet.mark_vtxos_as_spent(&htlcs.vtxo_ids).await?;
+		wallet.mark_vtxos_as_spent(&htlcs.vtxo_ids).await.retry()?;
 		outputs.sort_unstable();
 		return Ok(Some(Delivery {
 			vtxos: outputs,
@@ -730,21 +794,22 @@ async fn claim_lightning_receive_htlcs(
 	}
 	// Spend the inputs first: these two writes can't be atomic, and counting
 	// the receive in neither balance for a moment beats counting it in both.
-	wallet.mark_vtxos_as_spent(&htlcs.vtxo_ids).await?;
-	wallet.store_vtxos(&outputs, &VtxoState::Spendable).await?;
+	wallet.mark_vtxos_as_spent(&htlcs.vtxo_ids).await.retry()?;
+	wallet.store_vtxos(&outputs, &VtxoState::Spendable).await.retry()?;
 
 	wallet.inner.movements.finish_movement_with_update(
 		htlcs.movement_id,
 		MovementStatus::Successful,
 		MovementUpdate::new()
-			.effective_balance(effective_balance.to_signed().context("effective balance out of range")?)
+			.effective_balance(effective_balance.to_signed()
+				.context("effective balance out of range").retry()?)
 			.produced_vtxos(&outputs),
-	).await.context("failed to finish lightning receive movement")?;
+	).await.context("failed to finish lightning receive movement").retry()?;
 
 	let amount = recv.invoice.get_payment_amount(None).unwrap_or(effective_balance);
 	wallet.inner.db.record_settled_lightning_receive(
 		recv.payment_hash, recv.payment_preimage, &recv.invoice, amount,
-	).await?;
+	).await.retry()?;
 
 	Ok(None)
 }
@@ -759,9 +824,11 @@ async fn deliver_lightning_receive(
 	delivery: &Delivery,
 ) -> Result<(), AdvanceError> {
 	let destination = recv.claim_destination.as_ref()
-		.context("delivering receive has no claim destination")?;
+		.context("delivering receive has no claim destination")
+		.abort()?;
 	deliver_vtxos_to_address(wallet, destination, &delivery.vtxos).await
-		.context("failed to deliver lightning receive claim output to destination mailbox")?;
+		.context("failed to deliver lightning receive claim output to destination mailbox")
+		.retry()?;
 
 	let delivered = delivery.vtxos.iter().map(|v| v.amount()).sum();
 	wallet.inner.movements.finish_movement_with_update(
@@ -770,12 +837,12 @@ async fn deliver_lightning_receive(
 		MovementUpdate::new()
 			.effective_balance(SignedAmount::ZERO)
 			.sent_to([MovementDestination::ark(destination.clone(), delivered)]),
-	).await.context("failed to finish lightning receive movement")?;
+	).await.context("failed to finish lightning receive movement").retry()?;
 
 	let amount = recv.invoice.get_payment_amount(None).unwrap_or(delivered);
 	wallet.inner.db.record_settled_lightning_receive(
 		recv.payment_hash, recv.payment_preimage, &recv.invoice, amount,
-	).await?;
+	).await.retry()?;
 
 	Ok(())
 }

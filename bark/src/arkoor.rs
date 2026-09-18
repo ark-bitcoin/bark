@@ -21,24 +21,6 @@ pub struct ArkoorCreateResult {
 	pub change: Vec<Vtxo<Full>>,
 }
 
-/// Error returned by [`Wallet::create_checkpointed_arkoor_with_vtxos`].
-///
-/// The cosign RPC failure is kept as a typed [`tonic::Status`] rather
-/// than flattened into `anyhow`, so a caller driving this as a wallet
-/// action can route a genuine server rejection to its `on_rejection`
-/// path (via `AdvanceError::is_server_rejection`) instead of retrying a
-/// doomed request forever. Every other failure is opaque `Other`.
-#[derive(Debug, thiserror::Error)]
-pub enum ArkoorCreateError {
-	/// The `request_arkoor_cosign` RPC failed. May be a rejection
-	/// (`InvalidArgument`/`NotFound`) or a transient error; the caller
-	/// classifies it via the status code.
-	#[error("server failed to cosign arkoor: {0}")]
-	Cosign(#[source] tonic::Status),
-	#[error(transparent)]
-	Other(#[from] anyhow::Error),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ArkoorAddressError {
 	#[error("Ark address is for different network")]
@@ -220,7 +202,7 @@ impl Wallet {
 		inputs: impl IntoIterator<Item = WalletVtxo>,
 		change_keypair: Keypair,
 		change_pieces: Option<Vec<Amount>>,
-	) -> Result<ArkoorCreateResult, ArkoorCreateError> {
+	) -> anyhow::Result<ArkoorCreateResult> {
 		let (mut srv, _) = self.require_server().await?;
 		let input_ids = inputs.into_iter().map(|v| v.id()).collect::<Vec<_>>();
 
@@ -274,7 +256,7 @@ impl Wallet {
 		);
 
 		let response = srv.client.request_arkoor_cosign(cosign_request).await
-			.map_err(ArkoorCreateError::Cosign)?
+			.context("error requesting arkoor cosign")?
 			.into_inner();
 
 		let cosign_responses = ArkoorPackageCosignResponse::try_from(response)
