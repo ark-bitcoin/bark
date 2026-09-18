@@ -179,7 +179,7 @@ impl Server {
 			// An expired vtxo can only leave the Ark through a round or an
 			// offboard. Passing it on as an arkoor would hand the receiver
 			// a coin it cannot exit while the server can already sweep it.
-			if v.vtxo.expiry_height() <= chain_tip {
+			if !self.config.allow_expired_arkoor && v.vtxo.expiry_height() <= chain_tip {
 				return badarg!("vtxo {} expired at height {} (tip = {})",
 					v.vtxo_id, v.vtxo.expiry_height(), chain_tip,
 				);
