@@ -129,37 +129,34 @@ impl WalletAction for LightningSend {
 	fn id(&self) -> WalletActionId { LightningSend::id(self) }
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
-		let new_progress = match self.progress.clone() {
+		let new_progress = match &self.progress {
 			Progress::Start => {
 				let htlcs = request_lightning_send_htlcs(wallet, &self).await?;
 				Progress::HtlcReceived(htlcs)
 			},
 			Progress::HtlcReceived(htlcs) => {
-				initiate_lightning_send_payment(wallet, &self, &htlcs).await?;
-				Progress::PaymentInitiated(htlcs)
+				initiate_lightning_send_payment(wallet, &self, htlcs).await?;
+				Progress::PaymentInitiated(htlcs.clone())
 			},
 			Progress::PaymentInitiated(htlcs) => {
 				match check_lightning_send_payment_status(wallet, &self).await.retry()? {
 					PaymentStatus::Success(preimage) => {
-						settle_lightning_send_payment(wallet, &self, &htlcs, preimage).await?;
+						settle_lightning_send_payment(wallet, &self, htlcs, preimage).await?;
 						return Ok(Advance::Done);
 					},
 					PaymentStatus::Failed => {
 						info!("Lightning payment {} failed, preparing to revoke", self.invoice.payment_hash());
 						let revocation = Revocation { key: self.revocation_key };
-						Progress::RevocableHtlcs { htlcs, revocation }
+						Progress::RevocableHtlcs { htlcs: htlcs.clone(), revocation }
 					},
 					PaymentStatus::Pending => {
 						if self.is_htlc_near_expiry(wallet).await.retry()? {
 							info!("Lightning payment {} failed, preparing to revoke", self.invoice.payment_hash());
 							let revocation = Revocation { key: self.revocation_key };
-							Progress::RevocableHtlcs { htlcs, revocation }
+							Progress::RevocableHtlcs { htlcs: htlcs.clone(), revocation }
 						} else {
 							return Ok(Advance::Park {
-								state: LightningSend {
-									progress: Progress::PaymentInitiated(htlcs),
-									..self
-								},
+								state: self,
 								wake_after: Some(PAYMENT_PENDING_POLL_INTERVAL),
 								error: None,
 							});
@@ -169,7 +166,7 @@ impl WalletAction for LightningSend {
 			},
 			Progress::RevocableHtlcs { htlcs, revocation } |
 			Progress::RevocationStuck { htlcs, revocation } => {
-				revoke_lightning_send_htlcs(wallet, &self, &htlcs, &revocation).await?;
+				revoke_lightning_send_htlcs(wallet, &self, htlcs, revocation).await?;
 				return Ok(Advance::Done);
 			},
 		};

@@ -99,7 +99,7 @@ impl WalletAction for ArkoorSend {
 	fn id(&self) -> WalletActionId { ArkoorSend::id(self) }
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
-		let new_progress = match self.progress.clone() {
+		let new_progress = match self.progress {
 			Progress::Cosigning => run_cosign(wallet, &self).await?,
 			Progress::Registration {
 				movement_id, signed_destination_vtxos, signed_change_vtxos,

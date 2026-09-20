@@ -142,8 +142,8 @@ impl WalletAction for Board {
 	fn id(&self) -> WalletActionId { Board::id(self) }
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
-		match self.progress.clone() {
-			Progress::Broadcasting { signed_vtxo } => {
+		match self.progress {
+			Progress::Broadcasting { ref signed_vtxo } => {
 				match run_broadcast(wallet, &self, signed_vtxo).await? {
 					BroadcastOutcome::Seen => {
 						record_funding_tx(wallet, &self).await;
@@ -225,13 +225,13 @@ enum BroadcastOutcome {
 async fn run_broadcast(
 	wallet: &Wallet,
 	board: &Board,
-	signed_vtxo: Vtxo<Full>,
+	signed_vtxo: &Vtxo<Full>,
 ) -> Result<BroadcastOutcome, AdvanceError> {
 	// The server doesn't know this vtxo until `register_board`, so skip the
 	// recovery-mailbox post `store_locked_vtxos` would do (it would fail the
 	// mailbox FK to `vtxo`); `register_board` posts it once accepted.
 	wallet.store_vtxos(
-		[&signed_vtxo],
+		[signed_vtxo],
 		&VtxoState::Locked {
 			holder: Some(crate::vtxo::VtxoLockHolder::Movement { id: board.movement_id }),
 		},

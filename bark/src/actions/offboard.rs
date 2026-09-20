@@ -228,18 +228,18 @@ impl WalletAction for Offboard {
 	fn id(&self) -> WalletActionId { Offboard::id(self) }
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
-		let new_progress = match self.progress.clone() {
+		let new_progress = match self.progress {
 			Progress::Start => {
 				lock_vtxos(wallet, &self).await?
 			},
 			Progress::SplitWithArkoor => {
 				arkoor_split_offboard(wallet, &self).await?
 			}
-			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, change_vtxo_ids } => {
+			Progress::ArkoorRegistrationRequired { ref offboard_vtxo_ids, ref change_vtxo_ids } => {
 				register_arkoor_split(wallet, &self, offboard_vtxo_ids, change_vtxo_ids).await?
 			},
-			Progress::ReadyForOffboard { offboard_vtxo_ids, .. } => {
-				prepare_offboard(wallet, &self, offboard_vtxo_ids).await?
+			Progress::ReadyForOffboard { ref offboard_vtxo_ids, .. } => {
+				prepare_offboard(wallet, &self, offboard_vtxo_ids.clone()).await?
 			},
 			Progress::OffboardTxPrepared {
 				offboard_vtxo_ids, offboard_tx, forfeit_cosign_nonces, movement_id
@@ -263,10 +263,10 @@ impl WalletAction for Offboard {
 				});
 			},
 			Progress::AwaitingConfirmations {
-				ref offboard_vtxo_ids, offboard_txid, offboard_tx, movement_id, created_at,
+				ref offboard_vtxo_ids, offboard_txid, ref offboard_tx, movement_id, created_at,
 			} => {
 				return match check_offboard_confirmation(
-					wallet, &offboard_tx, created_at,
+					wallet, offboard_tx, created_at,
 				).await.retry()? {
 					ConfirmationOutcome::Confirmed => {
 						settle_offboard(
@@ -609,10 +609,10 @@ async fn arkoor_split_offboard(
 async fn register_arkoor_split(
 	wallet: &Wallet,
 	action: &Offboard,
-	offboard_vtxo_ids: Vec<VtxoId>,
-	change_vtxo_ids: Vec<VtxoId>,
+	offboard_vtxo_ids: &[VtxoId],
+	change_vtxo_ids: &[VtxoId],
 ) -> Result<Progress, AdvanceError> {
-	let to_register = offboard_vtxo_ids.iter().chain(&change_vtxo_ids).copied().collect::<Vec<_>>();
+	let to_register = offboard_vtxo_ids.iter().chain(change_vtxo_ids).copied().collect::<Vec<_>>();
 	let full_vtxos = wallet.inner.db.get_full_vtxos(&to_register).await
 		.context("failed to hydrate arkoor split vtxos").retry()?;
 
@@ -621,11 +621,11 @@ async fn register_arkoor_split(
 
 	// Registration succeeded, so the change is safe to spend now.
 	wallet.unlock_vtxos(
-		&change_vtxo_ids,
+		change_vtxo_ids,
 		Some(VtxoLockHolder::Action { id: action.id.clone() }),
 	).await.context("failed to unlock change vtxos after registration").retry()?;
 
-	Ok(Progress::ReadyForOffboard { offboard_vtxo_ids, prior_txid: None })
+	Ok(Progress::ReadyForOffboard { offboard_vtxo_ids: offboard_vtxo_ids.to_vec(), prior_txid: None })
 }
 
 /// `ReadyForOffboard -> OffboardTxPrepared`: have the server build the

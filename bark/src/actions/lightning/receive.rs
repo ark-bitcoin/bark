@@ -106,7 +106,7 @@ impl WalletAction for LightningReceive {
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		let mut preimage_revealed = false;
-		let new_progress = match self.progress.clone() {
+		let new_progress = match &self.progress {
 			Progress::AwaitingPayment => {
 				match check_incoming_lightning_payment(wallet, &self).await? {
 					IncomingStatus::Pending => {
@@ -132,12 +132,12 @@ impl WalletAction for LightningReceive {
 			Progress::HtlcsReady(htlcs) => {
 				// Preimage not revealed yet: if we can no longer finish a
 				// unilateral claim in time, abandon rather than commit.
-				if is_htlc_claim_window_closed(wallet, &htlcs).await.retry()? {
-					abandon_lightning_receive(wallet, &self, &htlcs).await.retry()?;
+				if is_htlc_claim_window_closed(wallet, htlcs).await.retry()? {
+					abandon_lightning_receive(wallet, &self, htlcs).await.retry()?;
 					return Ok(Advance::Done);
 				}
 
-				match claim_lightning_receive_htlcs(wallet, &self, &htlcs, &mut preimage_revealed).await {
+				match claim_lightning_receive_htlcs(wallet, &self, htlcs, &mut preimage_revealed).await {
 					Ok(None) => return Ok(Advance::Done),
 					Ok(Some(delivery)) => Progress::Delivering(delivery),
 					Err(e) => {
@@ -149,7 +149,7 @@ impl WalletAction for LightningReceive {
 								retrying claim: {:#}", self.payment_hash, e);
 							return Ok(Advance::Park {
 								state: LightningReceive {
-									progress: Progress::PreimageRevealed(htlcs),
+									progress: Progress::PreimageRevealed(htlcs.clone()),
 									..self
 								},
 								wake_after: Some(BASE_RETRY_BACKOFF),
@@ -162,13 +162,13 @@ impl WalletAction for LightningReceive {
 				}
 			},
 			Progress::PreimageRevealed(htlcs) => {
-				match claim_lightning_receive_htlcs(wallet, &self, &htlcs, &mut preimage_revealed).await? {
+				match claim_lightning_receive_htlcs(wallet, &self, htlcs, &mut preimage_revealed).await? {
 					None => return Ok(Advance::Done),
 					Some(delivery) => Progress::Delivering(delivery),
 				}
 			},
 			Progress::Delivering(delivery) => {
-				deliver_lightning_receive(wallet, &self, &delivery).await?;
+				deliver_lightning_receive(wallet, &self, delivery).await?;
 				return Ok(Advance::Done);
 			},
 		};
