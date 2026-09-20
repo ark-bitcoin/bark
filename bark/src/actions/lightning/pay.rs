@@ -245,16 +245,10 @@ impl WalletAction for LightningSend {
 	/// or our own state is inconsistent.
 	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		match &self.progress {
-			// Nothing committed server-side: drop the locks and the row
-			// ourselves, then bail. We can't rely on the executor's
-			// `Advance::Done` path because we want the original error
-			// surfaced to the caller.
+			// Nothing committed server-side: the executor releases the
+			// input locks and removes the row when the action fails.
 			Progress::Start => {
-				let id = self.id();
-				error!("Could not start lightning send {}: {:?}", id, error);
-				if let Err(cancel_err) = wallet.stop_wallet_action(&id).await {
-					warn!("could not cancel start-phase lightning send {}: {:#}", id, cancel_err);
-				}
+				error!("Could not start lightning send {}: {:?}", self.id(), error);
 				Advance::Failed(error)
 			},
 			Progress::HtlcReceived(htlcs) | Progress::PaymentInitiated(htlcs) => {

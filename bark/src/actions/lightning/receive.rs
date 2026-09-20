@@ -231,16 +231,10 @@ impl WalletAction for LightningReceive {
 	/// or our own state is inconsistent.
 	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		match &self.progress {
-			// Nothing committed server-side: drop the row ourselves and
-			// surface the original error to the caller.
+			// Nothing committed server-side: the executor removes the row
+			// when the action fails.
 			Progress::AwaitingPayment => {
-				let id = self.id();
-				error!("Could not start lightning receive {}: {:?}", id, error);
-				if let Err(e) = wallet.stop_wallet_action(&id).await {
-					warn!("could not cancel awaiting-payment lightning receive {}: {:#}",
-						id, e,
-					);
-				}
+				error!("Could not start lightning receive {}: {:?}", self.id(), error);
 				Advance::Failed(error)
 			},
 			// Preimage not revealed yet: abandon locally (the inbound HTLC

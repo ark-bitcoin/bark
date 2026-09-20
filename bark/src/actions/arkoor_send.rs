@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
-use log::{error, info, warn};
+use log::{error, info};
 
 use ark::arkoor::ArkoorDestination;
 use ark::vtxo::{Full, VtxoId, Vtxo};
@@ -175,17 +175,12 @@ impl WalletAction for ArkoorSend {
 
 	/// The step can't be completed as-is: the server rejected the request
 	/// or our own state is inconsistent.
-	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+	async fn on_abort(self, _wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		match self.progress {
-			// Nothing happened server-side, so the inputs go back to spendable.
+			// Nothing happened server-side, so the inputs go back to spendable
+			// when the executor tears the action down.
 			Progress::Cosigning => {
 				error!("arkoor send {} rejected during cosign: {:?}", self.id, error);
-				if let Err(cancel_err) = wallet.stop_wallet_action(&self.id).await {
-					warn!(
-						"could not stop arkoor send action {} after rejection: {:#}",
-						self.id, cancel_err,
-					);
-				}
 				Advance::Failed(error)
 			},
 			// Cosign already burned the inputs server-side and inserted the
