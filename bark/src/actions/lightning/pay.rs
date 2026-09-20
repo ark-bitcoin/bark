@@ -23,7 +23,6 @@ use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::lightning::{Invoice, PaymentHash, PaymentStatus, Preimage};
 use ark::mailbox::MailboxIdentifier;
-use ark::util::IteratorExt;
 use ark::{ProtocolEncoding, VtxoId, VtxoPolicy};
 use bitcoin_ext::BlockHeight;
 use server_rpc::protos::{self, lightning_payment_status};
@@ -142,10 +141,7 @@ impl WalletAction for LightningSend {
 				Progress::PaymentInitiated(htlcs)
 			},
 			Progress::PaymentInitiated(htlcs) => {
-				let wait = false;
-				match check_lightning_send_payment_status(
-					wallet, &self, &htlcs, wait,
-				).await.retry()? {
+				match check_lightning_send_payment_status(wallet, &self).await.retry()? {
 					PaymentStatus::Success(preimage) => {
 						settle_lightning_send_payment(wallet, &self, &htlcs, preimage).await?;
 						return Ok(Advance::Done);
@@ -566,35 +562,20 @@ async fn initiate_lightning_send_payment(
 /// Poll the server for payment status. Treats expired HTLCs as failed
 /// (server response of Pending plus tip past expiry collapses to Failed
 /// so the caller can revoke).
-pub(crate) async fn check_lightning_send_payment_status(
+async fn check_lightning_send_payment_status(
 	wallet: &Wallet,
 	send: &LightningSend,
-	htlcs: &Htlcs,
-	wait: bool,
 ) -> anyhow::Result<PaymentStatus> {
 	let (mut srv, _) = wallet.require_server().await?;
 	let payment_hash = send.invoice.payment_hash();
 
-	let mut htlc_vtxos = Vec::with_capacity(htlcs.vtxo_ids.len());
-	for id in htlcs.vtxo_ids.iter() {
-		htlc_vtxos.push(wallet.get_vtxo_by_id(*id).await?);
-	}
-
-	let policy = htlc_vtxos.iter()
-		.all_same(|v| v.vtxo.policy())
-		.context("All lightning htlc should have the same policy")?;
-	let policy = policy.as_server_htlc_send().context("VTXO is not an HTLC send")?;
-	if policy.payment_hash != payment_hash {
-		bail!("Payment hash mismatch on stored HTLC policy");
-	}
-
 	let tip = wallet.inner.chain.tip().await?;
-	let expired = tip > policy.htlc_expiry;
+	let expired = tip > send.htlc_expiry;
 	let pending_status = if expired { PaymentStatus::Failed } else { PaymentStatus::Pending };
 
 	let req = protos::CheckLightningPaymentRequest {
 		hash: payment_hash.to_vec(),
-		wait,
+		wait: false,
 	};
 	// NB: don't early-return on transport errors; collapse to
 	// expired-or-pending so the executor can revoke when appropriate.
