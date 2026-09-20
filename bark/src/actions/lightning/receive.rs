@@ -407,7 +407,7 @@ pub(crate) async fn compute_lightning_receive_anti_dos(
 			.choose(&mut rand::rng())
 			.context("have no spendable vtxo with sufficient expiry margin to prove ownership of")?;
 		let vtxo_keypair = wallet.get_vtxo_key(&vtxo).await
-			.expect("owned vtxo should be in database");
+			.context("failed to load the key of the anti-dos proof vtxo")?;
 		let attestation = LightningReceiveAttestation::new(payment_hash, vtxo.id(), &vtxo_keypair);
 		LightningReceiveAntiDos::InputVtxo(protos::InputVtxo {
 			vtxo_id: vtxo.id().to_bytes().to_vec(),
@@ -594,8 +594,10 @@ async fn prepare_lightning_receive_htlcs(
 			.and_then(|a| ark_info.fees.lightning_receive.calculate(a));
 		match (server_received_amount, fee) {
 			(Some(amount), Some(fee)) if htlc_amount + fee == amount => fee,
+			// Validated when the invoice was created, but the fee schedule
+			// comes from the server and can change between drives.
 			_ => ark_info.fees.lightning_receive.calculate(invoice_amount)
-				.expect("we previously validated this"),
+				.context("lightning receive fee overflows").abort()?,
 		}
 	};
 	let received = htlc_amount + fee;
