@@ -125,14 +125,7 @@ impl WalletAction for LightningReceive {
 						return Ok(Advance::Failed(err));
 					},
 					IncomingStatus::Ready => {
-						match prepare_lightning_receive_htlcs(wallet, &self).await? {
-							Grant::Accepted(htlcs) => Progress::HtlcsReady(htlcs),
-							Grant::Rejected(err) => {
-								error!("Rejecting the HTLC vtxos granted for lightning receive {}: {:#}",
-									self.payment_hash, err);
-								return Ok(Advance::Failed(err));
-							},
-						}
+						Progress::HtlcsReady(prepare_lightning_receive_htlcs(wallet, &self).await?)
 					},
 				}
 			},
@@ -282,15 +275,6 @@ pub struct Htlcs {
 	pub vtxo_ids: Vec<VtxoId>,
 	/// The ID of the ongoing movement
 	pub movement_id: MovementId,
-}
-
-/// The result of asking the server to grant HTLC-recv vtxos.
-pub(crate) enum Grant {
-	/// The server granted vtxos we're willing to claim against.
-	Accepted(Htlcs),
-	/// The granted vtxos don't match what we asked for, so we reject them
-	/// instead of claiming against them.
-	Rejected(anyhow::Error),
 }
 
 /// A handle for the cosigned claim outputs awaiting forwarding to the
@@ -502,10 +486,14 @@ fn htlc_recv_tree_blocks_needed(config: &Config) -> BlockDelta {
 /// AwaitingPayment -> HtlcsReady. Asks the server to grant HTLC-recv
 /// vtxos for the inbound payment, validates them, creates the receive
 /// movement and stores the vtxos locked.
+///
+/// A grant we are not willing to claim against aborts: the server hands
+/// back the same grant on every later request for this payment hash, so
+/// the receive fails while the preimage is still ours.
 async fn prepare_lightning_receive_htlcs(
 	wallet: &Wallet,
 	recv: &LightningReceive,
-) -> Result<Grant, AdvanceError> {
+) -> Result<Htlcs, AdvanceError> {
 	let (mut srv, ark_info) = wallet.require_server().await.retry()?;
 	let config = wallet.config();
 	let current_height = wallet.inner.chain.tip().await.retry()?;
@@ -572,35 +560,25 @@ async fn prepare_lightning_receive_htlcs(
 			).and_then(|blocks_needed| {
 				current_height.checked_add(blocks_needed)
 					.context("HTLC VTXO claim deadline overflows")
-			});
-			let claim_by = match claim_by {
-				Ok(claim_by) => claim_by,
-				Err(e) => return Ok(Grant::Rejected(e)),
-			};
+			}).abort()?;
 			if claim_by > p.htlc_expiry {
-				return Ok(Grant::Rejected(anyhow!(
+				abort!(
 					"HTLC VTXO timelocks leave no time to claim it unilaterally: we need \
 					until height {} (exit delta {}, htlc expiry delta {}), but the server \
 					can claim it from height {}",
 					claim_by, vtxo.exit_delta(), p.htlc_expiry_delta, p.htlc_expiry,
-				)));
+				);
 			}
 
 			// The server also chose the leaf's tree-level parameters, so validate
 			// them against the advertised ones like round outputs.
 			let blocks_needed = htlc_recv_tree_blocks_needed(config);
-			let tree_expiry_by = match current_height.checked_add(blocks_needed) {
-				Some(height) => height,
-				None => return Ok(Grant::Rejected(
-					anyhow!("HTLC VTXO tree expiry deadline overflows"),
-				)),
-			};
-			if let Err(e) = validate_vtxo_tree_params(
+			let tree_expiry_by = current_height.checked_add(blocks_needed)
+				.context("HTLC VTXO tree expiry deadline overflows").abort()?;
+			validate_vtxo_tree_params(
 				vtxo.server_pubkey(), vtxo.exit_delta(), vtxo.expiry_height(),
 				ark_info.server_pubkey, ark_info.vtxo_exit_delta, tree_expiry_by,
-			) {
-				return Ok(Grant::Rejected(e));
-			}
+			).abort()?;
 		} else {
 			abort!("invalid HTLC VTXO policy: {:?}", vtxo.policy());
 		}
@@ -650,10 +628,7 @@ async fn prepare_lightning_receive_htlcs(
 	let mut vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
 	vtxo_ids.sort();
 
-	Ok(Grant::Accepted(Htlcs {
-		vtxo_ids,
-		movement_id,
-	}))
+	Ok(Htlcs { vtxo_ids, movement_id })
 }
 
 /// Claiming -> done, or -> Delivering when the receive has a claim
