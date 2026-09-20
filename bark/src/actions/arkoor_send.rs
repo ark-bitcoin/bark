@@ -57,7 +57,8 @@ impl ArkoorSend {
 /// The four phases of an outgoing arkoor send.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Progress {
-	/// Inputs are locked and the change keypair is reserved.
+	/// Inputs are selected and the change keypair is reserved. This step
+	/// locks the inputs before it asks the server to co-sign.
 	Cosigning,
 	/// Cosign succeeded and the movement is recorded; pending registration of
 	/// the signed vtxo transactions with the server.
@@ -254,14 +255,8 @@ pub(crate) async fn start_arkoor_send(
 	let change = total_input.checked_sub(amount)
 		.context("selected inputs don't cover amount")?;
 
-	let id = new_action_id();
-	wallet.lock_vtxos(
-		inputs.iter(),
-		Some(VtxoLockHolder::Action { id: id.clone() }),
-	).await?;
-
 	Ok(ArkoorSend {
-		id,
+		id: new_action_id(),
 		destination,
 		amount,
 		input_vtxo_ids,
@@ -278,12 +273,21 @@ fn new_action_id() -> String {
 	rand::random::<[u8; 16]>().to_lower_hex_string()
 }
 
-/// Cosigning -> Registration. Cosigns the arkoor with the server and
-/// records the movement.
+/// Cosigning -> Registration. Locks the inputs, cosigns the arkoor with
+/// the server and records the movement.
 async fn run_cosign(wallet: &Wallet, send: &ArkoorSend) -> Result<Progress, AdvanceError> {
-	let _ = wallet.require_server().await.retry()?;
+	// Lock the inputs under the action. A re-drive finds them locked by this
+	// action already, which counts as success. An input that another
+	// operation took in the meantime fails the lock, and with it the send.
+	// Lock before anything that can retry, so the inputs stay reserved while
+	// the step waits for the server.
+	wallet.lock_vtxos(
+		&send.input_vtxo_ids,
+		Some(VtxoLockHolder::Action { id: send.id.clone() }),
+	).await.abort()?;
+	let inputs = wallet.inner.db.get_wallet_vtxos(&send.input_vtxo_ids).await
+		.context("failed to load arkoor inputs").retry()?;
 
-	let inputs = wallet.inner.db.get_wallet_vtxos(&send.input_vtxo_ids).await.retry()?;
 	let change_keypair = wallet.peek_keypair(send.change_key_index).await
 		.with_context(|| format!(
 			"action {}: stored change_key_index {} not in keystore",

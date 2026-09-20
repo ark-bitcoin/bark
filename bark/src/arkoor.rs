@@ -294,10 +294,9 @@ impl Wallet {
 	) -> anyhow::Result<()> {
 		let action = start_arkoor_send(self, destination.clone(), amount).await?;
 
-		// Persist the action together with the input locks so the executor has
-		// something to drive on restart; otherwise a crash between this point and
-		// `drive_action` leaves vtxos locked under an action id that has no
-		// checkpoint row.
+		// Persist the action before driving it, so a crash between this point
+		// and `drive_action` leaves a checkpoint to resume from. The first step
+		// locks the inputs, so no vtxo is ever locked without a checkpoint row.
 		self.inner.db.upsert_wallet_action_checkpoint(&action.id, &action.clone().into()).await?;
 
 		self.drive_action(action, DriveMode::UntilDone).await
