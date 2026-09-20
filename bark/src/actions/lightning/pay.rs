@@ -169,7 +169,7 @@ impl WalletAction for LightningSend {
 			},
 			Progress::RevocableHtlcs { htlcs, revocation } |
 			Progress::RevocationStuck { htlcs, revocation } => {
-				handle_lightning_send_htlcs_revocation(wallet, &self, &htlcs, &revocation).await?;
+				revoke_lightning_send_htlcs(wallet, &self, &htlcs, &revocation).await?;
 				return Ok(Advance::Done);
 			},
 		};
@@ -666,8 +666,8 @@ async fn revoke_lightning_send_htlcs(
 ) -> Result<(), AdvanceError> {
 	let (mut srv, _) = wallet.require_server().await.retry()?;
 
-	debug!("Revoking {} HTLC vtxos for payment {}",
-		htlcs.vtxo_ids.len(), send.invoice.payment_hash());
+	debug!("Revoking {} HTLC vtxos for payment {} (expiry: {})",
+		htlcs.vtxo_ids.len(), send.invoice.payment_hash(), send.htlc_expiry);
 
 	let mut htlc_keypairs = Vec::with_capacity(htlcs.vtxo_ids.len());
 	let mut htlc_vtxos = Vec::with_capacity(htlcs.vtxo_ids.len());
@@ -772,27 +772,4 @@ pub(crate) async fn exit_lightning_send_htlcs(
 	).await.retry()?;
 
 	Ok(())
-}
-
-/// Drives revocation forward: tries to revoke, escalates to exit if
-/// the vtxos are close to expiry. Returns `Ok(())` if either path
-/// finished cleanly, otherwise propagates the revocation error so the
-/// executor can retry later.
-async fn handle_lightning_send_htlcs_revocation(
-	wallet: &Wallet,
-	send: &LightningSend,
-	htlcs: &Htlcs,
-	revocation: &Revocation,
-) -> Result<(), AdvanceError> {
-	let payment_hash = send.invoice.payment_hash();
-	let tip = wallet.inner.chain.tip().await.retry()?;
-
-	debug!("Revoking HTLC VTXOs for payment {} (tip: {}, expiry: {})",
-		payment_hash, tip, send.htlc_expiry);
-
-
-	revoke_lightning_send_htlcs(wallet, send, htlcs, revocation).await
-		.inspect_err(|e| {
-			warn!("Failed to revoke HTLC VTXOs for payment {}: {:#}", payment_hash, e);
-		})
 }
