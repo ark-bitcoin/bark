@@ -10,18 +10,20 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{Amount, SignedAmount};
+use bitcoin::secp256k1::Keypair;
 use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
 use rand::seq::IteratorRandom;
 
 use ark::arkoor::package::ArkoorPackageBuilder;
+use ark::arkoor::state::UserGeneratedNonces;
 use ark::attestations::LightningReceiveAttestation;
 use ark::fees::validate_and_subtract_fee;
 use ark::lightning::{Bolt11InvoiceExt, PaymentHash, Preimage};
 use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy};
 use ark::vtxo::Full;
 use bitcoin_ext::{BlockDelta, BlockHeight};
-use server_rpc::protos;
+use server_rpc::{protos, ServerConnection};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 
 use crate::{Config, Wallet};
@@ -105,7 +107,6 @@ impl WalletAction for LightningReceive {
 	fn id(&self) -> WalletActionId { LightningReceive::id(self) }
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
-		let mut preimage_revealed = false;
 		let new_progress = match &self.progress {
 			Progress::AwaitingPayment => {
 				match check_incoming_lightning_payment(wallet, &self).await? {
@@ -137,32 +138,33 @@ impl WalletAction for LightningReceive {
 					return Ok(Advance::Done);
 				}
 
-				match claim_lightning_receive_htlcs(wallet, &self, htlcs, &mut preimage_revealed).await {
+				// Preparing the claim can fail without consequence.
+				let claim = prepare_lightning_receive_claim(wallet, &self, htlcs).await?;
+				// In the claim the preimage is revealed so failures are handled carefully.
+				match claim_lightning_receive_htlcs(wallet, &self, htlcs, claim).await {
 					Ok(None) => return Ok(Advance::Done),
 					Ok(Some(delivery)) => Progress::Delivering(delivery),
 					Err(e) => {
-						if preimage_revealed {
-							// Preimage is out but a post-reveal step failed. Park
-							// past the point of no return (PreimageRevealed never
-							// abandons) and retry the idempotent claim later.
-							warn!("lightning receive {} failed after revealing preimage, \
-								retrying claim: {:#}", self.payment_hash, e);
-							return Ok(Advance::Park {
-								state: LightningReceive {
-									progress: Progress::PreimageRevealed(htlcs.clone()),
-									..self
-								},
-								wake_after: Some(BASE_RETRY_BACKOFF),
-								error: None,
-							});
-						} else {
-							return Err(e);
-						}
+						// Preimage is out but a post-reveal step failed. Park
+						// past the point of no return (PreimageRevealed never
+						// abandons) and retry the idempotent claim later.
+						warn!("lightning receive {} failed after revealing preimage, \
+							retrying claim: {:#}", self.payment_hash, e);
+						return Ok(Advance::Park {
+							state: LightningReceive {
+								progress: Progress::PreimageRevealed(htlcs.clone()),
+								..self
+							},
+							wake_after: Some(BASE_RETRY_BACKOFF),
+							error: None,
+						});
 					},
 				}
 			},
 			Progress::PreimageRevealed(htlcs) => {
-				match claim_lightning_receive_htlcs(wallet, &self, htlcs, &mut preimage_revealed).await? {
+				// Retrying claim.
+				let claim = prepare_lightning_receive_claim(wallet, &self, htlcs).await?;
+				match claim_lightning_receive_htlcs(wallet, &self, htlcs, claim).await? {
 					None => return Ok(Advance::Done),
 					Some(delivery) => Progress::Delivering(delivery),
 				}
@@ -633,22 +635,22 @@ async fn prepare_lightning_receive_htlcs(
 	Ok(Htlcs { vtxo_ids, movement_id })
 }
 
-/// Claiming -> done, or -> Delivering when the receive has a claim
-/// destination that isn't our own. Reveals the preimage to the server in
-/// exchange for a cosigned claim. Local receives finalise the movement
-/// and write the permanent settled record here; external destinations
-/// hold the outputs locked and hand off to [`deliver_lightning_receive`].
-///
-/// The server's `claim_lightning_receive` is idempotent on payment hash,
-/// so this is safe to re-drive after a crash: a fresh cosign is returned
-/// for the new nonces.
-async fn claim_lightning_receive_htlcs(
+/// A claim for the granted HTLC vtxos, built but not sent. The preimage
+/// has not gone out yet, so the receive can still be abandoned.
+struct PreparedClaim {
+	srv: ServerConnection,
+	builder: ArkoorPackageBuilder<UserGeneratedNonces>,
+	keypairs: Vec<Keypair>,
+}
+
+/// Build the claim for the granted HTLC vtxos without revealing the
+/// preimage. A failure here leaves the receive abandonable.
+async fn prepare_lightning_receive_claim(
 	wallet: &Wallet,
 	recv: &LightningReceive,
 	htlcs: &Htlcs,
-	preimage_revealed: &mut bool,
-) -> Result<Option<Delivery>, AdvanceError> {
-	let (mut srv, _) = wallet.require_server().await.retry()?;
+) -> Result<PreparedClaim, AdvanceError> {
+	let (srv, _) = wallet.require_server().await.retry()?;
 
 	// Order inputs by vtxoid before generating nonces, then hydrate to
 	// full so the arkoor builder has the genesis chain.
@@ -678,8 +680,28 @@ async fn claim_lightning_receive_htlcs(
 		.generate_user_nonces(&keypairs)
 		.context("arkoor nonce generation for claim failed").abort()?;
 
+	Ok(PreparedClaim { srv, builder, keypairs })
+}
+
+/// Claiming -> done, or -> Delivering when the receive has a claim
+/// destination that isn't our own. Reveals the preimage to the server in
+/// exchange for a cosigned claim. Local receives finalise the movement
+/// and write the permanent settled record here; external destinations
+/// hold the outputs locked and hand off to [`deliver_lightning_receive`].
+///
+/// The server's `claim_lightning_receive` is idempotent on payment hash,
+/// so this is safe to re-drive after a crash: a fresh cosign is returned
+/// for the new nonces. Whatever this returns, the caller must assume the
+/// preimage is out.
+async fn claim_lightning_receive_htlcs(
+	wallet: &Wallet,
+	recv: &LightningReceive,
+	htlcs: &Htlcs,
+	claim: PreparedClaim,
+) -> Result<Option<Delivery>, AdvanceError> {
+	let PreparedClaim { mut srv, builder, keypairs } = claim;
+
 	info!("Claiming arkoor against payment preimage for {}", recv.payment_hash);
-	*preimage_revealed = true;
 	let package_cosign_request = protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
 	let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: recv.payment_hash.to_byte_array().to_vec(),
