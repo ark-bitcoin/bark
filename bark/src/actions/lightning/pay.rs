@@ -669,13 +669,11 @@ async fn revoke_lightning_send_htlcs(
 	debug!("Revoking {} HTLC vtxos for payment {} (expiry: {})",
 		htlcs.vtxo_ids.len(), send.invoice.payment_hash(), send.htlc_expiry);
 
-	let mut htlc_keypairs = Vec::with_capacity(htlcs.vtxo_ids.len());
-	let mut htlc_vtxos = Vec::with_capacity(htlcs.vtxo_ids.len());
-	for id in htlcs.vtxo_ids.iter() {
-		let vtxo = wallet.inner.db.get_full_vtxo(*id).await.retry()?
-			.with_context(|| format!("htlc vtxo with id {} not found", id)).retry()?;
-		htlc_keypairs.push(wallet.get_vtxo_key(&vtxo).await.retry()?);
-		htlc_vtxos.push(vtxo);
+	let htlc_vtxos = wallet.inner.db.get_full_vtxos(&htlcs.vtxo_ids).await
+		.context("failed to hydrate htlc vtxos").retry()?;
+	let mut htlc_keypairs = Vec::with_capacity(htlc_vtxos.len());
+	for vtxo in &htlc_vtxos {
+		htlc_keypairs.push(wallet.get_vtxo_key(vtxo).await.retry()?);
 	}
 
 	let revocation_claim_policy = VtxoPolicy::new_pubkey(revocation.key);
@@ -744,10 +742,9 @@ pub(crate) async fn exit_lightning_send_htlcs(
 	let payment_hash = send.invoice.payment_hash();
 	warn!("HTLC VTXOs for payment {} are near expiry, marking to exit", payment_hash);
 
-	let mut vtxos = Vec::with_capacity(htlcs.vtxo_ids.len());
-	for id in htlcs.vtxo_ids.iter() {
-		vtxos.push(wallet.get_vtxo_by_id(*id).await.retry()?.vtxo);
-	}
+	let vtxos = wallet.inner.db.get_wallet_vtxos(&htlcs.vtxo_ids).await
+		.context("failed to load htlc vtxos").retry()?
+		.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
 	wallet.inner.exit.start_exit_for_vtxos(&vtxos).await.retry()?;
 
