@@ -131,6 +131,13 @@ impl WalletAction for LightningSend {
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		let new_progress = match &self.progress {
 			Progress::Start => {
+				wallet.lock_vtxos(
+					&self.input_vtxo_ids,
+					Some(VtxoLockHolder::Action { id: self.id() }),
+				).await.abort()?;
+				Progress::InputsLocked
+			},
+			Progress::InputsLocked => {
 				let htlcs = request_lightning_send_htlcs(wallet, &self).await?;
 				Progress::HtlcReceived(htlcs)
 			},
@@ -178,7 +185,7 @@ impl WalletAction for LightningSend {
 	/// that. A send that learns the preimage settles and holds nothing.
 	fn pending_balance_vtxo_ids(&self) -> Vec<VtxoId> {
 		match &self.progress {
-			Progress::Start => self.input_vtxo_ids.clone(),
+			Progress::Start | Progress::InputsLocked => self.input_vtxo_ids.clone(),
 			Progress::HtlcReceived(h)
 				| Progress::PaymentInitiated(h)
 				| Progress::RevocableHtlcs { htlcs: h, .. }
@@ -192,7 +199,7 @@ impl WalletAction for LightningSend {
 	/// exiting) them.
 	async fn on_retry(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		match &self.progress {
-			Progress::Start => {
+			Progress::Start | Progress::InputsLocked => {
 				if or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
 					Advance::Failed(error.context(
 						"Could not start lightning send and HTLCs are near expiry",
@@ -239,7 +246,7 @@ impl WalletAction for LightningSend {
 		match &self.progress {
 			// Nothing committed server-side: the executor releases the
 			// input locks and removes the row when the action fails.
-			Progress::Start => {
+			Progress::Start | Progress::InputsLocked => {
 				error!("Could not start lightning send {}: {:?}", self.id(), error);
 				Advance::Failed(error)
 			},
@@ -279,8 +286,10 @@ impl WalletAction for LightningSend {
 /// phase, so impossible combinations are unrepresentable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Progress {
-	/// Inputs are locked, no server interaction yet.
+	/// Inputs are selected but not locked yet, no server interaction yet.
 	Start,
+	/// Inputs are locked, no server interaction yet.
+	InputsLocked,
 	/// Server cosigned the HTLC outputs; vtxos and movement persisted.
 	HtlcReceived(Htlcs),
 	/// Server has been told to pay; outcome is pending.
@@ -316,7 +325,8 @@ pub struct Revocation {
 const PAYMENT_PENDING_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Build a fresh [`LightningSend`] in `Progress::Start`: pick inputs,
-/// lock them, derive the htlc key, snapshot expiry.
+/// derive the htlc key, snapshot expiry. The `Start` step locks the
+/// inputs, so nothing is locked before the checkpoint exists.
 ///
 /// The executor persists the returned state. Idempotent under re-run
 /// only if no checkpoint exists yet for this invoice (the caller is
@@ -351,12 +361,6 @@ pub(crate) async fn start_lightning_send(
 	let input_total = inputs.iter().map(|v| v.amount()).sum::<Amount>();
 	let change = input_total.checked_sub(payment_amount + fee)
 		.context("selected inputs don't cover payment and fee")?;
-
-	let action_id = ln_pay_action_id(invoice.payment_hash());
-	wallet.lock_vtxos(
-		&inputs,
-		Some(crate::vtxo::VtxoLockHolder::Action { id: action_id }),
-	).await?;
 
 	let (change_keypair, _) = wallet.derive_store_next_keypair().await?;
 	let (revocation_keypair, _) = wallet.derive_store_next_keypair().await?;

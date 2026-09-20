@@ -6105,7 +6105,7 @@
           },
           "state": {
             "type": "string",
-            "description": "Lifecycle phase of the send: `unknown`, `start`, `htlc-received`,\n`payment-initiated`, `revocable-htlcs`, `revocation-stuck`, or `paid`."
+            "description": "Lifecycle phase of the send: `unknown`, `start`, `inputs-locked`, `htlc-received`,\n`payment-initiated`, `revocable-htlcs`, `revocation-stuck`, or `paid`."
           }
         }
       },
