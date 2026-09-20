@@ -650,6 +650,10 @@ mod test {
 /// Fail a board whose funding tx can never confirm: mark its vtxo spent and close
 /// the movement out at zero. Reached from either phase, since a funding input can
 /// be spent before the transaction is ever seen as well as after.
+///
+/// Re-entrant: a re-drive after a crash between the two writes finds the vtxo
+/// already spent, which is accepted as an old state so the movement still gets
+/// closed.
 async fn fail_dead_board(
 	wallet: &Wallet,
 	board: &Board,
@@ -657,7 +661,7 @@ async fn fail_dead_board(
 	warn!("Board {} funding input was spent by a confirmed conflicting tx, \
 		failing the board", board.id);
 	wallet.inner.db.update_vtxo_state_checked(
-		board.vtxo_id, VtxoState::Spent, &[VtxoStateKind::Locked],
+		board.vtxo_id, VtxoState::Spent, &[VtxoStateKind::Locked, VtxoStateKind::Spent],
 	).await.context("failed to mark double-spent board vtxo as spent").retry()?;
 	wallet.inner.movements.finish_movement_with_update(
 		board.movement_id, MovementStatus::Failed,
