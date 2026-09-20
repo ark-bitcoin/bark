@@ -173,18 +173,17 @@ impl WalletAction for ArkoorSend {
 		self.input_vtxo_ids.clone()
 	}
 
-	/// A step gave up on its current state: the server rejected the request
-	/// or the step can't be completed as-is.
+	/// The step can't be completed as-is: the server rejected the request
+	/// or our own state is inconsistent.
 	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
-		match self.progress.clone() {
+		match self.progress {
 			// Nothing happened server-side, so the inputs go back to spendable.
 			Progress::Cosigning => {
-				let id = self.id.clone();
-				error!("arkoor send {} rejected during cosign: {:?}", id, error);
-				if let Err(cancel_err) = wallet.stop_wallet_action(&id).await {
+				error!("arkoor send {} rejected during cosign: {:?}", self.id, error);
+				if let Err(cancel_err) = wallet.stop_wallet_action(&self.id).await {
 					warn!(
 						"could not stop arkoor send action {} after rejection: {:#}",
-						id, cancel_err,
+						self.id, cancel_err,
 					);
 				}
 				Advance::Failed(error)
@@ -209,12 +208,12 @@ impl WalletAction for ArkoorSend {
 					..self
 				})
 			},
+			// Defensive: `post_arkoor_to_mailboxes` collects per-method failures
+			// into the park summary rather than aborting, so this arm is
+			// unreachable today. Kept as a safe fallback so that if a future
+			// change starts surfacing per-method rejections we still salvage
+			// the change instead of looping.
 			Progress::Delivery { movement_id, signed_change_vtxos, .. } => {
-				// Defensive: `post_arkoor_to_mailboxes` collects per-method
-				// failures into the park summary rather than aborting,
-				// so this arm is unreachable today. Kept as a safe fallback so
-				// that if a future change starts surfacing per-method rejections
-				// we still salvage the change instead of looping.
 				Advance::Next(ArkoorSend {
 					progress: Progress::Finalizing {
 						movement_id,
@@ -224,7 +223,7 @@ impl WalletAction for ArkoorSend {
 					..self
 				})
 			},
-			// only touches local state
+			// Only touches local state.
 			Progress::Finalizing { .. } => Advance::Failed(error),
 		}
 	}

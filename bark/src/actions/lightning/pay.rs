@@ -30,8 +30,8 @@ use server_rpc::protos::{self, lightning_payment_status};
 
 use crate::Wallet;
 use crate::actions::{
-	abort, Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected, WalletAction,
-	WalletActionId,
+	abort, or_retry, Advance, AdvanceError, AdvanceResultExt, IntoAdvanceResult,
+	RetryUnlessRejected, WalletAction, WalletActionId,
 };
 use crate::arkoor::{resolve_change_pieces, split_change_amount};
 use crate::movement::update::MovementUpdate;
@@ -194,87 +194,57 @@ impl WalletAction for LightningSend {
 		}
 	}
 
-	/// A step failed transiently. Retry it, unless the HTLCs are running out
-	/// of time, in which case move on to revoking (or exiting) them.
+	/// The step failed transiently. Retry it, unless the HTLCs are
+	/// running out of time, in which case move on to revoking (or
+	/// exiting) them.
 	async fn on_retry(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
-		let step_error = format!("{:#}", error);
-		match self.recover_from_retry(wallet, error).await {
-			Ok(advance) => advance,
-			// The recovery itself failed: keep the state and try again later.
-			Err(e) => Advance::Retry {
-				state: self,
-				error: e.into_anyhow()
-					.context(format!("failed to recover from error: {}", step_error)),
-			},
-		}
-	}
-
-	/// A step gave up on its current state: the server rejected the request
-	/// or the step can't be completed as-is.
-	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
-		let step_error = format!("{:#}", error);
-		match self.recover_from_abort(wallet, error).await {
-			Ok(advance) => advance,
-			// The recovery itself failed: keep the state and try again later.
-			Err(e) => Advance::Retry {
-				state: self,
-				error: e.into_anyhow()
-					.context(format!("failed to recover from error: {}", step_error)),
-			},
-		}
-	}
-}
-
-impl LightningSend {
-	async fn recover_from_retry(
-		&self,
-		wallet: &Wallet,
-		error: anyhow::Error,
-	) -> Result<Advance<Self>, AdvanceError> {
-		match self.progress.clone() {
+		match &self.progress {
 			Progress::Start => {
-				if self.is_htlc_near_expiry(wallet).await.retry()? {
-					let err = error.context("Could not start lightning send and HTLCs are near expiry");
-					return Ok(Advance::Failed(err));
+				if or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
+					Advance::Failed(error.context(
+						"Could not start lightning send and HTLCs are near expiry",
+					))
+				} else {
+					Advance::Retry { state: self, error }
 				}
 			},
-			Progress::HtlcReceived(htlcs) |
-			Progress::PaymentInitiated(htlcs) => {
-				if self.is_htlc_near_expiry(wallet).await.retry()? {
-					let revocation = fail_lightning_send_payment(wallet, self).await?;
-					let next = LightningSend {
+			Progress::HtlcReceived(htlcs) | Progress::PaymentInitiated(htlcs) => {
+				if or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
+					let htlcs = htlcs.clone();
+					let revocation = or_retry!(self,
+						fail_lightning_send_payment(wallet, &self).await.into_anyhow(),
+					);
+					Advance::Next(LightningSend {
 						progress: Progress::RevocableHtlcs { htlcs, revocation },
-						..self.clone()
-					};
-					return Ok(Advance::Next(next));
+						..self
+					})
+				} else {
+					Advance::Retry { state: self, error }
 				}
 			},
 			Progress::RevocableHtlcs { htlcs, revocation } => {
 				warn!("We could not revoke HTLCs, will continue retrying but the attempt will be marked as such");
-				let next = LightningSend {
-					progress: Progress::RevocationStuck { htlcs, revocation },
-					..self.clone()
+				let progress = Progress::RevocationStuck {
+					htlcs: htlcs.clone(), revocation: revocation.clone(),
 				};
-				return Ok(Advance::Next(next));
+				Advance::Next(LightningSend { progress, ..self })
 			},
 			Progress::RevocationStuck { htlcs, .. } => {
-				if self.allow_exit_of_htlcs && self.is_htlc_near_expiry(wallet).await.retry()? {
-					exit_lightning_send_htlcs(wallet, self, &htlcs).await?;
-					return Ok(Advance::Done);
+				if self.allow_exit_of_htlcs && or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
+					or_retry!(self, exit_lightning_send_htlcs(wallet, &self, htlcs).await.into_anyhow());
+					Advance::Done
+				} else {
+					// Just keep retrying...
+					Advance::Retry { state: self, error }
 				}
-				// Just keep retrying...
 			},
 		}
-
-		Ok(Advance::Retry { state: self.clone(), error })
 	}
 
-	async fn recover_from_abort(
-		&self,
-		wallet: &Wallet,
-		error: anyhow::Error,
-	) -> Result<Advance<Self>, AdvanceError> {
-		match self.progress.clone() {
+	/// The step can't be completed as-is: the server rejected the request
+	/// or our own state is inconsistent.
+	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		match &self.progress {
 			// Nothing committed server-side: drop the locks and the row
 			// ourselves, then bail. We can't rely on the executor's
 			// `Advance::Done` path because we want the original error
@@ -285,34 +255,35 @@ impl LightningSend {
 				if let Err(cancel_err) = wallet.stop_wallet_action(&id).await {
 					warn!("could not cancel start-phase lightning send {}: {:#}", id, cancel_err);
 				}
-				Ok(Advance::Failed(error))
+				Advance::Failed(error)
 			},
-			Progress::HtlcReceived(htlcs) |
-			Progress::PaymentInitiated(htlcs) => {
-				let revocation = fail_lightning_send_payment(wallet, self).await?;
-				let next = LightningSend {
+			Progress::HtlcReceived(htlcs) | Progress::PaymentInitiated(htlcs) => {
+				let htlcs = htlcs.clone();
+				let revocation = or_retry!(self,
+					fail_lightning_send_payment(wallet, &self).await.into_anyhow(),
+				);
+				Advance::Next(LightningSend {
 					progress: Progress::RevocableHtlcs { htlcs, revocation },
-					..self.clone()
-				};
-				Ok(Advance::Next(next))
+					..self
+				})
 			},
 			Progress::RevocableHtlcs { htlcs, revocation } => {
 				warn!("We could not revoke HTLCs, will continue retrying but the attempt will be marked as such");
-				let next = LightningSend {
-					progress: Progress::RevocationStuck { htlcs, revocation },
-					..self.clone()
+				let progress = Progress::RevocationStuck {
+					htlcs: htlcs.clone(), revocation: revocation.clone(),
 				};
-				Ok(Advance::Next(next))
+				Advance::Next(LightningSend { progress, ..self })
 			},
 			Progress::RevocationStuck { htlcs, .. } => {
-				if self.allow_exit_of_htlcs && self.is_htlc_near_expiry(wallet).await.retry()? {
-					exit_lightning_send_htlcs(wallet, self, &htlcs).await?;
-					return Ok(Advance::Failed(error.context("Server refused to revoke HTLCs, exiting")));
+				if self.allow_exit_of_htlcs && or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
+					or_retry!(self, exit_lightning_send_htlcs(wallet, &self, htlcs).await.into_anyhow());
+					Advance::Failed(error.context("Server refused to revoke HTLCs, exiting"))
+				} else {
+					// Park instead of looping: re-driving immediately would just
+					// hit the same server rejection. Surface the original error
+					// so callers driving `UntilParkOrDone` see why we stopped.
+					Advance::Park { state: self, wake_after: None, error: Some(error) }
 				}
-				// Park instead of looping: re-driving immediately would just
-				// hit the same server rejection. Surface the original error
-				// so callers driving `UntilParkOrDone` see why we stopped.
-				Ok(Advance::Park { state: self.clone(), wake_after: None, error: Some(error) })
 			},
 		}
 	}

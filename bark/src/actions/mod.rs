@@ -282,6 +282,24 @@ macro_rules! retry {
 }
 use retry;
 
+/// Unwrap a fallible call made while handling a failed step.
+///
+/// `?` can't hand the action back on failure, so this returns
+/// [Advance::Retry] with `$state` as it was: the step runs again later and
+/// gets to fail (and be handled) again.
+macro_rules! or_retry {
+	($state:expr, $result:expr $(,)?) => {
+		match $result {
+			Ok(v) => v,
+			Err(e) => return crate::actions::Advance::Retry {
+				state: $state,
+				error: ::anyhow::Error::from(e),
+			},
+		}
+	};
+}
+use or_retry;
+
 /// Classify an error for a step function.
 ///
 /// `retry` means "repeat this exact step later". An error type that can prove

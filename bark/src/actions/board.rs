@@ -171,16 +171,13 @@ impl WalletAction for Board {
 		}
 	}
 
-	/// A step gave up on its current state.
-	///
-	/// The funding tx is already on-chain by the time the action runs, so we
-	/// can never safely fail-and-release. Registration failures are handled
-	/// inline in `Confirming` (kept retrying, vtxo left Locked), so an abort
-	/// reaching here is unexpected; re-evaluate from `Confirming` rather than
-	/// tearing the board down.
-	async fn on_abort(self, _wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
-		warn!("board {} hit an unexpected error, re-evaluating: {:#}", self.id, error);
-		// Keep `Broadcasting` so its `signed_vtxo` survives for the next drive.
+	/// The funding tx is already on-chain by the time the action runs, so
+	/// we can never safely fail-and-release. Registration failures are
+	/// handled inline in `Confirming` (kept retrying, vtxo left Locked),
+	/// so an abort reaching here is unexpected; re-evaluate from
+	/// `Confirming` rather than tearing the board down. Keep
+	/// `Broadcasting` so its `signed_vtxo` survives for the next drive.
+	async fn on_abort(self, _wallet: &Wallet, _error: anyhow::Error) -> Advance<Self> {
 		let progress = match self.progress {
 			broadcasting @ Progress::Broadcasting { .. } => broadcasting,
 			Progress::Confirming { .. } => Progress::Confirming { last_park_error: None },

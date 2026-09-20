@@ -47,7 +47,7 @@ use server_rpc::{protos, TryFromBytes};
 
 use crate::{Wallet, WalletVtxo};
 use crate::actions::{
-	abort, retry, Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected,
+	abort, or_retry, retry, Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected,
 	WalletAction, WalletActionId,
 };
 use crate::arkoor::split_change_amount;
@@ -325,65 +325,39 @@ impl WalletAction for Offboard {
 		}
 	}
 
-	/// A step gave up on its current state: the server rejected the request
-	/// or the step can't be completed as-is.
+	/// The step can't be completed as-is: the server rejected the request
+	/// or our own state is inconsistent.
 	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
-		let step_error = format!("{:#}", error);
-		match self.recover_from_abort(wallet, error).await {
-			Ok(advance) => advance,
-			// The recovery itself failed: keep the state and try again later.
-			Err(e) => Advance::Retry {
-				state: self,
-				error: e.context(format!("failed to recover from error: {}", step_error)),
-			},
-		}
-	}
-}
-
-impl Offboard {
-	async fn recover_from_abort(
-		&self,
-		wallet: &Wallet,
-		error: anyhow::Error,
-	) -> anyhow::Result<Advance<Self>> {
 		match &self.progress {
-			Progress::Start => {
-				// Nothing is locked yet, so the user is better served by a fresh
-				// attempt than by a lingering checkpoint.
-				Ok(Advance::Failed(error.context("Unable to lock VTXOs")))
-			},
+			// Nothing is locked yet, so the user is better served by a fresh
+			// attempt than by a lingering checkpoint.
+			Progress::Start => Advance::Failed(error.context("Unable to lock VTXOs")),
 			Progress::AwaitingConfirmations { .. } => {
 				debug_assert!(false, "no step aborts here");
 				error!("Abort should be impossible here: {:#}", error);
-				Ok(Advance::Park {
-					state: self.clone(),
-					wake_after: None,
-					error: Some(error),
-				})
+				Advance::Park { state: self, wake_after: None, error: Some(error) }
 			},
 			Progress::SplitWithArkoor => {
 				// We can safely unlock our VTXOs.
-				fail_offboard_movement(wallet, self).await?;
-				Ok(Advance::Failed(error))
-			}
+				or_retry!(self, fail_offboard_movement(wallet, &self).await);
+				Advance::Failed(error)
+			},
 			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, .. } |
-			Progress::ReadyForBroadcast {  offboard_vtxo_ids, .. } => {
+			Progress::ReadyForBroadcast { offboard_vtxo_ids, .. } => {
 				// TODO: should we auto-exit here ?
 				error!("Server rejected VTXOs, consider exiting: {:?}", offboard_vtxo_ids);
-				Ok(Advance::Park {
-					state: self.clone(),
-					wake_after: None,
-					error: Some(error),
-				})
+				Advance::Park { state: self, wake_after: None, error: Some(error) }
 			},
 			Progress::ReadyForOffboard { offboard_vtxo_ids, prior_txid: Some(prior_txid) } => {
 				// We already fell back here once from OffboardTxPrepared:
 				// our finish session had disappeared and its tx wasn't
 				// visible on chain. Now the fresh prepare got rejected too.
-				if let Some(progress) = adopt_broadcast_offboard(
-					wallet, self, offboard_vtxo_ids, *prior_txid,
-				).await? {
-					return Ok(adopted(Offboard { progress, ..self.clone() }));
+				let prior_txid = *prior_txid;
+				let adopted_progress = or_retry!(self,
+					adopt_broadcast_offboard(wallet, &self, offboard_vtxo_ids, prior_txid).await,
+				);
+				if let Some(progress) = adopted_progress {
+					return adopted(Offboard { progress, ..self });
 				}
 				if rejection_proves_inputs_spendable(&error) {
 					// The server rejected the request itself (e.g. the fee
@@ -393,27 +367,28 @@ impl Offboard {
 					// forfeited, so retrying can never succeed and it is
 					// safe to cancel the offboard and release the vtxos.
 					warn!("Offboard prepare rejected after session loss, cancelling: {:#}", error);
-					fail_offboard_movement(wallet, self).await?;
-					return Ok(Advance::Failed(error));
+					or_retry!(self, fail_offboard_movement(wallet, &self).await);
+					Advance::Failed(error)
+				} else {
+					// Any other rejection (typically: inputs already spent)
+					// makes it likeliest that the prior finish DID go through
+					// and our chain source simply lags the server's node. Keep
+					// looking for the prior tx; failing here would wrongly
+					// release forfeited vtxos as spendable.
+					error!("Offboard inputs rejected but prior offboard tx {} is not on chain, \
+						will keep looking for it: {:#}", prior_txid, error);
+					Advance::Park {
+						state: self,
+						wake_after: Some(CONFIRMATION_POLL_INTERVAL),
+						error: Some(error),
+					}
 				}
-				// Any other rejection (typically: inputs already spent)
-				// makes it likeliest that the prior finish DID go through
-				// and our chain source simply lags the server's node. Keep
-				// looking for the prior tx; failing here would wrongly
-				// release forfeited vtxos as spendable.
-				error!("Offboard inputs rejected but prior offboard tx {} is not on chain, \
-					will keep looking for it: {:#}", prior_txid, error);
-				Ok(Advance::Park {
-					state: self.clone(),
-					wake_after: Some(CONFIRMATION_POLL_INTERVAL),
-					error: Some(error),
-				})
 			},
 			Progress::ReadyForOffboard { prior_txid: None, .. } => {
 				// Nothing is forfeited before finish, so it is safe to fail
 				// here and release the vtxos.
-				fail_offboard_movement(wallet, self).await?;
-				Ok(Advance::Failed(error))
+				or_retry!(self, fail_offboard_movement(wallet, &self).await);
+				Advance::Failed(error)
 			},
 			Progress::OffboardTxPrepared { offboard_vtxo_ids, offboard_tx, .. } => {
 				// The server no longer holds a session for this offboard
@@ -424,28 +399,26 @@ impl Offboard {
 				// a fresh one: the expired session's forfeits can never be
 				// completed since the server's secret nonces died with it.
 				let offboard_txid = offboard_tx.compute_txid();
-				if let Some(progress) = adopt_broadcast_offboard(
-					wallet, self, offboard_vtxo_ids, offboard_txid,
-				).await? {
-					return Ok(adopted(Offboard { progress, ..self.clone() }));
+				let adopted_progress = or_retry!(self,
+					adopt_broadcast_offboard(wallet, &self, offboard_vtxo_ids, offboard_txid).await,
+				);
+				if let Some(progress) = adopted_progress {
+					return adopted(Offboard { progress, ..self });
 				}
 				warn!("Offboard session for tx {} is gone and the tx is not on chain, \
 					going back to prepare a fresh session: {:#}", offboard_txid, error);
-				let state = Offboard {
-					progress: Progress::ReadyForOffboard {
-						offboard_vtxo_ids: offboard_vtxo_ids.clone(),
-						prior_txid: Some(offboard_txid),
-					},
-					..self.clone()
+				let progress = Progress::ReadyForOffboard {
+					offboard_vtxo_ids: offboard_vtxo_ids.clone(),
+					prior_txid: Some(offboard_txid),
 				};
 				// Park instead of advancing directly so that a repeated
 				// rejection can't spin hot, burning a fresh server session
 				// (and its UTXO locks) every round trip.
-				Ok(Advance::Park {
-					state,
+				Advance::Park {
+					state: Offboard { progress, ..self },
 					wake_after: Some(CONFIRMATION_POLL_INTERVAL),
 					error: None,
-				})
+				}
 			},
 		}
 	}

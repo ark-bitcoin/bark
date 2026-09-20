@@ -26,7 +26,7 @@ use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiv
 
 use crate::{Config, Wallet};
 use crate::actions::{
-	abort, Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected,
+	abort, or_retry, Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected,
 	WalletAction, WalletActionId, BASE_RETRY_BACKOFF,
 };
 use crate::arkoor::{DeliveryOutcome, post_arkoor_to_mailboxes};
@@ -196,94 +196,64 @@ impl WalletAction for LightningReceive {
 		}
 	}
 
-	/// A step failed transiently. Retry it, unless the claim window has
-	/// closed or the claim retry budget is spent.
+	/// The step failed transiently. Retry it, unless the claim window
+	/// has closed or the claim retry budget is spent.
 	async fn on_retry(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
-		let step_error = format!("{:#}", error);
-		match self.recover_from_retry(wallet, error).await {
-			Ok(advance) => advance,
-			// The recovery itself failed: keep the state and try again later.
-			Err(e) => Advance::Retry {
-				state: self,
-				error: e.context(format!("failed to recover from error: {}", step_error)),
-			},
-		}
-	}
-
-	/// A step gave up on its current state: the server rejected the request
-	/// or the step can't be completed as-is.
-	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
-		let step_error = format!("{:#}", error);
-		match self.recover_from_abort(wallet, error).await {
-			Ok(advance) => advance,
-			// The recovery itself failed: keep the state and try again later.
-			Err(e) => Advance::Retry {
-				state: self,
-				error: e.context(format!("failed to recover from error: {}", step_error)),
-			},
-		}
-	}
-}
-
-impl LightningReceive {
-	async fn recover_from_retry(
-		&self,
-		wallet: &Wallet,
-		error: anyhow::Error,
-	) -> anyhow::Result<Advance<Self>> {
-		match self.progress.clone() {
-			// No money committed; just back off. Expiry reaping happens in the step.
-			Progress::AwaitingPayment => {
-				Ok(Advance::Retry { state: self.clone(), error })
-			},
+		match &self.progress {
+			// No money committed; just back off. Expiry reaping happens in
+			// the step.
+			Progress::AwaitingPayment => Advance::Retry { state: self, error },
 			Progress::HtlcsReady(htlcs) => {
-				if is_htlc_claim_window_closed(wallet, &htlcs).await? {
-					abandon_lightning_receive(wallet, self, &htlcs).await?;
-					let err = error.context("HTLC claim window closed, abandoning");
-					return Ok(Advance::Failed(err));
+				if or_retry!(self, is_htlc_claim_window_closed(wallet, htlcs).await) {
+					or_retry!(self, abandon_lightning_receive(wallet, &self, htlcs).await);
+					Advance::Failed(error.context("HTLC claim window closed, abandoning"))
+				} else {
+					Advance::Retry { state: self, error }
 				}
-				Ok(Advance::Retry { state: self.clone(), error })
 			},
 			Progress::PreimageRevealed(_) | Progress::Delivering(_) => {
 				let budget = u32::from(wallet.config().lightning_receive_claim_retries);
 				let state = LightningReceive {
 					claim_attempts: self.claim_attempts.saturating_add(1),
-					..self.clone()
+					..self
 				};
 				if state.claim_attempts >= budget {
 					let err = error.context("lightning receive claim retry budget exhausted");
-					return Ok(Advance::Park { state, wake_after: None, error: Some(err) });
+					Advance::Park { state, wake_after: None, error: Some(err) }
+				} else {
+					Advance::Retry { state, error }
 				}
-				Ok(Advance::Retry { state, error })
 			},
 		}
 	}
 
-	async fn recover_from_abort(
-		&self,
-		wallet: &Wallet,
-		error: anyhow::Error,
-	) -> anyhow::Result<Advance<Self>> {
-		match self.progress.clone() {
+	/// The step can't be completed as-is: the server rejected the request
+	/// or our own state is inconsistent.
+	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		match &self.progress {
 			// Nothing committed server-side: drop the row ourselves and
 			// surface the original error to the caller.
 			Progress::AwaitingPayment => {
 				let id = self.id();
 				error!("Could not start lightning receive {}: {:?}", id, error);
 				if let Err(e) = wallet.stop_wallet_action(&id).await {
-					warn!("could not cancel awaiting-payment lightning receive {}: {:#}", id, e);
+					warn!("could not cancel awaiting-payment lightning receive {}: {:#}",
+						id, e,
+					);
 				}
-				Ok(Advance::Failed(error))
+				Advance::Failed(error)
 			},
 			// Preimage not revealed yet: abandon locally (the inbound HTLC
 			// times out and the sender is refunded).
 			Progress::HtlcsReady(htlcs) => {
-				error!("Server rejected lightning receive claim before preimage disclosure, abandoning");
-				abandon_lightning_receive(wallet, self, &htlcs).await?;
-				Ok(Advance::Failed(error))
+				error!("Server rejected lightning receive claim before \
+					preimage disclosure, abandoning",
+			);
+				or_retry!(self, abandon_lightning_receive(wallet, &self, htlcs).await);
+				Advance::Failed(error)
 			},
 			Progress::PreimageRevealed(_) | Progress::Delivering(_) => {
-				Ok(Advance::Park { state: self.clone(), wake_after: None, error: Some(error) })
+				Advance::Park { state: self, wake_after: None, error: Some(error) }
 			},
 		}
 	}
