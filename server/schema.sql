@@ -614,7 +614,11 @@ CREATE TABLE public.htlc_vtxo (
     payment_hash text NOT NULL,
     htlc_expiry integer NOT NULL,
     direction public.htlc_direction NOT NULL,
-    resolution public.htlc_resolution
+    offchain_resolution public.htlc_resolution,
+    chain_resolution public.htlc_resolution,
+    chain_resolution_height integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT htlc_vtxo_chain_resolution_ck CHECK (((chain_resolution IS NULL) = (chain_resolution_height IS NULL)))
 );
 
 

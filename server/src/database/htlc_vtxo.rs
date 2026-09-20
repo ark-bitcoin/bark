@@ -117,7 +117,19 @@ pub struct Htlc {
 	pub payment_hash: PaymentHash,
 	pub htlc_expiry: BlockHeight,
 	pub direction: HtlcDirection,
-	pub resolution: Option<HtlcResolution>,
+	pub offchain_resolution: Option<HtlcResolution>,
+	pub chain_resolution: Option<HtlcResolution>,
+	pub chain_resolution_height: Option<BlockHeight>,
+}
+
+impl Htlc {
+	/// Whether the htlc has been fulfilled, revoked or is still open (`None`).
+	///
+	/// Data from the chain always takes priority. The chain and the off-chain
+	/// record shouldn't disagree on a healthy server.
+	pub fn resolution(&self) -> Option<HtlcResolution> {
+		self.chain_resolution.or(self.offchain_resolution)
+	}
 }
 
 /// An htlc vtxo: the vtxo state joined with its htlc data.
@@ -157,8 +169,13 @@ impl TryFrom<Row> for HtlcVtxo {
 			htlc_expiry: u32::try_from(row.get::<_, i32>("htlc_expiry"))
 				.context("htlc_expiry out of range for u32")?,
 			direction: row.get::<_, &str>("direction").parse()?,
-			resolution: row.get::<_, Option<&str>>("resolution")
+			offchain_resolution: row.get::<_, Option<&str>>("offchain_resolution")
 				.map(|s| s.parse()).transpose()?,
+			chain_resolution: row.get::<_, Option<&str>>("chain_resolution")
+				.map(|s| s.parse()).transpose()?,
+			chain_resolution_height: row.get::<_, Option<i32>>("chain_resolution_height")
+				.map(u32::try_from).transpose()
+				.context("chain_resolution_height out of range for u32")?,
 		};
 		let vtxo = VtxoState::<Full, ServerVtxoPolicy>::try_from(row)?
 			.try_into_user_vtxo_state()
@@ -174,7 +191,9 @@ const HTLC_VTXO_COLUMNS: &str = "
 	v.offboarded_in, v.banned_until_height, v.confirmed_height,
 	v.spend_state::TEXT AS spend_state, v.created_at, v.updated_at,
 	hv.payment_hash, hv.htlc_expiry,
-	hv.direction::TEXT AS direction, hv.resolution::TEXT AS resolution
+	hv.direction::TEXT AS direction,
+	hv.offchain_resolution::TEXT AS offchain_resolution,
+	hv.chain_resolution::TEXT AS chain_resolution, hv.chain_resolution_height
 ";
 
 /// Insert the htlc data of the given vtxos, with no resolution yet.
@@ -279,11 +298,97 @@ pub async fn set_htlc_vtxo_resolutions(
 
 	let ids = vtxo_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
 	let stmt = tx.prepare_typed("
-		UPDATE htlc_vtxo SET resolution = $2::htlc_resolution
+		UPDATE htlc_vtxo SET offchain_resolution = $2::htlc_resolution
 		FROM vtxo WHERE vtxo.id = htlc_vtxo.id AND vtxo.vtxo_id = ANY($1)
 	", &[Type::TEXT_ARRAY, Type::TEXT]).await?;
 
 	tx.execute(&stmt, &[&ids, &resolution.as_str()])
 		.await.context("failed to set htlc vtxo resolutions")?;
 	Ok(())
+}
+
+/// Record how an htlc vtxo resolved on-chain, at the height of the spend.
+pub async fn set_htlc_vtxo_chain_resolution(
+	tx: &Tx<'_>,
+	vtxo_id: VtxoId,
+	resolution: HtlcResolution,
+	height: BlockHeight,
+) -> anyhow::Result<()> {
+	let height = i32::try_from(height)
+		.with_context(|| format!("spent height of vtxo {} out of range for i32", vtxo_id))?;
+
+	let stmt = tx.prepare_typed("
+		UPDATE htlc_vtxo
+		SET chain_resolution = $2::htlc_resolution, chain_resolution_height = $3
+		FROM vtxo WHERE vtxo.id = htlc_vtxo.id AND vtxo.vtxo_id = $1
+	", &[Type::TEXT, Type::TEXT, Type::INT4]).await?;
+
+	tx.execute(&stmt, &[&vtxo_id.to_string(), &resolution.as_str(), &height])
+		.await.context("failed to set htlc vtxo chain resolution")?;
+	Ok(())
+}
+
+/// Drop the chain resolutions recorded above the given height.
+pub async fn clear_htlc_vtxo_chain_resolutions_above(
+	tx: &Tx<'_>,
+	height: BlockHeight,
+) -> anyhow::Result<()> {
+	let height = i32::try_from(height)
+		.with_context(|| format!("height {} out of range for i32", height))?;
+
+	let stmt = tx.prepare_typed("
+		UPDATE htlc_vtxo SET chain_resolution = NULL, chain_resolution_height = NULL
+		WHERE chain_resolution_height > $1
+	", &[Type::INT4]).await?;
+
+	tx.execute(&stmt, &[&height])
+		.await.context("failed to clear htlc vtxo chain resolutions")?;
+	Ok(())
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	const PAYMENT_HASH: &str =
+		"0000000000000000000000000000000000000000000000000000000000000001";
+
+	#[test]
+	fn chain_resolution_wins_over_offchain() {
+		let htlc = Htlc {
+			payment_hash: PaymentHash::from_str(PAYMENT_HASH).unwrap(),
+			htlc_expiry: 100,
+			direction: HtlcDirection::Incoming,
+			offchain_resolution: Some(HtlcResolution::Revoked),
+			chain_resolution: Some(HtlcResolution::Fulfilled),
+			chain_resolution_height: Some(120),
+		};
+		assert_eq!(htlc.resolution(), Some(HtlcResolution::Fulfilled));
+	}
+
+	#[test]
+	fn offchain_resolution_stands_without_a_chain_resolution() {
+		let htlc = Htlc {
+			payment_hash: PaymentHash::from_str(PAYMENT_HASH).unwrap(),
+			htlc_expiry: 100,
+			direction: HtlcDirection::Incoming,
+			offchain_resolution: Some(HtlcResolution::Revoked),
+			chain_resolution: None,
+			chain_resolution_height: None,
+		};
+		assert_eq!(htlc.resolution(), Some(HtlcResolution::Revoked));
+	}
+
+	#[test]
+	fn unresolved_htlc_has_no_resolution() {
+		let htlc = Htlc {
+			payment_hash: PaymentHash::from_str(PAYMENT_HASH).unwrap(),
+			htlc_expiry: 100,
+			direction: HtlcDirection::Incoming,
+			offchain_resolution: None,
+			chain_resolution: None,
+			chain_resolution_height: None,
+		};
+		assert_eq!(htlc.resolution(), None);
+	}
 }

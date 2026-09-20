@@ -12,6 +12,7 @@ use ark::vtxo::policy::clause::{HashDelaySignClause, HashDelaySignClause_v0, Tap
 use bitcoin_ext::BlockHeight;
 
 use crate::database::Db;
+use crate::database::htlc_vtxo::{self, HtlcResolution};
 use crate::ln::settler::HtlcSettler;
 use crate::sync::{BlockData, ChainEventListener, RawMempool};
 
@@ -99,7 +100,22 @@ impl VtxoExitFrontier {
 					.context("failed to record HTLC settlement from on-chain spend")?;
 			}
 
-			self.db.write(async |t| t.register_vtxo_spend(vtxo_id, spent_height, spent_txid).await).await?;
+			let chain_resolution = classify_htlc_spend(&vtxo, witness);
+			self.db.write(async |t| {
+				t.register_vtxo_spend(vtxo_id, spent_height, spent_txid).await?;
+				if let Some(resolution) = chain_resolution {
+					htlc_vtxo::set_htlc_vtxo_chain_resolution(
+						&t, vtxo_id, resolution, spent_height,
+					).await?;
+				}
+				Ok(())
+			}).await?;
+
+			if let Some(resolution) = chain_resolution {
+				slog!(HtlcVtxoResolvedOnChain, vtxo_id, height: spent_height,
+					resolution: resolution.as_str().to_owned(),
+				);
+			}
 			Ok(true)
 		} else {
 			Ok(false)
@@ -160,6 +176,56 @@ impl VtxoExitFrontier {
 		}
 		Ok(())
 	}
+}
+
+/// Reads the witness to determine if the htlc was spent using the preimage
+/// path (fulfilled) or the timeout path (revoked).
+///
+/// A non-htlc policy or a keypath spend gives `None`: the money moved, but
+/// not through a clause that names who got it.
+fn classify_htlc_spend(vtxo: &ServerVtxo, witness: &Witness) -> Option<HtlcResolution> {
+	let exit_delta = vtxo.exit_delta();
+	let server_pubkey = vtxo.server_pubkey();
+	let (payment_hash, preimage_script, timeout_script) = match vtxo.policy() {
+		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv(p)) => (
+			p.payment_hash,
+			p.user_reveals_preimage_clause(exit_delta).tapscript(),
+			p.server_claim_after_expiry_clause(server_pubkey, exit_delta).tapscript(),
+		),
+		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv_v0(p)) => (
+			p.payment_hash,
+			p.user_reveals_preimage_clause(exit_delta).tapscript(),
+			p.server_claim_after_expiry_clause(server_pubkey, exit_delta).tapscript(),
+		),
+		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcSend(p)) => (
+			p.payment_hash,
+			p.server_reveals_preimage_clause(server_pubkey, exit_delta).tapscript(),
+			p.user_claim_after_expiry_clause(exit_delta).tapscript(),
+		),
+		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcSend_v0(p)) => (
+			p.payment_hash,
+			p.server_reveals_preimage_clause(server_pubkey, exit_delta).tapscript(),
+			p.user_claim_after_expiry_clause(exit_delta).tapscript(),
+		),
+		_ => return None,
+	};
+
+	let leaf = witness.taproot_leaf_script()?;
+	if leaf.version == LeafVersion::TapScript {
+		if leaf.script == preimage_script.as_script() {
+			return Some(HtlcResolution::Fulfilled);
+		}
+		if leaf.script == timeout_script.as_script() {
+			return Some(HtlcResolution::Revoked);
+		}
+	}
+
+	error!(
+		"HTLC VTXO {} was spent on-chain through a script we don't recognize, so we \
+		cannot tell who got the money for {}. Witness: {:?}",
+		vtxo.id(), payment_hash, witness,
+	);
+	None
 }
 
 /// Try to extract a preimage from the witness of a spent HTLC-recv vtxo.
@@ -266,14 +332,12 @@ impl ChainEventListener for Arc<RwLock<VtxoExitFrontier>> {
 		// detection below works correctly for all frontier entries.
 		frontier.sync_new_vtxos_from_db().await?;
 
-		// Rollback DB state above fork point.
-		//
-		// htlc_settlement entries are intentionally NOT rolled back: once a
-		// preimage appears on-chain (even in a block that is later reorged),
-		// it is public knowledge. Settling the CLN hold invoice is still
-		// correct — the receiver already knows the preimage and could
-		// re-broadcast the claiming tx at any time.
-		frontier.db.write(async |t| t.reorg_frontier(block_ref.height).await).await?;
+		// Rollback all transactions that ocurred above this block
+		frontier.db.write(async |t| {
+			t.reorg_frontier(block_ref.height).await?;
+			htlc_vtxo::clear_htlc_vtxo_chain_resolutions_above(&t, block_ref.height).await?;
+			Ok(())
+		}).await?;
 
 		// Reload in-memory frontier
 		frontier.reload().await?;

@@ -51,6 +51,14 @@ pub struct WatchmanAddedVtxo {
 impl_slog!(WatchmanAddedVtxo, TRACE, "added VTXO to frontier");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtlcVtxoResolvedOnChain {
+	pub vtxo_id: VtxoId,
+	pub height: BlockHeight,
+	pub resolution: String,
+}
+impl_slog!(HtlcVtxoResolvedOnChain, INFO, "htlc vtxo resolved on chain");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchmanAddedFundingTx {
 	pub txid: Txid,
 	pub nb_vtxos: usize,

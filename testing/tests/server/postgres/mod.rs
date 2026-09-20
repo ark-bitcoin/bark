@@ -22,6 +22,7 @@ use bitcoin_ext::BlockRef;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
 use server::database::{BlockTable, Db, MailboxPayload};
+use server::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution};
 use server::database::tree::VtxoTreeUpdate;
 use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
@@ -2085,4 +2086,71 @@ async fn lightning_send_finished_mailbox_notification() {
 		},
 		other => panic!("expected LightningSendFinished payload, got {:?}", other),
 	}
+}
+
+/// A reorg drops the chain resolutions recorded above the fork height.
+#[tokio::test]
+async fn htlc_vtxo_chain_resolution_cleared_above_fork_height() {
+	let mut ctx = TestContext::new_minimal("postgresd/htlc_vtxo_chain_resolution_cleared").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.arkoor_htlc_out_vtxo.clone());
+	db.write(async |t| t.upsert_vtxos([vtxo.clone()]).await).await.unwrap();
+
+	let payment_hash = Preimage::random().compute_payment_hash();
+	db.write(async |t| htlc_vtxo::create_htlc_vtxos(
+		t, &[(vtxo.id(), payment_hash, 100)], HtlcDirection::Incoming,
+	).await).await.unwrap();
+
+	db.write(async |t| htlc_vtxo::set_htlc_vtxo_chain_resolution(
+		t, vtxo.id(), HtlcResolution::Fulfilled, 120,
+	).await).await.unwrap();
+
+	let stored = db.read(async |t| htlc_vtxo::get_htlc_vtxo(t, vtxo.id()).await).await
+		.unwrap().expect("htlc vtxo present");
+	assert_eq!(stored.htlc.chain_resolution, Some(HtlcResolution::Fulfilled));
+	assert_eq!(stored.htlc.chain_resolution_height, Some(120));
+
+	db.write(async |t| htlc_vtxo::clear_htlc_vtxo_chain_resolutions_above(t, 119).await)
+		.await.unwrap();
+
+	let stored = db.read(async |t| htlc_vtxo::get_htlc_vtxo(t, vtxo.id()).await).await
+		.unwrap().expect("htlc vtxo present");
+	assert_eq!(stored.htlc.chain_resolution, None);
+	assert_eq!(stored.htlc.chain_resolution_height, None);
+}
+
+/// A chain resolution recorded at the fork height itself survives the reorg.
+#[tokio::test]
+async fn htlc_vtxo_chain_resolution_kept_at_fork_height() {
+	let mut ctx = TestContext::new_minimal("postgresd/htlc_vtxo_chain_resolution_kept").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.arkoor_htlc_out_vtxo.clone());
+	db.write(async |t| t.upsert_vtxos([vtxo.clone()]).await).await.unwrap();
+
+	let payment_hash = Preimage::random().compute_payment_hash();
+	db.write(async |t| htlc_vtxo::create_htlc_vtxos(
+		t, &[(vtxo.id(), payment_hash, 100)], HtlcDirection::Incoming,
+	).await).await.unwrap();
+
+	db.write(async |t| htlc_vtxo::set_htlc_vtxo_chain_resolution(
+		t, vtxo.id(), HtlcResolution::Revoked, 120,
+	).await).await.unwrap();
+
+	db.write(async |t| htlc_vtxo::clear_htlc_vtxo_chain_resolutions_above(t, 120).await)
+		.await.unwrap();
+
+	let stored = db.read(async |t| htlc_vtxo::get_htlc_vtxo(t, vtxo.id()).await).await
+		.unwrap().expect("htlc vtxo present");
+	assert_eq!(stored.htlc.chain_resolution, Some(HtlcResolution::Revoked));
+	assert_eq!(stored.htlc.chain_resolution_height, Some(120));
 }

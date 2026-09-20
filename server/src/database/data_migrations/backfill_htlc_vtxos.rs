@@ -48,7 +48,7 @@ pub async fn run(db: &Db) -> anyhow::Result<u64> {
 	).await.context("preparing select")?;
 
 	let insert = writer.prepare_typed(
-		"INSERT INTO htlc_vtxo (id, payment_hash, htlc_expiry, direction, resolution) \
+		"INSERT INTO htlc_vtxo (id, payment_hash, htlc_expiry, direction, offchain_resolution) \
 		 VALUES ($1, $2, $3, $4::htlc_direction, $5::htlc_resolution) \
 		 ON CONFLICT (id) DO NOTHING",
 		&[Type::INT8, Type::TEXT, Type::INT4, Type::TEXT, Type::TEXT],
