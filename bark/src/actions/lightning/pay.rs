@@ -80,14 +80,12 @@ pub struct LightningSend {
 
 	/// Movement recording this payment, created up front in
 	/// `start_lightning_send` so re-driving `Start` reuses it rather than
-	/// creating a duplicate. `None` for checkpoints predating this field.
-	#[serde(default)]
-	pub movement_id: Option<MovementId>,
+	/// creating a duplicate.
+	pub movement_id: MovementId,
 
 	/// HTLC revocation key, pre-derived at start (like `htlc_key`) so the
-	/// failure step is idempotent. `None` for checkpoints predating this field.
-	#[serde(default)]
-	pub revocation_key: Option<PublicKey>,
+	/// failure step is idempotent.
+	pub revocation_key: PublicKey,
 
 	/// How long the server should keep trying to pay the invoice. `None`
 	/// leaves it to the server, and for checkpoints predating this field.
@@ -147,12 +145,14 @@ impl WalletAction for LightningSend {
 						return Ok(Advance::Done);
 					},
 					PaymentStatus::Failed => {
-						let revocation = fail_lightning_send_payment(wallet, &self).await?;
+						info!("Lightning payment {} failed, preparing to revoke", self.invoice.payment_hash());
+						let revocation = Revocation { key: self.revocation_key };
 						Progress::RevocableHtlcs { htlcs, revocation }
 					},
 					PaymentStatus::Pending => {
 						if self.is_htlc_near_expiry(wallet).await.retry()? {
-							let revocation = fail_lightning_send_payment(wallet, &self).await?;
+							info!("Lightning payment {} failed, preparing to revoke", self.invoice.payment_hash());
+							let revocation = Revocation { key: self.revocation_key };
 							Progress::RevocableHtlcs { htlcs, revocation }
 						} else {
 							return Ok(Advance::Park {
@@ -207,9 +207,8 @@ impl WalletAction for LightningSend {
 			Progress::HtlcReceived(htlcs) | Progress::PaymentInitiated(htlcs) => {
 				if or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
 					let htlcs = htlcs.clone();
-					let revocation = or_retry!(self,
-						fail_lightning_send_payment(wallet, &self).await.into_anyhow(),
-					);
+					info!("Lightning payment {} failed, preparing to revoke", self.invoice.payment_hash());
+					let revocation = Revocation { key: self.revocation_key };
 					Advance::Next(LightningSend {
 						progress: Progress::RevocableHtlcs { htlcs, revocation },
 						..self
@@ -249,9 +248,8 @@ impl WalletAction for LightningSend {
 			},
 			Progress::HtlcReceived(htlcs) | Progress::PaymentInitiated(htlcs) => {
 				let htlcs = htlcs.clone();
-				let revocation = or_retry!(self,
-					fail_lightning_send_payment(wallet, &self).await.into_anyhow(),
-				);
+				info!("Lightning payment {} failed, preparing to revoke", self.invoice.payment_hash());
+				let revocation = Revocation { key: self.revocation_key };
 				Advance::Next(LightningSend {
 					progress: Progress::RevocableHtlcs { htlcs, revocation },
 					..self
@@ -390,8 +388,8 @@ pub(crate) async fn start_lightning_send(
 		)),
 		htlc_key: change_keypair.public_key(),
 		htlc_expiry,
-		movement_id: Some(movement_id),
-		revocation_key: Some(revocation_keypair.public_key()),
+		movement_id,
+		revocation_key: revocation_keypair.public_key(),
 		retry_for,
 		allow_exit_of_htlcs: false,
 		progress: Progress::Start,
@@ -492,23 +490,8 @@ async fn request_lightning_send_htlcs(
 
 	// The movement was created up front in `start_lightning_send` and its id
 	// carried on the action, so re-driving `Start` updates that same movement
-	// rather than creating a duplicate. Legacy checkpoints predating the field
-	// have `None`; create one on demand to preserve the old behaviour.
-	// TODO: remove this `None` fallback (and make `movement_id` non-optional)
-	// after v0.2.6 ships, once no pre-v0.2.6 checkpoints can remain in flight.
-	let movement_id = match send.movement_id {
-		Some(id) => id,
-		None => wallet.inner.movements.new_movement_with_update(
-			Subsystem::LIGHTNING_SEND,
-			LightningSendMovement::Send.to_string(),
-			MovementUpdate::new()
-				.intended_balance(-send.payment_amount.to_signed()
-					.context("payment amount out of range").retry()?)
-				.fee(send.fee)
-				.consumed_vtxos(&full_inputs)
-				.sent_to([MovementDestination::new(send.original_payment_method.clone(), send.payment_amount)])
-		).await.context("failed to create lightning-send movement").retry()?,
-	};
+	// rather than creating a duplicate.
+	let movement_id = send.movement_id;
 	wallet.store_locked_vtxos(
 		&htlc_vtxos,
 		Some(VtxoLockHolder::Action { id: send.id() })
@@ -634,25 +617,6 @@ pub(crate) async fn settle_lightning_send_payment(
 	).await.retry()?;
 
 	Ok(())
-}
-
-/// PaymentInitiated -> RevocableHtlcs. Derives a revocation keypair;
-/// the actual server-side cosign happens in
-/// [`revoke_lightning_send_htlcs`].
-pub(crate) async fn fail_lightning_send_payment(
-	wallet: &Wallet,
-	send: &LightningSend,
-) -> Result<Revocation, AdvanceError> {
-	info!("Lightning payment {} failed, preparing to revoke", send.invoice.payment_hash());
-	// Use the key pre-derived at start so re-driving is idempotent; older
-	// checkpoints without it (`None`) derive on demand.
-	// TODO: remove this `None` fallback (and make `revocation_key` non-optional)
-	// after v0.2.6 ships, once no pre-v0.2.6 checkpoints can remain in flight.
-	let key = match send.revocation_key {
-		Some(key) => key,
-		None => wallet.derive_store_next_keypair().await.retry()?.0.public_key(),
-	};
-	Ok(Revocation { key })
 }
 
 /// Cosign the revocation with the server, mark the HTLC vtxos spent

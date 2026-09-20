@@ -202,8 +202,8 @@ fn send_at_start() -> LightningSend {
 		change_pieces: Some(vec![Amount::from_sat(500), Amount::from_sat(500)]),
 		htlc_key: test_pubkey(),
 		htlc_expiry: BlockHeight::new(100),
-		movement_id: Some(MovementId::new(1)),
-		revocation_key: Some(test_pubkey()),
+		movement_id: MovementId::new(1),
+		revocation_key: test_pubkey(),
 		retry_for: None,
 		progress: Progress::Start,
 		allow_exit_of_htlcs: false,
@@ -756,24 +756,19 @@ pub async fn test_remove_round_state(db: &impl BarkPersister) {
 // Lightning
 // ---------------------------------------------------------------------------
 
-/// A checkpoint persisted before `movement_id`/`revocation_key`/
-/// `change_pieces` existed has no such fields; `#[serde(default)]` must
-/// load them as `None` not fail.
+/// A checkpoint persisted before `change_pieces` existed has no such field;
+/// `#[serde(default)]` must load it as `None` not fail.
 #[test]
-fn legacy_checkpoint_missing_optional_fields_default_to_none() {
+fn legacy_checkpoint_missing_change_pieces_defaults_to_none() {
 	let checkpoint = WalletActionCheckpoint::from(send_at_start());
 	let mut json = serde_json::to_value(&checkpoint).expect("serialize checkpoint");
-	// Drop the fields to mimic a checkpoint written before they were added.
+	// Drop the field to mimic a checkpoint written before it was added.
 	let obj = json["LightningSend"].as_object_mut().expect("LightningSend object");
-	assert!(obj.remove("movement_id").is_some(), "fixture should carry a movement_id");
-	assert!(obj.remove("revocation_key").is_some(), "fixture should carry a revocation_key");
 	assert!(obj.remove("change_pieces").is_some(), "fixture should carry change_pieces");
 
 	let restored: WalletActionCheckpoint =
 		serde_json::from_value(json).expect("deserialize legacy checkpoint");
 	let send = restored.into_lightning_send().unwrap();
-	assert_eq!(send.movement_id, None);
-	assert_eq!(send.revocation_key, None);
 	assert_eq!(send.change_pieces, None);
 }
 
