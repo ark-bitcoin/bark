@@ -4,8 +4,9 @@
 //! ## Payment lifecycle
 //!
 //! [`ClnXpay::pay`] is fire-and-forget: it spawns a task that calls `xpay` over gRPC.
-//! On success, the sendpay stream picks up the result. On RPC error, the spawned task
-//! marks the attempt as `Submitted` with the error so the monitor can reconcile later.
+//! When CLN answers, success or error, the attempt is reconciled right away. When the
+//! call breaks in transport, xpay may still be running, so the monitor reconciles the
+//! attempt once its retry time has passed.
 //!
 //! ## Sendpay stream
 //!
@@ -83,7 +84,8 @@ impl ClnXpayClient {
 	///
 	/// On RPC success the sendpay stream will pick up the result, but we still
 	/// reconcile afterwards to handle edge cases (e.g. the stream missing an event).
-	/// On RPC error the reconciliation drives the attempt to its final state.
+	/// On an error from CLN the reconciliation drives the attempt to its final
+	/// state. On a transport error it is left to the monitor.
 	#[tracing::instrument(skip_all, fields(
 		payment_hash = %invoice.payment_hash(),
 		invoice = %invoice,
@@ -110,7 +112,14 @@ impl ClnXpayClient {
 				// it will happen in the sendpay stream of the monitor process
 				trace!("Payment successful for payment hash {}", payment_hash.as_hex());
 			},
-			// Fetch and store the attempt as failed.
+			Err(pay_err) if !is_cln_error(&pay_err) => {
+				// xpay may still be trying, and syncing now could fail an
+				// attempt CLN goes on to pay.
+				warn!("xpay call for {} broke, leaving it to the monitor: {:#}",
+					payment_hash, pay_err,
+				);
+				return;
+			},
 			Err(pay_err) => {
 				debug!("Error calling pay-command: {}", pay_err);
 			},
@@ -459,6 +468,14 @@ impl ClnXpayProcess {
 	}
 }
 
+/// Whether lightningd itself answered with an error, meaning xpay has stopped
+/// trying. cln-grpc words every failed call as `Error calling method ...`, but
+/// only an answer from lightningd carries `RpcError { code: Some(..) }`.
+fn is_cln_error(err: &anyhow::Error) -> bool {
+	err.downcast_ref::<tonic::Status>()
+		.is_some_and(|s| s.message().contains("RpcError { code: Some("))
+}
+
 /// Calls the xpay-command over gRPC.
 /// If the payment completes successfully it will return the pre-image
 /// Otherwise, an error will be returned
@@ -515,4 +532,25 @@ async fn call_xpay(
 	);
 
 	result
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn is_cln_error_tells_cln_errors_from_transport_errors() {
+		let cln = tonic::Status::unknown("Error calling method Xpay: RpcError { \
+			code: Some(205), message: \"no route\", data: None }");
+		assert!(is_cln_error(&cln.into()));
+
+		let transport = tonic::Status::unavailable("transport error");
+		assert!(!is_cln_error(&transport.into()));
+		let reset = tonic::Status::unknown("h2 protocol error: stream reset");
+		assert!(!is_cln_error(&reset.into()));
+		let socket = tonic::Status::unknown("Error calling method Xpay: RpcError { \
+			code: None, message: \"no response from lightningd\", data: None }");
+		assert!(!is_cln_error(&socket.into()));
+		assert!(!is_cln_error(&anyhow!("missing preimage")));
+	}
 }
