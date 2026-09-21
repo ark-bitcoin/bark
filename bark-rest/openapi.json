@@ -3463,12 +3463,16 @@
             "description": "The fee schedule outlining any fees that must be paid to interact with the Ark server."
           },
           "htlc_expiry_delta": {
-            "$ref": "#/components/schemas/u16",
-            "description": "The number of blocks to keep between Lightning and Ark HTLCs expiries"
+            "type": "integer",
+            "format": "int32",
+            "description": "The number of blocks to keep between Lightning and Ark HTLCs expiries",
+            "minimum": 0
           },
           "htlc_send_expiry_delta": {
-            "$ref": "#/components/schemas/u16",
-            "description": "The number of blocks after which an HTLC-send VTXO expires once granted."
+            "type": "integer",
+            "format": "int32",
+            "description": "The number of blocks after which an HTLC-send VTXO expires once granted.",
+            "minimum": 0
           },
           "ln_receive_anti_dos_required": {
             "type": "boolean",
@@ -3543,16 +3547,23 @@
             "description": "Link to the server's terms of service, if any."
           },
           "vtxo_exit_delta": {
-            "$ref": "#/components/schemas/u16",
-            "description": "Delta between exit confirmation and coins becoming spendable"
+            "type": "integer",
+            "format": "int32",
+            "description": "Delta between exit confirmation and coins becoming spendable",
+            "minimum": 0
           },
           "vtxo_expiry_delta": {
-            "$ref": "#/components/schemas/u16",
-            "description": "The number of blocks a VTXO lives before it expires.\n\n**Deprecated**: renamed to `vtxo_lifetime`. This field is still\npopulated with the same value for backwards compatibility and will\nbe removed in a future release."
+            "type": "integer",
+            "format": "int32",
+            "description": "The number of blocks a VTXO lives before it expires.\n\n**Deprecated**: renamed to `vtxo_lifetime`. This field is still\npopulated with the same value for backwards compatibility and will\nbe removed in a future release.",
+            "deprecated": true,
+            "minimum": 0
           },
           "vtxo_lifetime": {
-            "$ref": "#/components/schemas/u16",
-            "description": "The number of blocks a VTXO lives before it expires"
+            "type": "integer",
+            "format": "int32",
+            "description": "The number of blocks a VTXO lives before it expires",
+            "minimum": 0
           }
         }
       },
@@ -3774,7 +3785,9 @@
             "type": "string"
           },
           "height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -4114,13 +4127,17 @@
         ],
         "properties": {
           "claimable_height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
           "confirmed_block": {
             "$ref": "#/components/schemas/BlockRef"
           },
           "tip_height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -4143,7 +4160,9 @@
         ],
         "properties": {
           "tip_height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -4183,7 +4202,9 @@
             "$ref": "#/components/schemas/BlockRef"
           },
           "tip_height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -4248,7 +4269,9 @@
             ]
           },
           "tip_height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -4264,7 +4287,9 @@
             "$ref": "#/components/schemas/BlockRef"
           },
           "tip_height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
           "txid": {
             "type": "string"
@@ -4307,7 +4332,9 @@
                 "type": "string"
               },
               "height": {
-                "$ref": "#/components/schemas/u32"
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
               },
               "type": {
                 "type": "string",
@@ -4687,7 +4714,9 @@
                 "type": "string"
               },
               "tip": {
-                "$ref": "#/components/schemas/u32"
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
               },
               "type": {
                 "type": "string",
@@ -4949,7 +4978,9 @@
         ],
         "properties": {
           "tip_height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
           "transactions": {
             "type": "array",
@@ -5081,7 +5112,9 @@
         ],
         "properties": {
           "tip_height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -5532,7 +5565,9 @@
         ],
         "properties": {
           "tip_height": {
-            "$ref": "#/components/schemas/u32"
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -7023,8 +7058,10 @@
             "description": "The on-chain outpoint that roots this VTXO, formatted as\n`txid:vout`. Typically an output of a round transaction or a\nboard transaction."
           },
           "exit_delta": {
-            "$ref": "#/components/schemas/u16",
-            "description": "The relative timelock, in blocks, that must elapse before the\nfinal on-chain claim in an emergency exit."
+            "type": "integer",
+            "format": "int32",
+            "description": "The relative timelock, in blocks, that must elapse before the\nfinal on-chain claim in an emergency exit.",
+            "minimum": 0
           },
           "exit_depth": {
             "type": [
@@ -7036,8 +7073,10 @@
             "minimum": 0
           },
           "expiry_height": {
-            "$ref": "#/components/schemas/u32",
-            "description": "The block height at which this VTXO expires. After expiry, the\nserver can reclaim the sats. Refresh before expiry to receive\nnew VTXOs, or exit to move them on-chain."
+            "type": "integer",
+            "format": "int32",
+            "description": "The block height at which this VTXO expires. After expiry, the\nserver can reclaim the sats. Refresh before expiry to receive\nnew VTXOs, or exit to move them on-chain.",
+            "minimum": 0
           },
           "id": {
             "type": "string",
@@ -7361,16 +7400,6 @@
           }
         ],
         "description": "A VTXO together with its current wallet state."
-      },
-      "u16": {
-        "type": "integer",
-        "format": "int32",
-        "minimum": 0
-      },
-      "u32": {
-        "type": "integer",
-        "format": "int32",
-        "minimum": 0
       }
     },
     "securitySchemes": {
