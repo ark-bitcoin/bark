@@ -29,6 +29,7 @@ use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
 use server::filters;
 use server::filters::Filters;
+use server::ln::LightningFailureKind;
 use server::nursery::NurseryTxKind;
 use server::secret::Secret;
 use server::wallet::WalletKind;
@@ -2186,38 +2187,45 @@ async fn lightning_send_finished_mailbox_notification() {
 	);
 	let payment_hash = BOLT11_INVOICE.parse::<Bolt11Invoice>().unwrap().as_payment_hash();
 
-	// Store a failed payment notification (no preimage)
-	let cp1 = db.write(async |t| t.store_lightning_send_finished(mailbox_id, payment_hash, None).await).await.unwrap()
-		.expect("first insert should succeed");
+	// Store a failed payment notification (no preimage, with a reason)
+	let cp1 = db.write(async |t| t.store_lightning_send_finished(
+		mailbox_id, payment_hash, None, Some(LightningFailureKind::FeeTooLow),
+	).await).await.unwrap().expect("first insert should succeed");
 
 	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, 0, 10).await).await.unwrap();
 	assert_eq!(messages.len(), 1);
 	assert_eq!(messages[0].checkpoint, cp1);
 	match &messages[0].payload {
-		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage } => {
+		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage, failure } => {
 			assert_eq!(*ph, payment_hash);
 			assert!(preimage.is_none(), "failed payment should have no preimage");
+			assert_eq!(*failure, Some(LightningFailureKind::FeeTooLow),
+				"the failure reason must round-trip through the INSERT + SELECT");
 		},
 		other => panic!("expected LightningSendFinished payload, got {:?}", other),
 	}
 
 	// Duplicate insert for the same payment hash should be a no-op
-	let dup = db.write(async |t| t.store_lightning_send_finished(mailbox_id, payment_hash, None).await).await.unwrap();
+	let dup = db.write(async |t| t.store_lightning_send_finished(
+		mailbox_id, payment_hash, None, Some(LightningFailureKind::FeeTooLow),
+	).await).await.unwrap();
 	assert!(dup.is_none(), "duplicate insert should return None");
 
 	// Store a successful payment notification (with preimage)
 	let test_preimage = Preimage::random();
 	let success_hash: ark::lightning::PaymentHash = test_preimage.compute_payment_hash();
-	let cp2 = db.write(async |t| t.store_lightning_send_finished(mailbox_id, success_hash, Some(test_preimage)).await).await.unwrap()
-		.expect("first insert should succeed");
+	let cp2 = db.write(async |t| t.store_lightning_send_finished(
+		mailbox_id, success_hash, Some(test_preimage), None,
+	).await).await.unwrap().expect("first insert should succeed");
 	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
 
 	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, cp1, 10).await).await.unwrap();
 	assert_eq!(messages.len(), 1);
 	match &messages[0].payload {
-		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage } => {
+		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage, failure } => {
 			assert_eq!(*ph, success_hash);
 			assert_eq!(preimage.as_ref().map(|p| p.leak_ref()), Some(&test_preimage), "success should include preimage");
+			assert!(failure.is_none(), "a success must carry no failure reason");
 		},
 		other => panic!("expected LightningSendFinished payload, got {:?}", other),
 	}

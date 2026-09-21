@@ -49,7 +49,13 @@ impl<'a> PaymentAttemptHandler<'a> {
 			self.payment_update_tx.send(attempt.payment_hash)
 				.context("payment update channel broken")?;
 
-			self.post_lightning_send_finished(attempt.payment_hash, None).await;
+			// Falls back to the stored error: `update_..._status` keeps it
+			// when handed `None`.
+			let failure = LightningFailureKind::classify(error.or(attempt.error.as_deref()));
+
+			self.post_lightning_send_finished(
+				attempt.payment_hash, None, Some(failure),
+			).await;
 
 			// Attempted amount (not final_amount_msat) so failed/succeeded
 			// volumes stay comparable.
@@ -132,8 +138,14 @@ impl<'a> PaymentAttemptHandler<'a> {
 			self.payment_update_tx.send(attempt.payment_hash)
 				.context("payment update channel broken")?;
 
+			let failure = (status == LightningPaymentStatus::Failed).then(||
+				LightningFailureKind::classify(payment_error.or(attempt.error.as_deref()))
+			);
+
 			if status.is_final() {
-				self.post_lightning_send_finished(attempt.payment_hash, preimage).await;
+				self.post_lightning_send_finished(
+					attempt.payment_hash, preimage, failure,
+				).await;
 			}
 
 			// Record the fee only on the caller that actually transitioned
@@ -149,9 +161,6 @@ impl<'a> PaymentAttemptHandler<'a> {
 			}
 
 			if let Some(metric_status) = telemetry::LightningPaymentMetricStatus::from_status(status) {
-				let failure = (status == LightningPaymentStatus::Failed).then(||
-					LightningFailureKind::classify(payment_error.or(attempt.error.as_deref()))
-				);
 				// Utilisation only means something once a routing fee was
 				// actually paid.
 				let utilisation = (status == LightningPaymentStatus::Succeeded)
@@ -180,6 +189,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 		&self,
 		payment_hash: PaymentHash,
 		preimage: Option<Preimage>,
+		failure: Option<LightningFailureKind>,
 	) {
 		let mailbox_id = match self.db.read(async |t|
 			t.get_lightning_sender_mailbox_id(payment_hash).await
@@ -193,7 +203,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 		};
 
 		match self.db.write(async |t|
-			t.store_lightning_send_finished(mailbox_id, payment_hash, preimage).await
+			t.store_lightning_send_finished(mailbox_id, payment_hash, preimage, failure).await
 		).await {
 			Ok(Some(checkpoint)) => {
 				self.mailbox_manager.notify(mailbox_id, checkpoint);

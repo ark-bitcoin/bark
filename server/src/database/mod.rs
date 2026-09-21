@@ -58,6 +58,7 @@ use ark::encode::ProtocolEncoding;
 use crate::error::ContextExt;
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
+use crate::ln::LightningFailureKind;
 use crate::secret::Secret;
 use crate::telemetry;
 
@@ -137,6 +138,8 @@ pub enum MailboxPayload {
 		payment_hash: PaymentHash,
 		/// The preimage, present only on success.
 		preimage: Option<Secret<Preimage>>,
+		/// Why it failed. `None` on success and on pre-V69 rows.
+		failure: Option<LightningFailureKind>,
 	},
 }
 
@@ -538,6 +541,7 @@ impl<'t> Tx<'t> {
 			)
 			SELECT
 				m.vtxo_id, m.vtxo, m.payment_hash, m.unlock_hash, m.preimage,
+				m.failure_reason,
 				m.checkpoint, m.mailbox_type::TEXT AS entry_type, m.amount_sat
 			FROM mailbox m
 			WHERE m.unblinded_mailbox_id = $1
@@ -621,9 +625,13 @@ impl<'t> Tx<'t> {
 					let preimage = preimage.map(|s| Preimage::from_str(&s).map(Secret::new))
 						.transpose()
 						.context("invalid preimage in mailbox notification")?;
+					let failure = row.get::<_, Option<String>>("failure_reason")
+						.map(|s| LightningFailureKind::from_str(&s));
 					res.push(MailboxEntry {
 						checkpoint: cp,
-						payload: MailboxPayload::LightningSendFinished { payment_hash, preimage },
+						payload: MailboxPayload::LightningSendFinished {
+							payment_hash, preimage, failure,
+						},
 					});
 					telemetry::set_mailbox_get_metric(mailbox_type, 1);
 					continue;
@@ -767,6 +775,7 @@ impl<'t> Tx<'t> {
 		mailbox_id: MailboxIdentifier,
 		payment_hash: PaymentHash,
 		preimage: Option<Preimage>,
+		failure: Option<LightningFailureKind>,
 	) -> anyhow::Result<Option<Checkpoint>> {
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
@@ -779,16 +788,18 @@ impl<'t> Tx<'t> {
 		let mailbox_type_str = String::from(MailboxType::LnSendFinished);
 		let payment_hash_str = payment_hash.to_string();
 		let preimage_str = preimage.map(|p| p.to_string());
+		let failure_str = failure.map(|f| f.as_str());
 
 		let statement = self.prepare("
-			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, preimage, checkpoint, mailbox_type, created_at)
-			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW())
+			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, preimage, failure_reason, checkpoint, mailbox_type, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6::TEXT::mailbox_type, NOW())
 			ON CONFLICT (mailbox_type, payment_hash) DO NOTHING;
 		").await?;
 		let rows_inserted = self.execute(&statement, &[
 			&mailbox_id.to_string(),
 			&payment_hash_str,
 			&preimage_str,
+			&failure_str,
 			&checkpoint,
 			&mailbox_type_str,
 		]).await?;

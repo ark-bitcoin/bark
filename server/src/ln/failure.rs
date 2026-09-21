@@ -57,6 +57,23 @@ impl LightningFailureKind {
 		}
 	}
 
+	/// Inverse of [`Self::as_str`], for reading the kind back out of the
+	/// database. An unrecognised string is [`Self::Unknown`], so a value
+	/// written by a newer server never panics an older one.
+	pub fn from_str(s: &str) -> Self {
+		match s {
+			"fee_too_low" => Self::FeeTooLow,
+			"cltv_too_long" => Self::CltvTooLong,
+			"no_route" => Self::NoRoute,
+			"retries_exhausted" => Self::RetriesExhausted,
+			"destination_rejected" => Self::DestinationRejected,
+			"setup_timeout" => Self::SetupTimeout,
+			"invoice_state" => Self::InvoiceState,
+			"other" => Self::Other,
+			_ => Self::Unknown,
+		}
+	}
+
 	/// `None` maps to [`Self::Unknown`], not [`Self::Other`]: nobody writing
 	/// a reason down is a different problem from one we can't parse.
 	pub fn classify(error: Option<&str>) -> Self {
@@ -213,6 +230,18 @@ mod test {
 			}
 		}
 		assert_eq!(R::from(LightningFailureKind::Unknown), R::LightningFailureUnspecified);
+	}
+
+	/// The mailbox stores the kind as a string, so every kind must read back.
+	#[test]
+	fn kind_round_trips_through_its_string() {
+		use LightningFailureKind::*;
+		for kind in [
+			FeeTooLow, CltvTooLong, NoRoute, RetriesExhausted, DestinationRejected,
+			SetupTimeout, InvoiceState, Other, Unknown,
+		] {
+			assert_eq!(LightningFailureKind::from_str(kind.as_str()), kind);
+		}
 	}
 
 	/// Cost must not be swallowed by the generic route arm.

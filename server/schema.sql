@@ -1069,7 +1069,8 @@ CREATE TABLE public.mailbox (
     payment_hash text,
     unlock_hash text,
     preimage text,
-    amount_sat bigint
+    amount_sat bigint,
+    failure_reason text
 );
 
 
