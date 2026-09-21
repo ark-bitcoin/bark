@@ -683,7 +683,7 @@ impl LightningSendInfo {
 			LightningSendState::InProgress(send) => {
 				let phase = match send.progress {
 					SendProgress::Start => "start",
-					SendProgress::InputsLocked => "inputs-locked",
+					SendProgress::InputsLocked { .. } => "inputs-locked",
 					SendProgress::HtlcReceived(_) => "htlc-received",
 					SendProgress::PaymentInitiated(_) => "payment-initiated",
 					SendProgress::RevocableHtlcs { .. } => "revocable-htlcs",

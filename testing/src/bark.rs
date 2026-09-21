@@ -315,7 +315,7 @@ impl Bark {
 			}),
 			Cp::LightningSend(s) => format!("ln_send.{}", match s.progress {
 				pay::Progress::Start => "Start",
-				pay::Progress::InputsLocked => "InputsLocked",
+				pay::Progress::InputsLocked { .. } => "InputsLocked",
 				pay::Progress::HtlcReceived(_) => "HtlcReceived",
 				pay::Progress::PaymentInitiated(_) => "PaymentInitiated",
 				pay::Progress::RevocableHtlcs { .. } => "RevocableHtlcs",

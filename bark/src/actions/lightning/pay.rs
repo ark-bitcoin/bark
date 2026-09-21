@@ -78,10 +78,11 @@ pub struct LightningSend {
 	pub htlc_key: PublicKey,
 	pub htlc_expiry: BlockHeight,
 
-	/// Movement recording this payment, created up front in
-	/// `start_lightning_send` so re-driving `Start` reuses it rather than
-	/// creating a duplicate.
-	pub movement_id: MovementId,
+	/// Movement that bark 0.7 and earlier created in `start_lightning_send`,
+	/// before the movement was linked to the action. Only set on checkpoints
+	/// those versions left at `Start`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub movement_id: Option<MovementId>,
 
 	/// HTLC revocation key, pre-derived at start (like `htlc_key`) so the
 	/// failure step is idempotent.
@@ -135,10 +136,34 @@ impl WalletAction for LightningSend {
 					&self.input_vtxo_ids,
 					Some(VtxoLockHolder::Action { id: self.id() }),
 				).await.abort()?;
-				Progress::InputsLocked
+
+				// The movement is keyed by the action id, so a re-drive finds
+				// the one an earlier attempt created instead of adding another.
+				// A checkpoint from bark 0.7 or earlier carries a movement that
+				// isn't linked to the action, so use that one.
+				let movement_id = match self.movement_id {
+					Some(id) => id,
+					None => wallet.inner.movements.get_or_create_movement_with_action(
+						Subsystem::LIGHTNING_SEND,
+						LightningSendMovement::Send.to_string(),
+						&self.id(),
+						MovementUpdate::new()
+							.intended_balance(-self.payment_amount.to_signed()
+								.context("payment amount out of range").abort()?)
+							.fee(self.fee)
+							.consumed_vtxos(&self.input_vtxo_ids)
+							.sent_to([MovementDestination::new(
+								self.original_payment_method.clone(), self.payment_amount,
+							)])
+							.metadata(LightningMovement::metadata(
+								self.invoice.payment_hash(), Vec::<VtxoId>::new(), None,
+							)),
+					).await.context("failed to create lightning-send movement").retry()?,
+				};
+				Progress::InputsLocked { movement_id }
 			},
-			Progress::InputsLocked => {
-				let htlcs = request_lightning_send_htlcs(wallet, &self).await?;
+			Progress::InputsLocked { movement_id } => {
+				let htlcs = request_lightning_send_htlcs(wallet, &self, *movement_id).await?;
 				Progress::HtlcReceived(htlcs)
 			},
 			Progress::HtlcReceived(htlcs) => {
@@ -185,7 +210,7 @@ impl WalletAction for LightningSend {
 	/// that. A send that learns the preimage settles and holds nothing.
 	fn pending_balance_vtxo_ids(&self) -> Vec<VtxoId> {
 		match &self.progress {
-			Progress::Start | Progress::InputsLocked => self.input_vtxo_ids.clone(),
+			Progress::Start | Progress::InputsLocked { .. } => self.input_vtxo_ids.clone(),
 			Progress::HtlcReceived(h)
 				| Progress::PaymentInitiated(h)
 				| Progress::RevocableHtlcs { htlcs: h, .. }
@@ -199,7 +224,7 @@ impl WalletAction for LightningSend {
 	/// exiting) them.
 	async fn on_retry(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		match &self.progress {
-			Progress::Start | Progress::InputsLocked => {
+			Progress::Start | Progress::InputsLocked { .. } => {
 				if or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
 					Advance::Failed(error.context(
 						"Could not start lightning send and HTLCs are near expiry",
@@ -246,7 +271,7 @@ impl WalletAction for LightningSend {
 		match &self.progress {
 			// Nothing committed server-side: the executor releases the
 			// input locks and removes the row when the action fails.
-			Progress::Start | Progress::InputsLocked => {
+			Progress::Start | Progress::InputsLocked { .. } => {
 				error!("Could not start lightning send {}: {:?}", self.id(), error);
 				Advance::Failed(error)
 			},
@@ -288,8 +313,9 @@ impl WalletAction for LightningSend {
 pub enum Progress {
 	/// Inputs are selected but not locked yet, no server interaction yet.
 	Start,
-	/// Inputs are locked, no server interaction yet.
-	InputsLocked,
+	/// Inputs are locked and the movement is recorded, no server interaction
+	/// yet.
+	InputsLocked { movement_id: MovementId },
 	/// Server cosigned the HTLC outputs; vtxos and movement persisted.
 	HtlcReceived(Htlcs),
 	/// Server has been told to pay; outcome is pending.
@@ -326,7 +352,8 @@ const PAYMENT_PENDING_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Build a fresh [`LightningSend`] in `Progress::Start`: pick inputs,
 /// derive the htlc key, snapshot expiry. The `Start` step locks the
-/// inputs, so nothing is locked before the checkpoint exists.
+/// inputs and records the movement, so nothing but the derived keys is
+/// written before the checkpoint exists.
 ///
 /// The executor persists the returned state. Idempotent under re-run
 /// only if no checkpoint exists yet for this invoice (the caller is
@@ -346,9 +373,10 @@ pub(crate) async fn start_lightning_send(
 		bail!("Invoice is for wrong network: {}", invoice.network());
 	}
 
-	invoice.check_signature()?;
+	invoice.check_signature().context("invoice has bad signature")?;
 
-	let payment_amount = invoice.get_payment_amount(user_amount)?;
+	let payment_amount = invoice.get_payment_amount(user_amount)
+		.context("invoice has bad payment amount")?;
 	if payment_amount == Amount::ZERO {
 		bail!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
 	}
@@ -367,17 +395,6 @@ pub(crate) async fn start_lightning_send(
 
 	let htlc_expiry = tip + ark_info.htlc_send_expiry_delta;
 
-	let movement_id = wallet.inner.movements.new_movement_with_update(
-		Subsystem::LIGHTNING_SEND,
-		LightningSendMovement::Send.to_string(),
-		MovementUpdate::new()
-			.intended_balance(-payment_amount.to_signed().context("payment amount out of range")?)
-			.fee(fee)
-			.consumed_vtxos(&inputs)
-			.sent_to([MovementDestination::new(original_payment_method.clone(), payment_amount)])
-			.metadata(LightningMovement::metadata(invoice.payment_hash(), Vec::<VtxoId>::new(), None))
-	).await.context("failed to create lightning-send movement")?;
-
 	Ok(LightningSend {
 		invoice,
 		original_payment_method,
@@ -389,7 +406,7 @@ pub(crate) async fn start_lightning_send(
 		)),
 		htlc_key: change_keypair.public_key(),
 		htlc_expiry,
-		movement_id,
+		movement_id: None,
 		revocation_key: revocation_keypair.public_key(),
 		retry_for,
 		allow_exit_of_htlcs: false,
@@ -407,6 +424,7 @@ pub(crate) async fn start_lightning_send(
 async fn request_lightning_send_htlcs(
 	wallet: &Wallet,
 	send: &LightningSend,
+	movement_id: MovementId,
 ) -> Result<Htlcs, AdvanceError> {
 	let (mut srv, _) = wallet.require_server().await.retry()?;
 
@@ -489,10 +507,6 @@ async fn request_lightning_send_htlcs(
 		warn!("failed to register lightning-send output vtxo transactions with server: {:#}", e);
 	}
 
-	// The movement was created up front in `start_lightning_send` and its id
-	// carried on the action, so re-driving `Start` updates that same movement
-	// rather than creating a duplicate.
-	let movement_id = send.movement_id;
 	wallet.store_locked_vtxos(
 		&htlc_vtxos,
 		Some(VtxoLockHolder::Action { id: send.id() })
