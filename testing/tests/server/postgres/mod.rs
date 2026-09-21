@@ -1716,6 +1716,109 @@ async fn lightning_payment_attempt_result_update() {
 	assert_eq!(attempt2.final_amount_msat, Some(9999));
 }
 
+/// xpay can give up while parts are still pending. Its error is stored then,
+/// without changing the status, and must survive the later update that marks
+/// the attempt failed.
+#[tokio::test]
+async fn lightning_payment_attempt_error_survives_until_failed() {
+	use server::database::ln::LightningPaymentStatus;
+
+	let mut ctx = TestContext::new_minimal("postgresd/lightning_payment_attempt_error_survives").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+
+	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
+	let invoice = Invoice::Bolt11(bolt11.clone());
+
+	db.write(async |t| t.store_lightning_payment_start(
+		node_id, &invoice, sat(1000), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"), Duration::from_secs(60),
+	).await).await.unwrap();
+
+	let read = async || db.read(async |t| t.get_latest_payment_attempt_by_payment_hash(
+		(&bolt11).into()
+	).await).await.unwrap().expect("attempt present");
+
+	let attempt = read().await;
+	db.write(async |t| t.update_lightning_payment_attempt_status(
+		&attempt, LightningPaymentStatus::Submitted, None,
+	).await).await.unwrap();
+
+	let submitted = read().await;
+	let error = "Failed after 2 attempts. Then routing failed: excessive cost";
+	let updated_at = db.write(async |t| t.set_lightning_payment_attempt_error(&submitted, error).await)
+		.await.unwrap();
+	assert!(updated_at.is_some(), "error update should return new updated_at");
+
+	// The attempt it was read from is now stale.
+	assert!(db.write(async |t| t.set_lightning_payment_attempt_error(&submitted, "stale").await)
+		.await.unwrap().is_none());
+
+	let pending = read().await;
+	assert_eq!(pending.status, LightningPaymentStatus::Submitted);
+	assert_eq!(pending.error.as_deref(), Some(error));
+
+	db.write(async |t| t.update_lightning_payment_attempt_result(
+		&pending, LightningPaymentStatus::Failed, None, None,
+	).await).await.unwrap().expect("update applies");
+
+	let failed = read().await;
+	assert_eq!(failed.status, LightningPaymentStatus::Failed);
+	assert_eq!(failed.error.as_deref(), Some(error));
+}
+
+/// A stored xpay error is cleared when the remaining parts succeed.
+#[tokio::test]
+async fn lightning_payment_attempt_error_cleared_on_success() {
+	use server::database::ln::LightningPaymentStatus;
+
+	let mut ctx = TestContext::new_minimal("postgresd/lightning_payment_attempt_error_cleared").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+
+	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
+	let invoice = Invoice::Bolt11(bolt11.clone());
+
+	db.write(async |t| t.store_lightning_payment_start(
+		node_id, &invoice, sat(1000), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"), Duration::from_secs(60),
+	).await).await.unwrap();
+
+	let read = async || db.read(async |t| t.get_latest_payment_attempt_by_payment_hash(
+		(&bolt11).into()
+	).await).await.unwrap().expect("attempt present");
+
+	let attempt = read().await;
+	db.write(async |t| t.update_lightning_payment_attempt_status(
+		&attempt, LightningPaymentStatus::Submitted, None,
+	).await).await.unwrap();
+
+	let submitted = read().await;
+	db.write(async |t| t.set_lightning_payment_attempt_error(&submitted, "routing failed").await)
+		.await.unwrap().expect("error update applies");
+
+	let pending = read().await;
+	assert_eq!(pending.error.as_deref(), Some("routing failed"));
+
+	db.write(async |t| t.update_lightning_payment_attempt_result(
+		&pending, LightningPaymentStatus::Succeeded, None, Some(1_000_000),
+	).await).await.unwrap().expect("update applies");
+
+	let succeeded = read().await;
+	assert_eq!(succeeded.status, LightningPaymentStatus::Succeeded);
+	assert_eq!(succeeded.error, None);
+}
+
 /// `mark_htlc_send_vtxos_ln_spent` flags a linked spendable vtxo `ln-spent`,
 /// including when its attempt has already reached `Succeeded`. The settlement
 /// path transitions the attempt to `Succeeded` before marking its vtxos, so the
