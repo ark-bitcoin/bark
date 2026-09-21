@@ -1843,7 +1843,7 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 
 	// Update status to Accepted
 	db.write(async |t| t.store_lightning_htlc_subscription_status(
-		sub_id, LightningHtlcSubscriptionStatus::Accepted, Some(BlockHeight::new(200)),
+		sub_id, LightningHtlcSubscriptionStatus::Accepted, Some(BlockHeight::new(200)), None,
 	).await).await.unwrap();
 
 	let latest = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await.unwrap().unwrap();
@@ -1852,7 +1852,7 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 
 	// Calling Accepted again should NOT change accepted_at (idempotency)
 	db.write(async |t| t.store_lightning_htlc_subscription_status(
-		sub_id, LightningHtlcSubscriptionStatus::Accepted, None,
+		sub_id, LightningHtlcSubscriptionStatus::Accepted, None, None,
 	).await).await.unwrap();
 	let latest2 = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await.unwrap().unwrap();
 	assert_eq!(latest.accepted_at, latest2.accepted_at, "accepted_at must not change on duplicate");
@@ -1878,20 +1878,35 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 	// The claim and the hold settler both write `Settled` for the same
 	// subscription, so the second write must be a no-op.
 	db.write(async |t| t.store_lightning_htlc_subscription_status(
-		sub_id, LightningHtlcSubscriptionStatus::Settled, None,
+		sub_id, LightningHtlcSubscriptionStatus::Settled, None, None,
 	).await).await.unwrap();
 	let settled = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await)
 		.await.unwrap().unwrap();
 	assert_eq!(settled.status, LightningHtlcSubscriptionStatus::Settled);
 
 	db.write(async |t| t.store_lightning_htlc_subscription_status(
-		sub_id, LightningHtlcSubscriptionStatus::Settled, None,
+		sub_id, LightningHtlcSubscriptionStatus::Settled, None, None,
 	).await).await.expect("duplicate Settled write must not error");
 	let settled2 = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await)
 		.await.unwrap().unwrap();
 	assert_eq!(settled2.status, LightningHtlcSubscriptionStatus::Settled);
 	assert_eq!(settled.updated_at, settled2.updated_at,
 		"duplicate status write must not touch the row");
+
+	// A caller that decided on a stale `Created` read must not be able to
+	// move a row that has since advanced. Without the source guard this
+	// would drag the settled subscription back to Accepted.
+	let stale = db.write(async |t| t.store_lightning_htlc_subscription_status(
+		sub_id, LightningHtlcSubscriptionStatus::Accepted, None,
+		Some(LightningHtlcSubscriptionStatus::Created),
+	).await).await.unwrap();
+	assert!(!stale, "a guarded transition from the wrong source must not apply");
+	let after = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await)
+		.await.unwrap().unwrap();
+	assert_eq!(after.status, LightningHtlcSubscriptionStatus::Settled,
+		"the row must keep the status it had");
+	assert_eq!(settled2.updated_at, after.updated_at,
+		"a rejected transition must not touch the row");
 }
 
 #[tokio::test]

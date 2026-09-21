@@ -395,46 +395,59 @@ impl LightningManager {
 		subscription: LightningHtlcSubscription,
 		htlc_send_expiry_height: BlockHeight,
 	) -> anyhow::Result<()> {
-		match subscription.status {
-			LightningHtlcSubscriptionStatus::Created => {
-				self.db.write(async |t| t.store_lightning_htlc_subscription_status(
-					subscription.id,
-					LightningHtlcSubscriptionStatus::Accepted,
-					Some(htlc_send_expiry_height),
-				).await).await?;
+		// `subscription` is a snapshot read without a lock, so its status can be
+		// stale. The promotion is guarded on `Created` in the same statement, and
+		// when it does not apply we re-read to report the race instead of acting
+		// on what we thought we saw.
+		let promoted = subscription.status == LightningHtlcSubscriptionStatus::Created
+			&& self.db.write(async |t| t.store_lightning_htlc_subscription_status(
+				subscription.id,
+				LightningHtlcSubscriptionStatus::Accepted,
+				Some(htlc_send_expiry_height),
+				Some(LightningHtlcSubscriptionStatus::Created),
+			).await).await?;
 
-				let payment_hash = PaymentHash::from(&subscription.invoice);
-				// Wake check_lightning_receive so the client sees Accepted.
-				let _ = self.payment_update_tx.send(payment_hash);
-
-				// Post mailbox notification so the client knows to come online and claim
-				post_lightning_receive_notification(
-					&self.db, &self.mailbox_manager, payment_hash, subscription.amount(),
-				).await;
-
-				// Cancel the hold invoice on the receiving node: the intra-Ark
-				// payment settles off-CLN, so we don't want the HTLCs locked.
-				// NB: we only issue the RPC here, not the full cancel_invoice
-				// flow - we just set the subscription to Accepted, not Canceled.
-				let mut hold_client = self.node_by_id(subscription.lightning_node_id)
-					.context("invoice cannot be canceled: node is now offline")?
-					.hold_rpc.context("node doesn't support hold anymore")?;
-				hold_client.cancel(hold_plugin::CancelRequest {
-					payment_hash: payment_hash.to_vec(),
-				}).await?;
-			},
-			LightningHtlcSubscriptionStatus::Accepted |
-			LightningHtlcSubscriptionStatus::HtlcsReady |
-			LightningHtlcSubscriptionStatus::Settled => {
+		if !promoted {
+			let current = self.db
+				.read(async |t| t.get_htlc_subscription_by_id(subscription.id).await).await?
+				.context("htlc subscription disappeared")?
+				.status;
+			return Err(match current {
 				// Someone already paid the invoice (external LN acceptance or a
 				// prior initiate). Not an internal fault; the attempt is failed
 				// so the client can revoke its HTLC VTXOs.
-				return Err(PayInvoiceRace::AlreadyBeingPaid(subscription.status).into());
-			}
-			LightningHtlcSubscriptionStatus::Canceled => {
-				return Err(PayInvoiceRace::Canceled.into());
-			}
-		};
+				LightningHtlcSubscriptionStatus::Accepted
+					| LightningHtlcSubscriptionStatus::HtlcsReady
+					| LightningHtlcSubscriptionStatus::Settled
+				=> PayInvoiceRace::AlreadyBeingPaid(current).into(),
+				LightningHtlcSubscriptionStatus::Canceled => PayInvoiceRace::Canceled.into(),
+				// The guarded update applies to every Created row, so this is
+				// unreachable unless the guard itself is wrong.
+				LightningHtlcSubscriptionStatus::Created => anyhow!(
+					"htlc subscription {} is Created but was not promoted", subscription.id,
+				),
+			});
+		}
+
+		let payment_hash = PaymentHash::from(&subscription.invoice);
+		// Wake check_lightning_receive so the client sees Accepted.
+		let _ = self.payment_update_tx.send(payment_hash);
+
+		// Post mailbox notification so the client knows to come online and claim
+		post_lightning_receive_notification(
+			&self.db, &self.mailbox_manager, payment_hash, subscription.amount(),
+		).await;
+
+		// Cancel the hold invoice on the receiving node: the intra-Ark
+		// payment settles off-CLN, so we don't want the HTLCs locked.
+		// NB: we only issue the RPC here, not the full cancel_invoice
+		// flow - we just set the subscription to Accepted, not Canceled.
+		let mut hold_client = self.node_by_id(subscription.lightning_node_id)
+			.context("invoice cannot be canceled: node is now offline")?
+			.hold_rpc.context("node doesn't support hold anymore")?;
+		hold_client.cancel(hold_plugin::CancelRequest {
+			payment_hash: payment_hash.to_vec(),
+		}).await?;
 
 		Ok(())
 	}
@@ -608,7 +621,8 @@ impl LightningManager {
 		let newly_settled = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			subscription_id,
 			LightningHtlcSubscriptionStatus::Settled,
-			None
+			None,
+			None,
 		).await).await?;
 		let _ = self.payment_update_tx.send(payment_hash);
 
@@ -644,10 +658,13 @@ impl LightningManager {
 			payment_hash: payment_hash.to_vec(),
 		}).await?;
 
+		// The snapshot predates the hold RPC above, so guard on the status we
+		// saw. A subscription settled in the meantime keeps its settlement.
 		let newly_canceled = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			id,
 			LightningHtlcSubscriptionStatus::Canceled,
 			None,
+			Some(subscription.status),
 		).await).await?;
 		self.notify_payment_update(payment_hash);
 

@@ -505,11 +505,15 @@ impl<'t> Tx<'t> {
 	/// race would otherwise re-run the trigger on an unchanged row.
 	///
 	/// Returns `true` if the status transitioned.
+	/// `expected_from` restricts the transition to that source status, applied
+	/// in the same statement so a caller that decided on a stale read cannot
+	/// move a row that has since advanced. Pass `None` to accept any source.
 	pub async fn store_lightning_htlc_subscription_status(
 		&self,
 		id: i64,
 		status: LightningHtlcSubscriptionStatus,
 		lowest_incoming_htlc_expiry: Option<BlockHeight>,
+		expected_from: Option<LightningHtlcSubscriptionStatus>,
 	) -> anyhow::Result<bool> {
 		let accepted = status == LightningHtlcSubscriptionStatus::Accepted;
 		let expiry = lowest_incoming_htlc_expiry.map(i64::from);
@@ -523,9 +527,12 @@ impl<'t> Tx<'t> {
 				status = $2,
 				lowest_incoming_htlc_expiry = COALESCE($3, lowest_incoming_htlc_expiry),
 				accepted_at = CASE WHEN $4 THEN NOW() ELSE accepted_at END
-			WHERE id = $1 AND status != $2;
+			WHERE id = $1 AND status != $2
+				AND ($5::lightning_htlc_subscription_status IS NULL OR status = $5);
 		").await?;
-		let rows_affected = self.execute(&stmt, &[&id, &status, &expiry, &accepted]).await?;
+		let rows_affected = self.execute(
+			&stmt, &[&id, &status, &expiry, &accepted, &expected_from],
+		).await?;
 
 		Ok(rows_affected == 1)
 	}
