@@ -35,6 +35,28 @@ pub async fn wait_for_onchain_balance(barkd: &Barkd, expected: Amount) {
 	}
 }
 
+/// Poll until the daemon's chain tip reaches `height`.
+///
+/// `GET /tip` reports the cached tip the refresh decision reads.
+pub async fn wait_for_tip(barkd: &Barkd, height: u64) {
+	let timeout = Duration::from_secs(15);
+	let start = std::time::Instant::now();
+
+	loop {
+		let tip = barkd.tip().await.tip_height;
+		if u64::from(tip) >= height {
+			return;
+		}
+		if start.elapsed() > timeout {
+			panic!(
+				"daemon tip did not reach {} within {:?} (current: {})",
+				height, timeout, tip,
+			);
+		}
+		tokio::time::sleep(poll_interval()).await;
+	}
+}
+
 /// Wait for the daemon's background sync to register all confirmed boards
 /// as spendable VTXOs. Subscribes to the daemon's notification stream and
 /// re-checks the pending set on every wallet event, so the wait ends the

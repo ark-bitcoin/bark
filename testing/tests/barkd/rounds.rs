@@ -12,7 +12,9 @@ use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
 
-use super::helpers::{wait_for_boards_synced, wait_for_onchain_balance, wait_for_rounds_complete};
+use super::helpers::{
+	wait_for_boards_synced, wait_for_onchain_balance, wait_for_rounds_complete, wait_for_tip,
+};
 
 /// A captaind proxy that rejects round submissions containing a designated
 /// "unusable" VTXO, mimicking the real server's response: `InvalidArgument`
@@ -117,6 +119,10 @@ async fn maintenance_refresh_auto_barkd() {
 	// Push the vtxo within the refresh expiry threshold so the daemon
 	// considers it due for maintenance.
 	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
+
+	// `generate_blocks` only waits for bitcoind. The daemon joins off its own
+	// cached tip, so let it catch up or it sits the round out.
+	wait_for_tip(&barkd, ctx.bitcoind().get_block_count().await).await;
 
 	// Subscribe before triggering so we can't miss the log.
 	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
