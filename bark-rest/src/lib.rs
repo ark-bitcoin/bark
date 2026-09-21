@@ -6,6 +6,8 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod error;
+#[cfg(feature = "web-ui")]
+pub mod web;
 
 mod notifications;
 
@@ -204,6 +206,9 @@ pub struct ServerState {
 	/// Note: this map is only stored in memory and not persisted
 	/// to the database, any server restart will clear the map.
 	websocket_tickets: tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>,
+
+	#[cfg(feature = "web-ui")]
+	pub(crate) web: Option<web::WebConfig>,
 }
 
 /// Builder for [`ServerState`].
@@ -221,6 +226,8 @@ pub struct ServerStateBuilder {
 	on_wallet_create: Option<Box<OnWalletCreate>>,
 	on_wallet_delete: Option<Box<OnWalletDelete>>,
 	on_get_mnemonic: Option<Box<OnGetMnemonic>>,
+	#[cfg(feature = "web-ui")]
+	web: Option<web::WebConfig>,
 }
 
 impl ServerStateBuilder {
@@ -231,6 +238,8 @@ impl ServerStateBuilder {
 			on_wallet_create: None,
 			on_wallet_delete: None,
 			on_get_mnemonic: None,
+			#[cfg(feature = "web-ui")]
+			web: None,
 		}
 	}
 
@@ -259,12 +268,17 @@ impl ServerStateBuilder {
 		self
 	}
 
+	#[cfg(feature = "web-ui")]
+	pub fn web(mut self, web: impl Into<Option<web::WebConfig>>) -> Self {
+		self.web = web.into();
+		self
+	}
+
 	pub fn build(self, shutdown: CancellationToken) -> ServerState {
 		let wallet_opt = match &self.wallet {
 			Some(wallet) => Some(ServerWallet::new(wallet.clone(), shutdown.clone())),
 			None => None,
 		};
-
 		ServerState {
 			wallet: parking_lot::RwLock::new(wallet_opt),
 			shutdown: shutdown,
@@ -274,6 +288,8 @@ impl ServerStateBuilder {
 			on_get_mnemonic: self.on_get_mnemonic,
 			wallet_lifecycle: tokio::sync::Mutex::new(()),
 			websocket_tickets: tokio::sync::RwLock::new(HashMap::new()),
+			#[cfg(feature = "web-ui")]
+			web: self.web,
 		}
 	}
 }
@@ -341,22 +357,42 @@ impl RestServer {
 		let router = router
 			.route("/ping", get(ping))
 			.nest("/api/v1", api::v1::router(&state));
-		#[cfg(feature = "swagger-ui")]
-		let router = router
-			.merge(utoipa_swagger_ui::SwaggerUi::new("/swagger-ui")
-				.url("/api-docs/openapi.json", _api.clone()),
-			);
-		let router = router
-			.layer(cors_layer(config))
-			.layer(axum::middleware::from_fn(error::log_errors))
-			.with_state(state)
-			.fallback(error::route_not_found);
 
-		// Run the server
-		log::info!("Server starting on http://{}", socket_addr);
+		#[cfg(feature = "swagger-ui")]
+		let router = {
+			log::info!("Swagger UI is hosted on http://{}/swagger-ui", socket_addr);
+			router.merge(
+				utoipa_swagger_ui::SwaggerUi::new("/swagger-ui")
+					.url("/api-docs/openapi.json", _api.clone()),
+			)
+		};
+
+		#[cfg(feature = "web-ui")]
+		let (router, web_ui_attached) = web::attach_web_routes(router, &state);
+
+		#[cfg(not(feature = "web-ui"))]
+		let (router, web_ui_attached) = (router.fallback(error::route_not_found), false);
 
 		let listener = tokio::net::TcpListener::bind(socket_addr).await
 			.context("Failed to bind to address")?;
+
+		log::info!("Server starting on http://{}", socket_addr);
+
+		if web_ui_attached {
+			if let Some(token) = state.auth_token() {
+				log::info!("The web-ui is available at http://{}/?auth_token={}",
+					socket_addr, token.encode(),
+				);
+			} else {
+				log::info!("The web-ui is available at http://{}/", socket_addr);
+			}
+		}
+
+		// then finish running the server
+		let router = router
+			.layer(cors_layer(config))
+			.layer(axum::middleware::from_fn(error::log_errors))
+			.with_state(state);
 
 		let shutdown2 = shutdown.clone();
 		let jh = tokio::spawn(async move {

@@ -3920,7 +3920,7 @@
               "string",
               "null"
             ],
-            "description": "The Ark server to use for the wallet.\nOptional when a config.toml already exists in the datadir."
+            "description": "The Ark server to use for the wallet.\nOptional when a config.toml already exists in the datadir or when\nthe network has a default Ark server (mainnet and signet)."
           },
           "ark_server_access_token": {
             "type": [
@@ -3946,7 +3946,7 @@
               },
               {
                 "$ref": "#/components/schemas/ChainSourceConfig",
-                "description": "The chain source to use for the wallet.\nOptional when a config.toml already exists in the datadir."
+                "description": "The chain source to use for the wallet.\nOptional when a config.toml already exists in the datadir or when\nthe network has a default chain source (mainnet, signet and\nmutinynet)."
               }
             ]
           },

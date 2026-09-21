@@ -191,7 +191,8 @@ pub struct MailboxSyncResponse {
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct CreateWalletRequest {
 	/// The Ark server to use for the wallet.
-	/// Optional when a config.toml already exists in the datadir.
+	/// Optional when a config.toml already exists in the datadir or when
+	/// the network has a default Ark server (mainnet and signet).
 	pub ark_server: Option<String>,
 	/// An access token for a private Ark server.
 	///
@@ -203,7 +204,9 @@ pub struct CreateWalletRequest {
 	)]
 	pub ark_server_access_token: Option<String>,
 	/// The chain source to use for the wallet.
-	/// Optional when a config.toml already exists in the datadir.
+	/// Optional when a config.toml already exists in the datadir or when
+	/// the network has a default chain source (mainnet, signet and
+	/// mutinynet).
 	pub chain_source: Option<ChainSourceConfig>,
 	/// The optional mnemonic to use for the wallet
 	pub mnemonic: Option<String>,

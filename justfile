@@ -1,6 +1,9 @@
 # Find the target directory
 CARGO_TARGET := `cargo metadata --format-version 1 --no-deps | jq -r '.target_directory'`
 JUSTFILE_DIR := justfile_directory()
+# The rust target triple of this machine, the default for single-target nix
+# builds. Matches the target suffixes of the flake's release packages.
+HOST_TARGET := `rustc -vV | sed -n 's/^host: //p'`
 export CAPTAIND_EXEC := env("CAPTAIND_EXEC", CARGO_TARGET / "debug" / "captaind")
 export WATCHMAND_EXEC := env("WATCHMAND_EXEC", CARGO_TARGET / "debug" / "watchmand")
 export BARK_EXEC := env("BARK_EXEC", CARGO_TARGET / "debug" / "bark")
@@ -487,7 +490,7 @@ _nix-build-collect package target:
 	#!/usr/bin/env bash
 	set -euo pipefail
 	mkdir -p build
-	out=$(nix build --no-link --print-out-paths ".#{{package}}-{{target}}")
+	out=$(nix build --no-link --print-out-paths ${NIX_BUILD_FLAGS:-} ".#{{package}}-{{target}}")
 	for bin in "$out"/bin/*
 	do
 		name=$(basename "$bin")
@@ -499,6 +502,14 @@ _nix-build-collect package target:
 		install -m 755 "$bin" "$dest"
 		echo "$dest"
 	done
+
+# Like _nix-build-collect bark, but embeds a specific bark-web version (any
+# ref on the bark-web repo: a vX.Y.Z tag, a branch, or a commit) instead of
+# the flake.lock pin, through the BARK_WEB_VERSION env var (which requires
+# an impure build). Builds for this machine's target unless given another.
+nix-build-bark-web-version version target=HOST_TARGET:
+	BARK_WEB_VERSION={{version}} NIX_BUILD_FLAGS=--impure \
+		just _nix-build-collect bark {{target}}
 
 nix-build-bark-all:
 	#!/usr/bin/env bash

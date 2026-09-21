@@ -41,6 +41,18 @@ fn default_datadir() -> String {
 	}).join(".bark").display().to_string()
 }
 
+fn ui_default_chain_source() -> String {
+	let mut config = ConfigOpts::default();
+	config.fill_network_defaults(bark::BarkNetwork::Mainnet);
+	config.esplora.expect("no esplora in mainnet default")
+}
+
+fn ui_default_ark_server() -> String {
+	let mut config = ConfigOpts::default();
+	config.fill_network_defaults(bark::BarkNetwork::Mainnet);
+	config.ark.expect("no ark server in mainnet default")
+}
+
 #[derive(Parser)]
 #[command(name = "barkd", about = "Bark daemon", version = FULL_VERSION)]
 struct Cli {
@@ -129,6 +141,28 @@ struct Cli {
 	/// something else restricts who can reach the port.
 	#[arg(long)]
 	dangerously_allow_remote_no_auth: bool,
+
+	/// Don't serve the embedded bark-web wallet UI.
+	#[cfg(feature = "barkd-web-ui")]
+	#[arg(long, env = "BARKD_NO_UI", value_parser = BoolishValueParser::new())]
+	no_ui: bool,
+
+	/// Ark server URL the UI's create-wallet flow uses while no wallet is
+	/// loaded
+	#[cfg(feature = "barkd-web-ui")]
+	#[arg(long, env = "BARKD_UI_DEFAULT_ARK_SERVER", default_value_t = ui_default_ark_server())]
+	ui_default_ark_server: String,
+
+	/// Chain source (esplora) URL the UI's create-wallet flow uses while no
+	/// wallet is loaded
+	#[cfg(feature = "barkd-web-ui")]
+	#[arg(long, env = "BARKD_UI_DEFAULT_CHAIN_SOURCE", default_value_t = ui_default_chain_source())]
+	ui_default_chain_source: String,
+
+	/// Network the UI's create-wallet flow uses while no wallet is loaded
+	#[cfg(feature = "barkd-web-ui")]
+	#[arg(long, env = "BARKD_UI_DEFAULT_NETWORK", default_value = "mainnet")]
+	ui_default_network: String,
 }
 
 #[derive(Subcommand)]
@@ -475,13 +509,28 @@ async fn main() -> anyhow::Result<()>{
 	};
 
 	let inner_wallet = wallet_opt.as_ref().map(|w| w.clone());
-	let state = ServerState::builder()
+	let builder = ServerState::builder()
 		.wallet(wallet_opt)
 		.auth_token(auth_token)
 		.on_wallet_create(on_wallet_create)
 		.on_wallet_delete(on_wallet_delete)
-		.on_get_mnemonic(on_get_mnemonic)
-		.build(shutdown.clone());
+		.on_get_mnemonic(on_get_mnemonic);
+
+	// Serve the embedded bark-web SPA from the same origin as the REST API.
+	#[cfg(feature = "barkd-web-ui")]
+	let builder = builder.web(if cli.no_ui {
+		None
+	} else {
+		Some(bark_rest::web::WebConfig {
+			ark_server: cli.ui_default_ark_server.clone(),
+			chain_source: cli.ui_default_chain_source.clone(),
+			network: cli.ui_default_network.clone(),
+			wallet_data_path: cli.datadir.clone(),
+			datadir: datadir.clone(),
+		})
+	});
+
+	let state = builder.build(shutdown.clone());
 	let server = RestServer::start(&config, Arc::new(state), shutdown.clone()).await?;
 
 	run_shutdown_signal_listener(shutdown.clone()).await;
@@ -500,6 +549,14 @@ async fn main() -> anyhow::Result<()>{
 #[cfg(test)]
 mod test {
 	use super::*;
+
+	#[test]
+	fn defaults_dont_panic() {
+		// assert that mainnet_default_chain_source does not panic
+		let _ = ui_default_chain_source();
+		// assert that mainnet_default_ark_server does not panic
+		let _ = ui_default_ark_server();
+	}
 
 	/// `--expose-mnemonic` is a bare presence flag: absent means the mnemonic
 	/// endpoint is disabled, present means enabled. This guards both the

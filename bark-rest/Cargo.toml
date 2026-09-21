@@ -11,6 +11,10 @@ description = "a REST server built on top of the bark-wallet crate"
 default = ["native", "swagger-ui"]
 native = ["bark-wallet/native"]
 swagger-ui = ["dep:utoipa-swagger-ui"]
+# Embed and serve the bark-web SPA from the directory the BARK_WEB_DIST env
+# var points at during the build. Without the var no web UI is served.
+# See `src/web.rs`.
+web-ui = ["dep:rust-embed"]
 
 [dependencies]
 ark-lib = { version = "0.7.1", path = "../lib" }
@@ -25,7 +29,7 @@ chrono.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs"] }
 tokio-util.workspace = true
 tracing.workspace = true
 tower.workspace = true
@@ -38,3 +42,4 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-axum = "0.2.0"
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"], optional = true }
+rust-embed = { version = "8.5", features = ["mime-guess", "interpolate-folder-path"], optional = true }

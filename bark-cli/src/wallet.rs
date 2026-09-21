@@ -142,12 +142,16 @@ pub struct ConfigOpts {
 
 impl ConfigOpts {
 	/// Fill the default required config fields based on network
-	fn fill_network_defaults(&mut self, net: BarkNetwork) {
+	pub fn fill_network_defaults(&mut self, net: BarkNetwork) {
 		// Fallback to our default mainnet
 		if net == BarkNetwork::Mainnet {
 			// Only do it when the user did *not* specify either --esplora or --bitcoind.
 			if self.esplora.is_none() && self.bitcoind.is_none() {
 				self.esplora = Some("https://mempool.second.tech/api".to_owned());
+			}
+
+			if self.ark.is_none() {
+				self.ark = Some("https://ark.second.tech/".to_owned());
 			}
 		}
 
@@ -413,12 +417,14 @@ async fn try_create_wallet(
 				"error loading existing config file at {}", config_path.display(),
 			))?
 		},
-		(false, true) => {
+		// Without config args the network defaults alone can suffice;
+		// validate rejects networks that lack a default chain source
+		// (e.g. regtest).
+		(false, _) => {
 			opts.config.fill_network_defaults(net);
 			opts.config.validate().context("invalid config options")?;
 			opts.config.write_to_file(net.as_bitcoin(), config_path)?
 		},
-		(false, false) => bail!("You need to provide config flags or a config file"),
 		(true, true) => bail!("Cannot provide an existing config file and config flags"),
 	};
 

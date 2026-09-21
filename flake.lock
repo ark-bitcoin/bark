@@ -1,5 +1,29 @@
 {
   "nodes": {
+    "bark-web": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1789727824,
+        "narHash": "sha256-GjwXhd0taPmPYcC3UQm89PrdMXRyaDmnI+jsuug9M9Q=",
+        "owner": "ark-bitcoin",
+        "repo": "bark-web",
+        "rev": "dad02198df52fe1f6c8d0d4cfde74d42927dbfe2",
+        "type": "gitlab"
+      },
+      "original": {
+        "owner": "ark-bitcoin",
+        "ref": "v0.9.0",
+        "repo": "bark-web",
+        "type": "gitlab"
+      }
+    },
     "crane": {
       "locked": {
         "lastModified": 1776635034,
@@ -70,6 +94,7 @@
     },
     "root": {
       "inputs": {
+        "bark-web": "bark-web",
         "crane": "crane",
         "fenix": "fenix",
         "flake-utils": "flake-utils",

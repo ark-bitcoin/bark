@@ -4,10 +4,10 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**ark_server** | Option<**String**> | The Ark server to use for the wallet. Optional when a config.toml already exists in the datadir. | [optional]
+**ark_server** | Option<**String**> | The Ark server to use for the wallet. Optional when a config.toml already exists in the datadir or when the network has a default Ark server (mainnet and signet). | [optional]
 **ark_server_access_token** | Option<**String**> | An access token for a private Ark server.  **Deprecated**: access tokens are no longer enforced by the server; this field will be removed in a future release. | [optional]
 **birthday_height** | Option<**i32**> | An optional birthday height to start syncing the wallet from | [optional]
-**chain_source** | Option<[**models::ChainSourceConfig**](ChainSourceConfig.md)> | The chain source to use for the wallet. Optional when a config.toml already exists in the datadir. | [optional]
+**chain_source** | Option<[**models::ChainSourceConfig**](ChainSourceConfig.md)> | The chain source to use for the wallet. Optional when a config.toml already exists in the datadir or when the network has a default chain source (mainnet, signet and mutinynet). | [optional]
 **force** | Option<**bool**> | Proceed even if the datadir contains unexpected files | [optional]
 **gap_limit** | Option<**i32**> | How many consecutive unused key indices a VTXO key scan may cross before it concludes the wallet doesn't own a recovered/imported VTXO. | [optional]
 **mnemonic** | Option<**String**> | The optional mnemonic to use for the wallet | [optional]
