@@ -222,7 +222,11 @@ pub struct MessageVerification {
 	pub valid: bool,
 }
 
-/// The different balances of a Bark wallet, broken down by state.
+/// The different balances of a Bark wallet.
+///
+/// `spendable_sat` counts the spendable VTXOs, `needs_refresh_sat` the ones
+/// that have to be refreshed before they can be sent again, and every other
+/// field what an operation in progress holds, so the fields never overlap.
 ///
 /// All amounts are in sats.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -233,13 +237,21 @@ pub struct Balance {
 	#[serde(rename = "spendable_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub spendable: Amount,
+	/// Sats in VTXOs that can no longer be sent in an arkoor payment because
+	/// they have expired or their exit depth has reached the server's limit.
+	/// They can still be offboarded, exited or refreshed, but are not part of
+	/// `spendable_sat` until maintenance has refreshed them.
+	#[serde(default, rename = "needs_refresh_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64, required))]
+	pub needs_refresh: Amount,
 	/// Sats locked in an outgoing Lightning payment that has not yet
 	/// settled.
 	#[serde(rename = "pending_lightning_send_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub pending_lightning_send: Amount,
-	/// Sats from an incoming Lightning payment that can be claimed but
-	/// have not yet been swept into a spendable VTXO.
+	/// Sats in HTLC VTXOs of an incoming Lightning payment whose preimage has
+	/// been revealed but which have not been swapped for spendable VTXOs yet.
+	/// A payment that can still be cancelled is not counted.
 	#[serde(rename = "claimable_lightning_receive_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub claimable_lightning_receive: Amount,
@@ -253,6 +265,18 @@ pub struct Balance {
 	#[serde(rename = "pending_board_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub pending_board: Amount,
+	/// Sats locked in an outgoing arkoor payment that has not completed yet:
+	/// the whole input amount, until the send finalizes and the change comes
+	/// back as spendable.
+	#[serde(default, rename = "pending_arkoor_send_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64, required))]
+	pub pending_arkoor_send: Amount,
+	/// Sats locked in an offboard whose transaction has not been broadcast
+	/// yet, including any change that comes back. Once the transaction is on
+	/// the network the sats belong to the on-chain wallet.
+	#[serde(default, rename = "pending_offboard_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64, required))]
+	pub pending_offboard: Amount,
 	/// Sats held in VTXOs whose unilateral exit has committed on-chain but which
 	/// haven't yet been drained to the onchain wallet: their state is
 	/// [`VtxoStateInfo::Exited`] and their exit has not reached
@@ -266,11 +290,14 @@ impl From<bark::Balance> for Balance {
 	fn from(v: bark::Balance) -> Self {
 		Balance {
 			spendable: v.spendable,
+			needs_refresh: v.needs_refresh,
 			pending_in_round: v.pending_in_round,
 			pending_lightning_send: v.pending_lightning_send,
 			claimable_lightning_receive: v.claimable_lightning_receive,
 			pending_exit: v.pending_exit,
 			pending_board: v.pending_board,
+			pending_arkoor_send: v.pending_arkoor_send,
+			pending_offboard: v.pending_offboard,
 		}
 	}
 }
