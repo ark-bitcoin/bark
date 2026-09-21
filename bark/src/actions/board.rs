@@ -122,7 +122,8 @@ pub enum Progress {
 	/// being retried (with the vtxo left Locked) until it succeeds, the board exits,
 	/// or it expires.
 	Confirming {
-		/// Most recent reason a registration attempt failed, for diagnostics.
+		/// Most recent reason the board parked without progress, for
+		/// diagnostics.
 		last_park_error: Option<String>,
 	},
 }
@@ -171,21 +172,25 @@ impl WalletAction for Board {
 		}
 	}
 
-	/// The funding tx is already on-chain by the time the action runs, so
-	/// we can never safely fail-and-release. Registration failures are
-	/// handled inline in `Confirming` (kept retrying, vtxo left Locked),
-	/// so an abort reaching here is unexpected; re-evaluate from
-	/// `Confirming` rather than tearing the board down. Keep
-	/// `Broadcasting` so its `signed_vtxo` survives for the next drive.
-	async fn on_abort(self, _wallet: &Wallet, _error: anyhow::Error) -> Advance<Self> {
+	/// The funding tx may already be on-chain by the time the action
+	/// runs, so we can never safely fail-and-release. Registration
+	/// failures are handled inline in `Confirming` (kept retrying, vtxo
+	/// left Locked), so the only abort that reaches here is a checkpoint
+	/// without a funding transaction, which no re-drive can heal. Park
+	/// with the reason, so the caller hears it and the checkpoint shows
+	/// why the board is stuck. Keep `Broadcasting` so its `signed_vtxo`
+	/// survives for the next drive.
+	async fn on_abort(self, _wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		let progress = match self.progress {
 			broadcasting @ Progress::Broadcasting { .. } => broadcasting,
-			Progress::Confirming { .. } => Progress::Confirming { last_park_error: None },
+			Progress::Confirming { .. } => Progress::Confirming {
+				last_park_error: Some(format!("{:#}", error)),
+			},
 		};
 		Advance::Park {
 			state: Board { progress, ..self },
 			wake_after: None,
-			error: None,
+			error: Some(error),
 		}
 	}
 }
