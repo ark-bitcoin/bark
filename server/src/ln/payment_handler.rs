@@ -63,6 +63,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 				// Falls back to the stored error: `update_..._status` keeps it
 				// when handed `None`.
 				Some(LightningFailureKind::classify(error.or(attempt.error.as_deref()))),
+				None,
 			);
 		}
 
@@ -151,6 +152,11 @@ impl<'a> PaymentAttemptHandler<'a> {
 				let failure = (status == LightningPaymentStatus::Failed).then(||
 					LightningFailureKind::classify(payment_error.or(attempt.error.as_deref()))
 				);
+				// Utilisation only means something once a routing fee was
+				// actually paid.
+				let utilisation = (status == LightningPaymentStatus::Succeeded)
+					.then(|| attempt.routing_budget_utilisation_ppm(final_amount_msat))
+					.flatten();
 				// Attempted amount (not final_amount_msat / CLN's amount_sent_msat)
 				// so failed/succeeded volumes stay comparable.
 				telemetry::add_lightning_payment(
@@ -161,6 +167,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 					attempt.is_self_payment(),
 					attempt.user_agent.as_deref(),
 					failure,
+					utilisation,
 				);
 			}
 		}

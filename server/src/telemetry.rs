@@ -469,6 +469,7 @@ struct Metrics {
 	unilateral_exit_counter: Counter<u64>,
 	unilateral_exit_volume: Counter<u64>,
 	lightning_payment_sync_counter: Counter<u64>,
+	lightning_routing_budget_utilisation_ppm: Histogram<u64>,
 	lightning_payment_sync_queue_gauge: Gauge<u64>,
 	lightning_open_invoices_gauge: Gauge<u64>,
 	vtxo_pool_expiry_blocks_bucket_gauge: Gauge<u64>,
@@ -720,6 +721,15 @@ impl Metrics {
 			.with_unit("sat")
 			.build();
 		let lightning_payment_sync_counter = meter.u64_counter("lightning_payment_sync_counter").build();
+		let lightning_routing_budget_utilisation_ppm =
+			meter.u64_histogram("lightning_routing_budget_utilisation_ppm")
+				// Fraction of the budget; 1M ppm is all of it.
+				.with_boundaries(vec![
+					0.0, 50_000.0, 100_000.0, 200_000.0, 300_000.0,
+					400_000.0, 500_000.0, 600_000.0, 700_000.0,
+					800_000.0, 900_000.0, 950_000.0, 1_000_000.0,
+				])
+				.build();
 		let lightning_payment_sync_queue_gauge = meter.u64_gauge("lightning_payment_sync_queue_gauge").build();
 		let lightning_open_invoices_gauge = meter.u64_gauge("lightning_open_invoices_gauge").build();
 		// Prometheus-histogram-shaped view of the VTXO pool by blocks-until-expiry.
@@ -869,6 +879,7 @@ impl Metrics {
 			unilateral_exit_counter,
 			unilateral_exit_volume,
 			lightning_payment_sync_counter,
+			lightning_routing_budget_utilisation_ppm,
 			lightning_payment_sync_queue_gauge,
 			lightning_open_invoices_gauge,
 			vtxo_pool_expiry_blocks_bucket_gauge,
@@ -1427,6 +1438,7 @@ pub fn add_lightning_payment(
 	is_self_payment: bool,
 	user_agent: Option<&str>,
 	failure: Option<crate::ln::LightningFailureKind>,
+	utilisation_ppm: Option<u64>,
 ) {
 	if let Some(m) = TELEMETRY.get() {
 		let user_agent_name = user_agent.map(bucket_user_agent).unwrap_or("unknown");
@@ -1445,6 +1457,9 @@ pub fn add_lightning_payment(
 		}
 		m.lightning_payment_counter.add(1, &attrs);
 		m.lightning_payment_volume.add(amount_msat / 1000, &attrs);
+		if let Some(ppm) = utilisation_ppm {
+			m.lightning_routing_budget_utilisation_ppm.record(ppm, &attrs);
+		}
 	}
 }
 

@@ -112,6 +112,9 @@ pub struct LightningPaymentAttempt {
 	/// How long the lightning node was told to keep retrying the payment.
 	/// `None` for pre-V66 rows, for which `cln_xpay_timeout` applies.
 	pub retry_for: Option<Duration>,
+	/// Routing budget passed to CLN as xpay's `maxfee`. `None` for pre-V68
+	/// rows and intra-Ark self-payments, which never reach CLN.
+	pub max_routing_fee: Option<Amount>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
 }
@@ -120,6 +123,17 @@ impl LightningPaymentAttempt {
 	/// Whether this attempt is an intra-Ark self-payment.
 	pub fn is_self_payment(&self) -> bool {
 		self.lightning_htlc_subscription_id.is_some()
+	}
+
+	/// Routing fee as ppm of the authorised budget. `None` when either side is
+	/// unknown: pre-V68 rows, intra-Ark self-pay, or an unpaid attempt.
+	pub fn routing_budget_utilisation_ppm(&self, final_amount_msat: Option<u64>) -> Option<u64> {
+		let budget_msat = self.max_routing_fee?.to_msat();
+		if budget_msat == 0 {
+			return None;
+		}
+		let routing_msat = final_amount_msat?.checked_sub(self.amount_msat)?;
+		Some(routing_msat.saturating_mul(1_000_000) / budget_msat)
 	}
 
 	/// Derive routing fee from CLN's `amount_sent_msat`; 0 when unset
@@ -153,6 +167,10 @@ impl TryFrom<Row> for LightningPaymentAttempt {
 			user_agent: row.get("user_agent"),
 			retry_for: row.get::<_, Option<i32>>("retry_for_secs")
 				.map(|s| Duration::from_secs(u64::try_from(s).expect("negative retry_for_secs in db row"))),
+			max_routing_fee: row.get::<_, Option<i64>>("max_routing_fee_msat")
+				.map(|f| Amount::from_msat_ceil(
+					u64::try_from(f).expect("negative max_routing_fee_msat in db row"),
+				)),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})
