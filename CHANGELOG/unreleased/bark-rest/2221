@@ -1,0 +1,5 @@
+- `barkd` now can host the `bark-web` UI web wallet
+  - bark releases will include latest bark-web, `BARK_WEB_VERSION` on (Nix)
+    compilation can be used to change what version you want to include
+  - `--no-ui` or `BARKD_NO_UI` will disable hosting the wallet
+  [#2221](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2221

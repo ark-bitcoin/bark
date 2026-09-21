@@ -1,5 +1,8 @@
 {
 	craneLib, pkgs, lib,
+	# The built bark-web distribution to embed into barkd, normally the
+	# `dist` package of the bark-web flake input.
+	barkWeb,
 	gitHash ? "unknown",
 	targets ? [ "x86_64-unknown-linux-gnu" ],
 	# Path to a macOS SDK used when cross-compiling the apple-darwin targets.
@@ -64,6 +67,9 @@ let
 		# the swagger-ui distribution; without it the script tries to download
 		# from GitHub, which the sandbox forbids.
 		SWAGGER_UI_DOWNLOAD_URL = "file://${swaggerUi}";
+		# Points the bark-rest build script at a store-pinned copy of the
+		# bark-web distribution so release barkd binaries ship the web UI.
+		BARK_WEB_DIST = "${barkWeb}";
 	};
 
 	# The glibc floor for the gnu targets. Zig links against glibc version
@@ -176,7 +182,10 @@ let
 				# system libraries, which is required when cross-compiling.
 				buildPhaseCargoCommand = ''
 					cargoBuildLog=$(mktemp cargoBuildLogXXXX.json)
-					cargo zigbuild --release --locked -p bark-cli --no-default-features --features tls-webpki-roots,sqlite-bundled,barkd-swagger-ui --target ${zigbuildTarget target} --message-format json-render-diagnostics >"$cargoBuildLog"
+					cargo zigbuild --release --locked -p bark-cli --no-default-features \
+						--features tls-webpki-roots,sqlite-bundled,barkd-swagger-ui,barkd-web-ui \
+						--target ${zigbuildTarget target} \
+						--message-format json-render-diagnostics >"$cargoBuildLog"
 				'';
 			}
 			// lib.optionalAttrs isDarwin {

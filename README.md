@@ -75,6 +75,12 @@ For a detailed technical explanation, see our [protocol documentation](https://s
 ![An example of an Ark transaction tree from a refresh](assets/tx-tree-refresh.jpg)
 _A transaction tree showing how Ark enables multiple users to share control of a single UTXO through pre-signed transactions._
 
+## Building Bark
+
+Both bark's client and server binaries can be built with either cargo or nix.
+Nix builds are reproducible and are used for official releases.
+For more info, see the [`BUILDING.md`](BUILDING.md) file.
+
 ## Minimum supported Rust version (MSRV)
 
 Most of our crates do not yet specify a MSRV, but we will commit to one once we make an official release.

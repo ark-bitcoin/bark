@@ -15,9 +15,20 @@
 			url = "github:nix-community/fenix";
 			inputs.nixpkgs.follows = "nixpkgs";
 		};
+		# The bark-web SPA embedded into release barkd binaries. Its flake
+		# exposes the built distribution as `packages.dist`, which we hand to
+		# the bark-rest build script through BARK_WEB_DIST. The input tracks
+		# bark-web main, pinned by flake.lock; to embed a specific bark-web
+		# version or a locally built dist instead, set the BARK_WEB_VERSION
+		# or BARK_WEB_DIST env var (see below).
+		bark-web = {
+			url = "gitlab:ark-bitcoin/bark-web/v0.9.0";
+			inputs.nixpkgs.follows = "nixpkgs";
+			inputs.flake-utils.follows = "flake-utils";
+		};
 	};
 
-	outputs = { self, nixpkgs, flake-utils, crane, fenix }:
+	outputs = { self, nixpkgs, flake-utils, crane, fenix, bark-web }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
 				rustVersion = "1.90.0";
@@ -140,9 +151,30 @@
 					];
 				};
 
+				# The bark-web distribution embedded into barkd, in order of
+				# precedence (the env vars are visible only under
+				# `nix build --impure`):
+				#
+				# - `BARK_WEB_DIST`: absolute path to an already built bark-web dist
+				# - `BARK_WEB_VERSION`: another ref of the bark-web repo
+				#   (a vX.Y.Z tag, a branch, or a commit)
+				# - Otherwise the flake input's flake.lock pin.
+				envBarkWebDist = builtins.getEnv "BARK_WEB_DIST";
+				envBarkWebVersion = builtins.getEnv "BARK_WEB_VERSION";
+				barkWebFlake = if envBarkWebVersion != ""
+					then builtins.getFlake "gitlab:ark-bitcoin/bark-web/${envBarkWebVersion}"
+					else bark-web;
+				barkWebDist = if envBarkWebDist != ""
+					then builtins.path {
+						path = /. + envBarkWebDist;
+						name = "bark-web-dist";
+					}
+					else barkWebFlake.packages.${system}.dist;
+
 				barkPackages = import ./nix/package-bark.nix {
 					pkgs = releasePkgs;
 					inherit lib craneLib;
+					barkWeb = barkWebDist;
 					gitHash = self.rev or self.dirtyRev or "unknown";
 					targets = [
 						"x86_64-unknown-linux-gnu"
