@@ -23,6 +23,9 @@ use crate::vtxo::{VtxoState, VtxoStateKind};
 ///
 /// Each field counts different VTXOs, so the fields never overlap. See
 /// [Wallet::balance] for how the fields are computed.
+///
+/// Show [Balance::spendable] as what a user can pay with and [Balance::total]
+/// as what a user owns, or use [Balance::summary] for exactly those numbers.
 #[derive(Debug, Clone)]
 pub struct Balance {
 	/// Sats in VTXOs that can be spent right now, in an arkoor or lightning
@@ -65,6 +68,57 @@ pub struct Balance {
 	/// yet, including any change that comes back. Once the transaction is on
 	/// the network the sats belong to the on-chain wallet.
 	pub pending_offboard: Amount,
+}
+
+impl Balance {
+	/// The sum of every field: all sats that belong to the wallet.
+	pub fn total(&self) -> Amount {
+		self.spendable + self.needs_refresh + self.pending()
+	}
+
+	/// The sats held by operations in progress: everything except
+	/// [Balance::spendable] and [Balance::needs_refresh].
+	pub fn pending(&self) -> Amount {
+		self.pending_in_round
+			+ self.pending_board
+			+ self.pending_arkoor_send
+			+ self.pending_lightning_send
+			+ self.claimable_lightning_receive
+			+ self.pending_offboard
+			+ self.pending_exit
+	}
+
+	/// Whether any sats are held by an operation in progress.
+	pub fn has_pending(&self) -> bool {
+		self.pending() > Amount::ZERO
+	}
+
+	/// The numbers to show a user, without the breakdown.
+	pub fn summary(&self) -> BalanceSummary {
+		BalanceSummary {
+			spendable: self.spendable,
+			needs_refresh: self.needs_refresh,
+			pending: self.pending(),
+			total: self.total(),
+		}
+	}
+}
+
+/// The wallet balance without the breakdown of [Balance]: what a user can pay
+/// with, what needs a refresh first, what is held by operations in progress
+/// and what the user owns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BalanceSummary {
+	/// Sats that can be spent right now. See [Balance::spendable].
+	pub spendable: Amount,
+	/// Sats that need a refresh before they can be sent again. See
+	/// [Balance::needs_refresh].
+	pub needs_refresh: Amount,
+	/// Sats held by operations in progress. They either come back as
+	/// spendable or leave the wallet, for example to the on-chain wallet.
+	pub pending: Amount,
+	/// All sats that belong to the wallet: `spendable + needs_refresh + pending`.
+	pub total: Amount,
 }
 
 impl Wallet {

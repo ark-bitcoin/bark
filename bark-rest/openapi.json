@@ -3589,7 +3589,7 @@
       },
       "Balance": {
         "type": "object",
-        "description": "The different balances of a Bark wallet.\n\n`spendable_sat` counts the spendable VTXOs, `needs_refresh_sat` the ones\nthat have to be refreshed before they can be sent again, and every other\nfield what an operation in progress holds, so the fields never overlap.\n\nAll amounts are in sats.",
+        "description": "The different balances of a Bark wallet.\n\n`spendable_sat` counts the spendable VTXOs, `needs_refresh_sat` the ones\nthat have to be refreshed before they can be sent again, and every other\nfield what an operation in progress holds, so the fields never overlap.\n\nSee [BalanceSummary] for the totals to show a user.\n\nAll amounts are in sats.",
         "required": [
           "spendable_sat",
           "needs_refresh_sat",

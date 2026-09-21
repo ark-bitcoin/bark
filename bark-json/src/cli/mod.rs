@@ -228,6 +228,8 @@ pub struct MessageVerification {
 /// that have to be refreshed before they can be sent again, and every other
 /// field what an operation in progress holds, so the fields never overlap.
 ///
+/// See [BalanceSummary] for the totals to show a user.
+///
 /// All amounts are in sats.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
@@ -298,6 +300,70 @@ impl From<bark::Balance> for Balance {
 			pending_board: v.pending_board,
 			pending_arkoor_send: v.pending_arkoor_send,
 			pending_offboard: v.pending_offboard,
+		}
+	}
+}
+
+/// The wallet balance without the breakdown of [Balance]: what a user can pay
+/// with, what is held by operations in progress and what the user owns.
+/// Build it from a [Balance].
+///
+/// All amounts are in sats.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct BalanceSummary {
+	/// Sats that can be spent right now. See `spendable_sat` of [Balance].
+	#[serde(rename = "spendable_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub spendable: Amount,
+	/// Sats that need a refresh before they can be sent again. See
+	/// `needs_refresh_sat` of [Balance].
+	#[serde(rename = "needs_refresh_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub needs_refresh: Amount,
+	/// Sats held by operations in progress: the sum of the `pending_*_sat`
+	/// fields of [Balance]. They either come back as spendable or leave the
+	/// wallet, for example to the on-chain wallet.
+	#[serde(rename = "pending_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub pending: Amount,
+	/// All sats that belong to the wallet: `spendable_sat + needs_refresh_sat + pending_sat`.
+	#[serde(rename = "total_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub total: Amount,
+}
+
+impl From<&Balance> for BalanceSummary {
+	fn from(v: &Balance) -> Self {
+		let pending = v.pending_in_round
+			+ v.pending_board
+			+ v.pending_arkoor_send
+			+ v.pending_lightning_send
+			+ v.claimable_lightning_receive
+			+ v.pending_offboard
+			+ v.pending_exit;
+		BalanceSummary {
+			spendable: v.spendable,
+			needs_refresh: v.needs_refresh,
+			pending,
+			total: v.spendable + v.needs_refresh + pending,
+		}
+	}
+}
+
+impl From<Balance> for BalanceSummary {
+	fn from(v: Balance) -> Self {
+		BalanceSummary::from(&v)
+	}
+}
+
+impl From<bark::BalanceSummary> for BalanceSummary {
+	fn from(v: bark::BalanceSummary) -> Self {
+		BalanceSummary {
+			spendable: v.spendable,
+			needs_refresh: v.needs_refresh,
+			pending: v.pending,
+			total: v.total,
 		}
 	}
 }
