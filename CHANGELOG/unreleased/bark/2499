@@ -1,0 +1,5 @@
+- Use the `BlockHeight` and `BlockDelta` types for heights and deltas
+  [#2499](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2499)
+  - **BREAKING:** Heights and deltas in `Config`, the wallet API and the
+    persistence traits are `BlockHeight` and `BlockDelta` instead of `u32`
+    and `u16`. The JSON and REST formats are unchanged.

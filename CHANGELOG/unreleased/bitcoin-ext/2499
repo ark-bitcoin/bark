@@ -1,0 +1,8 @@
+- Add `BlockHeight` and `BlockDelta` types
+  Heights and deltas are no longer plain integers, so they can't be mixed up
+  and arithmetic on them saturates instead of overflowing.
+  [#2499](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2499)
+  - **BREAKING:** `BlockHeight` wraps a `u32` and `BlockDelta` wraps a `u16`.
+    Use `BlockHeight::new`, `BlockDelta::new`, `to_u32` and `to_u16` to
+    convert. `BlockHeight + BlockDelta` and `BlockDelta + BlockDelta`
+    saturate; `checked_*` variants are available.
