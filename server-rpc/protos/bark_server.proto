@@ -380,7 +380,9 @@ message LightningPaymentStatus {
 	oneof payment_status {
 		core.Empty pending = 1;
 		PaymentSuccessStatus success = 2;
-		core.Empty failed = 3;
+		// Was core.Empty. Both are length-delimited, so the wire format is
+		// unchanged and an older peer still matches the `failed` arm.
+		core.LightningPaymentFailure failed = 3;
 	};
 }
 

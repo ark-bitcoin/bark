@@ -1,6 +1,28 @@
-
 syntax = "proto3";
 
 package core;
 
 message Empty {}
+
+// Why a lightning send failed.
+//
+// Only FEE_TOO_LOW is worth retrying with a larger routing reserve: no route
+// fit the budget, possibly after earlier attempts failed. The others cannot be
+// helped by more money.
+enum LightningFailureReason {
+	// Zero value, so a message from a server that does not set the reason
+	// decodes as unspecified rather than as a real reason.
+	LIGHTNING_FAILURE_UNSPECIFIED = 0;
+	LIGHTNING_FAILURE_FEE_TOO_LOW = 1;
+	LIGHTNING_FAILURE_CLTV_TOO_LONG = 2;
+	LIGHTNING_FAILURE_NO_ROUTE = 3;
+	LIGHTNING_FAILURE_DESTINATION_REJECTED = 4;
+	LIGHTNING_FAILURE_SETUP_TIMEOUT = 5;
+	LIGHTNING_FAILURE_INVOICE_STATE = 6;
+	LIGHTNING_FAILURE_OTHER = 7;
+	LIGHTNING_FAILURE_RETRIES_EXHAUSTED = 8;
+}
+
+message LightningPaymentFailure {
+	LightningFailureReason reason = 1;
+}

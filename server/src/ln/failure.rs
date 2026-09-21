@@ -7,6 +7,8 @@
 
 use std::fmt;
 
+use server_rpc::protos;
+
 /// `PAY_*` codes xpay and askrene return.
 const PAY_DESTINATION_PERM_FAIL: i32 = 203;
 const PAY_ROUTE_NOT_FOUND: i32 = 205;
@@ -97,6 +99,24 @@ impl LightningFailureKind {
 	}
 }
 
+impl From<LightningFailureKind> for protos::LightningFailureReason {
+	fn from(kind: LightningFailureKind) -> Self {
+		match kind {
+			LightningFailureKind::FeeTooLow => Self::LightningFailureFeeTooLow,
+			LightningFailureKind::CltvTooLong => Self::LightningFailureCltvTooLong,
+			LightningFailureKind::NoRoute => Self::LightningFailureNoRoute,
+			LightningFailureKind::RetriesExhausted => Self::LightningFailureRetriesExhausted,
+			LightningFailureKind::DestinationRejected => Self::LightningFailureDestinationRejected,
+			LightningFailureKind::SetupTimeout => Self::LightningFailureSetupTimeout,
+			LightningFailureKind::InvoiceState => Self::LightningFailureInvoiceState,
+			LightningFailureKind::Other => Self::LightningFailureOther,
+			// A classification we could not make is reported as unset, not as
+			// a reason the client might act on.
+			LightningFailureKind::Unknown => Self::LightningFailureUnspecified,
+		}
+	}
+}
+
 /// Extracts `N` from cln-grpc's `code: Some(N)`.
 fn cln_error_code(error: &str) -> Option<i32> {
 	let (_, rest) = error.split_once("code: some(")?;
@@ -168,6 +188,34 @@ mod test {
 		assert_eq!(LightningFailureKind::classify(None), LightningFailureKind::Unknown);
 	}
 
+	/// The wire enum must not silently collapse kinds onto one value, and an
+	/// unclassified failure must report unspecified rather than a reason the
+	/// client could act on.
+	#[test]
+	fn wire_reason_is_distinct_per_kind() {
+		use protos::LightningFailureReason as R;
+		let all = [
+			LightningFailureKind::FeeTooLow,
+			LightningFailureKind::CltvTooLong,
+			LightningFailureKind::NoRoute,
+			LightningFailureKind::RetriesExhausted,
+			LightningFailureKind::DestinationRejected,
+			LightningFailureKind::SetupTimeout,
+			LightningFailureKind::InvoiceState,
+			LightningFailureKind::Other,
+		];
+		let mapped = all.map(R::from);
+		for (i, a) in mapped.iter().enumerate() {
+			assert_ne!(*a, R::LightningFailureUnspecified,
+				"{:?} must not map to unspecified", all[i]);
+			for b in &mapped[i + 1..] {
+				assert_ne!(a, b, "two kinds share a wire value");
+			}
+		}
+		assert_eq!(R::from(LightningFailureKind::Unknown), R::LightningFailureUnspecified);
+	}
+
+	/// Cost must not be swallowed by the generic route arm.
 	#[test]
 	fn parses_code() {
 		assert_eq!(cln_error_code(&xpay_err(206, "x").to_lowercase()), Some(206));

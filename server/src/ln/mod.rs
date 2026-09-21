@@ -429,7 +429,20 @@ impl Server {
 				})
 			},
 			PaymentStatus::Failed => {
-				lightning_payment_status::PaymentStatus::Failed(protos::Empty {})
+				// Re-read to classify: the manager's PaymentStatus carries no
+				// reason, and this is the failure path, so the extra read is
+				// rare. A missing attempt reports unspecified rather than
+				// failing the call.
+				let error = self.db.read(async |t|
+					t.get_latest_payment_attempt_by_payment_hash(payment_hash).await
+				).await.inspect_err(|e| {
+					warn!("Failed to look up attempt for {}: {:#}", payment_hash, e);
+				}).ok().flatten().and_then(|a| a.error);
+				let kind = LightningFailureKind::classify(error.as_deref());
+
+				lightning_payment_status::PaymentStatus::Failed(protos::LightningPaymentFailure {
+					reason: protos::LightningFailureReason::from(kind).into(),
+				})
 			},
 			PaymentStatus::Pending => {
 				lightning_payment_status::PaymentStatus::Pending(protos::Empty {})
