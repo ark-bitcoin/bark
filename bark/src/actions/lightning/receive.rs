@@ -614,9 +614,9 @@ async fn prepare_lightning_receive_htlcs(
 		&recv.id(),
 		MovementUpdate::new()
 			.intended_balance(invoice_amount.to_signed()
-				.context("invoice amount out of range").retry()?)
+				.context("invoice amount out of range").abort()?)
 			.effective_balance(htlc_amount.to_signed()
-				.context("htlc amount out of range").retry()?)
+				.context("htlc amount out of range").abort()?)
 			.fee(fee)
 			.metadata(LightningMovement::metadata(
 				payment_hash, &vtxos, Some(recv.payment_preimage),
@@ -765,7 +765,7 @@ async fn claim_lightning_receive_htlcs(
 		MovementStatus::Successful,
 		MovementUpdate::new()
 			.effective_balance(effective_balance.to_signed()
-				.context("effective balance out of range").retry()?)
+				.context("effective balance out of range").abort()?)
 			.produced_vtxos(&outputs),
 	).await.context("failed to finish lightning receive movement").retry()?;
 
