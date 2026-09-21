@@ -8,7 +8,7 @@
 //! the VTXO is spent. A spent VTXO is stored as spent rather than refused,
 //! since it is part of the wallet's history.
 
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use bitcoin::secp256k1::Keypair;
 use log::{info, warn};
 
@@ -17,7 +17,7 @@ use ark::vtxo::Full;
 use server_rpc::protos::VtxoSpendState;
 
 use crate::Wallet;
-use crate::vtxo::{VtxoState, VtxoValidationError};
+use crate::vtxo::{ServerStatusAdoption, VtxoState, VtxoValidationError};
 
 /// Why a VTXO could not be imported.
 #[derive(Debug, thiserror::Error)]
@@ -159,17 +159,14 @@ impl Wallet {
 		}
 
 		let id = vtxo.id();
-		Ok(match self.fetch_vtxo_spend_state(id, keypair).await? {
-			VtxoSpendState::Spendable => VtxoState::Spendable,
-			VtxoSpendState::Spent => VtxoState::Spent,
-			state @ (
-				VtxoSpendState::Unclaimed
-				| VtxoSpendState::Unregistered
-				| VtxoSpendState::HtlcRecvUnclaimed
-			) => return Err(ImportVtxoError::InFlight { id, state }),
-			VtxoSpendState::Unspecified => return Err(ImportVtxoError::Transient(
-				anyhow!("server returned an unspecified spend state for vtxo {id}"),
-			)),
+		let spend_state = self.fetch_vtxo_spend_state(id, keypair).await?;
+		let adoption = ServerStatusAdoption::from_spend_state(spend_state)
+			.with_context(|| format!("cannot decide the state of vtxo {id}"))?;
+		Ok(match adoption {
+			ServerStatusAdoption::Spendable => VtxoState::Spendable,
+			ServerStatusAdoption::Spent => VtxoState::Spent,
+			ServerStatusAdoption::InFlight(state) =>
+				return Err(ImportVtxoError::InFlight { id, state }),
 		})
 	}
 

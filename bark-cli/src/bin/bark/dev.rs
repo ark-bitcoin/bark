@@ -12,6 +12,7 @@ use ark::{ArkInfo, Vtxo, VtxoId};
 use ark::encode::ProtocolEncoding;
 use ark::vtxo::Full;
 use bark::ImportVtxoArgs;
+use bark::vtxo::VtxoStateKind;
 use bark_json::primitives::{VtxoInfo, WalletVtxoInfo};
 use server_rpc as rpc;
 
@@ -77,6 +78,24 @@ pub enum VtxoCommand {
 		vtxo: Vec<VtxoId>,
 	},
 
+	/// Take the server's word for the state of VTXOs in this wallet (dangerous)
+	///
+	/// Asks the server about each VTXO and writes the answer into the wallet.
+	/// The server is believed without question, so a VTXO it calls spent is
+	/// marked spent here and disappears from your balance. A VTXO locked by a
+	/// running operation keeps its lock.
+	#[command()]
+	TrustAndAdoptServerStatus {
+		/// You must use this flag to acknowledge the danger of running this command
+		#[arg(long = "dangerous")]
+		dangerous: bool,
+		/// Check every VTXO in the wallet that has not exited
+		#[arg(long = "all", conflicts_with = "vtxos")]
+		all: bool,
+		/// The VTXOs to check
+		vtxos: Vec<VtxoId>,
+	},
+
 	/// Import serialized VTXOs into the wallet
 	#[command()]
 	Import {
@@ -132,6 +151,54 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 					.context("Failed to drop vtxo")?;
 			}
 		}
+		VtxoCommand::TrustAndAdoptServerStatus { dangerous, all, vtxos } => {
+			if !dangerous {
+				bail!("You must acknowledge the danger. Run again with --dangerous")
+			}
+			if !all && vtxos.is_empty() {
+				bail!("Pass either --all or a list of vtxo ids");
+			}
+
+			let wallet = open_wallet(&datadir, crate::USER_AGENT).await
+				.context("Failed to open wallet")?
+				.context("No wallet found")?;
+
+			let ids = if all {
+				wallet.all_vtxos().await.context("Failed to list vtxos")?
+					.iter()
+					.filter(|v| v.state.kind() != VtxoStateKind::Exited)
+					.map(|v| v.id())
+					.collect()
+			} else {
+				vtxos
+			};
+
+			let mut updated = Vec::with_capacity(ids.len());
+			let mut failed = 0;
+			for vtxo_id in ids {
+				match wallet.trust_and_adopt_server_vtxo_status(vtxo_id).await {
+					Ok(Some(adoption)) => info!("Server reports vtxo {} as {:?}", vtxo_id, adoption),
+					Ok(None) => info!("Vtxo {} is locked, leaving it alone", vtxo_id),
+					Err(e) => {
+						warn!("Failed to check vtxo {}: {:#}", vtxo_id, e);
+						failed += 1;
+						continue;
+					},
+				}
+
+				match wallet.get_vtxo_by_id(vtxo_id).await {
+					Ok(wallet_vtxo) => updated.push(WalletVtxoInfo::from(&wallet_vtxo)),
+					Err(e) => {
+						warn!("Failed to get vtxo {}: {:#}", vtxo_id, e);
+						failed += 1;
+					},
+				}
+			}
+			output_json(&updated);
+			if failed > 0 {
+				bail!("Failed to update {} vtxos", failed);
+			}
+		},
 		VtxoCommand::Import { vtxos, vtxo_multi, gap_limit, skip_status_check, allow_partial } => {
 			if vtxos.is_empty() && vtxo_multi.is_empty() {
 				bail!("No VTXOs provided. Add raw VTXO arguments to import");
