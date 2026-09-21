@@ -29,7 +29,7 @@ use server_rpc::protos::{self, lightning_payment_status};
 
 use crate::Wallet;
 use crate::actions::{
-	abort, or_retry, Advance, AdvanceError, AdvanceResultExt, IntoAdvanceResult,
+	abort, or_retry, Advance, AdvanceError, IntoAdvanceResult,
 	RetryUnlessRejected, WalletAction, WalletActionId,
 };
 use crate::arkoor::{resolve_change_pieces, split_change_amount};
@@ -255,7 +255,7 @@ impl WalletAction for LightningSend {
 			},
 			Progress::RevocationStuck { htlcs, .. } => {
 				if self.allow_exit_of_htlcs && or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
-					or_retry!(self, exit_lightning_send_htlcs(wallet, &self, htlcs).await.into_anyhow());
+					or_retry!(self, exit_lightning_send_htlcs(wallet, &self, htlcs).await);
 					Advance::Done
 				} else {
 					// Just keep retrying...
@@ -293,7 +293,7 @@ impl WalletAction for LightningSend {
 			},
 			Progress::RevocationStuck { htlcs, .. } => {
 				if self.allow_exit_of_htlcs && or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
-					or_retry!(self, exit_lightning_send_htlcs(wallet, &self, htlcs).await.into_anyhow());
+					or_retry!(self, exit_lightning_send_htlcs(wallet, &self, htlcs).await);
 					Advance::Failed(error.context("Server refused to revoke HTLCs, exiting"))
 				} else {
 					// Park instead of looping: re-driving immediately would just

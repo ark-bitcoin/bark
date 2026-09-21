@@ -223,8 +223,22 @@ pub enum AdvanceError {
 	Abort(anyhow::Error),
 }
 
-impl AdvanceError {
-	/// Convert into [anyhow::Error]
+/// The plain error behind a failed call, classified or not.
+///
+/// Lets [or_retry] take both an `anyhow::Result` and a
+/// `Result<_, AdvanceError>`: a failure while handling a failed step is
+/// retried whatever its own classification was.
+trait IntoAnyhow {
+	fn into_anyhow(self) -> anyhow::Error;
+}
+
+impl IntoAnyhow for anyhow::Error {
+	fn into_anyhow(self) -> anyhow::Error {
+		self
+	}
+}
+
+impl IntoAnyhow for AdvanceError {
 	fn into_anyhow(self) -> anyhow::Error {
 		match self {
 			Self::Retry(e) => e,
@@ -257,13 +271,13 @@ impl<T> AdvanceResultExt<T> for Result<T, AdvanceError> {
 /// Similar to `bail!` but returns an [AdvanceError::Abort] error
 macro_rules! abort {
 	($msg:literal $(,)?) => {
-		return Err(AdvanceError::Abort(crate::anyhow::anyhow!($msg)))
+		return Err(AdvanceError::Abort(::anyhow::anyhow!($msg)))
 	};
 	($err:expr $(,)?) => {
-		return Err(AdvanceError::Abort(crate::anyhow::anyhow!($err)))
+		return Err(AdvanceError::Abort(::anyhow::anyhow!($err)))
 	};
 	($fmt:expr, $($arg:tt)*) => {
-		return Err(AdvanceError::Abort(crate::anyhow::anyhow!($fmt, $($arg)*)))
+		return Err(AdvanceError::Abort(::anyhow::anyhow!($fmt, $($arg)*)))
 	};
 }
 use abort;
@@ -271,13 +285,13 @@ use abort;
 /// Similar to `bail!` but returns an [AdvanceError::Retry] error
 macro_rules! retry {
 	($msg:literal $(,)?) => {
-		return Err(AdvanceError::Retry(crate::anyhow::anyhow!($msg)))
+		return Err(AdvanceError::Retry(::anyhow::anyhow!($msg)))
 	};
 	($err:expr $(,)?) => {
-		return Err(AdvanceError::Retry(crate::anyhow::anyhow!($err)))
+		return Err(AdvanceError::Retry(::anyhow::anyhow!($err)))
 	};
 	($fmt:expr, $($arg:tt)*) => {
-		return Err(AdvanceError::Retry(crate::anyhow::anyhow!($fmt, $($arg)*)))
+		return Err(AdvanceError::Retry(::anyhow::anyhow!($fmt, $($arg)*)))
 	};
 }
 use retry;
@@ -293,7 +307,7 @@ macro_rules! or_retry {
 			Ok(v) => v,
 			Err(e) => return crate::actions::Advance::Retry {
 				state: $state,
-				error: ::anyhow::Error::from(e),
+				error: crate::actions::IntoAnyhow::into_anyhow(e),
 			},
 		}
 	};

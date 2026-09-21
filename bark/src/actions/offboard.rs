@@ -598,7 +598,7 @@ async fn arkoor_split_offboard(
 	let change_vtxo_ids = arkoor.change.iter().map(|v| v.id()).collect::<Vec<_>>();
 	get_or_create_movement(
 		wallet, action, &offboard_vtxo_ids, change_vtxo_ids.iter().copied(),
-	).await.retry()?;
+	).await?;
 
 	Ok(Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, change_vtxo_ids })
 }
@@ -721,7 +721,7 @@ async fn prepare_offboard(
 	// movement created for it.
 	let movement_id = get_or_create_movement(
 		wallet, action, &offboard_vtxo_ids, iter::empty::<VtxoId>(),
-	).await.retry()?;
+	).await?;
 	Ok(Progress::OffboardTxPrepared {
 		offboard_vtxo_ids,
 		offboard_tx: unsigned_tx,
@@ -862,9 +862,10 @@ async fn adopt_broadcast_offboard(
 	action: &Offboard,
 	offboard_vtxo_ids: &Vec<VtxoId>,
 	offboard_txid: Txid,
-) -> anyhow::Result<Option<Progress>> {
+) -> Result<Option<Progress>, AdvanceError> {
 	let tx = wallet.inner.chain.get_tx(&offboard_txid).await
-		.with_context(|| format!("failed to look up offboard tx {} on chain", offboard_txid))?;
+		.with_context(|| format!("failed to look up offboard tx {} on chain", offboard_txid))
+		.retry()?;
 	let Some(offboard_tx) = tx else {
 		return Ok(None);
 	};
@@ -994,14 +995,14 @@ async fn get_or_create_movement(
 	action: &Offboard,
 	offboard_vtxo_ids: &Vec<VtxoId>,
 	change: impl IntoIterator<Item = impl VtxoRef>,
-) -> anyhow::Result<MovementId> {
-	let destination = action.check_destination(wallet.network().await?)?;
+) -> Result<MovementId, AdvanceError> {
+	let destination = action.check_destination(wallet.network().await.retry()?).retry()?;
 	let net = action.onchain_output_amount;
-	let required = net.checked_add(action.committed_fee).context("overflow")?;
+	let required = net.checked_add(action.committed_fee).context("overflow").abort()?;
 	match &action.kind {
 		OffboardKind::OffboardWhole { .. } => {
 			let effective_amt = -SignedAmount::try_from(required)
-				.context("can't have this many vtxo sats")?;
+				.context("can't have this many vtxo sats").abort()?;
 			wallet.inner.movements.get_or_create_movement_with_action(
 				Subsystem::OFFBOARD,
 				OffboardMovement::Offboard.to_string(),
@@ -1012,7 +1013,7 @@ async fn get_or_create_movement(
 					.fee(action.committed_fee)
 					.consumed_vtxos(offboard_vtxo_ids)
 					.sent_to([MovementDestination::bitcoin(destination, net)]),
-			).await.context("failed to create offboard movement")
+			).await.context("failed to create offboard movement").retry()
 		},
 		OffboardKind::SendOnchain { input_vtxo_ids, .. } => {
 			wallet.inner.movements.get_or_create_movement_with_action(
@@ -1020,8 +1021,8 @@ async fn get_or_create_movement(
 				OffboardMovement::SendOnchain.to_string(),
 				&action.id,
 				MovementUpdate::new()
-					.intended_balance(-net.to_signed().context("amount out of range")?)
-					.effective_balance(-required.to_signed().context("required amount out of range")?)
+					.intended_balance(-net.to_signed().context("amount out of range").abort()?)
+					.effective_balance(-required.to_signed().context("required amount out of range").abort()?)
 					.fee(action.committed_fee)
 					.consumed_vtxos(input_vtxo_ids)
 					.produced_vtxos(change)
@@ -1030,7 +1031,7 @@ async fn get_or_create_movement(
 						serde_json::to_value(offboard_vtxo_ids).expect("offboard_vtxos can serde"),
 					)])
 					.sent_to([MovementDestination::bitcoin(destination, net)]),
-			).await.context("failed to create send-onchain movement")
+			).await.context("failed to create send-onchain movement").retry()
 		}
 	}
 }
@@ -1046,7 +1047,7 @@ async fn get_or_create_movement(
 async fn fail_offboard_movement(
 	wallet: &Wallet,
 	action: &Offboard,
-) -> anyhow::Result<()> {
+) -> Result<(), AdvanceError> {
 	let offboard_vtxo_ids = action.kind.vtxo_ids();
 	let movement_id = get_or_create_movement(
 		wallet, action, offboard_vtxo_ids, iter::empty::<VtxoId>(),
@@ -1058,5 +1059,6 @@ async fn fail_offboard_movement(
 		movement_id,
 		MovementStatus::Failed,
 		MovementUpdate::new().effective_balance(SignedAmount::ZERO),
-	).await.context("failed to mark offboard movement as failed")
+	).await.context("failed to mark offboard movement as failed").retry()?;
+	Ok(())
 }
