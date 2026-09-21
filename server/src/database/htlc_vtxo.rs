@@ -166,16 +166,16 @@ impl TryFrom<Row> for HtlcVtxo {
 		let htlc = Htlc {
 			payment_hash: PaymentHash::from_str(row.get::<_, &str>("payment_hash"))
 				.context("invalid payment_hash in DB")?,
-			htlc_expiry: u32::try_from(row.get::<_, i32>("htlc_expiry"))
-				.context("htlc_expiry out of range for u32")?,
+			htlc_expiry: BlockHeight::try_from(row.get::<_, i32>("htlc_expiry"))
+				.context("htlc_expiry out of range for block height")?,
 			direction: row.get::<_, &str>("direction").parse()?,
 			offchain_resolution: row.get::<_, Option<&str>>("offchain_resolution")
 				.map(|s| s.parse()).transpose()?,
 			chain_resolution: row.get::<_, Option<&str>>("chain_resolution")
 				.map(|s| s.parse()).transpose()?,
 			chain_resolution_height: row.get::<_, Option<i32>>("chain_resolution_height")
-				.map(u32::try_from).transpose()
-				.context("chain_resolution_height out of range for u32")?,
+				.map(BlockHeight::try_from).transpose()
+				.context("chain_resolution_height out of range for block height")?,
 		};
 		let vtxo = VtxoState::<Full, ServerVtxoPolicy>::try_from(row)?
 			.try_into_user_vtxo_state()
@@ -215,7 +215,7 @@ pub async fn create_htlc_vtxos(
 	for (vtxo_id, payment_hash, htlc_expiry) in vtxos {
 		vtxo_ids.push(vtxo_id.to_string());
 		payment_hashes.push(payment_hash.to_string());
-		expiries.push(i32::try_from(*htlc_expiry)
+		expiries.push(i32::try_from(htlc_expiry.to_u32())
 			.with_context(|| format!("htlc_expiry of vtxo {} out of range for i32", vtxo_id))?);
 	}
 
@@ -314,7 +314,7 @@ pub async fn set_htlc_vtxo_chain_resolution(
 	resolution: HtlcResolution,
 	height: BlockHeight,
 ) -> anyhow::Result<()> {
-	let height = i32::try_from(height)
+	let height = i32::try_from(height.to_u32())
 		.with_context(|| format!("spent height of vtxo {} out of range for i32", vtxo_id))?;
 
 	let stmt = tx.prepare_typed("
@@ -333,7 +333,7 @@ pub async fn clear_htlc_vtxo_chain_resolutions_above(
 	tx: &Tx<'_>,
 	height: BlockHeight,
 ) -> anyhow::Result<()> {
-	let height = i32::try_from(height)
+	let height = i32::try_from(height.to_u32())
 		.with_context(|| format!("height {} out of range for i32", height))?;
 
 	let stmt = tx.prepare_typed("
@@ -357,11 +357,11 @@ mod test {
 	fn chain_resolution_wins_over_offchain() {
 		let htlc = Htlc {
 			payment_hash: PaymentHash::from_str(PAYMENT_HASH).unwrap(),
-			htlc_expiry: 100,
+			htlc_expiry: BlockHeight::new(100),
 			direction: HtlcDirection::Incoming,
 			offchain_resolution: Some(HtlcResolution::Revoked),
 			chain_resolution: Some(HtlcResolution::Fulfilled),
-			chain_resolution_height: Some(120),
+			chain_resolution_height: Some(BlockHeight::new(120)),
 		};
 		assert_eq!(htlc.resolution(), Some(HtlcResolution::Fulfilled));
 	}
@@ -370,7 +370,7 @@ mod test {
 	fn offchain_resolution_stands_without_a_chain_resolution() {
 		let htlc = Htlc {
 			payment_hash: PaymentHash::from_str(PAYMENT_HASH).unwrap(),
-			htlc_expiry: 100,
+			htlc_expiry: BlockHeight::new(100),
 			direction: HtlcDirection::Incoming,
 			offchain_resolution: Some(HtlcResolution::Revoked),
 			chain_resolution: None,
@@ -383,7 +383,7 @@ mod test {
 	fn unresolved_htlc_has_no_resolution() {
 		let htlc = Htlc {
 			payment_hash: PaymentHash::from_str(PAYMENT_HASH).unwrap(),
-			htlc_expiry: 100,
+			htlc_expiry: BlockHeight::new(100),
 			direction: HtlcDirection::Incoming,
 			offchain_resolution: None,
 			chain_resolution: None,

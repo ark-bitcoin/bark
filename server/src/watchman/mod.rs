@@ -41,7 +41,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Context;
-use bitcoin::absolute::LockTime;
 use bitcoin::{Address, Amount, FeeRate, Transaction, TxIn, TxOut, Sequence, ScriptBuf, Weight, Witness, sighash};
 use bitcoin::Txid;
 use tokio::sync::watch;
@@ -610,7 +609,7 @@ impl Watchman {
 			);
 		}
 
-		let lock_time = LockTime::from_height(self.sync_height().height)
+		let lock_time = self.sync_height().height.to_locktime()
 			.expect("valid block height");
 
 		// Output weight (non-witness data * 4)

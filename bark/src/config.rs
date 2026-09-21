@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use bitcoin::{FeeRate, Network};
 
-use bitcoin_ext::{BlockDelta, BlockHeight};
+use bitcoin_ext::BlockDelta;
 
 use crate::chain::ChainSourceSpec;
 use crate::secret::Secret;
@@ -195,14 +195,14 @@ pub struct Config {
 	/// fully confirmed
 	///
 	/// Default value: 6 for mainnet, 2 for testnets
-	pub round_tx_required_confirmations: BlockHeight,
+	pub round_tx_required_confirmations: BlockDelta,
 
 	/// The number of confirmations required before considering an offboard tx
 	/// confirmed. If set to 0, offboard movements are marked as successful
 	/// immediately without waiting for confirmation.
 	///
 	/// Default value: 2 for mainnet
-	pub offboard_required_confirmations: BlockHeight,
+	pub offboard_required_confirmations: BlockDelta,
 
 	/// How long, in seconds, a broadcast offboard tx may be missing from
 	/// both chain and mempool before the wallet reports the offboard as
@@ -265,13 +265,13 @@ impl Config {
 			bitcoind_zmq_address: None,
 			#[cfg(feature = "socks5-proxy")]
 			socks5_proxy: None,
-			vtxo_refresh_expiry_threshold: 144,
-			vtxo_exit_margin: 12,
-			htlc_recv_claim_delta: 18,
+			vtxo_refresh_expiry_threshold: BlockDelta::new(144),
+			vtxo_exit_margin: BlockDelta::new(12),
+			htlc_recv_claim_delta: BlockDelta::new(18),
 			lightning_receive_claim_retries: 5,
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(2)),
-			round_tx_required_confirmations: 1,
-			offboard_required_confirmations: 2,
+			round_tx_required_confirmations: BlockDelta::new(1),
+			offboard_required_confirmations: BlockDelta::new(2),
 			offboard_lost_tx_grace_period_secs: 3600,
 			daemon_sync_interval_secs: 60,
 			daemon_manual_sync: false,
@@ -280,10 +280,10 @@ impl Config {
 		};
 
 		if network != Network::Bitcoin {
-			ret.vtxo_refresh_expiry_threshold = 12;
+			ret.vtxo_refresh_expiry_threshold = BlockDelta::new(12);
 			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_u32(1));
-			ret.round_tx_required_confirmations = 1;
-			ret.offboard_required_confirmations = 0;
+			ret.round_tx_required_confirmations = BlockDelta::new(1);
+			ret.offboard_required_confirmations = BlockDelta::ZERO;
 		}
 
 		ret

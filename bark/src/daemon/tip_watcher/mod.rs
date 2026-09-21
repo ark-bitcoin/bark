@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use bark_runtime::CancellationToken;
-use bitcoin_ext::BlockRef;
+use bitcoin_ext::{BlockHeight, BlockRef};
 
 pub use source::TipSource;
 
@@ -108,7 +108,7 @@ impl TipWatcher {
 	}
 
 	/// Wait until the tip reaches the given height.
-	pub async fn wait_for_height(&self, height: u32) -> anyhow::Result<BlockRef> {
+	pub async fn wait_for_height(&self, height: BlockHeight) -> anyhow::Result<BlockRef> {
 		// watch::Receiver::wait_for needs a mutable receiver,
 		// so we subscribe with our own copy
 		let mut subscription = self.rx.clone();

@@ -157,7 +157,7 @@ impl Wallet {
 		let properties = self.inner.db.read_properties().await?.context("Missing config")?;
 		let current_height = self.inner.chain.tip().await?;
 
-		let expiry_height = current_height + ark_info.vtxo_lifetime as BlockHeight;
+		let expiry_height = current_height + ark_info.vtxo_lifetime;
 		let builder = BoardBuilder::new(
 			user_keypair.public_key(),
 			expiry_height,
@@ -261,7 +261,7 @@ impl Wallet {
 		let cosign_resp = srv.client.request_board_cosign(protos::BoardCosignRequest {
 			amount: amount.to_sat(),
 			utxo: bitcoin::consensus::serialize(&utxo), //TODO(stevenroose) change to own
-			expiry_height,
+			expiry_height: expiry_height.into(),
 			user_pubkey: user_keypair.public_key().serialize().to_vec(),
 			pub_nonce: builder.user_pub_nonce().serialize().to_vec(),
 			funding_tx: bitcoin::consensus::serialize(&board_psbt.unsigned_tx),

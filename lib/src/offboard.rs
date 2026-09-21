@@ -37,7 +37,7 @@ pub const OFFBOARD_TX_OFFBOARD_VOUT: usize = 0;
 pub const OFFBOARD_TX_CONNECTOR_VOUT: usize = 1;
 
 /// Additional number of blocks after the input VTXO expiry we wait to sweep connectors
-const CONNECTOR_EXPIRY_DELTA: BlockDelta = 144;
+const CONNECTOR_EXPIRY_DELTA: BlockDelta = BlockDelta::new(144);
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
@@ -484,9 +484,8 @@ fn construct_connector_vtxo_single<G>(
 		policy: ServerVtxoPolicy::ServerOwned,
 		amount: P2TR_DUST,
 		server_pubkey: input.server_pubkey,
-		expiry_height: input.expiry_height.checked_add(CONNECTOR_EXPIRY_DELTA as u32)
-			.expect("expiry_height + CONNECTOR_EXPIRY_DELTA fits in u32 by MAX_BLOCK_HEIGHT invariant"),
-		exit_delta: 0,
+		expiry_height: input.expiry_height + CONNECTOR_EXPIRY_DELTA,
+		exit_delta: BlockDelta::ZERO,
 		genesis: Bare,
 	}
 }
@@ -510,9 +509,8 @@ fn construct_connector_vtxo_fanout_root(
 		amount: P2TR_DUST.checked_mul(nb_vtxos as u64)
 			.expect("P2TR_DUST * nb_vtxos fits in u64 by VTXO-count and dust bounds"),
 		server_pubkey: server_pubkey,
-		expiry_height: max_expiry_height.checked_add(CONNECTOR_EXPIRY_DELTA as u32)
-			.expect("max_expiry_height + CONNECTOR_EXPIRY_DELTA fits in u32 by MAX_BLOCK_HEIGHT invariant"),
-		exit_delta: 0,
+		expiry_height: max_expiry_height + CONNECTOR_EXPIRY_DELTA,
+		exit_delta: BlockDelta::ZERO,
 		genesis: Bare,
 	}
 }
@@ -532,9 +530,8 @@ fn construct_connector_vtxo_fanout_leaf<G>(
 		policy: ServerVtxoPolicy::ServerOwned,
 		amount: P2TR_DUST,
 		server_pubkey: input.server_pubkey,
-		expiry_height: input.expiry_height.checked_add(CONNECTOR_EXPIRY_DELTA as u32)
-			.expect("expiry_height + CONNECTOR_EXPIRY_DELTA fits in u32 by MAX_BLOCK_HEIGHT invariant"),
-		exit_delta: 0,
+		expiry_height: input.expiry_height + CONNECTOR_EXPIRY_DELTA,
+		exit_delta: BlockDelta::ZERO,
 		genesis: Bare,
 	}
 }

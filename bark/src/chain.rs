@@ -17,7 +17,7 @@ use bitcoin::{
 use log::{debug, info, warn};
 use tokio::sync::RwLock;
 
-use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt, TxStatus};
+use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef, FeeRateExt, TxStatus};
 use bitcoin_ext::rpc;
 #[cfg(feature = "bitcoind-rpc")]
 use bitcoin_ext::rpc::{
@@ -365,10 +365,10 @@ impl ChainSource {
 		match self.inner() {
 			#[cfg(feature = "bitcoind-rpc")]
 			ChainSourceClient::Bitcoind { rpc, .. } => {
-				Ok(rpc.get_block_count().await? as BlockHeight)
+				Ok(BlockHeight::new(rpc.get_block_count().await? as u32))
 			},
 			ChainSourceClient::Esplora(client) => {
-				Ok(client.get_height().await?)
+				Ok(client.get_height().await?.into())
 			},
 		}
 	}
@@ -429,11 +429,11 @@ impl ChainSource {
 		match self.inner() {
 			#[cfg(feature = "bitcoind-rpc")]
 			ChainSourceClient::Bitcoind { rpc, .. } => {
-				let hash = rpc.get_block_hash(height as u64).await?;
+				let hash = rpc.get_block_hash(height.into()).await?;
 				Ok(BlockRef { height, hash })
 			},
 			ChainSourceClient::Esplora(client) => {
-				let hash = client.get_block_hash(height).await?;
+				let hash = client.get_block_hash(height.into()).await?;
 				Ok(BlockRef { height, hash })
 			},
 		}
@@ -532,10 +532,10 @@ impl ChainSource {
 			#[cfg(feature = "bitcoind-rpc")]
 			ChainSourceClient::Bitcoind { sync, .. } => {
 				// We must offset the height to account for the fact we iterate using next_block()
-				let start = block_scan_start.saturating_sub(1);
+				let start = block_scan_start.saturating_sub(BlockDelta::new(1));
 				let block_ref = self.block_ref(start).await?;
 				let cp = CheckPoint::new(BlockId {
-					height: block_ref.height,
+					height: block_ref.height.into(),
 					hash: block_ref.hash,
 				});
 
@@ -565,7 +565,7 @@ impl ChainSource {
 										txin.previous_output.clone(),
 										tx.compute_txid(),
 										TxStatus::Confirmed(BlockRef {
-											height: em.block_height(),
+											height: em.block_height().into(),
 											hash: em.block.block_hash().clone(),
 										}),
 									);
@@ -607,7 +607,7 @@ impl ChainSource {
 								let status = output_status.status.expect("Status should be valid if an outpoint is spent");
 								if status.confirmed {
 									TxStatus::Confirmed(BlockRef {
-										height: status.block_height.expect("Confirmed transaction missing block_height"),
+										height: status.block_height.expect("Confirmed transaction missing block_height").into(),
 										hash: status.block_hash.expect("Confirmed transaction missing block_hash"),
 									})
 								} else {
@@ -712,7 +712,7 @@ impl ChainSource {
 				match esplora.get_tx_info(&txid).await? {
 					Some(info) => match (info.status.block_height, info.status.block_hash) {
 						(Some(block_height), Some(block_hash)) => Ok(TxStatus::Confirmed(BlockRef {
-							height: block_height,
+							height: block_height.into(),
 							hash: block_hash,
 						} )),
 						_ => Ok(TxStatus::Mempool),
@@ -853,7 +853,7 @@ async fn bitcoind_tx_status(
 	).await?;
 	if header.confirmations > 0 {
 		Ok(TxStatus::Confirmed(BlockRef {
-			height: header.height as BlockHeight,
+			height: BlockHeight::new(header.height as u32),
 			hash: header.hash,
 		}))
 	} else {

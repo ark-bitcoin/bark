@@ -21,7 +21,7 @@ use bitcoin::{
 	Transaction, TxIn, TxOut, Txid, Witness,
 };
 use bitcoin::secp256k1::{Keypair, PublicKey, rand::thread_rng};
-use bitcoin_ext::P2TR_DUST_SAT;
+use bitcoin_ext::{BlockDelta, BlockHeight, P2TR_DUST_SAT};
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::{debug, info, trace};
@@ -696,7 +696,7 @@ async fn restart_funded_server() {
 async fn restart_custom_cfg_server() {
 	let ctx = TestContext::new("server/restart_custom_cfg_server").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
-		cfg.vtxo_exit_delta = 24;
+		cfg.vtxo_exit_delta = BlockDelta::new(24);
 	}).create_unregistered().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
@@ -981,7 +981,7 @@ async fn reject_expired_arkoor_cosign() {
 	);
 
 	// Let the vtxo expire before the server sees the request.
-	let height = ctx.generate_blocks(srv.config().vtxo_lifetime as u32 + 1).await;
+	let height = ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32() + 1).await;
 	srv.bitcoind().wait_for_blockheight(height).await;
 
 	let mut rpc = srv.get_public_rpc().await;
@@ -1332,11 +1332,11 @@ async fn reject_overlong_board_cosign() {
 	// real lifetime is ~499M blocks (~9,500 years) vs the configured ~4320. A board
 	// VTXO with that expiry can never be cheaply swept (the funding output's expiry
 	// leaf is dead until ~year 11,500), stranding the server's reclaim/forfeit path.
-	let offset = ark::vtxo::policy::MAX_BLOCK_HEIGHT - tip;
+	let offset = ark::vtxo::policy::MAX_BLOCK_HEIGHT.to_u32() - tip;
 	let expiry_height = tip + (offset - offset % 65_536);
-	assert!(expiry_height <= ark::vtxo::policy::MAX_BLOCK_HEIGHT);
+	assert!(expiry_height <= ark::vtxo::policy::MAX_BLOCK_HEIGHT.to_u32());
 	assert!(
-		expiry_height - tip > ark_info.vtxo_lifetime as u32,
+		expiry_height - tip > ark_info.vtxo_lifetime.to_u32(),
 		"test expiry lifetime ({}) must exceed the server's cap ({})",
 		expiry_height - tip, ark_info.vtxo_lifetime,
 	);
@@ -1412,7 +1412,7 @@ async fn request_board_cosign_with_funding_tx(
 	let res = rpc.request_board_cosign(protos::BoardCosignRequest {
 		amount: sat(100_000).to_sat(),
 		utxo: utxo.serialize(),
-		expiry_height: tip + ark_info.vtxo_lifetime as u32,
+		expiry_height: tip + ark_info.vtxo_lifetime.to_u32(),
 		user_pubkey: user_key.public_key().serialize().to_vec(),
 		pub_nonce: pub_nonce.serialize().to_vec(),
 		funding_tx: bitcoin::consensus::serialize(funding_tx),
@@ -1634,7 +1634,7 @@ async fn captaind_config_change(){
 
 	let ctx = TestContext::new("server/captaind_config_change").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
-		cfg.vtxo_exit_delta = 12;
+		cfg.vtxo_exit_delta = BlockDelta::new(12);
 	}).create_unregistered().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 	let bark1 = ctx.bark("bark1", &srv).create().await;
@@ -1650,7 +1650,7 @@ async fn captaind_config_change(){
 
 	srv.stop().await.unwrap();
 
-	srv.config_mut().vtxo_exit_delta = 24;
+	srv.config_mut().vtxo_exit_delta = BlockDelta::new(24);
 	srv.config_mut().round_interval = Duration::from_secs(3600);
 
 	srv.start().await.unwrap();
@@ -1662,9 +1662,9 @@ async fn captaind_config_change(){
 
 	let vtxos1 = bark1.vtxos().await;
 	let vtxos2 = bark2.vtxos().await;
-	assert_eq!(vtxos1[0].exit_delta, 12);
-	assert_eq!(vtxos2[0].exit_delta, 12);
-	assert_eq!(srv.config().vtxo_exit_delta, 24);
+	assert_eq!(vtxos1[0].exit_delta, BlockDelta::new(12));
+	assert_eq!(vtxos2[0].exit_delta, BlockDelta::new(12));
+	assert_eq!(srv.config().vtxo_exit_delta, BlockDelta::new(24));
 
 	// transactions still work
 
@@ -1678,7 +1678,7 @@ async fn captaind_config_change(){
 
 	// new vtxo should have new exit_delta
 	let new_vtxo = bark1.vtxos().await;
-	assert_eq!(new_vtxo[0].exit_delta, 24);
+	assert_eq!(new_vtxo[0].exit_delta, BlockDelta::new(24));
 }
 
 #[tokio::test]
@@ -1708,7 +1708,7 @@ async fn test_cosign_vtxo_tree() {
 	let ctx = TestContext::new("server/test_cosign_vtxo_tree").await;
 	let srv = ctx.new_server_with_cfg("server", None, |_| { }).await;
 
-	let expiry = 100_000;
+	let expiry = BlockHeight::new(100_000);
 	let exit_delta = srv.ark_info().vtxo_exit_delta;
 
 	let vtxo_key = Keypair::from_str("b44d09e86c02df6b57b6e92ac1c63b72c8781d5ed90d6f42073e4f47945d9e0d").unwrap();
@@ -2195,7 +2195,7 @@ async fn test_register_board() {
 	// Get server info and calculate expiry height
 	let ark_info = srv.ark_info().await;
 	let current_height = ctx.generate_blocks(1).await;
-	let expiry_height = current_height + ark_info.vtxo_lifetime as u32;
+	let expiry_height = current_height + ark_info.vtxo_lifetime;
 
 	// Create a board builder to get the funding script
 	let board_amount = sat(100_000);
@@ -2227,7 +2227,7 @@ async fn test_register_board() {
 	let cosign_request = protos::BoardCosignRequest {
 		amount: board_amount.to_sat(),
 		utxo: board_utxo.serialize(),
-		expiry_height,
+		expiry_height: expiry_height.into(),
 		user_pubkey: client_cosign_keypair.public_key().serialize().to_vec(),
 		pub_nonce: board_builder.user_pub_nonce().serialize().to_vec(),
 		funding_tx: bitcoin::consensus::serialize(&funding_tx),

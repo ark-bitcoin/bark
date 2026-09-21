@@ -200,7 +200,7 @@ async fn accept_mailbox() {
 	bark4.drop_vtxos().await;
 	assert_eq!(bark4.vtxos().await.len(), 0, "bark4 should have 0 VTXOs after drop");
 
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32 + 10).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32() + 10).await;
 
 	// Import gates on ownership and the server's spend state, not on expiry, and
 	// the server still reports an expired vtxo as spendable, so this is accepted

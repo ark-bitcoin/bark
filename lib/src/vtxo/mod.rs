@@ -1054,13 +1054,13 @@ impl ProtocolEncoding for VtxoPolicy {
 				w.emit_u8(VTXO_POLICY_SERVER_HTLC_SEND)?;
 				user_pubkey.encode(w)?;
 				payment_hash.to_sha256_hash().encode(w)?;
-				w.emit_u32(*htlc_expiry)?;
+				w.emit_u32(htlc_expiry.to_u32())?;
 			},
 			Self::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
 				w.emit_u8(VTXO_POLICY_SERVER_HTLC_SEND_V0)?;
 				user_pubkey.encode(w)?;
 				payment_hash.to_sha256_hash().encode(w)?;
-				w.emit_u32(*htlc_expiry)?;
+				w.emit_u32(htlc_expiry.to_u32())?;
 			},
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
 				user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
@@ -1068,8 +1068,8 @@ impl ProtocolEncoding for VtxoPolicy {
 				w.emit_u8(VTXO_POLICY_SERVER_HTLC_RECV)?;
 				user_pubkey.encode(w)?;
 				payment_hash.to_sha256_hash().encode(w)?;
-				w.emit_u32(*htlc_expiry)?;
-				w.emit_u16(*htlc_expiry_delta)?;
+				w.emit_u32(htlc_expiry.to_u32())?;
+				w.emit_u16(htlc_expiry_delta.to_u16())?;
 			},
 			Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy {
 				user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta,
@@ -1077,8 +1077,8 @@ impl ProtocolEncoding for VtxoPolicy {
 				w.emit_u8(VTXO_POLICY_SERVER_HTLC_RECV_V0)?;
 				user_pubkey.encode(w)?;
 				payment_hash.to_sha256_hash().encode(w)?;
-				w.emit_u32(*htlc_expiry)?;
-				w.emit_u16(*htlc_expiry_delta)?;
+				w.emit_u32(htlc_expiry.to_u32())?;
+				w.emit_u16(htlc_expiry_delta.to_u16())?;
 			},
 		}
 		Ok(())
@@ -1482,9 +1482,9 @@ where
 	let version = VTXO_ENCODING_VERSION;
 	w.emit_u16(version)?;
 	w.emit_u64(vtxo.amount.to_sat())?;
-	w.emit_u32(vtxo.expiry_height)?;
+	w.emit_u32(vtxo.expiry_height.to_u32())?;
 	vtxo.server_pubkey.encode(w)?;
-	w.emit_u16(vtxo.exit_delta)?;
+	w.emit_u16(vtxo.exit_delta.to_u16())?;
 	vtxo.anchor_point.encode(w)?;
 
 	vtxo.genesis.encode(w, version)?;
@@ -1742,9 +1742,9 @@ mod test {
 		let big: Vtxo<Full> = Vtxo {
 			policy: VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
 			amount: Amount::from_sat(10_000),
-			expiry_height: 101_010,
+			expiry_height: BlockHeight::new(101_010),
 			server_pubkey: DUMMY_SERVER_KEY.public_key(),
-			exit_delta: 2016,
+			exit_delta: BlockDelta::new(2016),
 			anchor_point: OutPoint::new(Txid::from_slice(&[1u8; 32]).unwrap(), 1),
 			genesis: Full {
 				items: vec![GenesisItem {
@@ -1767,9 +1767,9 @@ mod test {
 		let vtxo: Vtxo<Full> = Vtxo {
 			policy: VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
 			amount: Amount::from_sat(10_000),
-			expiry_height: 101_010,
+			expiry_height: BlockHeight::new(101_010),
 			server_pubkey: DUMMY_SERVER_KEY.public_key(),
-			exit_delta: 2016,
+			exit_delta: BlockDelta::new(2016),
 			anchor_point: OutPoint::new(Txid::from_slice(&[1u8; 32]).unwrap(), 1),
 			genesis: Full {
 				items: vec![GenesisItem {
@@ -1832,9 +1832,9 @@ mod test {
 		Vtxo {
 			policy: VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
 			amount,
-			expiry_height: 101_010,
+			expiry_height: BlockHeight::new(101_010),
 			server_pubkey: DUMMY_SERVER_KEY.public_key(),
-			exit_delta: 2016,
+			exit_delta: BlockDelta::new(2016),
 			anchor_point: OutPoint::new(Txid::from_slice(&[1u8; 32]).unwrap(), 1),
 			genesis: Full {
 				items: vec![GenesisItem {
@@ -1854,7 +1854,7 @@ mod test {
 	/// A valid P2TR script_pubkey usable as a sibling output.
 	fn dummy_p2tr_script() -> ScriptBuf {
 		VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key())
-			.script_pubkey(DUMMY_SERVER_KEY.public_key(), 2016, 101_010)
+			.script_pubkey(DUMMY_SERVER_KEY.public_key(), BlockDelta::new(2016), BlockHeight::new(101_010))
 	}
 
 	#[test]

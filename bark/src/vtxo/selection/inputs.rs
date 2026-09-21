@@ -372,13 +372,13 @@ mod test {
 	///
 	/// Use distinct amount/expiry combinations within a test: identical specs produce
 	/// identical VTXO ids.
-	fn dummy_wallet_vtxo(sats: u64, expiry_height: BlockHeight) -> WalletVtxo {
+	fn dummy_wallet_vtxo(sats: u64, expiry_height: u32) -> WalletVtxo {
 		let amount = Amount::from_sat(sats);
 		let fee = Amount::from_sat(330);
 		let (_, vtxo) = DummyTestVtxoSpec {
 			amount: amount + fee,
 			fee,
-			expiry_height,
+			expiry_height: BlockHeight::new(expiry_height),
 			..Default::default()
 		}.build();
 		assert_eq!(vtxo.amount(), amount);
@@ -425,7 +425,7 @@ mod test {
 		];
 
 		// A vtxo expiring at the given height counts as expired.
-		let selection = InputSelection::new().expires_after(200);
+		let selection = InputSelection::new().expires_after(BlockHeight::new(200));
 		let selected = selection.select(vtxos.clone(), Amount::from_sat(5_000)).unwrap();
 		assert_eq!(amounts(&selected), [30_000]);
 
@@ -524,7 +524,7 @@ mod test {
 		// A flat fee: the first iteration selects 10k sats for the amount alone, the
 		// second extends the selection to also cover the fee.
 		let (selected, fee) = InputSelection::new()
-			.fee_scheme(0, |_, _| Ok(Amount::from_sat(500)))
+			.fee_scheme(BlockHeight::ZERO, |_, _| Ok(Amount::from_sat(500)))
 			.select(vtxos, Amount::from_sat(9_800)).unwrap();
 
 		assert_eq!(amounts(&selected), [10_000, 20_000]);
@@ -542,7 +542,7 @@ mod test {
 		// forbids adding the second one, so the selection replaces the first.
 		let (selected, fee) = InputSelection::new()
 			.max_inputs(1)
-			.fee_scheme(0, |_, _| Ok(Amount::from_sat(500)))
+			.fee_scheme(BlockHeight::ZERO, |_, _| Ok(Amount::from_sat(500)))
 			.select(vtxos, Amount::from_sat(9_800)).unwrap();
 
 		assert_eq!(amounts(&selected), [20_000]);

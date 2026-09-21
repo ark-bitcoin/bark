@@ -647,8 +647,9 @@ impl Server {
 		// NB compare in u32: a `requested_lifetime as u16` cast truncates, letting a
 		// client request a lifetime of `n * 65536 + small` that wraps under the cap
 		// and gets a VTXO whose expiry the server can't cheaply sweep.
-		let requested_lifetime = expiry_height - tip.height;
-		let max_lifetime = self.config.vtxo_lifetime as u32 + LIFETIME_BUFFER as u32;
+		let requested_lifetime = expiry_height.checked_blocks_since(tip.height)
+			.expect("expiry checked against tip above");
+		let max_lifetime = self.config.vtxo_lifetime.to_u32() + LIFETIME_BUFFER as u32;
 		if requested_lifetime > max_lifetime {
 			return badarg!("requested VTXO lifetime {} is too high (server VTXO lifetime is {})",
 				requested_lifetime, self.config.vtxo_lifetime,
@@ -749,7 +750,7 @@ impl Server {
 			self.bitcoind.call_raw(
 				"getblockheader", &[bcd::json_arg(confirmed_hash)?, true.into()],
 			).await?;
-		let confirmed_height = confirmed_header.height as BlockHeight;
+		let confirmed_height = BlockHeight::new(confirmed_header.height as u32);
 
 		let confirmations = tx_info.confirmations.unwrap_or(0) as usize;
 		if confirmations < self.config.required_board_confirmations {

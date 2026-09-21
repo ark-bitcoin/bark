@@ -500,7 +500,7 @@ impl Lightningd {
 		trace!("{} - Wait for block {}", self.name, blockheight);
 		let mut client = self.grpc_client().await;
 		client.wait_block_height(cln_rpc::WaitblockheightRequest {
-			blockheight: blockheight,
+			blockheight: blockheight.to_u32(),
 			timeout: None,
 		}).await.unwrap();
 	}
@@ -512,7 +512,7 @@ impl Lightningd {
 	/// Wait until lightnignd is synced with bitcoind
 	pub async fn wait_for_block_sync(&self) {
 		let height = self.bitcoind().get_block_count().await;
-		self.wait_for_block(height as BlockHeight).await;
+		self.wait_for_block(BlockHeight::new(height as u32)).await;
 	}
 
 	pub async fn get_onchain_address(&self) -> bitcoin::Address {

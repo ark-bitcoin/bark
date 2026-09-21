@@ -18,7 +18,7 @@ use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
 use bitcoin::hashes::{sha256, Hash};
 use bark::lightning_invoice::Bolt11Invoice;
-use bitcoin_ext::BlockRef;
+use bitcoin_ext::{BlockHeight, BlockRef};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
 use server::database::{BlockTable, Db, MailboxPayload};
@@ -221,19 +221,19 @@ async fn block_database_crud() {
 	// Construct some mock block refs
 	let hash1 = bitcoin::BlockHash::from_str("0000000000000000000670ab57e8c1a4637b22d1d56e4c2837d08ec9a61e7777").unwrap();
 	let block1 = BlockRef {
-		height: 1,
+		height: BlockHeight::new(1),
 		hash: hash1,
 	};
 
 	let hash2 = bitcoin::BlockHash::from_str("00000000000000000003acbe2c55c3b2ee3421fd4b726e2f8ef6e7ef1ecc4777").unwrap();
 	let block2 = BlockRef {
-		height: 2,
+		height: BlockHeight::new(2),
 		hash: hash2,
 	};
 
 	// Initially no blocks
-	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 1).await).await.unwrap().is_none());
-	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 2).await).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(1)).await).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(2)).await).await.unwrap().is_none());
 
 	// Initially no tip
 	assert!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().is_none());
@@ -241,7 +241,7 @@ async fn block_database_crud() {
 	// Store first block
 	db.write(async |t| t.store_block(BlockTable::Captaind, &block1).await).await.expect("Store block1");
 	{
-		let stored = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 1).await).await.unwrap().expect("block1 present");
+		let stored = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(1)).await).await.unwrap().expect("block1 present");
 		assert_eq!(stored.height, block1.height);
 		assert_eq!(stored.hash, block1.hash);
 		assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(block1.clone()));
@@ -250,7 +250,7 @@ async fn block_database_crud() {
 	// Store second block
 	db.write(async |t| t.store_block(BlockTable::Captaind, &block2).await).await.expect("Store block2");
 	{
-		let stored = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 2).await).await.unwrap().expect("block2 present");
+		let stored = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(2)).await).await.unwrap().expect("block2 present");
 		assert_eq!(stored.height, block2.height);
 		assert_eq!(stored.hash, block2.hash);
 		assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(block2.clone()));
@@ -259,7 +259,7 @@ async fn block_database_crud() {
 	// Try to add a conflicting block at block-height 2
 	let hash2_conflict = bitcoin::BlockHash::from_str("11111111111111111111acbe2c55c3b2ee3421fd4b726e2f8ef6e7ef1ecc4777").unwrap();
 	let block2_conflict = BlockRef {
-		height: 2,
+		height: BlockHeight::new(2),
 		hash: hash2_conflict,
 	};
 
@@ -267,14 +267,14 @@ async fn block_database_crud() {
 	assert!(result.is_err(), "Storing a conflicting block at the same height should error");
 
 	// Remove blocks above height2 (block2 should still be there)
-	db.write(async |t| t.remove_blocks_above(BlockTable::Captaind, 2).await).await.expect("Remove above height2");
-	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 2).await).await.unwrap().is_some()); // block2 still there
-	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 1).await).await.unwrap().is_some()); // block1 still there
+	db.write(async |t| t.remove_blocks_above(BlockTable::Captaind, BlockHeight::new(2)).await).await.expect("Remove above height2");
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(2)).await).await.unwrap().is_some()); // block2 still there
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(1)).await).await.unwrap().is_some()); // block1 still there
 	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(block2.clone())); // Tip should be at block2
 
 	// Remove blocks above height1 (block1 should still be there)
-	db.write(async |t| t.remove_blocks_above(BlockTable::Captaind, 1).await).await.expect("Remove above height1");
-	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 1).await).await.unwrap().is_some()); // block1 still there
+	db.write(async |t| t.remove_blocks_above(BlockTable::Captaind, BlockHeight::new(1)).await).await.expect("Remove above height1");
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(1)).await).await.unwrap().is_some()); // block1 still there
 	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(block1.clone())); // Tip should be at block1
 }
 
@@ -415,8 +415,8 @@ async fn block_table_independence() {
 	let hash_captaind = bitcoin::BlockHash::from_str("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f").unwrap();
 	let hash_watchmand = bitcoin::BlockHash::from_str("0000000000000000000065bda8f8a88f2e1e00d9a6887a43d640e52a4c3b3a81").unwrap();
 
-	let captaind_block_100 = BlockRef { height: 100, hash: hash_captaind };
-	let watchmand_block_100 = BlockRef { height: 100, hash: hash_watchmand };
+	let captaind_block_100 = BlockRef { height: BlockHeight::new(100), hash: hash_captaind };
+	let watchmand_block_100 = BlockRef { height: BlockHeight::new(100), hash: hash_watchmand };
 
 	// Initially both tables are empty
 	assert!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().is_none());
@@ -427,46 +427,46 @@ async fn block_table_independence() {
 
 	// Verify isolation: captaind has it, watchmand doesn't
 	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(captaind_block_100));
-	assert_eq!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 100).await).await.unwrap(), Some(captaind_block_100));
+	assert_eq!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(100)).await).await.unwrap(), Some(captaind_block_100));
 	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await.unwrap(), None);
-	assert_eq!(db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, 100).await).await.unwrap(), None);
+	assert_eq!(db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, BlockHeight::new(100)).await).await.unwrap(), None);
 
 	// Insert block 100 into watchmand table (different hash!)
 	db.write(async |t| t.store_block(BlockTable::Watchmand, &watchmand_block_100).await).await.expect("Store to watchmand");
 
 	// Verify both tables have independent data at the same height
-	let captaind_retrieved = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 100).await).await.unwrap().unwrap();
-	let watchmand_retrieved = db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, 100).await).await.unwrap().unwrap();
+	let captaind_retrieved = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(100)).await).await.unwrap().unwrap();
+	let watchmand_retrieved = db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, BlockHeight::new(100)).await).await.unwrap().unwrap();
 
 	assert_eq!(captaind_retrieved.hash, hash_captaind);
 	assert_eq!(watchmand_retrieved.hash, hash_watchmand);
 	assert_ne!(captaind_retrieved.hash, watchmand_retrieved.hash, "Tables should have different hashes at same height");
 
 	// Add more blocks to test independent highest block tracking
-	let captaind_block_101 = BlockRef { height: 101, hash: hash_captaind };
-	let watchmand_block_102 = BlockRef { height: 102, hash: hash_watchmand };
+	let captaind_block_101 = BlockRef { height: BlockHeight::new(101), hash: hash_captaind };
+	let watchmand_block_102 = BlockRef { height: BlockHeight::new(102), hash: hash_watchmand };
 
 	db.write(async |t| t.store_block(BlockTable::Captaind, &captaind_block_101).await).await.unwrap();
 	db.write(async |t| t.store_block(BlockTable::Watchmand, &watchmand_block_102).await).await.unwrap();
 
-	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().unwrap().height, 101);
-	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await.unwrap().unwrap().height, 102);
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().unwrap().height, BlockHeight::new(101));
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await.unwrap().unwrap().height, BlockHeight::new(102));
 
 	// Test independent removal
-	db.write(async |t| t.remove_blocks_above(BlockTable::Captaind, 100).await).await.unwrap();
+	db.write(async |t| t.remove_blocks_above(BlockTable::Captaind, BlockHeight::new(100)).await).await.unwrap();
 
 	// Captaind should only have block 100 now
-	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().unwrap().height, 100);
-	assert_eq!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 101).await).await.unwrap(), None);
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().unwrap().height, BlockHeight::new(100));
+	assert_eq!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, BlockHeight::new(101)).await).await.unwrap(), None);
 
 	// Watchmand should still have both blocks
-	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await.unwrap().unwrap().height, 102);
-	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, 100).await).await.unwrap().is_some());
-	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, 102).await).await.unwrap().is_some());
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await.unwrap().unwrap().height, BlockHeight::new(102));
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, BlockHeight::new(100)).await).await.unwrap().is_some());
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, BlockHeight::new(102)).await).await.unwrap().is_some());
 
 	// Test independent lowest block tracking
-	assert_eq!(db.read(async |t| t.get_lowest_block(BlockTable::Captaind).await).await.unwrap().unwrap().height, 100);
-	assert_eq!(db.read(async |t| t.get_lowest_block(BlockTable::Watchmand).await).await.unwrap().unwrap().height, 100);
+	assert_eq!(db.read(async |t| t.get_lowest_block(BlockTable::Captaind).await).await.unwrap().unwrap().height, BlockHeight::new(100));
+	assert_eq!(db.read(async |t| t.get_lowest_block(BlockTable::Watchmand).await).await.unwrap().unwrap().height, BlockHeight::new(100));
 }
 
 #[tokio::test]
@@ -485,30 +485,30 @@ async fn ban_vtxo() {
 	db.write(async |t| t.upsert_vtxos(&[vtxo]).await).await.expect("upsert succeeded");
 
 	// Initially no vtxos are banned
-	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");
+	let banned = db.read(async |t| t.list_banned_vtxos(BlockHeight::new(100)).await).await.expect("list succeeded");
 	assert!(banned.is_empty(), "no vtxos should be banned initially");
 
 	// The vtxo should not have a ban set
 	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert!(state.banned_until_height.is_none());
-	assert!(state.check_spendable(100).is_ok());
+	assert!(state.check_spendable(BlockHeight::new(100)).is_ok());
 
 	// Ban the vtxo until block 200
-	db.write(async |t| t.ban_vtxo(vtxo_id, 200).await).await.expect("ban succeeded");
+	db.write(async |t| t.ban_vtxo(vtxo_id, BlockHeight::new(200)).await).await.expect("ban succeeded");
 
 	// The vtxo should now be banned
 	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert_eq!(state.banned_until_height, Some(200));
-	assert!(state.check_spendable(100).is_err()); // tip 100 < ban 200
-	assert!(state.check_spendable(200).is_ok()); // tip 200 >= ban 200
+	assert!(state.check_spendable(BlockHeight::new(100)).is_err()); // tip 100 < ban 200
+	assert!(state.check_spendable(BlockHeight::new(200)).is_ok()); // tip 200 >= ban 200
 
 	// Should appear in the banned list
-	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");
+	let banned = db.read(async |t| t.list_banned_vtxos(BlockHeight::new(100)).await).await.expect("list succeeded");
 	assert_eq!(banned.len(), 1);
 	assert_eq!(banned[0].vtxo_id, vtxo_id);
-	assert_eq!(banned[0].banned_until_height, 200);
+	assert_eq!(banned[0].banned_until_height, BlockHeight::new(200));
 
 	// Unban the vtxo
 	db.write(async |t| t.unban_vtxo(vtxo_id).await).await.expect("unban succeeded");
@@ -517,10 +517,10 @@ async fn ban_vtxo() {
 	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert!(state.banned_until_height.is_none());
-	assert!(state.check_spendable(100).is_ok());
+	assert!(state.check_spendable(BlockHeight::new(100)).is_ok());
 
 	// Banned list should be empty again
-	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");
+	let banned = db.read(async |t| t.list_banned_vtxos(BlockHeight::new(100)).await).await.expect("list succeeded");
 	assert!(banned.is_empty());
 }
 
@@ -646,6 +646,10 @@ async fn postgres_offboards() {
 
 #[tokio::test]
 async fn nursery_txs() {
+	fn h(v: u32) -> BlockHeight {
+		BlockHeight::new(v)
+	}
+
 	let mut ctx = TestContext::new_minimal("postgresd/nursery_txs").await;
 	ctx.init_central_postgres().await;
 	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
@@ -662,45 +666,45 @@ async fn nursery_txs() {
 	let txid = tx.compute_txid();
 
 	// Hand the tx to the nursery.
-	db.write(async |t| t.upsert_nursery_tx(&tx, NurseryTxKind::Round, 100).await).await.unwrap();
+	db.write(async |t| t.upsert_nursery_tx(&tx, NurseryTxKind::Round, h(100)).await).await.unwrap();
 	let stored = db.read(async |t| t.get_nursery_raw_tx(txid).await).await.unwrap().unwrap();
 	assert_eq!(stored.compute_txid(), txid);
 
-	let active = db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap();
+	let active = db.read(async |t| t.get_active_nursery_txs(h(0)).await).await.unwrap();
 	assert_eq!(active.len(), 1);
 	assert_eq!(active[0].txid, txid);
 	assert_eq!(active[0].kind, NurseryTxKind::Round);
-	assert_eq!(active[0].confirm_target_height, 100);
+	assert_eq!(active[0].confirm_target_height, h(100));
 	assert_eq!(active[0].confirmed_at_height, None);
 	let unconfirmed = db.read(async |t| t.get_unconfirmed_nursery_txs().await).await.unwrap();
 	assert_eq!(unconfirmed, vec![(txid, NurseryTxKind::Round)]);
 
 	// Upserting again keeps the original target.
-	db.write(async |t| t.upsert_nursery_tx(&tx, NurseryTxKind::Round, 200).await).await.unwrap();
-	let active = db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap();
+	db.write(async |t| t.upsert_nursery_tx(&tx, NurseryTxKind::Round, h(200)).await).await.unwrap();
+	let active = db.read(async |t| t.get_active_nursery_txs(h(0)).await).await.unwrap();
 	assert_eq!(active.len(), 1);
-	assert_eq!(active[0].confirm_target_height, 100);
+	assert_eq!(active[0].confirm_target_height, h(100));
 
 	// Confirm the tx: still active until it is deeply confirmed.
-	assert!(db.write(async |t| t.set_nursery_tx_confirmed(txid, 105).await).await.unwrap());
-	let active = db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap();
+	assert!(db.write(async |t| t.set_nursery_tx_confirmed(txid, h(105)).await).await.unwrap());
+	let active = db.read(async |t| t.get_active_nursery_txs(h(0)).await).await.unwrap();
 	assert_eq!(active.len(), 1);
-	assert_eq!(active[0].confirmed_at_height, Some(105));
-	assert!(db.read(async |t| t.get_active_nursery_txs(105).await).await.unwrap().is_empty());
+	assert_eq!(active[0].confirmed_at_height, Some(h(105)));
+	assert!(db.read(async |t| t.get_active_nursery_txs(h(105)).await).await.unwrap().is_empty());
 	assert!(db.read(async |t| t.get_unconfirmed_nursery_txs().await).await.unwrap().is_empty());
 
 	// Recording the same confirmation again reports no change.
-	assert!(!db.write(async |t| t.set_nursery_tx_confirmed(txid, 105).await).await.unwrap());
+	assert!(!db.write(async |t| t.set_nursery_tx_confirmed(txid, h(105)).await).await.unwrap());
 
 	// A confirmed tx can't be abandoned: it has to stay active in case
 	// a reorg evicts its confirmation.
 	assert!(db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap().is_none());
 
 	// A reorg unconfirms all txs confirmed after the fork point.
-	assert!(db.write(async |t| t.clear_nursery_confirmations_after(105).await).await.unwrap().is_empty());
-	let reorged = db.write(async |t| t.clear_nursery_confirmations_after(104).await).await.unwrap();
-	assert_eq!(reorged, vec![(txid, NurseryTxKind::Round, 105)]);
-	let active = db.read(async |t| t.get_active_nursery_txs(105).await).await.unwrap();
+	assert!(db.write(async |t| t.clear_nursery_confirmations_after(h(105)).await).await.unwrap().is_empty());
+	let reorged = db.write(async |t| t.clear_nursery_confirmations_after(h(104)).await).await.unwrap();
+	assert_eq!(reorged, vec![(txid, NurseryTxKind::Round, h(105))]);
+	let active = db.read(async |t| t.get_active_nursery_txs(h(105)).await).await.unwrap();
 	assert_eq!(active.len(), 1);
 	assert_eq!(active[0].confirmed_at_height, None);
 
@@ -708,7 +712,7 @@ async fn nursery_txs() {
 	// kind of the tx that was abandoned.
 	let abandoned = db.write(async |t| t.abandon_nursery_tx(txid).await).await.unwrap();
 	assert_eq!(abandoned, Some(NurseryTxKind::Round));
-	assert!(db.read(async |t| t.get_active_nursery_txs(0).await).await.unwrap().is_empty());
+	assert!(db.read(async |t| t.get_active_nursery_txs(h(0)).await).await.unwrap().is_empty());
 	assert!(db.read(async |t| t.get_unconfirmed_nursery_txs().await).await.unwrap().is_empty());
 
 	// Abandoning twice or abandoning an unknown txid reports failure.
@@ -1038,11 +1042,11 @@ async fn watchman_frontier() {
 	assert!(unfrontiered.is_empty(), "all vtxos should be frontiered now");
 
 	// Register confirmation at height 100
-	db.write(async |t| t.register_vtxo_confirmation(vtxo.id(), 100).await).await.unwrap();
+	db.write(async |t| t.register_vtxo_confirmation(vtxo.id(), BlockHeight::new(100)).await).await.unwrap();
 
 	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
 	let (confirmed_height, _) = frontier[&vtxo.id()];
-	assert_eq!(confirmed_height, Some(100));
+	assert_eq!(confirmed_height, Some(BlockHeight::new(100)));
 
 	// Register a spend at height 101
 	let spend_tx = Transaction {
@@ -1052,7 +1056,7 @@ async fn watchman_frontier() {
 		output: vec![],
 	};
 	let spend_txid = spend_tx.compute_txid();
-	db.write(async |t| t.register_vtxo_spend(vtxo.id(), 101, spend_txid).await).await.unwrap();
+	db.write(async |t| t.register_vtxo_spend(vtxo.id(), BlockHeight::new(101), spend_txid).await).await.unwrap();
 
 	// Spent vtxos do not appear in frontier
 	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
@@ -1071,14 +1075,14 @@ async fn watchman_reorg() {
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 	db.write(async |t| t.add_vtxo_to_frontier(vtxo.id()).await).await.unwrap();
-	db.write(async |t| t.register_vtxo_confirmation(vtxo.id(), 100).await).await.unwrap();
+	db.write(async |t| t.register_vtxo_confirmation(vtxo.id(), BlockHeight::new(100)).await).await.unwrap();
 
 	// Verify confirmed
 	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
-	assert_eq!(frontier[&vtxo.id()].0, Some(100));
+	assert_eq!(frontier[&vtxo.id()].0, Some(BlockHeight::new(100)));
 
 	// Reorg at height 99 – confirmation at 100 should be cleared
-	db.write(async |t| t.reorg_frontier(99).await).await.unwrap();
+	db.write(async |t| t.reorg_frontier(BlockHeight::new(99)).await).await.unwrap();
 
 	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
 	assert!(frontier[&vtxo.id()].0.is_none(), "confirmation cleared after reorg");
@@ -1164,7 +1168,7 @@ async fn round_queries_empty() {
 	assert!(!db.read(async |t| t.is_round_tx(txid).await).await.unwrap(), "no rounds yet");
 	assert!(db.read(async |t| t.get_round(round_id).await).await.unwrap().is_none());
 	assert!(db.read(async |t| t.get_last_round_id().await).await.unwrap().is_none());
-	assert!(db.read(async |t| t.get_expired_round_ids(u32::MAX).await).await.unwrap().is_empty());
+	assert!(db.read(async |t| t.get_expired_round_ids(BlockHeight::MAX).await).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1191,14 +1195,14 @@ async fn round_participation() {
 	};
 
 	// No participations yet
-	let pending = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(0)).await).await.unwrap();
 	assert!(pending.is_empty());
 
 	// Store a participation
-	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// One pending participation
-	let pending = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(0)).await).await.unwrap();
 	assert_eq!(pending.len(), 1);
 
 	let unlock_hash = UnlockHash::hash(&unlock_preimage);
@@ -1213,7 +1217,7 @@ async fn round_participation() {
 	let removed = db.write(async |t| t.remove_round_participation(unlock_hash).await).await.unwrap();
 	assert!(removed, "should have removed one participation");
 
-	let pending = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(0)).await).await.unwrap();
 	assert!(pending.is_empty(), "participation removed");
 
 	// Removing again returns false
@@ -1221,14 +1225,14 @@ async fn round_participation() {
 	assert!(!removed_again, "nothing to remove the second time");
 
 	// a scheduled participation only becomes pending at its height
-	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output), Some(100)).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), Some(BlockHeight::new(100))).await).await.unwrap();
 
-	let pending = db.read(async |t| t.get_all_pending_round_participations(99).await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(99)).await).await.unwrap();
 	assert!(pending.is_empty(), "not due before the scheduled height");
 
-	let pending = db.read(async |t| t.get_all_pending_round_participations(100).await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(100)).await).await.unwrap();
 	assert_eq!(pending.len(), 1, "due once the scheduled height is reached");
-	assert_eq!(pending[0].scheduled_height, Some(100));
+	assert_eq!(pending[0].scheduled_height, Some(BlockHeight::new(100)));
 }
 
 #[tokio::test]
@@ -1253,16 +1257,16 @@ async fn round_participation_supersedes_on_same_input() {
 
 	// First (old) delegated refresh on the vtxo.
 	let old_preimage: UnlockPreimage = [1u8; 32];
-	db.write(async |t| t.try_store_round_participation(0, old_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), old_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 	let old_hash = UnlockHash::hash(&old_preimage);
 
 	// A new request for the same vtxo supersedes the old one.
 	let new_preimage: UnlockPreimage = [2u8; 32];
-	db.write(async |t| t.try_store_round_participation(0, new_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), new_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 	let new_hash = UnlockHash::hash(&new_preimage);
 
 	// Only the new participation remains pending; the old one was dropped.
-	let pending = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(0)).await).await.unwrap();
 	assert_eq!(pending.len(), 1, "old delegated refresh should have been dropped");
 	assert_eq!(pending[0].unlock_hash, new_hash);
 
@@ -1299,7 +1303,7 @@ async fn round_participation_forfeited_at() {
 		unblinded_mailbox_id: None,
 	};
 
-	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// newly created participation is not forfeited
 	let part = db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.unwrap()
@@ -1370,7 +1374,7 @@ async fn set_forfeit_transactions_is_idempotent() {
 		},
 		unblinded_mailbox_id: None,
 	};
-	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &input_vtxo_ids, std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &input_vtxo_ids, std::iter::once(&output), None).await).await.unwrap();
 
 	// `set_forfeit_transactions` has two preconditions that `finish_round`
 	// would normally have established:
@@ -1500,7 +1504,7 @@ async fn set_forfeit_transactions_rejects_non_round_spent_vtxo() {
 		},
 		unblinded_mailbox_id: None,
 	};
-	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// Attach the participation to a round, but deliberately skip the
 	// `vtxo.spend_state = 'spent'` / `spent_in_round` transition that
@@ -1564,13 +1568,13 @@ async fn round_participation_same_vtxo_multiple_pending() {
 	};
 
 	// First participation succeeds
-	db.write(async |t| t.try_store_round_participation(0, preimage1, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), preimage1, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// Second participation with same vtxo as input should remove the first participation
-	db.write(async |t| t.try_store_round_participation(0, preimage2, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), preimage2, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
 
 	// Only the second participation should be stored as pending
-	let [pending] = db.read(async |t| t.get_all_pending_round_participations(0).await).await.unwrap()
+	let [pending] = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(0)).await).await.unwrap()
 		.try_into().expect("Should have exactly one pending participation");
 	assert_eq!(pending.unlock_preimage, Secret::from(preimage2));
 	let [input] = pending.inputs.try_into().expect("Should have exactly one input");
@@ -1607,7 +1611,7 @@ async fn lightning_payment_attempt_lifecycle() {
 
 	// Start a payment
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(2), None, &[], None, 1, sat(1),
+		node_id, &invoice, sat(2), None, &[], None, BlockHeight::new(1), sat(1),
 	).await).await.unwrap();
 
 	// One open attempt
@@ -1655,7 +1659,7 @@ async fn lightning_payment_attempt_with_error() {
 	let invoice = Invoice::Bolt11(bolt11);
 
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(1), None, &[], None, 1, sat(1)
+		node_id, &invoice, sat(1), None, &[], None, BlockHeight::new(1), sat(1)
 	).await).await.unwrap();
 
 	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
@@ -1691,7 +1695,7 @@ async fn lightning_payment_attempt_result_update() {
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(1000), None, &[], None, 1, sat(1),
+		node_id, &invoice, sat(1000), None, &[], None, BlockHeight::new(1), sat(1),
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1738,7 +1742,7 @@ async fn mark_htlc_send_vtxos_ln_spent_for_settled_attempt() {
 
 	// Open attempt linked to the HTLC-send vtxo.
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(2), None, &[vtxo.id()], None, 1, sat(1),
+		node_id, &invoice, sat(2), None, &[vtxo.id()], None, BlockHeight::new(1), sat(1),
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1784,7 +1788,7 @@ async fn lightning_payment_attempt_stores_protocol_fee() {
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.arkoor_htlc_out_vtxo.clone());
 	db.write(async |t| t.upsert_vtxos([vtxo.clone()]).await).await.unwrap();
 
-	let expected_block_height: u32 = 850_000;
+	let expected_block_height = BlockHeight::new(850_000);
 	let expected_user_fee = sat(1_234);
 	db.write(async |t| t.store_lightning_payment_start(
 		node_id, &invoice, sat(50_000), None, &[vtxo.id()],
@@ -1835,7 +1839,7 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 
 	// Update status to Accepted
 	db.write(async |t| t.store_lightning_htlc_subscription_status(
-		sub_id, LightningHtlcSubscriptionStatus::Accepted, Some(200),
+		sub_id, LightningHtlcSubscriptionStatus::Accepted, Some(BlockHeight::new(200)),
 	).await).await.unwrap();
 
 	let latest = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await.unwrap().unwrap();
@@ -2103,19 +2107,19 @@ async fn htlc_vtxo_chain_resolution_cleared_above_fork_height() {
 
 	let payment_hash = Preimage::random().compute_payment_hash();
 	db.write(async |t| htlc_vtxo::create_htlc_vtxos(
-		t, &[(vtxo.id(), payment_hash, 100)], HtlcDirection::Incoming,
+		t, &[(vtxo.id(), payment_hash, BlockHeight::new(100))], HtlcDirection::Incoming,
 	).await).await.unwrap();
 
 	db.write(async |t| htlc_vtxo::set_htlc_vtxo_chain_resolution(
-		t, vtxo.id(), HtlcResolution::Fulfilled, 120,
+		t, vtxo.id(), HtlcResolution::Fulfilled, BlockHeight::new(120),
 	).await).await.unwrap();
 
 	let stored = db.read(async |t| htlc_vtxo::get_htlc_vtxo(t, vtxo.id()).await).await
 		.unwrap().expect("htlc vtxo present");
 	assert_eq!(stored.htlc.chain_resolution, Some(HtlcResolution::Fulfilled));
-	assert_eq!(stored.htlc.chain_resolution_height, Some(120));
+	assert_eq!(stored.htlc.chain_resolution_height, Some(BlockHeight::new(120)));
 
-	db.write(async |t| htlc_vtxo::clear_htlc_vtxo_chain_resolutions_above(t, 119).await)
+	db.write(async |t| htlc_vtxo::clear_htlc_vtxo_chain_resolutions_above(t, BlockHeight::new(119)).await)
 		.await.unwrap();
 
 	let stored = db.read(async |t| htlc_vtxo::get_htlc_vtxo(t, vtxo.id()).await).await
@@ -2139,18 +2143,18 @@ async fn htlc_vtxo_chain_resolution_kept_at_fork_height() {
 
 	let payment_hash = Preimage::random().compute_payment_hash();
 	db.write(async |t| htlc_vtxo::create_htlc_vtxos(
-		t, &[(vtxo.id(), payment_hash, 100)], HtlcDirection::Incoming,
+		t, &[(vtxo.id(), payment_hash, BlockHeight::new(100))], HtlcDirection::Incoming,
 	).await).await.unwrap();
 
 	db.write(async |t| htlc_vtxo::set_htlc_vtxo_chain_resolution(
-		t, vtxo.id(), HtlcResolution::Revoked, 120,
+		t, vtxo.id(), HtlcResolution::Revoked, BlockHeight::new(120),
 	).await).await.unwrap();
 
-	db.write(async |t| htlc_vtxo::clear_htlc_vtxo_chain_resolutions_above(t, 120).await)
+	db.write(async |t| htlc_vtxo::clear_htlc_vtxo_chain_resolutions_above(t, BlockHeight::new(120)).await)
 		.await.unwrap();
 
 	let stored = db.read(async |t| htlc_vtxo::get_htlc_vtxo(t, vtxo.id()).await).await
 		.unwrap().expect("htlc vtxo present");
 	assert_eq!(stored.htlc.chain_resolution, Some(HtlcResolution::Revoked));
-	assert_eq!(stored.htlc.chain_resolution_height, Some(120));
+	assert_eq!(stored.htlc.chain_resolution_height, Some(BlockHeight::new(120)));
 }

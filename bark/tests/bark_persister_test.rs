@@ -19,7 +19,7 @@ use lightning_invoice::Bolt11Invoice;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 use ark::lightning::{PaymentHash, Preimage};
-use bitcoin_ext::BlockRef;
+use bitcoin_ext::{BlockHeight, BlockRef};
 
 use bark::{WalletProperties, WalletVtxo};
 use bark::actions::{WalletActionCheckpoint, WalletActionId};
@@ -218,9 +218,9 @@ impl BarkPersister for Dummy {
 			StoredExit {
 				vtxo_id: VtxoId::from_slice(&[])?,
 				state: ExitState::Claimable(ExitClaimableState {
-					tip_height: 0,
+					tip_height: BlockHeight::ZERO,
 					claimable_since: BlockRef {
-						height: 0,
+						height: BlockHeight::ZERO,
 						hash: BlockHash::all_zeros(),
 					},
 					last_scanned_block: None,
@@ -261,7 +261,7 @@ impl BarkPersister for Dummy {
 			deserialize::<Transaction>(&[])?,
 			ExitTxOrigin::Wallet {
 			confirmed_in: Some(BlockRef {
-				height: 0,
+				height: BlockHeight::ZERO,
 				hash: BlockHash::all_zeros(),
 			}),
 		})))

@@ -11,6 +11,7 @@ use bark::movement::MovementStatus;
 use bark::round::RoundFlowKind;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::{VtxoLockHolder, VtxoState};
+use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_log::{NoRoundPayments, RoundFinished, RoundParticipationRejected};
 use server_rpc::protos;
 
@@ -167,7 +168,7 @@ async fn manual_maintenance_refresh_drops_server_rejected_vtxo() {
 	let (wallet, _proxy, bad_id, good_id) = setup_bark_sdk_with_rejected_vtxo(&ctx, &srv).await;
 
 	// Age both vtxos so they are due for refresh.
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
 
 	// `maintenance_refresh` blocks until the round it joins finishes, so trigger a round
 	// alongside it (after a short delay so it subscribes first). It should submit
@@ -296,7 +297,7 @@ async fn finished_round_supersedes_pending_delegated_participation() {
 
 	// Far enough ahead that the rounds below leave it pending, but well within the
 	// vtxo's lifetime, which the server checks against the scheduled height.
-	let scheduled_height = srv.bitcoind().get_block_count().await as u32 + 100;
+	let scheduled_height = BlockHeight::new(srv.bitcoind().get_block_count().await as u32 + 100);
 	wallet.refresh_vtxos_scheduled(vec![id], scheduled_height).await
 		.expect("submit the scheduled delegated participation");
 
@@ -344,7 +345,7 @@ async fn scheduled_delegated_refresh_waits_for_height() {
 	let tip = srv.bitcoind().get_block_count().await as u32;
 	let scheduled_height = tip + 10;
 
-	let round = wallet.refresh_vtxos_scheduled(vec![vtxo_id], scheduled_height).await
+	let round = wallet.refresh_vtxos_scheduled(vec![vtxo_id], BlockHeight::new(scheduled_height)).await
 		.expect("submit delegated refresh")
 		.expect("a participation should have been submitted");
 	let unlock_hash = round.state().unlock_hash()
@@ -392,7 +393,7 @@ async fn scheduled_delegated_refresh_refuses_unexitable_replacements() {
 
 	let ctx = TestContext::new("bark_sdk/scheduled_delegated_refresh_refuses_unexitable_replacements").await;
 	let srv = ctx.captaind("server").funded(btc(1))
-		.cfg(|cfg| cfg.vtxo_lifetime = VTXO_LIFETIME)
+		.cfg(|cfg| cfg.vtxo_lifetime = BlockDelta::new(VTXO_LIFETIME))
 		.create().await;
 
 	let wallet = ctx.bark_sdk("bark", &srv)
@@ -406,7 +407,7 @@ async fn scheduled_delegated_refresh_refuses_unexitable_replacements() {
 	let input_expiry = vtxos[0].expiry_height();
 
 	let tip = srv.bitcoind().get_block_count().await as u32;
-	let round = wallet.refresh_vtxos_scheduled(vec![vtxo_id], tip + 1).await
+	let round = wallet.refresh_vtxos_scheduled(vec![vtxo_id], BlockHeight::new(tip + 1)).await
 		.expect("submit delegated refresh")
 		.expect("a participation should have been submitted");
 	let unlock_hash = round.state().unlock_hash()
@@ -431,9 +432,9 @@ async fn scheduled_delegated_refresh_refuses_unexitable_replacements() {
 	// deliberately goes through with the swap. That is the case covered by
 	// [delegated_refresh_completes_with_expired_inputs].
 	let tip = srv.bitcoind().get_block_count().await as u32;
-	ctx.generate_blocks(input_expiry - 1 - tip).await;
+	ctx.generate_blocks(input_expiry.to_u32() - 1 - tip).await;
 	let tip = srv.bitcoind().get_block_count().await as u32;
-	assert!(input_expiry > tip,
+	assert!(input_expiry.to_u32() > tip,
 		"the input must still be unexpired for the exit margin check to apply, \
 		expires at {input_expiry} (tip {tip})",
 	);
@@ -466,7 +467,7 @@ async fn delegated_refresh_completes_with_expired_inputs() {
 
 	let ctx = TestContext::new("bark_sdk/delegated_refresh_completes_with_expired_inputs").await;
 	let srv = ctx.captaind("server").funded(btc(1))
-		.cfg(|cfg| cfg.vtxo_lifetime = VTXO_LIFETIME)
+		.cfg(|cfg| cfg.vtxo_lifetime = BlockDelta::new(VTXO_LIFETIME))
 		.create().await;
 
 	let wallet = ctx.bark_sdk("bark", &srv)
@@ -497,7 +498,7 @@ async fn delegated_refresh_completes_with_expired_inputs() {
 	// clearing the replacements' expiry clears the input's too.
 	ctx.generate_blocks(ROUND_CONFIRMATIONS + VTXO_LIFETIME as u32).await;
 	let tip = srv.bitcoind().get_block_count().await as u32;
-	assert!(input_expiry <= tip,
+	assert!(input_expiry.to_u32() <= tip,
 		"the input should be expired by now, expires at {input_expiry} (tip {tip})",
 	);
 
@@ -538,7 +539,7 @@ async fn delegated_refresh_completes_with_expired_inputs() {
 
 	let output_id = *refresh.output_vtxos.first().expect("the refresh produced a vtxo");
 	let output = wallet.get_vtxo_by_id(output_id).await.expect("output vtxo");
-	assert!(output.expiry_height() <= tip,
+	assert!(output.expiry_height().to_u32() <= tip,
 		"the replacement should be expired too, expires at {} (tip {})",
 		output.expiry_height(), tip,
 	);
@@ -567,7 +568,7 @@ async fn maintenance_refresh_delegated_errors_when_all_inputs_unspendable() {
 	assert_eq!(vtxos.len(), 2, "expected two boarded vtxos");
 
 	// Age both vtxos so they are due for refresh, then poison the whole batch.
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
 	*bad.lock().unwrap() = vtxos.iter().map(|v| v.id()).collect();
 
 	// The batch is submitted, every input is rejected and excluded, and the loop
@@ -589,7 +590,7 @@ async fn maintenance_refresh_delegated_drops_server_rejected_vtxo() {
 	let srv = ctx.captaind("server").funded(btc(1)).create().await;
 	let (wallet, _proxy, bad_id, good_id) = setup_bark_sdk_with_rejected_vtxo(&ctx, &srv).await;
 
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
 	wallet.maybe_schedule_maintenance_refresh_delegated().await
 		.expect("delegated maintenance should schedule a refresh, dropping the rejected input");
 	srv.trigger_round().await;
@@ -968,7 +969,7 @@ async fn delegated_participation_is_redelegated_when_input_consumed() {
 	let a = vtxos.iter().find(|v| v.vtxo.amount() == sat(400_000)).unwrap().vtxo.id();
 	let b = vtxos.iter().find(|v| v.vtxo.amount() == sat(300_000)).unwrap().vtxo.id();
 
-	let height = ctx.bitcoind().get_block_count().await as u32 + 10;
+	let height = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32 + 10);
 	wallet.refresh_vtxos_scheduled(vec![a, b], height).await.unwrap()
 		.expect("delegated refresh should register");
 

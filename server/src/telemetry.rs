@@ -941,16 +941,16 @@ pub fn set_wallet_balance(wallet_kind: WalletKind, wallet_balance: TrustedBalanc
 }
 
 pub fn set_block_height(block_height: BlockHeight) {
-	BLOCK_HEIGHT_TIP.store(block_height as u64, Ordering::Relaxed);
+	BLOCK_HEIGHT_TIP.store(u64::from(block_height), Ordering::Relaxed);
 	if let Some(m) = TELEMETRY.get() {
-		m.block_height_gauge.record(block_height as u64, m.global_labels());
+		m.block_height_gauge.record(u64::from(block_height), m.global_labels());
 	}
 }
 
 pub fn set_sync_height(block_height: BlockHeight) {
-	SYNC_HEIGHT_TIP.store(block_height as u64, Ordering::Relaxed);
+	SYNC_HEIGHT_TIP.store(u64::from(block_height), Ordering::Relaxed);
 	if let Some(m) = TELEMETRY.get() {
-		m.sync_height_gauge.record(block_height as u64, m.global_labels());
+		m.sync_height_gauge.record(u64::from(block_height), m.global_labels());
 	}
 }
 
@@ -1480,7 +1480,7 @@ fn compute_expiry_histogram(
 	let mut total_blocks = 0u64;
 
 	for (&expiry_height, vtxo_map) in pool {
-		let delta = expiry_height.saturating_sub(block_height_tip);
+		let delta = expiry_height.to_u32().saturating_sub(block_height_tip);
 		let slot = EXPIRY_HISTOGRAM_BOUNDARIES.iter()
 			.position(|&b| delta <= b)
 			.unwrap_or(EXPIRY_HISTOGRAM_BOUNDARIES.len());
@@ -1639,6 +1639,7 @@ impl<'a> SpanExt for SpanRef<'a> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use bitcoin_ext::BlockDelta;
 
 	fn known(class: BarkVersionClass) -> Option<&'static str> {
 		match class {
@@ -1724,17 +1725,17 @@ mod tests {
 	#[test]
 	fn expiry_histogram_buckets_are_cumulative_and_ordered() {
 		// One VTXO in each ascending bucket, plus a couple past +Inf.
-		let tip: BlockHeight = 800_000;
+		let tip = BlockHeight::new(800_000);
 		let entries: Vec<(BlockHeight, u64, usize)> = vec![
-			(tip + 3,   100, 1),   // le=6:   1 VTXO,     100 sat
-			(tip + 40,  200, 1),   // le=72:  1 VTXO,     200 sat
-			(tip + 140, 300, 1),   // le=144: 1 VTXO,     300 sat
-			(tip + 148, 400, 1),   // le=150: 1 VTXO,     400 sat
-			(tip + 260, 500, 1),   // le=288: 1 VTXO,     500 sat
-			(tip + 2000, 999, 2),  // le=+Inf: 2 VTXOs,   999+999 = 1998 sat
+			(tip + BlockDelta::new(3),   100, 1),   // le=6:   1 VTXO,     100 sat
+			(tip + BlockDelta::new(40),  200, 1),   // le=72:  1 VTXO,     200 sat
+			(tip + BlockDelta::new(140), 300, 1),   // le=144: 1 VTXO,     300 sat
+			(tip + BlockDelta::new(148), 400, 1),   // le=150: 1 VTXO,     400 sat
+			(tip + BlockDelta::new(260), 500, 1),   // le=288: 1 VTXO,     500 sat
+			(tip + BlockDelta::new(2000), 999, 2),  // le=+Inf: 2 VTXOs,   999+999 = 1998 sat
 		];
 		let pool = build_pool(&entries);
-		let hist = compute_expiry_histogram(&pool, tip);
+		let hist = compute_expiry_histogram(&pool, tip.to_u32());
 
 		let last = *hist.cum_count.last().unwrap();
 		assert_eq!(last, 7, "total VTXO count");
@@ -1753,9 +1754,9 @@ mod tests {
 
 	#[test]
 	fn expiry_histogram_exactly_at_boundary_lands_in_that_bucket() {
-		let tip: BlockHeight = 800_000;
-		let pool = build_pool(&[(tip + 144, 1000, 1)]);
-		let hist = compute_expiry_histogram(&pool, tip);
+		let tip = BlockHeight::new(800_000);
+		let pool = build_pool(&[(tip + BlockDelta::new(144), 1000, 1)]);
+		let hist = compute_expiry_histogram(&pool, tip.to_u32());
 
 		let ix_143_or_prev = EXPIRY_HISTOGRAM_LE_LABELS.iter().position(|&l| l == "72").unwrap();
 		let ix_144 = EXPIRY_HISTOGRAM_LE_LABELS.iter().position(|&l| l == "144").unwrap();
@@ -1766,9 +1767,9 @@ mod tests {
 	#[test]
 	fn expiry_histogram_past_tip_saturates_to_zero_delta() {
 		// A VTXO whose expiry is already behind the current tip.
-		let tip: BlockHeight = 800_000;
-		let pool = build_pool(&[(tip - 5, 42, 1)]);
-		let hist = compute_expiry_histogram(&pool, tip);
+		let tip = BlockHeight::new(800_000);
+		let pool = build_pool(&[(tip.saturating_sub(BlockDelta::new(5)), 42, 1)]);
+		let hist = compute_expiry_histogram(&pool, tip.to_u32());
 		// delta saturates to 0, which is <= 6, so it lands in the first bucket.
 		let ix_6 = 0;
 		assert_eq!(hist.cum_count[ix_6], 1);
@@ -1778,25 +1779,25 @@ mod tests {
 
 	#[test]
 	fn expiry_histogram_sum_of_blocks_weighted_by_count() {
-		let tip: BlockHeight = 800_000;
+		let tip = BlockHeight::new(800_000);
 		let pool = build_pool(&[
-			(tip + 10, 100, 3),  // 10 blocks * 3 VTXOs = 30
-			(tip + 50, 200, 2),  // 50 blocks * 2 VTXOs = 100
+			(tip + BlockDelta::new(10), 100, 3),  // 10 blocks * 3 VTXOs = 30
+			(tip + BlockDelta::new(50), 200, 2),  // 50 blocks * 2 VTXOs = 100
 		]);
-		let hist = compute_expiry_histogram(&pool, tip);
+		let hist = compute_expiry_histogram(&pool, tip.to_u32());
 		assert_eq!(hist.total_blocks, 30 + 100);
 	}
 
 	#[test]
 	fn amount_histogram_buckets_are_cumulative() {
 		// AMOUNT_HISTOGRAM_BOUNDARIES = [1k, 5k, 10k, 50k, 100k, 500k, 1M, 5M] + Inf.
-		let tip: BlockHeight = 800_000;
+		let tip = BlockHeight::new(800_000);
 		let pool = build_pool(&[
-			(tip + 100, 500,       2),   // dust: 2 VTXOs, 500 sat each,     le=1000
-			(tip + 100, 5_000,     1),   // 1 VTXO, 5000 sat,                 le=5000
-			(tip + 100, 50_000,    1),   // 1 VTXO, 50k sat,                  le=50000
-			(tip + 100, 5_000_000, 1),   // 1 VTXO, 5M sat,                   le=5000000
-			(tip + 100, 9_999_999, 1),   // 1 VTXO, ~0.1 BTC,                 le=+Inf
+			(tip + BlockDelta::new(100), 500,       2),   // dust: 2 VTXOs, 500 sat each,     le=1000
+			(tip + BlockDelta::new(100), 5_000,     1),   // 1 VTXO, 5000 sat,                 le=5000
+			(tip + BlockDelta::new(100), 50_000,    1),   // 1 VTXO, 50k sat,                  le=50000
+			(tip + BlockDelta::new(100), 5_000_000, 1),   // 1 VTXO, 5M sat,                   le=5000000
+			(tip + BlockDelta::new(100), 9_999_999, 1),   // 1 VTXO, ~0.1 BTC,                 le=+Inf
 		]);
 		let hist = compute_amount_histogram(&pool);
 
@@ -1825,8 +1826,8 @@ mod tests {
 	#[test]
 	fn amount_histogram_boundary_lands_in_that_bucket() {
 		// A VTXO with amount exactly 1000 must land in le=1000, not le=5000.
-		let tip: BlockHeight = 800_000;
-		let pool = build_pool(&[(tip + 100, 1_000, 1)]);
+		let tip = BlockHeight::new(800_000);
+		let pool = build_pool(&[(tip + BlockDelta::new(100), 1_000, 1)]);
 		let hist = compute_amount_histogram(&pool);
 		let ix_1000 = AMOUNT_HISTOGRAM_LE_LABELS.iter().position(|&l| l == "1000").unwrap();
 		let ix_5000 = AMOUNT_HISTOGRAM_LE_LABELS.iter().position(|&l| l == "5000").unwrap();
@@ -1846,8 +1847,8 @@ mod tests {
 	#[test]
 	fn amount_histogram_dust_below_smallest_boundary_still_lands_in_first_slot() {
 		// A VTXO smaller than any boundary lands in the first (le=1000) slot.
-		let tip: BlockHeight = 800_000;
-		let pool = build_pool(&[(tip + 100, 42, 1)]);
+		let tip = BlockHeight::new(800_000);
+		let pool = build_pool(&[(tip + BlockDelta::new(100), 42, 1)]);
 		let hist = compute_amount_histogram(&pool);
 		assert_eq!(hist.cum_count[0], 1);
 		assert_eq!(hist.cum_sats[0], 42);

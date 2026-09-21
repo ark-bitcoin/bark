@@ -14,7 +14,7 @@ use crate::nursery::NurseryTxKind;
 
 /// Convert a [BlockHeight] into the INT4 stored in postgres.
 fn height_to_sql(height: BlockHeight) -> anyhow::Result<i32> {
-	i32::try_from(height).with_context(|| format!("block height {} out of range", height))
+	i32::try_from(height.to_u32()).with_context(|| format!("block height {} out of range", height))
 }
 
 /// Convert an INT4 from postgres back into a [BlockHeight]. Negative

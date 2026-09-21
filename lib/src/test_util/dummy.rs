@@ -39,8 +39,8 @@ impl Default for DummyTestVtxoSpec {
 		Self {
 			amount: Amount::ONE_BTC + Amount::from_btc(0.1).unwrap(),
 			fee: Amount::from_btc(0.1).unwrap(),
-			expiry_height: 10_000,
-			exit_delta: 144,
+			expiry_height: BlockHeight::new(10_000),
+			exit_delta: BlockDelta::new(144),
 			user_keypair: *DUMMY_USER_KEY,
 			server_keypair: *DUMMY_SERVER_KEY,
 		}
@@ -110,8 +110,8 @@ fn create_dummy_output() {
 	let board = DummyTestVtxoSpec {
 		amount: Amount::from_sat(1_330),
 		fee: Amount::from_sat(330),
-		expiry_height: 100000,
-		exit_delta: 1000,
+		expiry_height: BlockHeight::new(100000),
+		exit_delta: BlockDelta::new(1000),
 		user_keypair: Keypair::new(&crate::SECP, &mut bitcoin::secp256k1::rand::thread_rng()),
 		server_keypair: Keypair::new(&crate::SECP, &mut bitcoin::secp256k1::rand::thread_rng()),
 	};

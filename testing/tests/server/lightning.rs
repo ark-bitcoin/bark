@@ -11,7 +11,7 @@ use futures::future::join_all;
 use log::{info, trace};
 
 use ark::{ProtocolEncoding, Vtxo, SECP};
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 use ark::arkoor::ArkoorDestination;
 use ark::attestations::ArkoorCosignAttestation;
 use ark::vtxo::Full;
@@ -214,7 +214,7 @@ lightning_test!(server_settles_invoice_from_on_chain_htlc_preimage, watchmand, |
 	// while the exit is driven to completion on-chain.
 	cfg.receive_htlc_forward_timeout = Duration::from_secs(5 * 60);
 	// To make sure we don't sweep the vtxo before user can broadcast preimage
-	cfg.vtxopool.vtxo_lifetime = 2048;
+	cfg.vtxopool.vtxo_lifetime = BlockDelta::new(2048);
 });
 
 /// The server must refuse `request_lightning_pay_htlc_revocation` for a
@@ -361,8 +361,8 @@ async fn request_second_htlc_cosign(
 	let second_hash = ark::lightning::PaymentHash::from(
 		sha256::Hash::hash(b"a second invoice").to_byte_array(),
 	);
-	let tip = ctx.bitcoind().get_block_count().await as BlockHeight;
-	let htlc_expiry = tip + srv.config().htlc_send_expiry_delta as BlockHeight + 2;
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+	let htlc_expiry = tip + srv.config().htlc_send_expiry_delta + BlockDelta::new(2);
 	let htlc_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key();
 	let outputs = vec![ArkoorDestination {
 		total_amount: htlc_vtxos.iter().map(|v| v.amount()).sum(),
@@ -474,8 +474,8 @@ async fn cosign_htlc_send_to_pubkey(
 		inputs.push(vtxo);
 	}
 
-	let tip = ctx.bitcoind().get_block_count().await as BlockHeight;
-	let htlc_expiry = tip + srv.config().htlc_send_expiry_delta as BlockHeight + 2;
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+	let htlc_expiry = tip + srv.config().htlc_send_expiry_delta + BlockDelta::new(2);
 	let policy = ark::VtxoPolicy::new_server_htlc_send(owner, payment_hash, htlc_expiry);
 
 	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
@@ -1096,7 +1096,7 @@ async fn refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry(
 	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
 
 	let mut client = srv.get_public_rpc().await;
-	let htlc_expiry_delta = srv.config().htlc_expiry_delta as BlockHeight;
+	let htlc_expiry_delta = srv.config().htlc_expiry_delta;
 
 	tokio::select! {
 		_ = pay(invoice_info.invoice) => {},
@@ -1115,7 +1115,7 @@ async fn refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry(
 				.expect("Accepted subscription must have lowest_incoming_htlc_expiry");
 
 			// Boundary: requested + delta == lowest + 1. Server must refuse.
-			let attacker_expiry = lowest - htlc_expiry_delta + 1;
+			let attacker_expiry = lowest.saturating_sub(htlc_expiry_delta).to_u32() + 1;
 			let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 			let req = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
@@ -1133,7 +1133,7 @@ async fn refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry(
 			);
 
 			// Just below the boundary: requested + delta == lowest. Must accept.
-			let safe_expiry = lowest - htlc_expiry_delta ;
+			let safe_expiry = lowest.saturating_sub(htlc_expiry_delta).to_u32();
 			let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 			let req_safe = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
@@ -1233,7 +1233,7 @@ async fn refuse_receive_claim_after_incoming_htlc_expiry() {
 		.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
 			payment_hash: payment_hash.as_ref().to_vec(),
 			user_pubkey: keypair.public_key().serialize().to_vec(),
-			htlc_recv_expiry: lowest - srv.config().htlc_expiry_delta as BlockHeight,
+			htlc_recv_expiry: lowest.saturating_sub(srv.config().htlc_expiry_delta).into(),
 			lightning_receive_anti_dos: None,
 		})
 		.await
@@ -1245,12 +1245,12 @@ async fn refuse_receive_claim_after_incoming_htlc_expiry() {
 		.collect::<Vec<Vtxo<Full>>>();
 
 	// Wait until the inbound HTLC expired: the attacker's node gets refunded.
-	let tip = ctx.bitcoind().get_block_count().await as BlockHeight;
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
 	assert!(
 		tip < lowest,
 		"test premise broken: tip {tip} already past lowest {lowest}"
 	);
-	ctx.generate_blocks(lowest - tip + 1).await;
+	ctx.generate_blocks(lowest.checked_blocks_since(tip).unwrap() + 1).await;
 
 	// The attack: claim the granted VTXOs cooperatively. The inbound HTLC is
 	// expired, so the server can never settle its hold invoice: cosigning here
@@ -1430,7 +1430,7 @@ async fn settled_hash_replay_claim_still_settles_hold() {
 	let granted = rpc.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
 		payment_hash: payment_hash.as_ref().to_vec(),
 		user_pubkey: keypair.public_key().serialize().to_vec(),
-		htlc_recv_expiry: lowest - srv.config().htlc_expiry_delta as BlockHeight,
+		htlc_recv_expiry: lowest.saturating_sub(srv.config().htlc_expiry_delta).into(),
 		lightning_receive_anti_dos: None,
 	}).await.expect("prepare should succeed while the inbound HTLC is live")
 		.into_inner().htlc_vtxos.into_iter()
@@ -1971,7 +1971,7 @@ async fn check_lightning_receive_poll_interval_fallback() {
 
 	// Create a hold invoice on the server.
 	let resp = srv.start_lightning_receive(
-		payment_hash, btc(1), 18, None, None,
+		payment_hash, btc(1), BlockDelta::new(18), None, None,
 	).await.unwrap();
 
 	// Create a disconnected receiver: the sender is kept alive so

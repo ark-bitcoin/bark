@@ -229,7 +229,7 @@ mod test {
 				VALUES (?1, ?2, ?3, ?4)",
 				params![
 					vtxo.id().to_string(),
-					vtxo.expiry_height(),
+					vtxo.expiry_height().to_u32(),
 					vtxo.amount().to_sat(),
 					vtxo.serialize(),
 				],

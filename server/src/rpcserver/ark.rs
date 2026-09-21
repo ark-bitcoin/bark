@@ -442,7 +442,7 @@ impl rpc::server::ArkService for Server {
 		let resp = self.start_lightning_receive(
 			payment_hash,
 			amount,
-			req.min_cltv_delta as BlockDelta,
+			BlockDelta::try_from(req.min_cltv_delta).badarg("invalid min_cltv_delta")?,
 			mailbox_id,
 			req.description,
 		).await.to_status()?;
@@ -479,7 +479,7 @@ impl rpc::server::ArkService for Server {
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
-		let htlc_recv_expiry = req.htlc_recv_expiry as BlockHeight;
+		let htlc_recv_expiry = BlockHeight::new(req.htlc_recv_expiry);
 
 		let (sub, htlcs) = self.prepare_lightning_claim(
 			payment_hash, user_pubkey, htlc_recv_expiry, req.lightning_receive_anti_dos,
@@ -700,7 +700,7 @@ impl rpc::server::ArkService for Server {
 		}
 
 		let unlock_hash = self.register_delegated_round_participation(
-			inputs, outputs, req.scheduled_height,
+			inputs, outputs, req.scheduled_height.map(BlockHeight::new),
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::RoundParticipationResponse {

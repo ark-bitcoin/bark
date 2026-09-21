@@ -43,5 +43,5 @@ pub async fn tip(
 	let wallet = state.require_wallet()?;
 
 	let tip_height = wallet.chain().tip().await?;
-	Ok(axum::Json(bark_json::web::TipResponse { tip_height }))
+	Ok(axum::Json(bark_json::web::TipResponse { tip_height: tip_height.into() }))
 }

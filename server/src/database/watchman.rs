@@ -36,7 +36,7 @@ impl<'t> Tx<'t> {
 			AND (frontier_at IS NULL
 				OR ($2::int4 IS NOT NULL
 					AND confirmed_height IS DISTINCT FROM $2::int4))
-		", &[&funding_txid.to_string(), &confirmed_height.map(|h| h as i32)]).await?;
+		", &[&funding_txid.to_string(), &confirmed_height.map(|h| h.to_u32() as i32)]).await?;
 
 		Ok(())
 	}
@@ -74,7 +74,7 @@ impl<'t> Tx<'t> {
 			WHERE vtxo_id = $1 AND confirmed_height IS DISTINCT FROM $2::int4
 		", &[Type::TEXT, Type::INT4]).await?;
 
-		self.execute(&stmt, &[&vtxo_id.to_string(), &(height as i32)]).await?;
+		self.execute(&stmt, &[&vtxo_id.to_string(), &(height.to_u32() as i32)]).await?;
 
 		Ok(())
 	}
@@ -92,7 +92,7 @@ impl<'t> Tx<'t> {
 			WHERE vtxo_id = $1 AND onchain_spent_height IS NULL
 		", &[Type::TEXT, Type::INT4, Type::TEXT]).await?;
 
-		self.execute(&stmt, &[&vtxo_id.to_string(), &(height as i32), &txid.to_string()]).await?;
+		self.execute(&stmt, &[&vtxo_id.to_string(), &(height.to_u32() as i32), &txid.to_string()]).await?;
 
 		Ok(())
 	}
@@ -114,7 +114,9 @@ impl<'t> Tx<'t> {
 		while let Some(row) = rows.next().await {
 			let row = row?;
 			let confirmed_height: Option<i32> = row.get("confirmed_height");
-			let confirmed_height = confirmed_height.map(|h| h as BlockHeight);
+			let confirmed_height = confirmed_height.map(|h| {
+				BlockHeight::try_from(h).expect("invalid block height in db")
+			});
 			let vtxo = ServerVtxo::deserialize(row.get("vtxo"))?;
 			frontier.insert(vtxo.id(), (confirmed_height, vtxo));
 		}
@@ -138,7 +140,9 @@ impl<'t> Tx<'t> {
 
 		rows.iter().map(|row| {
 			let confirmed_height: Option<i32> = row.get("confirmed_height");
-			let confirmed_height = confirmed_height.map(|h| h as BlockHeight);
+			let confirmed_height = confirmed_height.map(|h| {
+				BlockHeight::try_from(h).expect("invalid block height in db")
+			});
 			let vtxo = ServerVtxo::deserialize(row.get("vtxo"))?;
 			Ok((vtxo, confirmed_height))
 		}).collect()
@@ -185,14 +189,14 @@ impl<'t> Tx<'t> {
 			UPDATE vtxo SET confirmed_height = NULL, updated_at = NOW()
 			WHERE confirmed_height > $1
 		", &[Type::INT4]).await?;
-		self.execute(&stmt, &[&(height as i32)]).await?;
+		self.execute(&stmt, &[&(height.to_u32() as i32)]).await?;
 
 		let stmt = self.prepare_typed("
 			UPDATE vtxo
 			SET onchain_spent_height = NULL, onchain_spent_txid = NULL, updated_at = NOW()
 			WHERE onchain_spent_height > $1
 		", &[Type::INT4]).await?;
-		self.execute(&stmt, &[&(height as i32)]).await?;
+		self.execute(&stmt, &[&(height.to_u32() as i32)]).await?;
 
 		Ok(())
 	}

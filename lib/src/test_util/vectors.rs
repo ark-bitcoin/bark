@@ -11,6 +11,8 @@ use bitcoin::secp256k1::Keypair;
 use bitcoin::transaction::Version;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
 
+use bitcoin_ext::{BlockDelta, BlockHeight};
+
 use crate::{musig, Vtxo, VtxoPolicy, VtxoRequest, SECP};
 use crate::arkoor::ArkoorDestination;
 use crate::arkoor::package::ArkoorPackageBuilder;
@@ -112,8 +114,8 @@ impl VtxoTestHex {
 }
 
 pub fn generate_vtxo_vectors() -> VtxoTestVectors {
-	let expiry_height = 101_010;
-	let exit_delta = 2016;
+	let expiry_height = BlockHeight::new(101_010);
+	let exit_delta = BlockDelta::new(2016);
 	let server_key = Keypair::from_str("916da686cedaee9a9bfb731b77439f2a3f1df8664e16488fba46b8d2bfe15e92").unwrap();
 	let board_user_key = Keypair::from_str("fab9e598081a3e74b2233d470c4ad87bcc285b6912ed929568e62ac0e9409879").unwrap();
 	let amount = Amount::from_sat(10_330);
@@ -170,7 +172,7 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 		policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
 			user_pubkey: arkoor_htlc_out_user_key.public_key(),
 			payment_hash,
-			htlc_expiry: expiry_height - 1000,
+			htlc_expiry: expiry_height.saturating_sub(BlockDelta::new(1000)),
 		}),
 	};
 	let arkoor1_dest2 = ArkoorDestination {
@@ -242,8 +244,8 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 			policy: VtxoPolicy::new_server_htlc_recv(
 				round2_user_key.public_key(),
 				round2_payment_hash,
-				expiry_height - 2000,
-				40,
+				expiry_height.saturating_sub(BlockDelta::new(2000)),
+				BlockDelta::new(40),
 			),
 		},
 		cosign_pubkey: Some(round2_cosign_key.public_key()),

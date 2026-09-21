@@ -53,7 +53,7 @@ fn validate_htlc_recv_expiry(
 	htlc_expiry_delta: BlockDelta,
 	requested: BlockHeight,
 ) -> anyhow::Result<()> {
-	let delta = BlockHeight::from(htlc_expiry_delta);
+	let delta = htlc_expiry_delta;
 
 	let chain_tip_plus_delta = chain_tip.checked_add(delta)
 		.context("chain_tip + htlc_expiry_delta overflows BlockHeight")?;
@@ -123,7 +123,7 @@ pub(crate) fn validate_intra_ark_payment(
 /// This must stay well below `Config::htlc_expiry_delta`: receivers prepare
 /// their claim with that larger margin, so an honest receiver claiming
 /// promptly is never affected.
-const RECEIVE_CLAIM_EXPIRY_MARGIN: BlockDelta = 3;
+const RECEIVE_CLAIM_EXPIRY_MARGIN: BlockDelta = BlockDelta::new(3);
 
 /// Validates that a lightning receive claim can still be collected on.
 ///
@@ -136,7 +136,7 @@ fn validate_receive_claim(
 	lowest_incoming_htlc_expiry: BlockHeight,
 	chain_tip: BlockHeight,
 ) -> anyhow::Result<()> {
-	let margin = BlockHeight::from(RECEIVE_CLAIM_EXPIRY_MARGIN);
+	let margin = RECEIVE_CLAIM_EXPIRY_MARGIN;
 
 	let tip_plus_margin = chain_tip.checked_add(margin)
 		.context("chain_tip + RECEIVE_CLAIM_EXPIRY_MARGIN overflows BlockHeight")?;
@@ -200,8 +200,8 @@ impl Server {
 
 		// Verify that the proposed expiry makes sense for us
 		let tip = self.sync_manager.chain_tip().height;
-		let expiry = tip + self.config.htlc_send_expiry_delta as BlockHeight;
-		if requested_policy.htlc_expiry < expiry - 1 {
+		let expiry = tip + self.config.htlc_send_expiry_delta;
+		if requested_policy.htlc_expiry < expiry.saturating_sub(BlockDelta::new(1)) {
 			return badarg!(
 				"requested expiry is too low. our tip is {tip}. \
 				sync your node and try again",
@@ -983,7 +983,7 @@ mod tests {
 	use super::*;
 
 	/// Typical config delta used in tests.
-	const DELTA: BlockDelta = 40;
+	const DELTA: BlockDelta = BlockDelta::new(40);
 
 	/// Build a signed bolt11 invoice, standing in for one we issued via cln.
 	///
@@ -1073,41 +1073,41 @@ mod tests {
 	#[test]
 	fn receive_claim_margin() {
 		// tip + margin == lowest is still ok
-		assert!(validate_receive_claim(103, 100).is_ok());
+		assert!(validate_receive_claim(BlockHeight::new(103), BlockHeight::new(100)).is_ok());
 		// one block later and the settle might not make it
-		let res = validate_receive_claim(102, 100);
+		let res = validate_receive_claim(BlockHeight::new(102), BlockHeight::new(100));
 		assert!(res.is_err());
 		assert!(format!("{:#}", res.unwrap_err()).contains("too close to the current chaintip"));
 		// and certainly once it expired
-		assert!(validate_receive_claim(100, 100).is_err());
-		assert!(validate_receive_claim(99, 100).is_err());
+		assert!(validate_receive_claim(BlockHeight::new(100), BlockHeight::new(100)).is_err());
+		assert!(validate_receive_claim(BlockHeight::new(99), BlockHeight::new(100)).is_err());
 	}
 
 	#[test]
 	fn grant_outgoing_htlc_respects_htlcs_expiry_delta() {
 		// In this test the chain_tip shouldn't result in problems
 		// We have sufficient time anyway
-		let lowest_expiry = 1000;
-		let chain_tip = 100;
+		let lowest_expiry = BlockHeight::new(1000);
+		let chain_tip = BlockHeight::new(100);
 
-		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, 900).expect("Is safe");
-		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, 960).expect("Is safe");
-		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, 961).expect_err("Not enough time for server to broadcast");
-		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, 1000).expect_err("Is unsafe");
-		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, u32::MAX).expect_err("Is unsafe");
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, BlockHeight::new(900)).expect("Is safe");
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, BlockHeight::new(960)).expect("Is safe");
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, BlockHeight::new(961)).expect_err("Not enough time for server to broadcast");
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, BlockHeight::new(1000)).expect_err("Is unsafe");
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, BlockHeight::MAX).expect_err("Is unsafe");
 	}
 
 	#[test]
 	fn grant_takes_chaintip_into_account() {
-		let lowest_expiry = 1000;
+		let lowest_expiry = BlockHeight::new(1000);
 
 		// This one is a bit weird.
 		// Yes, the user requests an already expired htlc so it looks totally safe
 		// However, the because we are so close to the lowest incoming
 		// the server wouldn't have sufficient time to respond
-		validate_htlc_recv_expiry(lowest_expiry, 990, DELTA, 900).expect_err("Only 10 blocks to respond");
-		validate_htlc_recv_expiry(lowest_expiry, 980, DELTA, 900).expect_err("Only 20 blocks to respond");
-		validate_htlc_recv_expiry(lowest_expiry, 970, DELTA, 900).expect_err("Only 30 blocks to respond");
-		validate_htlc_recv_expiry(lowest_expiry, 960, DELTA, 900).expect("This is safe now");
+		validate_htlc_recv_expiry(lowest_expiry, BlockHeight::new(990), DELTA, BlockHeight::new(900)).expect_err("Only 10 blocks to respond");
+		validate_htlc_recv_expiry(lowest_expiry, BlockHeight::new(980), DELTA, BlockHeight::new(900)).expect_err("Only 20 blocks to respond");
+		validate_htlc_recv_expiry(lowest_expiry, BlockHeight::new(970), DELTA, BlockHeight::new(900)).expect_err("Only 30 blocks to respond");
+		validate_htlc_recv_expiry(lowest_expiry, BlockHeight::new(960), DELTA, BlockHeight::new(900)).expect("This is safe now");
 	}
 }

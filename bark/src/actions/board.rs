@@ -16,7 +16,7 @@ use log::{error, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::vtxo::{Full, VtxoId};
-use bitcoin_ext::{BlockHeight, TxStatus};
+use bitcoin_ext::{BlockDelta, TxStatus};
 use server_rpc::protos;
 
 use crate::Wallet;
@@ -255,7 +255,7 @@ async fn run_broadcast(
 async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, AdvanceError> {
 	let (_, ark_info) = wallet.require_server().await?;
 	let current_height = wallet.inner.chain.tip().await?;
-	let required = ark_info.required_board_confirmations as BlockHeight;
+	let required = BlockDelta::new(ark_info.required_board_confirmations as u16);
 
 	let vtxo = wallet.get_vtxo_by_id(board.vtxo_id).await?;
 
@@ -282,7 +282,7 @@ async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, Ad
 	let anchor = vtxo.chain_anchor();
 	let confs = match wallet.inner.chain.tx_status(anchor.txid).await {
 		Ok(TxStatus::Confirmed(block_ref)) =>
-			Some(current_height.saturating_sub(block_ref.height).saturating_add(1)),
+			Some(current_height.checked_blocks_since(block_ref.height).unwrap_or(0).saturating_add(1)),
 		Ok(TxStatus::Mempool) => Some(0),
 		// Dropped from the mempool before confirming. Probe for a conflicting
 		// spend of the funding inputs: if one has confirmed the funding tx can
@@ -314,7 +314,7 @@ async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, Ad
 		Err(_) => None,
 	};
 
-	if confs.is_some_and(|c| c >= required) {
+	if confs.is_some_and(|c| c >= required.to_u32()) {
 		// Attempt registration inline. A failure here (the server can't see
 		// enough confirmations yet, or refuses) is not terminal: leave the vtxo
 		// Locked and retry next drive, exactly like the old loop. The funding tx
@@ -335,8 +335,8 @@ async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, Ad
 	// the exit commits.
 	//
 	// I know this if is collapsible, but it reads better like this...
-	let exit_margin = wallet.config().vtxo_exit_margin as BlockHeight;
-	if vtxo.expiry_height() <= current_height.saturating_add(exit_margin) {
+	let exit_margin = wallet.config().vtxo_exit_margin;
+	if vtxo.expiry_height() <= current_height + exit_margin {
 		if !wallet.exit_mgr().is_exiting(vtxo.id()).await {
 			warn!("Board {} expired before confirmation, marking VTXO for exit", board.id);
 			wallet.inner.exit.start_exit_for_vtxos(&[vtxo.vtxo.clone()]).await?;

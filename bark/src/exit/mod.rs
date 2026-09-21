@@ -992,7 +992,7 @@ impl Exit {
 				});
 			}
 
-			let locktime = bitcoin::absolute::LockTime::from_height(tip)
+			let locktime = tip.to_locktime()
 				.map_err(|e| ExitError::InvalidLocktime { tip, error: e.to_string() })?;
 
 			Transaction {

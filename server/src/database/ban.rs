@@ -23,7 +23,7 @@ pub async fn ban_vtxo<T: GenericClient>(
 
 	let rows = client.execute(&stmt, &[
 		&vtxo_id.to_string(),
-		&(until_height as i32),
+		&(until_height.to_u32() as i32),
 	]).await.context("failed to ban vtxo")?;
 
 	ensure!(rows > 0, "vtxo {} not found", vtxo_id);
@@ -59,7 +59,7 @@ pub async fn list_banned_vtxos<T: GenericClient>(
 		WHERE banned_until_height IS NOT NULL AND banned_until_height > $1
 	", &[Type::INT4]).await?;
 
-	let rows = client.query(&stmt, &[&(chain_tip as i32)]).await
+	let rows = client.query(&stmt, &[&(chain_tip.to_u32() as i32)]).await
 		.context("failed to list banned vtxos")?;
 
 	rows.into_iter()

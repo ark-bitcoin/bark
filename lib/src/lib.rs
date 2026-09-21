@@ -75,7 +75,7 @@ pub struct ArkInfo {
 	pub required_board_confirmations: usize,
 	/// Maximum CLTV delta server will allow clients to request an
 	/// invoice generation with.
-	pub max_user_invoice_cltv_delta: u16,
+	pub max_user_invoice_cltv_delta: BlockDelta,
 	/// Minimum amount for a board the server will cosign
 	pub min_board_amount: Amount,
 
@@ -161,7 +161,7 @@ pub mod scripts {
 
 	/// Create a tapscript that is a checksig and a relative timelock.
 	pub fn delayed_sign(delay_blocks: BlockDelta, pubkey: XOnlyPublicKey) -> ScriptBuf {
-		let csv = bitcoin::Sequence::from_height(delay_blocks);
+		let csv = bitcoin::Sequence::from(delay_blocks);
 		bitcoin::Script::builder()
 			.push_int(csv.to_consensus_u32() as i64)
 			.push_opcode(opcodes::all::OP_CSV)
@@ -173,7 +173,7 @@ pub mod scripts {
 
 	/// Create a tapscript that is a checksig and an absolute timelock.
 	pub fn timelock_sign(timelock_height: BlockHeight, pubkey: XOnlyPublicKey) -> ScriptBuf {
-		let lt = bitcoin::absolute::LockTime::from_height(timelock_height).unwrap();
+		let lt = timelock_height.to_locktime().unwrap();
 		bitcoin::Script::builder()
 			.push_int(lt.to_consensus_u32() as i64)
 			.push_opcode(opcodes::all::OP_CLTV)
@@ -189,8 +189,8 @@ pub mod scripts {
 		timelock_height: BlockHeight,
 		pubkey: XOnlyPublicKey,
 	) -> ScriptBuf {
-		let csv = bitcoin::Sequence::from_height(delay_blocks);
-		let lt = bitcoin::absolute::LockTime::from_height(timelock_height).unwrap();
+		let csv = bitcoin::Sequence::from(delay_blocks);
+		let lt = timelock_height.to_locktime().unwrap();
 		bitcoin::Script::builder()
 			.push_int(lt.to_consensus_u32().try_into().unwrap())
 			.push_opcode(opcodes::all::OP_CLTV)
@@ -246,7 +246,7 @@ pub mod scripts {
 		pubkey: XOnlyPublicKey,
 	) -> ScriptBuf {
 		let hash_160 = ripemd160::Hash::hash(&hash[..]);
-		let csv = bitcoin::Sequence::from_height(delay_blocks);
+		let csv = bitcoin::Sequence::from(delay_blocks);
 
 		bitcoin::Script::builder()
 			.push_int(csv.to_consensus_u32().try_into().unwrap())
@@ -269,7 +269,7 @@ pub mod scripts {
 		pubkey: XOnlyPublicKey,
 	) -> ScriptBuf {
 		let hash_160 = ripemd160::Hash::hash(&hash[..]);
-		let csv = bitcoin::Sequence::from_height(delay_blocks);
+		let csv = bitcoin::Sequence::from(delay_blocks);
 
 		bitcoin::Script::builder()
 			.push_int(csv.to_consensus_u32().try_into().unwrap())

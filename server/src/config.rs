@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 
 use ark::fees::FeeSchedule;
-use bitcoin_ext::{BlockDelta, BlockHeight};
+use bitcoin_ext::BlockDelta;
 use cln_rpc::node_client::NodeClient;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 
@@ -302,7 +302,7 @@ pub struct Config {
 	/// is expected to confirm. When the target passes without a
 	/// confirmation, the operator is warned on every new block until
 	/// they intervene.
-	pub nursery_confirm_target_blocks: BlockHeight,
+	pub nursery_confirm_target_blocks: BlockDelta,
 
 	pub rpc: Rpc,
 	pub postgres: Postgres,
@@ -906,7 +906,7 @@ mod test {
 		let cfg = Config::load_with_custom_env(DEFAULT_CAPTAIND_CONFIG_PATH, Some(env)).unwrap();
 		cfg.validate().expect("invalid configuration");
 
-		assert_eq!(cfg.vtxo_lifetime, 42);
+		assert_eq!(cfg.vtxo_lifetime, BlockDelta::new(42));
 		assert_eq!(cfg.bitcoind.cookie, Some("/not/hot/dog/but/cookie".into()));
 		let lncfg = cfg.cln_array.get(0).unwrap();
 		assert_eq!(lncfg.uri, Uri::from_str(uri).unwrap());

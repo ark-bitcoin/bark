@@ -107,7 +107,7 @@ impl LightningSend {
 	pub async fn is_htlc_near_expiry(&self, wallet: &Wallet) -> anyhow::Result<bool> {
 		let tip = wallet.inner.chain.tip().await?;
 		Ok(tip > self.htlc_expiry
-			.saturating_sub(wallet.config().vtxo_refresh_expiry_threshold as BlockHeight))
+			.saturating_sub(wallet.config().vtxo_refresh_expiry_threshold))
 	}
 
 	/// Returns whether the lightning payment has failed to revoke HTLCs after a failed payment.
@@ -345,7 +345,7 @@ pub(crate) async fn start_lightning_send(
 	let (change_keypair, _) = wallet.derive_store_next_keypair().await?;
 	let (revocation_keypair, _) = wallet.derive_store_next_keypair().await?;
 
-	let htlc_expiry = tip + ark_info.htlc_send_expiry_delta as BlockHeight;
+	let htlc_expiry = tip + ark_info.htlc_send_expiry_delta;
 
 	let movement_id = wallet.inner.movements.new_movement_with_update(
 		Subsystem::LIGHTNING_SEND,

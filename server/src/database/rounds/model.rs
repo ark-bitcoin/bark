@@ -97,7 +97,8 @@ impl TryFrom<Row> for StoredRound {
 			funding_tx,
 			seq: RoundSeq::new(row.get::<_, i64>("seq") as u64),
 			signed_tree: SignedVtxoTreeSpec::deserialize(row.get("signed_tree"))?,
-			expiry_height: row.get::<_, i32>("expiry") as BlockHeight,
+			expiry_height: BlockHeight::try_from(row.get::<_, i32>("expiry"))
+				.context("invalid block height in db")?,
 			swept_at: row.get("swept_at"),
 			created_at: row.get("created_at"),
 		})

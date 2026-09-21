@@ -16,7 +16,7 @@ use ark::vtxo::{VtxoId, VtxoPolicyKind};
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::exit::ExitState;
 use bark_json::primitives::VtxoStateInfo;
-use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt};
+use bitcoin_ext::{BlockDelta, TaprootSpendInfoExt};
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use server::database::Db;
 use server::database::htlc_vtxo::{self, HtlcResolution};
@@ -670,7 +670,7 @@ async fn bark_should_exit_a_pending_board() {
 	let board_vtxo = bark.vtxos().await.first().cloned().unwrap();
 	let board_expiry = board_vtxo.expiry_height;
 	let tip = ctx.bitcoind().sync_client().tip().unwrap().height;
-	ctx.generate_blocks(board_expiry - tip - 2).await;
+	ctx.generate_blocks(board_expiry.checked_blocks_since(tip).unwrap() - 2).await;
 	bark.sync().await;
 
 	// An exit has kicked off but the pending_board entry stays alive so registration
@@ -813,7 +813,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	let htlc_expiry_height = bark1_client.all_vtxos().await.unwrap().into_iter().find_map(
 		|v| v.policy().as_server_htlc_send().map(|h| h.htlc_expiry)
 	).unwrap();
-	ctx.generate_blocks(htlc_expiry_height - tip.height).await;
+	ctx.generate_blocks(htlc_expiry_height.checked_blocks_since(tip.height).unwrap()).await;
 
 	// Without `allow_lightning_send_to_exit`, even at expiry the action
 	// must keep parking - no exit may be started, and the send must be
@@ -982,9 +982,9 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 		let htlc = bark.vtxos().await.unwrap().into_iter().find(
 			|v| v.policy_type() == VtxoPolicyKind::ServerHtlcSend
 		).unwrap();
-		htlc.expiry_height() - bark.config().vtxo_refresh_expiry_threshold as BlockHeight + 1
+		htlc.expiry_height().saturating_sub(bark.config().vtxo_refresh_expiry_threshold) + BlockDelta::new(1)
 	};
-	ctx.generate_blocks(desired_height - tip.height).await;
+	ctx.generate_blocks(desired_height.checked_blocks_since(tip.height).unwrap()).await;
 
 	// Without `allow_lightning_send_to_exit`, the sync moves the action
 	// through `RevocableHtlcs` → `RevocationFailed` and parks, but does

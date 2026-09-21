@@ -7,6 +7,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router, debug_handler};
 
 use bitcoin::Amount;
+use bitcoin_ext::BlockHeight;
 use utoipa::OpenApi;
 
 use ark::VtxoId;
@@ -861,7 +862,7 @@ pub async fn refresh_delegated(
 		.collect::<Result<Vec<_>, _>>()?;
 
 	let round = match body.height {
-		Some(height) => wallet.refresh_vtxos_scheduled(vtxo_ids, height).await
+		Some(height) => wallet.refresh_vtxos_scheduled(vtxo_ids, BlockHeight::new(height)).await
 			.context("Failed to store round participation")?,
 		None => wallet.refresh_vtxos_delegated(vtxo_ids).await
 			.context("Failed to store round participation")?,

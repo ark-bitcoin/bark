@@ -4,7 +4,7 @@ use std::sync::atomic::{self, AtomicUsize};
 use bitcoin::{Amount, OutPoint, Psbt, ScriptBuf, SignedAmount, Transaction, TxIn, TxOut, Txid};
 use bitcoin::absolute::LockTime;
 use bitcoin::hashes::Hash;
-use bitcoin_ext::P2TR_DUST_SAT;
+use bitcoin_ext::{BlockDelta, P2TR_DUST_SAT};
 
 use bark::onchain::OnchainWalletTrait;
 use bark_json::movements::MovementStatus;
@@ -302,7 +302,7 @@ async fn board_psbt_rejects_wrong_expiry_height() {
 	let signed_psbt = onchain.finish_psbt(psbt).await.unwrap();
 
 	let err = wallet
-		.board_psbt(signed_psbt, keypair, expiry_height + 1)
+		.board_psbt(signed_psbt, keypair, expiry_height + BlockDelta::new(1))
 		.await
 		.unwrap_err()
 		.to_alt_string();

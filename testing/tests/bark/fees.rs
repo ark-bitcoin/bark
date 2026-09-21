@@ -8,7 +8,7 @@ use ark::fees::{
 	PpmFeeRate, RefreshFees,
 };
 use bark_json::movements::{MovementDestination, PaymentMethod};
-use bitcoin_ext::{FeeRateExt, P2TR_DUST};
+use bitcoin_ext::{BlockDelta, FeeRateExt, P2TR_DUST};
 use server_log::ArkFeeRecorded;
 use ark_testing::{TestContext, btc, is_bark_version, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
@@ -420,7 +420,7 @@ async fn refresh_should_refresh_vtxos() {
 	let ctx = TestContext::new("fees/refresh_should_refresh_vtxos").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.fees.refresh = RefreshFees {
 			base_fee: sat(500),
 			ppm_expiry_table: vec![
@@ -493,7 +493,7 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 	let ctx = TestContext::new("fees/refresh_should_refresh_vtxos_no_dust").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.fees.refresh = RefreshFees {
 			base_fee: Amount::ZERO,
 			ppm_expiry_table: vec![
@@ -1029,7 +1029,7 @@ async fn lightning_send_fee_ppm_expiry_table() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
-		cfg.vtxo_lifetime = 144;
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.fees.lightning_send = LightningSendFees {
 			min_fee: Amount::ZERO,
 			base_fee: sat(1_000),

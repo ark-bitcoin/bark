@@ -232,7 +232,7 @@ impl<G, P: Policy> VtxoState<G, P> {
 
 	fn check_not_banned(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
 		if let Some(until) = self.banned_until_height {
-			if chain_tip < until {
+			if chain_tip.to_u32() < until {
 				return badarg!("vtxo {} is banned until block {}", self.vtxo_id, until);
 			}
 		}
@@ -432,7 +432,7 @@ impl TryFrom<Row> for BannedVtxo {
 
 	fn try_from(row: Row) -> Result<Self, Self::Error> {
 		let vtxo_id = VtxoId::from_str(row.get::<_, &str>("vtxo_id"))?;
-		let banned_until_height = u32::try_from(row.get::<_, i32>("banned_until_height"))
+		let banned_until_height = BlockHeight::try_from(row.get::<_, i32>("banned_until_height"))
 			.context("banned_until_height out of range for u32")?;
 
 		Ok(Self { vtxo_id, banned_until_height })
@@ -483,14 +483,14 @@ mod test {
 	#[test]
 	fn spendable_unbanned_is_spendable() {
 		let v = spendable();
-		assert!(v.check_spendable(100).is_ok());
+		assert!(v.check_spendable(BlockHeight::new(100)).is_ok());
 	}
 
 	#[test]
 	fn unregistered_is_not_spendable() {
 		let mut v = spendable();
 		v.spend_state = SpendState::Unregistered;
-		let err = v.check_spendable(100).unwrap_err();
+		let err = v.check_spendable(BlockHeight::new(100)).unwrap_err();
 		assert!(format!("{err}").contains("unregistered"), "got: {err}");
 	}
 
@@ -498,7 +498,7 @@ mod test {
 	fn unregistered_is_valid_anti_dos_proof() {
 		let mut v = spendable();
 		v.spend_state = SpendState::Unregistered;
-		assert!(v.check_valid_anti_dos_proof(100).is_ok());
+		assert!(v.check_valid_anti_dos_proof(BlockHeight::new(100)).is_ok());
 	}
 
 	#[test]
@@ -506,22 +506,22 @@ mod test {
 		let mut v = spendable();
 		v.spend_state = SpendState::Spent;
 		v.oor_spent_txid = Some(Txid::all_zeros());
-		assert!(v.check_valid_anti_dos_proof(100).is_err());
+		assert!(v.check_valid_anti_dos_proof(BlockHeight::new(100)).is_err());
 	}
 
 	#[test]
 	fn exited_is_not_spendable() {
 		let mut v = spendable();
-		v.confirmed_height = Some(90);
-		let err = v.check_spendable(100).unwrap_err();
+		v.confirmed_height = Some(BlockHeight::new(90));
+		let err = v.check_spendable(BlockHeight::new(100)).unwrap_err();
 		assert!(format!("{err}").contains("exited"), "got: {err}");
 	}
 
 	#[test]
 	fn exited_is_not_valid_anti_dos_proof() {
 		let mut v = spendable();
-		v.confirmed_height = Some(90);
-		let err = v.check_valid_anti_dos_proof(100).unwrap_err();
+		v.confirmed_height = Some(BlockHeight::new(90));
+		let err = v.check_valid_anti_dos_proof(BlockHeight::new(100)).unwrap_err();
 		assert!(format!("{err}").contains("exited"), "got: {err}");
 	}
 
@@ -530,8 +530,8 @@ mod test {
 		let mut v = spendable();
 		v.spend_state = SpendState::Unregistered;
 		v.banned_until_height = Some(200);
-		assert!(v.check_valid_anti_dos_proof(100).is_err());
-		assert!(v.check_valid_anti_dos_proof(200).is_ok());
+		assert!(v.check_valid_anti_dos_proof(BlockHeight::new(100)).is_err());
+		assert!(v.check_valid_anti_dos_proof(BlockHeight::new(200)).is_ok());
 	}
 
 	#[test]
@@ -539,16 +539,16 @@ mod test {
 		let mut v = spendable();
 		v.spend_state = SpendState::Spent;
 		v.oor_spent_txid = Some(Txid::all_zeros());
-		assert!(v.check_spendable(100).is_err());
+		assert!(v.check_spendable(BlockHeight::new(100)).is_err());
 	}
 
 	#[test]
 	fn banned_is_not_spendable() {
 		let mut v = spendable();
 		v.banned_until_height = Some(200);
-		assert!(v.check_spendable(100).is_err());
+		assert!(v.check_spendable(BlockHeight::new(100)).is_err());
 		// At tip == 200 the ban has expired (not strictly greater).
-		assert!(v.check_spendable(200).is_ok());
+		assert!(v.check_spendable(BlockHeight::new(200)).is_ok());
 	}
 
 	#[test]
@@ -558,9 +558,9 @@ mod test {
 		v.spend_state = SpendState::Spent;
 		v.oor_spent_txid = Some(txid);
 		// check_spendable rejects it
-		assert!(v.check_spendable(100).is_err());
+		assert!(v.check_spendable(BlockHeight::new(100)).is_err());
 		// but check_spendable_for_oor allows it when the txid matches
-		assert!(v.check_spendable_for_oor(100, txid).is_ok());
+		assert!(v.check_spendable_for_oor(BlockHeight::new(100), txid).is_ok());
 	}
 
 	#[test]
@@ -570,14 +570,14 @@ mod test {
 		v.oor_spent_txid = Some(Txid::all_zeros());
 		let other_txid = "0000000000000000000000000000000000000000000000000000000000000001"
 			.parse().unwrap();
-		assert!(v.check_spendable_for_oor(100, other_txid).is_err());
+		assert!(v.check_spendable_for_oor(BlockHeight::new(100), other_txid).is_err());
 	}
 
 	#[test]
 	fn unregistered_is_not_spendable_for_oor() {
 		let mut v = spendable();
 		v.spend_state = SpendState::Unregistered;
-		assert!(v.check_spendable_for_oor(100, Txid::all_zeros()).is_err());
+		assert!(v.check_spendable_for_oor(BlockHeight::new(100), Txid::all_zeros()).is_err());
 	}
 
 	#[test]
@@ -586,17 +586,17 @@ mod test {
 			(htlc_send(), "server-htlc-send-v1"),
 			(htlc_recv(), "server-htlc-receive-v1"),
 		] {
-			let err = format!("{}", v.check_spendable(100).unwrap_err());
+			let err = format!("{}", v.check_spendable(BlockHeight::new(100)).unwrap_err());
 			assert!(err.contains("not spendable as a") && err.contains(policy), "got: {err}");
 			// And the oor gate, which every arkoor path funnels through.
-			let err = format!("{}", v.check_spendable_for_oor(100, Txid::all_zeros()).unwrap_err());
+			let err = format!("{}", v.check_spendable_for_oor(BlockHeight::new(100), Txid::all_zeros()).unwrap_err());
 			assert!(err.contains("not spendable as a") && err.contains(policy), "got: {err}");
 		}
 	}
 
 	#[test]
 	fn htlc_send_is_spendable_by_the_lightning_send() {
-		assert!(htlc_send().check_htlc_send_spendable(100).is_ok());
+		assert!(htlc_send().check_htlc_send_spendable(BlockHeight::new(100)).is_ok());
 	}
 
 	/// The lightning-send gate is not a way around the policy gate: it only
@@ -604,7 +604,7 @@ mod test {
 	#[test]
 	fn only_htlc_send_is_spendable_by_the_lightning_send() {
 		for v in [spendable(), htlc_recv()] {
-			let err = v.check_htlc_send_spendable(100).unwrap_err();
+			let err = v.check_htlc_send_spendable(BlockHeight::new(100)).unwrap_err();
 			assert!(format!("{err}").contains("not an htlc-send vtxo"), "got: {err}");
 		}
 	}
@@ -615,9 +615,9 @@ mod test {
 	fn spent_htlc_send_is_not_spendable_by_the_lightning_send() {
 		let mut v = htlc_send();
 		v.spend_state = SpendState::LnSpent;
-		assert!(v.check_htlc_send_spendable(100).is_err());
+		assert!(v.check_htlc_send_spendable(BlockHeight::new(100)).is_err());
 		v.spend_state = SpendState::Spendable;
 		v.banned_until_height = Some(200);
-		assert!(v.check_htlc_send_spendable(100).is_err());
+		assert!(v.check_htlc_send_spendable(BlockHeight::new(100)).is_err());
 	}
 }

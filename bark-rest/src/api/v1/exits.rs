@@ -354,7 +354,7 @@ pub async fn exit_progress(
 
 	Ok(axum::Json(bark_json::cli::ExitProgressResponse {
 		done,
-		claimable_height,
+		claimable_height: claimable_height.map(Into::into),
 		exits: exits.into_iter().map(|e| e.into()).collect::<Vec<_>>(),
 		error: None,
 	}))

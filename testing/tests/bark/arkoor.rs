@@ -67,7 +67,7 @@ async fn receive_expired_arkoor_while_offline() {
 	bark1.send_oor(bark2.address().await, sat(100_000)).await;
 
 	// bark2 stays offline until the VTXO has expired.
-	ctx.generate_blocks(srv.config().vtxo_lifetime as u32 + 1).await;
+	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32() + 1).await;
 
 	bark2.sync().await;
 	assert_eq!(bark2.vtxos().await.len(), 1);

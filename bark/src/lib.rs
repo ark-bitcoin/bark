@@ -499,7 +499,7 @@ const MAX_NB_ROUND_NONCES: usize = 16;
 /// blocks to notice the server-only timeout leaf and broadcast a unilateral
 /// exit. Non-production networks (regtest, signet, testnet) only require it
 /// to be non-zero so tests and integrator sessions can use short deltas.
-const MIN_MAINNET_VTXO_EXIT_DELTA: BlockDelta = 96;
+const MIN_MAINNET_VTXO_EXIT_DELTA: BlockDelta = BlockDelta::new(96);
 
 /// Refuse an [ArkInfo] whose parameters would make participation unsafe:
 /// `vtxo_lifetime` must leave room to board and broadcast a unilateral exit
@@ -507,9 +507,9 @@ const MIN_MAINNET_VTXO_EXIT_DELTA: BlockDelta = 96;
 /// its CSV window; `nb_round_nonces` must be non-zero and bounded.
 fn check_ark_info_safe(ark_info: &ArkInfo, vtxo_exit_margin: BlockDelta) -> anyhow::Result<()> {
 	let required = ark_info.required_board_confirmations;
-	let margin = vtxo_exit_margin as usize;
+	let margin = vtxo_exit_margin.to_u16() as usize;
 	let min_safe = required.saturating_add(margin);
-	ensure!(ark_info.vtxo_exit_delta > 0,
+	ensure!(ark_info.vtxo_exit_delta > BlockDelta::ZERO,
 		"server-advertised vtxo_exit_delta is 0; refusing to connect",
 	);
 	ensure!(ark_info.nb_round_nonces > 0,
@@ -518,7 +518,7 @@ fn check_ark_info_safe(ark_info: &ArkInfo, vtxo_exit_margin: BlockDelta) -> anyh
 	if ark_info.network == Network::Bitcoin {
 		// No upper bound: a long lifetime is safe because unilateral exit is
 		// always available before the server-only timeout leaf activates.
-		ensure!((ark_info.vtxo_lifetime as usize) > min_safe,
+		ensure!((ark_info.vtxo_lifetime.to_u16() as usize) > min_safe,
 			"server-advertised vtxo_lifetime {} is unsafe (minimum > {} = \
 			required_board_confirmations {} + vtxo_exit_margin {}); refusing to connect",
 			ark_info.vtxo_lifetime, min_safe, required, margin,
@@ -628,12 +628,12 @@ impl From<Utxo> for UtxoInfo {
 			Utxo::Local(o) => UtxoInfo {
 				outpoint: o.outpoint,
 				amount: o.amount,
-				confirmation_height: o.confirmation_height,
+				confirmation_height: o.confirmation_height.map(|h| h.to_u32()),
 			},
 			Utxo::Exit(e) => UtxoInfo {
 				outpoint: e.vtxo.point(),
 				amount: e.vtxo.amount(),
-				confirmation_height: Some(e.height),
+				confirmation_height: Some(e.height.to_u32()),
 			},
 		}
 	}
@@ -1757,7 +1757,7 @@ impl Wallet {
 	/// Returns all vtxos that will expire within `threshold` blocks
 	pub async fn get_expiring_vtxos(
 		&self,
-		threshold: BlockHeight,
+		threshold: BlockDelta,
 	) -> anyhow::Result<Vec<WalletVtxo>> {
 		let expiry = self.inner.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
@@ -2349,7 +2349,7 @@ impl Wallet {
 	) -> anyhow::Result<Option<BlockHeight>> {
 		let first_expiry = self.get_first_expiring_vtxo_blockheight().await?;
 		Ok(first_expiry.map(|h| {
-			h.saturating_sub(self.inner.config.vtxo_refresh_expiry_threshold as BlockHeight)
+			h.saturating_sub(self.inner.config.vtxo_refresh_expiry_threshold)
 		}))
 	}
 
@@ -2582,6 +2582,7 @@ mod tests {
 	use bitcoin::secp256k1::PublicKey;
 
 	use ark::ArkInfo;
+	use bitcoin_ext::BlockDelta;
 	use server_rpc::client::CreateEndpointError;
 
 	use super::{
@@ -2608,15 +2609,15 @@ mod tests {
 			mailbox_pubkey: pk,
 			round_interval: std::time::Duration::from_secs(60),
 			nb_round_nonces: 8,
-			vtxo_exit_delta: 48,
-			vtxo_lifetime,
-			htlc_send_expiry_delta: 100,
-			htlc_expiry_delta: 100,
+			vtxo_exit_delta: BlockDelta::new(48),
+			vtxo_lifetime: BlockDelta::new(vtxo_lifetime),
+			htlc_send_expiry_delta: BlockDelta::new(100),
+			htlc_expiry_delta: BlockDelta::new(100),
 			max_vtxo_amount: None,
 			required_board_confirmations,
-			max_user_invoice_cltv_delta: 100,
+			max_user_invoice_cltv_delta: BlockDelta::new(100),
 			min_board_amount: Amount::from_sat(1000),
-			vtxo_expiry_delta: vtxo_lifetime,
+			vtxo_expiry_delta: BlockDelta::new(vtxo_lifetime),
 			offboard_feerate: FeeRate::ZERO,
 			max_offboard_inputs: 1,
 			ln_receive_anti_dos_required: false,
@@ -2631,7 +2632,7 @@ mod tests {
 		let mut ai = ark_info_with_lifetime(0, 6);
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
-		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
 		assert!(err.contains("unsafe"), "unexpected error: {err}");
 	}
 
@@ -2642,26 +2643,26 @@ mod tests {
 		let mut ai = ark_info_with_lifetime(6 + 12, 6);
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
-		assert!(check_ark_info_safe(&ai, 12).is_err());
+		assert!(check_ark_info_safe(&ai, BlockDelta::new(12)).is_err());
 	}
 
 	#[test]
 	fn ark_info_one_block_over_the_boundary_is_accepted() {
 		let ai = ark_info_with_lifetime(6 + 12 + 1, 6);
-		check_ark_info_safe(&ai, 12).unwrap();
+		check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap();
 	}
 
 	#[test]
 	fn ark_info_generous_lifetime_is_accepted() {
 		let ai = ark_info_with_lifetime(4032, 6);
-		check_ark_info_safe(&ai, 12).unwrap();
+		check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap();
 	}
 
 	#[test]
 	fn ark_info_with_zero_vtxo_exit_delta_is_rejected() {
 		let mut ai = ark_info_with_lifetime(4032, 6);
-		ai.vtxo_exit_delta = 0;
-		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		ai.vtxo_exit_delta = BlockDelta::ZERO;
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
 		assert!(err.contains("vtxo_exit_delta"), "unexpected error: {err}");
 	}
 
@@ -2669,8 +2670,8 @@ mod tests {
 	fn ark_info_below_mainnet_vtxo_exit_delta_is_rejected() {
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.network = Network::Bitcoin;
-		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA - 1;
-		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA.saturating_sub(BlockDelta::new(1));
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
 		assert!(err.contains("mainnet minimum"), "unexpected error: {err}");
 	}
 
@@ -2679,14 +2680,14 @@ mod tests {
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
-		check_ark_info_safe(&ai, 12).unwrap();
+		check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap();
 	}
 
 	#[test]
 	fn ark_info_with_zero_nb_round_nonces_is_rejected() {
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.nb_round_nonces = 0;
-		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
 		assert!(err.contains("nb_round_nonces"), "unexpected error: {err}");
 	}
 
@@ -2694,7 +2695,7 @@ mod tests {
 	fn ark_info_at_nb_round_nonces_cap_is_accepted() {
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.nb_round_nonces = MAX_NB_ROUND_NONCES;
-		check_ark_info_safe(&ai, 12).unwrap();
+		check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap();
 	}
 
 	#[test]
@@ -2703,7 +2704,7 @@ mod tests {
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
 		ai.nb_round_nonces = MAX_NB_ROUND_NONCES + 1;
-		let err = check_ark_info_safe(&ai, 12).unwrap_err().to_string();
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
 		assert!(err.contains("nb_round_nonces"), "unexpected error: {err}");
 	}
 

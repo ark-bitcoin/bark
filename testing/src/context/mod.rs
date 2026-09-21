@@ -13,7 +13,7 @@ use ark::fees::{
 use bitcoin::{Amount, FeeRate, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use bitcoin::absolute::LockTime;
 use bitcoin::transaction::Version;
-use bitcoin_ext::{BlockHeight, FeeRateExt, TxOutExt};
+use bitcoin_ext::{BlockDelta, BlockHeight, FeeRateExt, TxOutExt};
 use bitcoin_ext::fee::P2A_SCRIPT;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoincore_rpc::json::SignRawTransactionInput;
@@ -329,7 +329,7 @@ impl TestContext {
 		// stalled P2P direct-fetch falls through to the RPC push below.
 		let fast = tokio::time::timeout(
 			Duration::from_secs(2),
-			node.wait_for_blockheight(target as BlockHeight),
+			node.wait_for_blockheight(BlockHeight::new(target as u32)),
 		).await;
 		if fast.is_ok() {
 			return;
@@ -420,8 +420,8 @@ impl TestContext {
 		server::config::Config {
 			data_dir: data_dir.clone(),
 			network: Network::Regtest,
-			vtxo_lifetime: 432,
-			vtxo_exit_delta: 12,
+			vtxo_lifetime: BlockDelta::new(432),
+			vtxo_exit_delta: BlockDelta::new(12),
 			round_interval: Duration::from_secs(3600),
 			round_submit_time: Duration::from_millis(5000),
 			// this one can be long cuz in most tests all users are ready and we don't wait
@@ -441,7 +441,7 @@ impl TestContext {
 			max_arkoor_fanout: 4,
 			allow_expired_arkoor: false,
 			rpc_rich_errors: true,
-			nursery_confirm_target_blocks: 6,
+			nursery_confirm_target_blocks: BlockDelta::new(6),
 			sync_manager_block_poll_interval: Duration::from_millis(100),
 			handshake_psa: None,
 			tos_link: None,
@@ -454,8 +454,8 @@ impl TestContext {
 					VtxoTarget { count: 3, amount: btc(1) },
 				],
 				vtxo_target_issue_threshold: 50,
-				vtxo_lifetime: 432,
-				vtxo_pre_expiry: 12,
+				vtxo_lifetime: BlockDelta::new(432),
+				vtxo_pre_expiry: BlockDelta::new(12),
 				// A checkpointed allocation adds two txs to the chain, so this
 				// allows the same three chained allocations as before checkpoints.
 				max_vtxo_exit_depth: 6,
@@ -495,9 +495,9 @@ impl TestContext {
 			htlc_settlement_poll_interval: Duration::from_secs(5),
 			track_all_base_delay: Duration::from_secs(1),
 			max_track_all_delay: Duration::from_secs(60),
-			htlc_expiry_delta: 6,
-			htlc_send_expiry_delta: 258,
-			max_user_invoice_cltv_delta: 58,
+			htlc_expiry_delta: BlockDelta::new(6),
+			htlc_send_expiry_delta: BlockDelta::new(258),
+			max_user_invoice_cltv_delta: BlockDelta::new(58),
 			invoice_expiry: Duration::from_secs(10 * 60),
 			receive_htlc_forward_timeout: Duration::from_secs(30),
 			min_board_amount: Amount::from_sat(20_000),
@@ -554,7 +554,7 @@ impl TestContext {
 			watchman: server::watchman::Config {
 				reaction_interval: std::time::Duration::from_secs(1),
 				sweep_interval: std::time::Duration::from_secs(1),
-				progress_grace_period: 2,
+				progress_grace_period: BlockDelta::new(2),
 				claim_chunksize: 15.try_into().unwrap(),
 				incremental_relay_fee: FeeRate::from_sat_per_kvb_ceil(100),
 				min_cpfp_amount: Amount::from_sat(10_000),
@@ -642,13 +642,13 @@ impl TestContext {
 			bitcoind_zmq_address: bitcoind.map(|b| b.zmq_url()),
 			socks5_proxy: None,
 
-			vtxo_refresh_expiry_threshold: 24,
-			vtxo_exit_margin: 12,
-			htlc_recv_claim_delta: 18,
+			vtxo_refresh_expiry_threshold: BlockDelta::new(24),
+			vtxo_exit_margin: BlockDelta::new(12),
+			htlc_recv_claim_delta: BlockDelta::new(18),
 			lightning_receive_claim_retries: 5,
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(5)),
-			round_tx_required_confirmations: constants::ROUND_CONFIRMATIONS,
-			offboard_required_confirmations: constants::OFFBOARD_CONFIRMATIONS,
+			round_tx_required_confirmations: constants::ROUND_CONFIRMATIONS.try_into().unwrap(),
+			offboard_required_confirmations: constants::OFFBOARD_CONFIRMATIONS.try_into().unwrap(),
 			offboard_lost_tx_grace_period_secs: 3600,
 			daemon_sync_interval_secs: 3,
 			daemon_manual_sync: false,
@@ -703,7 +703,7 @@ impl TestContext {
 		// receive the block; the wallet syncs in a background task and may
 		// still be catching up. Callers that immediately query `wallet_status`
 		// need to also wait for the wallet's own sync height to catch up.
-		let height = srv.bitcoind().get_block_count().await as BlockHeight;
+		let height = BlockHeight::new(srv.bitcoind().get_block_count().await as u32);
 		srv.wait_for_sync_height(height).await;
 	}
 
@@ -777,7 +777,7 @@ impl TestContext {
 		// wait for all captainds to catch up
 		let captainds = self.captainds.lock().unwrap().clone();
 		let captainds = join_all(captainds.into_iter().map(|srv| async move {
-			srv.wait_for_sync_height(tip as u32).await
+			srv.wait_for_sync_height(BlockHeight::new(tip as u32)).await
 		}));
 
 		// then join all futures
@@ -834,7 +834,7 @@ impl TestContext {
 
 	/// Generated a block using the central bitcoind and ensures that electrs is synced with it.
 	/// Returns the new block height.
-	pub async fn generate_blocks(&self, block_num: u32) -> u32 {
+	pub async fn generate_blocks(&self, block_num: u32) -> BlockHeight {
 		// Give transactions time to propagate
 		tokio::time::sleep(Duration::from_millis(1000)).await;
 
@@ -845,7 +845,7 @@ impl TestContext {
 
 		let height = self.bitcoind().get_block_count().await;
 		info!("New chain tip: {}", height);
-		height as u32
+		BlockHeight::new(height as u32)
 	}
 
 	/// Generated a block using the central bitcoind without waiting for propagation

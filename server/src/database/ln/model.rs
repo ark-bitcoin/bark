@@ -137,7 +137,7 @@ impl TryFrom<Row> for LightningPaymentAttempt {
 			lightning_htlc_subscription_id: row.get("lightning_htlc_subscription_id"),
 			status: row.get("status"),
 			error: row.get("error"),
-			block_height: row.get::<_, Option<i32>>("block_height").map(|i| i as BlockHeight),
+			block_height: row.get::<_, Option<i32>>("block_height").map(|i| BlockHeight::try_from(i).expect("invalid block height in db")),
 			user_fee: row.get::<_, Option<i64>>("user_fee_sat")
 				.map(|f| Amount::from_sat(u64::try_from(f).expect("negative user_fee_sat in db row"))),
 			created_at: row.get("created_at"),
@@ -237,7 +237,8 @@ impl <'a>TryFrom<&'a Row> for LightningHtlcSubscription {
 				.context("error decoding payment hash from db")?,
 			invoice: invoice,
 			status: row.get("status"),
-			lowest_incoming_htlc_expiry: row.get::<_, Option<i64>>("lowest_incoming_htlc_expiry").map(|i| i as BlockHeight),
+			lowest_incoming_htlc_expiry: row.get::<_, Option<i64>>("lowest_incoming_htlc_expiry")
+				.map(|i| BlockHeight::try_from(i).expect("invalid block height in db")),
 			accepted_at: row.try_get("accepted_at").ok(),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),

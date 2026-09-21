@@ -282,7 +282,7 @@ impl Exit {
 
 		let tip = wallet.chain().tip().await
 			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })?;
-		let locktime = bitcoin::absolute::LockTime::from_height(tip)
+		let locktime = tip.to_locktime()
 			.map_err(|e| ExitError::InvalidLocktime { tip, error: e.to_string() })?;
 
 		let mut output_amount = Amount::ZERO;

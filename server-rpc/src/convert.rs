@@ -147,16 +147,16 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			mailbox_pubkey: v.mailbox_pubkey.serialize().to_vec(),
 			round_interval_secs: v.round_interval.as_secs() as u32,
 			nb_round_nonces: v.nb_round_nonces as u32,
-			vtxo_exit_delta: v.vtxo_exit_delta as u32,
-			vtxo_lifetime: v.vtxo_lifetime as u32,
+			vtxo_exit_delta: v.vtxo_exit_delta.into(),
+			vtxo_lifetime: v.vtxo_lifetime.into(),
 			// we serve the deprecated field from the new one so that it
 			// can never go stale for old clients
-			vtxo_expiry_delta: v.vtxo_lifetime as u32,
-			htlc_send_expiry_delta: v.htlc_send_expiry_delta as u32,
-			htlc_expiry_delta: v.htlc_expiry_delta as u32,
+			vtxo_expiry_delta: v.vtxo_lifetime.into(),
+			htlc_send_expiry_delta: v.htlc_send_expiry_delta.into(),
+			htlc_expiry_delta: v.htlc_expiry_delta.into(),
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| v.to_sat()),
 			required_board_confirmations: v.required_board_confirmations as u32,
-			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
+			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta.into(),
 			min_board_amount: v.min_board_amount.to_sat(),
 			offboard_feerate_sat_vkb: v.offboard_feerate.to_sat_per_kwu() * 4,
 			max_offboard_inputs: v.max_offboard_inputs as u32,
@@ -196,7 +196,7 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid htlc_expiry_delta")?,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| Amount::from_sat(v)),
 			required_board_confirmations: check_block_delta(v.required_board_confirmations)
-				.map_err(|_| "invalid required_board_confirmations")? as usize,
+				.map_err(|_| "invalid required_board_confirmations")?.to_u16() as usize,
 			max_user_invoice_cltv_delta: check_block_delta(v.max_user_invoice_cltv_delta)
 				.map_err(|_| "invalid max_user_invoice_cltv_delta")?,
 			min_board_amount: Amount::from_sat(v.min_board_amount),
@@ -819,21 +819,21 @@ mod test {
 	#[test]
 	fn ark_info_rejects_oversized_vtxo_exit_delta() {
 		let mut proto = baseline_ark_info_proto();
-		proto.vtxo_exit_delta = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
+		proto.vtxo_exit_delta = ark::vtxo::policy::MAX_BLOCK_DELTA.to_u32() + 1;
 		assert!(ark::ArkInfo::try_from(proto).is_err());
 	}
 
 	#[test]
 	fn ark_info_rejects_oversized_htlc_expiry_delta() {
 		let mut proto = baseline_ark_info_proto();
-		proto.htlc_expiry_delta = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
+		proto.htlc_expiry_delta = ark::vtxo::policy::MAX_BLOCK_DELTA.to_u32() + 1;
 		assert!(ark::ArkInfo::try_from(proto).is_err());
 	}
 
 	#[test]
 	fn ark_info_rejects_oversized_max_user_invoice_cltv_delta() {
 		let mut proto = baseline_ark_info_proto();
-		proto.max_user_invoice_cltv_delta = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
+		proto.max_user_invoice_cltv_delta = ark::vtxo::policy::MAX_BLOCK_DELTA.to_u32() + 1;
 		assert!(ark::ArkInfo::try_from(proto).is_err());
 	}
 
@@ -842,7 +842,7 @@ mod test {
 		// A malicious server could otherwise push this near u32::MAX and overflow
 		// the client's `current_height + required` board arithmetic.
 		let mut proto = baseline_ark_info_proto();
-		proto.required_board_confirmations = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
+		proto.required_board_confirmations = ark::vtxo::policy::MAX_BLOCK_DELTA.to_u32() + 1;
 		assert!(ark::ArkInfo::try_from(proto).is_err());
 	}
 
@@ -856,8 +856,8 @@ mod test {
 		proto.vtxo_expiry_delta = 42;
 
 		let info = ark::ArkInfo::try_from(proto).unwrap();
-		assert_eq!(info.vtxo_lifetime, 42);
-		assert_eq!(info.vtxo_expiry_delta, 42);
+		assert_eq!(info.vtxo_lifetime.to_u32(), 42);
+		assert_eq!(info.vtxo_expiry_delta.to_u32(), 42);
 	}
 
 	#[test]
@@ -869,8 +869,8 @@ mod test {
 		proto.vtxo_expiry_delta = 100;
 
 		let info = ark::ArkInfo::try_from(proto).unwrap();
-		assert_eq!(info.vtxo_lifetime, 42);
-		assert_eq!(info.vtxo_expiry_delta, 42);
+		assert_eq!(info.vtxo_lifetime.to_u32(), 42);
+		assert_eq!(info.vtxo_expiry_delta.to_u32(), 42);
 
 		// and both fields are populated again on the way out
 		let proto = protos::ArkInfo::from(info);

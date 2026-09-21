@@ -33,13 +33,13 @@
 //!
 //! Builder style with [VtxoFilter]:
 //! ```rust
-//! use bitcoin_ext::BlockHeight;
+//! use bitcoin_ext::{BlockDelta, BlockHeight};
 //! use bark::vtxo::{FilterVtxos, VtxoFilter};
 //!
 //! # async fn example(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
-//! let tip: BlockHeight = 1_000;
+//! let tip = BlockHeight::new(1_000);
 //! let filter = VtxoFilter::new(wallet)
-//!     .expires_before(tip + 144) // expiring within ~1 day
+//!     .expires_before(tip + BlockDelta::new(144)) // expiring within ~1 day
 //!     .counterparty();           // and/or with counterparty risk
 //! filter.filter_vtxos(&mut vtxos).await?;
 //! # Ok(vtxos) }
@@ -78,7 +78,7 @@ use crate::Wallet;
 use crate::exit::progress::util::estimate_exit_cost;
 use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
-const SOFT_REFRESH_EXPIRY_THRESHOLD: BlockDelta = 28;
+const SOFT_REFRESH_EXPIRY_THRESHOLD: BlockDelta = BlockDelta::new(28);
 
 /// Trait needed to be implemented to filter wallet VTXOs.
 ///
@@ -144,11 +144,11 @@ impl<'a> VtxoFilter<'a> {
 	/// ```
 	/// # async fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo::{VtxoFilter, FilterVtxos};
-	/// use bitcoin_ext::BlockHeight;
+	/// use bitcoin_ext::{BlockDelta, BlockHeight};
 	///
-	/// let tip: BlockHeight = 1_000;
+	/// let tip = BlockHeight::new(1_000);
 	/// let filter = VtxoFilter::new(wallet)
-	///     .expires_before(tip + 144) // expiring within ~1 day
+	///     .expires_before(tip + BlockDelta::new(144)) // expiring within ~1 day
 	///     .counterparty();           // or with counterparty risk
 	/// let filtered = wallet.spendable_vtxos_with(&filter).await?;
 	/// # Ok(filtered) }
@@ -171,7 +171,7 @@ impl<'a> VtxoFilter<'a> {
 	/// use bark::vtxo::{VtxoFilter, FilterVtxos};
 	/// use bitcoin_ext::BlockHeight;
 	///
-	/// let h: BlockHeight = 10_000;
+	/// let h = BlockHeight::new(10_000);
 	/// let filter = VtxoFilter::new(wallet)
 	///     .expires_before(h);
 	/// let filtered = wallet.spendable_vtxos_with(&filter).await?;
@@ -317,7 +317,7 @@ impl<'a> RefreshStrategy<'a> {
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
 	///
-	/// let tip: BlockHeight = 200_000;
+	/// let tip = BlockHeight::new(200_000);
 	/// let fr = FeeRate::from_sat_per_vb(5).unwrap();
 	/// let must = RefreshStrategy::must_refresh(wallet, tip, fr);
 	/// must.filter_vtxos(&mut vtxos).await?;
@@ -358,7 +358,7 @@ impl<'a> RefreshStrategy<'a> {
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
 	///
-	/// let tip: BlockHeight = 200_000;
+	/// let tip = BlockHeight::new(200_000);
 	/// let fr = FeeRate::from_sat_per_vb(8).unwrap();
 	/// let should = RefreshStrategy::should_refresh(wallet, tip, fr);
 	/// should.filter_vtxos(&mut vtxos).await?;
@@ -421,7 +421,7 @@ impl<'a> RefreshStrategy<'a> {
 		}
 
 		// Check if the VTXO's expiry height is within the refresh threshold.
-		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold as BlockHeight;
+		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
 		if self.tip > vtxo.expiry_height() {
 			warn!("VTXO {} is expired, must be refreshed", vtxo.id());
 			return Ok(true)
@@ -453,8 +453,8 @@ impl<'a> RefreshStrategy<'a> {
 		}
 
 		// Check if the VTXO's expiry height is within the refresh threshold.
-		let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold as BlockHeight
-			+ SOFT_REFRESH_EXPIRY_THRESHOLD as BlockHeight;
+		let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold
+			+ SOFT_REFRESH_EXPIRY_THRESHOLD;
 		if self.tip > vtxo.expiry_height().saturating_sub(soft_threshold) {
 			warn!("VTXO {} is about to expire, should be refreshed on next opportunity",
 				vtxo.id(),

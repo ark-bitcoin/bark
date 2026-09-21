@@ -86,7 +86,7 @@ pub async fn run(db: &Db) -> anyhow::Result<u64> {
 			_ => None,
 		};
 
-		let htlc_expiry = i32::try_from(htlc_expiry)
+		let htlc_expiry = i32::try_from(htlc_expiry.to_u32())
 			.with_context(|| format!("htlc_expiry out of range for vtxo id={}", id))?;
 
 		inserted += writer.execute(

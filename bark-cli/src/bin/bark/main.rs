@@ -17,7 +17,7 @@ use bark::secret::Secret;
 use bark_cli::VERSION_DEV_MARKER;
 use bitcoin::{Amount};
 use bitcoin::secp256k1;
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::BlockDelta;
 use clap::builder::BoolishValueParser;
 use clap::Parser;
 use futures::StreamExt;
@@ -604,10 +604,14 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			let vtxos = match (threshold_blocks, threshold_hours, counterparty, all, vtxos) {
 				(None, None, false, false, None) => wallet.get_expiring_vtxos(
-					wallet.config().vtxo_refresh_expiry_threshold as BlockHeight,
+					wallet.config().vtxo_refresh_expiry_threshold,
 				).await?,
-				(Some(b), None, false, false, None) => wallet.get_expiring_vtxos(b).await?,
-				(None, Some(h), false, false, None) => wallet.get_expiring_vtxos(h*6).await?,
+				(Some(b), None, false, false, None) => wallet.get_expiring_vtxos(
+					BlockDelta::try_from(b).context("threshold_blocks too large")?,
+				).await?,
+				(None, Some(h), false, false, None) => wallet.get_expiring_vtxos(
+					BlockDelta::try_from(h*6).context("threshold_hours too large")?,
+				).await?,
 				(None, None, true, false, None) => {
 					let filter = VtxoFilter::new(&wallet).counterparty();
 					wallet.spendable_vtxos_with(&filter).await?
@@ -627,7 +631,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			info!("Refreshing {} vtxos...", vtxos.len());
 			if delegated {
 				let res = match height {
-					Some(height) => wallet.refresh_vtxos_scheduled(vtxos, height).await?,
+					Some(height) => wallet.refresh_vtxos_scheduled(vtxos, height.into()).await?,
 					None => wallet.refresh_vtxos_delegated(vtxos).await?,
 				};
 

@@ -3,5 +3,7 @@ arithmetic-side-effects-allowed = [
     "bitcoin::FeeRate",
     "bitcoin::Weight",
     "bitcoin::SignedAmount",
+    "bitcoin_ext::BlockHeight",
+    "bitcoin_ext::BlockDelta",
     "std::time::Duration",
 ]

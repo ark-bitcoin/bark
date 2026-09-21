@@ -52,7 +52,7 @@ impl ExitVtxo {
 	/// - `vtxo`: the [Vtxo] being exited.
 	/// - `tip`: current chain tip used to initialize the starting state.
 	/// - `movement_id`: the [MovementId] of the pending movement that records this exit.
-	pub fn new(vtxo: &Vtxo<Bare>, tip: u32, movement_id: Option<MovementId>) -> Self {
+	pub fn new(vtxo: &Vtxo<Bare>, tip: BlockHeight, movement_id: Option<MovementId>) -> Self {
 		Self {
 			vtxo_id: vtxo.id(),
 			amount: vtxo.amount(),

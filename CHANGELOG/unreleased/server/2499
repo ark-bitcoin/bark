@@ -1,0 +1,5 @@
+- Use the `BlockHeight` and `BlockDelta` types for heights and deltas
+  [#2499](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2499)
+  - **BREAKING:** Height and delta fields in the server `Config` are
+    `BlockHeight` and `BlockDelta` instead of `u32` and `u16`. The config
+    file format is unchanged.

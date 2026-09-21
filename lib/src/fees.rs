@@ -258,7 +258,7 @@ impl VtxoFeeInfo {
 	pub fn from_vtxo_and_tip<G>(vtxo: &Vtxo<G>, tip: BlockHeight) -> Self {
 		Self {
 			amount: vtxo.amount(),
-			expiry_blocks: vtxo.expiry_height().saturating_sub(tip),
+			expiry_blocks: vtxo.expiry_height().checked_blocks_since(tip).unwrap_or(0),
 		}
 	}
 }

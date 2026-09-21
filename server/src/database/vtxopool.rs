@@ -73,7 +73,7 @@ impl<'t> Tx<'t> {
 		self.execute(&stmt, &[
 			&vtxo.id().to_string(),
 			&vtxo.serialize(),
-			&(vtxo.expiry_height() as i32),
+			&(vtxo.expiry_height().to_u32() as i32),
 			&(vtxo.amount().to_sat() as i64),
 		]).await?;
 		Ok(())
@@ -92,7 +92,7 @@ impl<'t> Tx<'t> {
 		let (ids, vtxos, expiries, amounts) = vtxos.into_iter().map(|v|
 			(v.id().to_string(),
 			v.serialize(),
-			v.expiry_height() as i32,
+			v.expiry_height().to_u32() as i32,
 			v.amount().to_sat() as i64,
 		)).collect::<(Vec<_>, Vec<_>, Vec<_>, Vec<_>)>();
 

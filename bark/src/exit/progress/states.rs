@@ -110,7 +110,7 @@ impl ExitStateProgress for ExitProcessingState {
 			let clause = ctx.wallet.find_signable_clause(ctx.vtxo).await
 				.ok_or_else(|| ExitError::ClaimMissingSignableClause { vtxo: ctx.vtxo.id() })?;
 
-			let wait_delta = clause.sequence().map_or(0, |csv| csv.0) as BlockDelta;
+			let wait_delta = BlockDelta::new(clause.sequence().map_or(0, |csv| csv.0) as u16);
 			return Ok(ExitState::new_awaiting_delta(tip, *conf_block, wait_delta));
 		}
 		if now_confirmed != prev_confirmed {
@@ -266,7 +266,7 @@ impl ExitStateProgress for ExitAwaitingDeltaState {
 			Ok(ExitState::new_claimable(tip, spendable_block, None))
 		} else {
 			info!("Waiting for {} more confirmations until exit for VTXO ({}) is spendable...",
-				self.claimable_height - tip, ctx.vtxo.id(),
+				self.claimable_height.checked_blocks_since(tip).unwrap_or(0), ctx.vtxo.id(),
 			);
 			Ok(self.into())
 		}

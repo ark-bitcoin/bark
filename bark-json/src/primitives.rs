@@ -20,6 +20,7 @@ use bitcoin_ext::{BlockDelta, BlockHeight};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct BlockRef {
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub height: BlockHeight,
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub hash: bitcoin::BlockHash,
@@ -85,12 +86,12 @@ impl From<bark::onchain::Utxo> for UtxoInfo {
 			bark::onchain::Utxo::Local(o) => UtxoInfo {
 				outpoint: o.outpoint,
 				amount: o.amount,
-				confirmation_height: o.confirmation_height,
+				confirmation_height: o.confirmation_height.map(|h| h.to_u32()),
 			},
 			bark::onchain::Utxo::Exit(e) => UtxoInfo {
 				outpoint: e.vtxo.point(),
 				amount: e.vtxo.amount(),
-				confirmation_height: Some(e.height),
+				confirmation_height: Some(e.height.to_u32()),
 			},
 		}
 	}
@@ -124,9 +125,11 @@ pub struct VtxoInfo {
 	/// The block height at which this VTXO expires. After expiry, the
 	/// server can reclaim the sats. Refresh before expiry to receive
 	/// new VTXOs, or exit to move them on-chain.
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub expiry_height: BlockHeight,
 	/// The relative timelock, in blocks, that must elapse before the
 	/// final on-chain claim in an emergency exit.
+	#[cfg_attr(feature = "utoipa", schema(value_type = u16))]
 	pub exit_delta: BlockDelta,
 	/// The on-chain outpoint that roots this VTXO, formatted as
 	/// `txid:vout`. Typically an output of a round transaction or a

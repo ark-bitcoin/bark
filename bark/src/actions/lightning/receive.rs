@@ -20,7 +20,7 @@ use ark::fees::validate_and_subtract_fee;
 use ark::lightning::{Bolt11InvoiceExt, PaymentHash, Preimage};
 use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy};
 use ark::vtxo::Full;
-use bitcoin_ext::{BlockDelta, BlockHeight};
+use bitcoin_ext::BlockDelta;
 use server_rpc::protos;
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 
@@ -39,7 +39,7 @@ const LN_RECV_NAMESPACE: &str = "ln_recv";
 
 /// Leniency delta to allow claim when blocks were mined between htlc
 /// receive and claim preparation.
-const LIGHTNING_PREPARE_CLAIM_DELTA: BlockDelta = 2;
+const LIGHTNING_PREPARE_CLAIM_DELTA: BlockDelta = BlockDelta::new(2);
 
 /// How long to sleep between polls while waiting for an inbound payment
 const AWAITING_PAYMENT_POLL_INTERVAL: Duration = Duration::from_secs(4);
@@ -354,7 +354,7 @@ pub(crate) async fn start_lightning_receive(
 	let req = protos::StartLightningReceiveRequest {
 		payment_hash: payment_hash.to_vec(),
 		amount_sat: amount.to_sat(),
-		min_cltv_delta: requested_min_cltv_delta as u32,
+		min_cltv_delta: requested_min_cltv_delta.into(),
 		mailbox_id: Some(mailbox_id.serialize()),
 		description,
 	};
@@ -395,7 +395,7 @@ pub(crate) async fn compute_lightning_receive_anti_dos(
 		// random but keep a 2-block margin: better no proof than one that
 		// expires while the claim is in flight.
 		let vtxo = wallet.spendable_vtxos().await?.into_iter()
-			.filter(|v| v.expiry_height() > tip + 2)
+			.filter(|v| v.expiry_height() > tip + BlockDelta::new(2))
 			.choose(&mut rand::rng())
 			.context("have no spendable vtxo with sufficient expiry margin to prove ownership of")?;
 		let vtxo_keypair = wallet.get_vtxo_key(&vtxo).await
@@ -488,12 +488,12 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 		},
 	};
 
-	let htlc_recv_expiry = current_height + recv.htlc_recv_cltv_delta as BlockHeight;
+	let htlc_recv_expiry = current_height + recv.htlc_recv_cltv_delta;
 	let keypair = wallet.peek_keypair(recv.key_index).await?;
 	let req = protos::PrepareLightningReceiveClaimRequest {
 		payment_hash: payment_hash.to_vec(),
 		user_pubkey: keypair.public_key().serialize().to_vec(),
-		htlc_recv_expiry,
+		htlc_recv_expiry: htlc_recv_expiry.into(),
 		lightning_receive_anti_dos,
 	};
 	let res = srv.client.prepare_lightning_receive_claim(req).await
@@ -532,7 +532,7 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 			let claim_by = htlc_recv_exit_blocks_needed(
 				vtxo.exit_delta(), p.htlc_expiry_delta, config,
 			).and_then(|blocks_needed| {
-				current_height.checked_add(BlockHeight::from(blocks_needed))
+				current_height.checked_add(blocks_needed)
 					.context("HTLC VTXO claim deadline overflows")
 			});
 			let claim_by = match claim_by {
@@ -550,7 +550,7 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 
 			// The server also chose the leaf's tree-level parameters, so validate
 			// them against the advertised ones like round outputs.
-			let blocks_needed = BlockHeight::from(htlc_recv_tree_blocks_needed(config));
+			let blocks_needed = htlc_recv_tree_blocks_needed(config);
 			let tree_expiry_by = match current_height.checked_add(blocks_needed) {
 				Some(height) => height,
 				None => return Ok(Grant::Rejected(
@@ -819,16 +819,14 @@ pub(crate) async fn is_htlc_claim_window_closed(
 
 		let claim_by = htlc_recv_exit_blocks_needed(
 			vtxo.exit_delta(), p.htlc_expiry_delta, config,
-		).map(|blocks| tip.saturating_add(BlockHeight::from(blocks)))?;
+		).map(|blocks| tip + blocks)?;
 		if claim_by > p.htlc_expiry {
 			debug!("HTLC vtxo {} needs until height {} to claim, but the server \
 				can claim it from height {}", vtxo.id(), claim_by, p.htlc_expiry);
 			return Ok(true);
 		}
 
-		let tree_expiry_by = tip.saturating_add(
-			BlockHeight::from(htlc_recv_tree_blocks_needed(config)),
-		);
+		let tree_expiry_by = tip + htlc_recv_tree_blocks_needed(config);
 		if tree_expiry_by > vtxo.expiry_height() {
 			debug!("HTLC vtxo {} needs its backing tree until height {}, but it \
 				expires at height {}", vtxo.id(), tree_expiry_by, vtxo.expiry_height());
@@ -900,25 +898,29 @@ mod tests {
 		// A server granting the deltas it advertised leaves us
 		// LIGHTNING_PREPARE_CLAIM_DELTA to spare.
 		for (exit_delta, htlc_expiry_delta) in [(144, 6), (144, 40), (100, 0)] {
+			let (exit_delta, htlc_expiry_delta) =
+				(BlockDelta::new(exit_delta), BlockDelta::new(htlc_expiry_delta));
 			let needed = htlc_recv_exit_blocks_needed(
 				exit_delta, htlc_expiry_delta, &config,
 			).unwrap();
 			let requested = requested_cltv_delta(exit_delta, htlc_expiry_delta, &config);
 
-			assert_eq!(requested - needed, LIGHTNING_PREPARE_CLAIM_DELTA);
+			assert_eq!(requested.saturating_sub(needed), LIGHTNING_PREPARE_CLAIM_DELTA);
 		}
 	}
 
 	#[test]
 	fn htlc_recv_exit_blocks_needed_exceeds_cltv_delta_when_server_inflates_a_delta() {
 		let config = Config::network_default(bitcoin::Network::Bitcoin);
-		let requested = requested_cltv_delta(144, 6, &config);
+		let requested = requested_cltv_delta(BlockDelta::new(144), BlockDelta::new(6), &config);
 
 		// Inflating either delta past the leniency delta eats the whole window.
-		let inflated_expiry_delta = htlc_recv_exit_blocks_needed(144, 9, &config).unwrap();
+		let inflated_expiry_delta =
+			htlc_recv_exit_blocks_needed(BlockDelta::new(144), BlockDelta::new(9), &config).unwrap();
 		assert!(inflated_expiry_delta > requested);
 
-		let inflated_exit_delta = htlc_recv_exit_blocks_needed(147, 6, &config).unwrap();
+		let inflated_exit_delta =
+			htlc_recv_exit_blocks_needed(BlockDelta::new(147), BlockDelta::new(6), &config).unwrap();
 		assert!(inflated_exit_delta > requested);
 	}
 
@@ -935,11 +937,13 @@ mod tests {
 	#[test]
 	fn htlc_recv_tree_blocks_needed_stays_under_a_full_claim() {
 		let mut config = Config::network_default(bitcoin::Network::Bitcoin);
-		config.vtxo_exit_margin = 12;
+		config.vtxo_exit_margin = BlockDelta::new(12);
 
-		assert_eq!(htlc_recv_tree_blocks_needed(&config), 12);
+		assert_eq!(htlc_recv_tree_blocks_needed(&config), BlockDelta::new(12));
 
-		let needed = htlc_recv_exit_blocks_needed(144, 40, &config).unwrap();
+		let needed = htlc_recv_exit_blocks_needed(
+			BlockDelta::new(144), BlockDelta::new(40), &config,
+		).unwrap();
 		assert!(htlc_recv_tree_blocks_needed(&config) < needed);
 	}
 }

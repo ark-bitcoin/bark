@@ -4,7 +4,7 @@ use ark::encode::ProtocolEncoding;
 use ark::offboard::OffboardForfeitResult;
 use ark::test_util::VTXO_VECTORS;
 use ark::{ServerVtxo, ServerVtxoPolicy};
-use bitcoin_ext::P2TR_DUST;
+use bitcoin_ext::{BlockDelta, P2TR_DUST};
 use server::database::data_migrations;
 use server::database::tree::VtxoTreeUpdate;
 use server::database::Db;
@@ -75,9 +75,9 @@ async fn fix_offboard_vtxos() {
 		connector_point,
 		ServerVtxoPolicy::ServerOwned,
 		P2TR_DUST,
-		vtxo.expiry_height() + 144,
+		vtxo.expiry_height() + BlockDelta::new(144),
 		vtxo.server_pubkey(),
-		0,
+		BlockDelta::ZERO,
 		connector_point,
 	);
 	let forfeit = ServerVtxo::new(

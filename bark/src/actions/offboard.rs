@@ -42,7 +42,7 @@ use ark::attestations::OffboardRequestAttestation;
 use ark::fees::VtxoFeeInfo;
 use ark::offboard::{OffboardForfeitContext, OffboardForfeitError, OffboardRequest};
 use ark::vtxo::VtxoRef;
-use bitcoin_ext::{BlockHeight, TxStatus};
+use bitcoin_ext::{BlockDelta, TxStatus};
 use server_rpc::{protos, TryFromBytes};
 
 use crate::{Wallet, WalletVtxo};
@@ -931,8 +931,9 @@ async fn check_offboard_confirmation(
 
 	match status {
 		Ok(TxStatus::Confirmed(block_ref)) => {
-			let confs = current_height - (block_ref.height - 1);
-			if confs >= required_confs as BlockHeight {
+			let confs = current_height.checked_blocks_since(block_ref.height)
+				.map_or(0, |confs| confs + 1);
+			if confs >= required_confs.to_u32() {
 				Ok(ConfirmationOutcome::Confirmed)
 			} else {
 				trace!(
@@ -943,7 +944,7 @@ async fn check_offboard_confirmation(
 			}
 		},
 		Ok(TxStatus::Mempool) => {
-			if required_confs == 0 {
+			if required_confs == BlockDelta::ZERO {
 				Ok(ConfirmationOutcome::Confirmed)
 			} else {
 				trace!("Offboard tx {} still in mempool, waiting...", offboard_txid);

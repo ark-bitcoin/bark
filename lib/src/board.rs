@@ -595,9 +595,9 @@ mod test {
 		// user
 		let amount = Amount::from_btc(1.5).unwrap();
 		let fee = Amount::from_btc(0.1).unwrap();
-		let expiry = 100_000;
+		let expiry = BlockHeight::new(100_000);
 		let server_pubkey = server_key.public_key();
-		let exit_delta = 24;
+		let exit_delta = BlockDelta::new(24);
 		let builder = BoardBuilder::new(
 			user_key.public_key(), expiry, server_pubkey, exit_delta,
 		);
@@ -638,9 +638,9 @@ mod test {
 
 		let amount = Amount::from_btc(1.5).unwrap();
 		let fee = Amount::from_btc(0.1).unwrap();
-		let expiry = 100_000;
+		let expiry = BlockHeight::new(100_000);
 		let server_pubkey = server_key.public_key();
-		let exit_delta = 24;
+		let exit_delta = BlockDelta::new(24);
 
 		let builder = BoardBuilder::new(
 			user_key.public_key(), expiry, server_pubkey, exit_delta,
@@ -758,9 +758,9 @@ mod test {
 		fn new_builder_with_funding_details(amount: Amount, fee: Amount) -> Result<BoardBuilder<state::CanGenerateNonces>, BoardFundingError> {
 			let user_key = Keypair::from_str("5255d132d6ec7d4fc2a41c8f0018bb14343489ddd0344025cc60c7aa2b3fda6a").unwrap();
 			let server_key = Keypair::from_str("1fb316e653eec61de11c6b794636d230379509389215df1ceb520b65313e5426").unwrap();
-			let expiry = 100_000;
+			let expiry = BlockHeight::new(100_000);
 			let server_pubkey = server_key.public_key();
-			let exit_delta = 24;
+			let exit_delta = BlockDelta::new(24);
 			let builder = BoardBuilder::new(
 				user_key.public_key(), expiry, server_pubkey, exit_delta,
 			);

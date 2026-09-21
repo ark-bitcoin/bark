@@ -353,8 +353,10 @@ impl LightningManager {
 		// NB: we don't want a lightning payment to take more time than the
 		// htlc-send expiry leaves us with.
 		let max_cltv_expiry_delta = htlc_send_expiry_height
-			.checked_sub(tip + self.htlc_expiry_delta as BlockHeight)
+			.checked_blocks_since(BlockHeight::new(tip) + self.htlc_expiry_delta)
 			.context("HTLC expiry height is too soon to perform a lightning payment")?;
+		let max_cltv_expiry_delta = BlockDelta::try_from(max_cltv_expiry_delta)
+			.unwrap_or(BlockDelta::MAX);
 
 		// Fire-and-forget: ClnXpayClient::pay issues the gRPC and reconciles
 		// the DB on completion, same as the old ClnXpay::pay wrapper. If the
@@ -368,7 +370,7 @@ impl LightningManager {
 				invoice,
 				amount,
 				max_routing_fee,
-				max_cltv_expiry_delta as BlockDelta,
+				max_cltv_expiry_delta,
 				retry_for,
 			).await;
 		});
@@ -516,7 +518,7 @@ impl LightningManager {
 		let res = hold_client.invoice(hold_plugin::InvoiceRequest {
 			payment_hash: payment_hash.to_vec(),
 			amount_msat: amount.to_msat(),
-			min_final_cltv_expiry: Some(cltv_delta as u64),
+			min_final_cltv_expiry: Some(cltv_delta.into()),
 			expiry: Some(self.invoice_expiry.as_secs()),
 			routing_hints: vec![],
 			description: description.map(hold_plugin::invoice_request::Description::Memo),

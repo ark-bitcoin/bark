@@ -285,7 +285,7 @@ impl Server {
 				let selection = WithGuaranteedChange(SingleRandomDraw);
 				let psbt = wallet.build_tx_at_chunk_feerate(selection, fee_rate, |b| {
 					b.ordering(bdk_wallet::TxOrdering::Untouched);
-					b.current_height(tip);
+					b.current_height(tip.to_u32());
 					// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
 					b.add_recipient(script_pubkey.clone(), net_amount);
 					b.add_recipient(connector_spk.clone(), connector_amt);

@@ -161,8 +161,8 @@ impl ExitState {
 		confirmed_block: BlockRef,
 		wait_delta: BlockDelta
 	) -> Self {
-		debug_assert_ne!(wait_delta, 0, "wait delta must be non-zero");
-		let claimable_height = confirmed_block.height + wait_delta as BlockHeight;
+		debug_assert_ne!(wait_delta, BlockDelta::ZERO, "wait delta must be non-zero");
+		let claimable_height = confirmed_block.height + wait_delta;
 		ExitState::AwaitingDelta(ExitAwaitingDeltaState {
 			tip_height: tip,
 			confirmed_block,
@@ -346,46 +346,49 @@ mod test {
 
 	/// One [ExitState] per variant, for tests that need to cover the whole enum.
 	fn all_states() -> [ExitState; 8] {
-		let block_ref = BlockRef { height: 1, hash: bitcoin::BlockHash::all_zeros() };
+		let tip = BlockHeight::new(1);
+		let block_ref = BlockRef { height: tip, hash: bitcoin::BlockHash::all_zeros() };
 		[
-			ExitState::new_start(1),
-			ExitState::new_processing(1, [txid(1)]),
-			ExitState::new_awaiting_delta(1, block_ref, 10),
-			ExitState::new_claimable(1, block_ref, Some(block_ref)),
-			ExitState::new_claim_in_progress(1, block_ref, txid(1)),
-			ExitState::new_claimed(1, txid(1), block_ref),
-			ExitState::new_vtxo_already_spent(1),
-			ExitState::new_canceled(1),
+			ExitState::new_start(tip),
+			ExitState::new_processing(tip, [txid(1)]),
+			ExitState::new_awaiting_delta(tip, block_ref, BlockDelta::new(10)),
+			ExitState::new_claimable(tip, block_ref, Some(block_ref)),
+			ExitState::new_claim_in_progress(tip, block_ref, txid(1)),
+			ExitState::new_claimed(tip, txid(1), block_ref),
+			ExitState::new_vtxo_already_spent(tip),
+			ExitState::new_canceled(tip),
 		]
 	}
 
 	#[test]
 	fn is_cancelable_only_checks_the_final_tx() {
+		let tip = BlockHeight::new(100);
+
 		// Start is always cancellable — nothing has been built yet.
-		assert!(ExitState::new_start(100).is_cancelable());
+		assert!(ExitState::new_start(tip).is_cancelable());
 
 		// Processing with nothing broadcast.
-		assert!(ExitState::new_processing_from_transactions(100, vec![
+		assert!(ExitState::new_processing_from_transactions(tip, vec![
 			tx(1, ExitTxStatus::VerifyInputs),
 			tx(2, ExitTxStatus::AwaitingCpfpBroadcast),
 		]).is_cancelable());
 
 		// Ancestors broadcast but the final (leaf) tx is not — still cancellable, since only the
 		// last transaction actually commits the VTXO on-chain.
-		assert!(ExitState::new_processing_from_transactions(100, vec![
+		assert!(ExitState::new_processing_from_transactions(tip, vec![
 			tx(1, broadcast()),
 			tx(2, ExitTxStatus::AwaitingCpfpBroadcast),
 		]).is_cancelable());
 
 		// The final tx has been broadcast — no longer cancellable.
-		assert!(!ExitState::new_processing_from_transactions(100, vec![
+		assert!(!ExitState::new_processing_from_transactions(tip, vec![
 			tx(1, broadcast()),
 			tx(2, broadcast()),
 		]).is_cancelable());
 
 		// Terminal / post-broadcast states are never cancellable.
-		assert!(!ExitState::new_canceled(100).is_cancelable());
-		assert!(!ExitState::new_vtxo_already_spent(100).is_cancelable());
+		assert!(!ExitState::new_canceled(tip).is_cancelable());
+		assert!(!ExitState::new_vtxo_already_spent(tip).is_cancelable());
 	}
 
 	#[test]

@@ -50,7 +50,7 @@ const ROUND_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Blocks by which we let a round's VTXO expiry fall short of the full
 /// advertised lifetime when doing interactive rounds.
-const VTXO_EXPIRY_HEIGHT_BUFFER: BlockHeight = 6;
+const VTXO_EXPIRY_HEIGHT_BUFFER: BlockDelta = BlockDelta::new(6);
 
 /// The most a recovered delegated round participation may lose to fees,
 /// in percent of its input value. A hard-coded bound: the wallet that
@@ -1315,8 +1315,7 @@ fn min_exitable_output_vtxo_expiry_height(
 	exit_margin: BlockDelta,
 	exit_delta: BlockDelta,
 ) -> BlockHeight {
-	tip.saturating_add(2 * exit_margin as BlockHeight)
-		.saturating_add(exit_delta as BlockHeight)
+	tip + exit_margin * 2 + exit_delta
 }
 
 /// Check that each VTXO's expiry leaves us enough room for a unilateral
@@ -1369,12 +1368,12 @@ fn check_round_matches_participation(
 	let max_input_exit_delta = part.inputs.iter().map(|v| v.exit_delta()).max()
 		.expect("min one input");
 	let min_exitable = min_exitable_output_vtxo_expiry_height(tip, exit_margin, max_input_exit_delta);
-	let min_scheduled = scheduled_height.map(|h| h.saturating_add(1));
+	let min_scheduled = scheduled_height.map(|h| h + BlockDelta::new(1));
 	let min_expiry_height = match (expired_inputs, min_scheduled) {
 		(false, Some(h)) => h.max(min_exitable),
 		(false, None) => min_exitable,
 		(true, Some(h)) => h,
-		(true, None) => 0,
+		(true, None) => BlockHeight::ZERO,
 	};
 
 	for (vtxo, req) in new_vtxos.iter().zip(&part.outputs) {
@@ -1414,7 +1413,7 @@ async fn check_funding_tx_confirmations(
 	funding_tx: &Transaction,
 ) -> anyhow::Result<bool> {
 	let tip = wallet.inner.chain.tip().await.context("chain source error")?;
-	let conf_height = tip - wallet.inner.config.round_tx_required_confirmations + 1;
+	let conf_height = tip.saturating_sub(wallet.inner.config.round_tx_required_confirmations) + BlockDelta::new(1);
 	let tx_status = wallet.inner.chain.tx_status(funding_txid).await.context("chain source error")?;
 	trace!("Round funding tx {} confirmation status: {:?} (tip={})",
 		funding_txid, tx_status, tip,
@@ -1422,7 +1421,7 @@ async fn check_funding_tx_confirmations(
 	match tx_status {
 		TxStatus::Confirmed(b) if b.height <= conf_height => Ok(true),
 		TxStatus::Mempool | TxStatus::Confirmed(_) => {
-			if wallet.inner.config.round_tx_required_confirmations == 0 {
+			if wallet.inner.config.round_tx_required_confirmations == BlockDelta::ZERO {
 				debug!("Accepting round funding tx without confirmations because of configuration");
 				Ok(true)
 			} else {
@@ -1682,8 +1681,7 @@ async fn sign_vtxo_tree(
 	// Validate the tree. We expect new VTXOs to be within a buffer from
 	// expected vtxo lifetime.
 	let tip = wallet.inner.chain.tip().await.context("chain source error")?;
-	let min_expiry_height = tip
-		.saturating_add(ark_info.vtxo_lifetime as BlockHeight)
+	let min_expiry_height = (tip + ark_info.vtxo_lifetime)
 		.saturating_sub(VTXO_EXPIRY_HEIGHT_BUFFER);
 	validate_vtxo_tree_params(
 		vtxo_tree.server_pubkey, vtxo_tree.exit_delta, vtxo_tree.expiry_height,
@@ -2143,7 +2141,7 @@ impl Wallet {
 			input_vtxos,
 			vtxo_requests,
 			unblinded_mailbox_id: Some(unblinded_mailbox_id.serialize()),
-			scheduled_height,
+			scheduled_height: scheduled_height.map(|h| h.into()),
 		}).await.context("error submitting round participation to server")?.into_inner();
 
 		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)
@@ -2871,9 +2869,9 @@ mod test {
 		// The tree expires at height 101_000, so with an exit margin of 12
 		// (counted twice, for the old and the new exit) plus the input exit
 		// delta of 6, the last acceptable tip is 100_970.
-		check_output_vtxos_exitable(&vtxos, 100_970, 12, 6)
+		check_output_vtxos_exitable(&vtxos, BlockHeight::new(100_970), BlockDelta::new(12), BlockDelta::new(6))
 			.expect("vtxos with room for a unilateral exit should be accepted");
-		assert!(check_output_vtxos_exitable(&vtxos, 100_971, 12, 6).is_err(),
+		assert!(check_output_vtxos_exitable(&vtxos, BlockHeight::new(100_971), BlockDelta::new(12), BlockDelta::new(6)).is_err(),
 			"vtxos without room for a unilateral exit must be rejected");
 	}
 

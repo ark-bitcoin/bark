@@ -321,7 +321,12 @@ async fn progress_once(
 		},
 	};
 
-	Ok(bark_json::cli::ExitProgressResponse { done, claimable_height, exits, error })
+	Ok(bark_json::cli::ExitProgressResponse {
+		done,
+		claimable_height: claimable_height.map(Into::into),
+		exits,
+		error,
+	})
 }
 
 pub async fn claim_exits(
