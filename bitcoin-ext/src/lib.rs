@@ -184,6 +184,14 @@ impl TryFrom<i32> for BlockHeight {
 	}
 }
 
+impl TryFrom<BlockHeight> for i32 {
+	type Error = std::num::TryFromIntError;
+
+	fn try_from(v: BlockHeight) -> Result<i32, Self::Error> {
+		i32::try_from(v.0)
+	}
+}
+
 /// Add a delta to the height, saturating at [u32::MAX].
 impl ops::Add<BlockDelta> for BlockHeight {
 	type Output = BlockHeight;
