@@ -137,29 +137,7 @@ impl WalletAction for LightningSend {
 					Some(VtxoLockHolder::Action { id: self.id() }),
 				).await.abort()?;
 
-				// The movement is keyed by the action id, so a re-drive finds
-				// the one an earlier attempt created instead of adding another.
-				// A checkpoint from bark 0.7 or earlier carries a movement that
-				// isn't linked to the action, so use that one.
-				let movement_id = match self.movement_id {
-					Some(id) => id,
-					None => wallet.inner.movements.get_or_create_movement_with_action(
-						Subsystem::LIGHTNING_SEND,
-						LightningSendMovement::Send.to_string(),
-						&self.id(),
-						MovementUpdate::new()
-							.intended_balance(-self.payment_amount.to_signed()
-								.context("payment amount out of range").abort()?)
-							.fee(self.fee)
-							.consumed_vtxos(&self.input_vtxo_ids)
-							.sent_to([MovementDestination::new(
-								self.original_payment_method.clone(), self.payment_amount,
-							)])
-							.metadata(LightningMovement::metadata(
-								self.invoice.payment_hash(), Vec::<VtxoId>::new(), None,
-							)),
-					).await.context("failed to create lightning-send movement").retry()?,
-				};
+				let movement_id = get_or_create_movement(wallet, &self).await?;
 				Progress::InputsLocked { movement_id }
 			},
 			Progress::InputsLocked { movement_id } => {
@@ -226,6 +204,7 @@ impl WalletAction for LightningSend {
 		match &self.progress {
 			Progress::Start | Progress::InputsLocked { .. } => {
 				if or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
+					or_retry!(self, fail_lightning_send_movement(wallet, &self).await);
 					Advance::Failed(error.context(
 						"Could not start lightning send and HTLCs are near expiry",
 					))
@@ -269,10 +248,11 @@ impl WalletAction for LightningSend {
 	/// or our own state is inconsistent.
 	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		match &self.progress {
-			// Nothing committed server-side: the executor releases the
-			// input locks and removes the row when the action fails.
+			// Nothing committed server-side: close the movement and let the
+			// executor release the input locks and remove the row.
 			Progress::Start | Progress::InputsLocked { .. } => {
 				error!("Could not start lightning send {}: {:?}", self.id(), error);
+				or_retry!(self, fail_lightning_send_movement(wallet, &self).await);
 				Advance::Failed(error)
 			},
 			Progress::HtlcReceived(htlcs) | Progress::PaymentInitiated(htlcs) => {
@@ -412,6 +392,51 @@ pub(crate) async fn start_lightning_send(
 		allow_exit_of_htlcs: false,
 		progress: Progress::Start,
 	})
+}
+
+/// The movement of the send, created on first use.
+///
+/// Keyed by the action id, so a re-driven step finds the movement an
+/// earlier attempt created instead of adding another. A checkpoint from
+/// bark 0.7 or earlier carries a movement that isn't linked to the action,
+/// so use that one.
+async fn get_or_create_movement(
+	wallet: &Wallet,
+	send: &LightningSend,
+) -> Result<MovementId, AdvanceError> {
+	if let Some(id) = send.movement_id {
+		return Ok(id);
+	}
+
+	wallet.inner.movements.get_or_create_movement_with_action(
+		Subsystem::LIGHTNING_SEND,
+		LightningSendMovement::Send.to_string(),
+		&send.id(),
+		MovementUpdate::new()
+			.intended_balance(-send.payment_amount.to_signed()
+				.context("payment amount out of range").abort()?)
+			.fee(send.fee)
+			.consumed_vtxos(&send.input_vtxo_ids)
+			.sent_to([MovementDestination::new(
+				send.original_payment_method.clone(), send.payment_amount,
+			)])
+			.metadata(LightningMovement::metadata(
+				send.invoice.payment_hash(), Vec::<VtxoId>::new(), None,
+			)),
+	).await.context("failed to create lightning-send movement").retry()
+}
+
+/// Record the movement as failed before the action fails terminally.
+async fn fail_lightning_send_movement(
+	wallet: &Wallet,
+	send: &LightningSend,
+) -> Result<(), AdvanceError> {
+	let movement_id = get_or_create_movement(wallet, send).await?;
+	wallet.inner.movements.finish_movement_with_update(
+		movement_id,
+		MovementStatus::Failed,
+		MovementUpdate::new().effective_balance(SignedAmount::ZERO),
+	).await.context("failed to mark lightning-send movement as failed").retry()
 }
 
 /// Start -> HtlcReceived. Server cosigns the HTLC outputs; the wallet
