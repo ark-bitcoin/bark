@@ -639,6 +639,7 @@ impl LightningManager {
 				telemetry::LightningDirection::Receive,
 				is_self_payment,
 				htlc_subscription.user_agent.as_deref(),
+				None,
 			);
 		}
 

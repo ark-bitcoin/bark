@@ -1,11 +1,14 @@
 pub mod node_manager;
 
 pub mod cln;
+pub mod failure;
 pub mod guard;
 pub mod ledger;
 pub mod settler;
 
 mod payment_handler;
+
+pub use self::failure::LightningFailureKind;
 
 use std::cmp;
 use std::collections::HashMap;

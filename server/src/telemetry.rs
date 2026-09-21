@@ -61,6 +61,7 @@ pub const ATTRIBUTE_ROUND_STEP: &str = "round_step";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
 pub const ATTRIBUTE_DIRECTION: &str = "direction";
 pub const ATTRIBUTE_LIGHTNING_SELF_PAYMENT: &str = "self_payment";
+pub const ATTRIBUTE_LIGHTNING_FAILURE_REASON: &str = "reason";
 
 /// Intra-Ark payments (`self_payment="true"`) are counted on both sides;
 /// filter `self_payment="false"` for real network volume.
@@ -1425,17 +1426,23 @@ pub fn add_lightning_payment(
 	direction: LightningDirection,
 	is_self_payment: bool,
 	user_agent: Option<&str>,
+	failure: Option<crate::ln::LightningFailureKind>,
 ) {
 	if let Some(m) = TELEMETRY.get() {
 		let user_agent_name = user_agent.map(bucket_user_agent).unwrap_or("unknown");
 
-		let attrs = m.with_global_labels([
+		let mut attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
 			KeyValue::new(ATTRIBUTE_STATUS, status.as_str()),
 			KeyValue::new(ATTRIBUTE_DIRECTION, direction.as_str()),
 			KeyValue::new(ATTRIBUTE_LIGHTNING_SELF_PAYMENT, is_self_payment),
 			KeyValue::new(USER_AGENT_NAME, user_agent_name),
 		]);
+		// Only on failures, so success and receive series keep the label set
+		// they have today.
+		if let Some(kind) = failure {
+			attrs.push(KeyValue::new(ATTRIBUTE_LIGHTNING_FAILURE_REASON, kind.as_str()));
+		}
 		m.lightning_payment_counter.add(1, &attrs);
 		m.lightning_payment_volume.add(amount_msat / 1000, &attrs);
 	}

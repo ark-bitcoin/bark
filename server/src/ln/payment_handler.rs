@@ -7,6 +7,7 @@ use ark::lightning::{PaymentHash, Preimage};
 
 use crate::database;
 use crate::database::ln::{LightningPaymentAttempt, LightningPaymentStatus};
+use crate::ln::LightningFailureKind;
 use crate::ln::settler::HtlcSettler;
 use crate::telemetry;
 
@@ -59,6 +60,9 @@ impl<'a> PaymentAttemptHandler<'a> {
 				telemetry::LightningDirection::Send,
 				attempt.is_self_payment(),
 				attempt.user_agent.as_deref(),
+				// Falls back to the stored error: `update_..._status` keeps it
+				// when handed `None`.
+				Some(LightningFailureKind::classify(error.or(attempt.error.as_deref()))),
 			);
 		}
 
@@ -144,6 +148,9 @@ impl<'a> PaymentAttemptHandler<'a> {
 			}
 
 			if let Some(metric_status) = telemetry::LightningPaymentMetricStatus::from_status(status) {
+				let failure = (status == LightningPaymentStatus::Failed).then(||
+					LightningFailureKind::classify(payment_error.or(attempt.error.as_deref()))
+				);
 				// Attempted amount (not final_amount_msat / CLN's amount_sent_msat)
 				// so failed/succeeded volumes stay comparable.
 				telemetry::add_lightning_payment(
@@ -153,6 +160,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 					telemetry::LightningDirection::Send,
 					attempt.is_self_payment(),
 					attempt.user_agent.as_deref(),
+					failure,
 				);
 			}
 		}
