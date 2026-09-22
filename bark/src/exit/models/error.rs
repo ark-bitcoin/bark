@@ -97,6 +97,9 @@ pub enum ExitError {
 		error: String
 	},
 
+	#[error("Invalid Fee Margin: {margin} must be finite and non-negative and keep the fee in range")]
+	InvalidFeeMargin { margin: String },
+
 	#[error("Invalid Locktime ({tip}): {error}")]
 	InvalidLocktime { tip: BlockHeight, error: String },
 

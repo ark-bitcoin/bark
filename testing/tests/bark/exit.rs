@@ -45,7 +45,7 @@ async fn simple_exit() {
 
 	srv.stop().await.unwrap();
 
-	// The estimate-fee subcommand isn't in any release up to 0.6.1, so guard these
+	// The estimate-fee subcommand first shipped in bark 0.6.2, so guard these
 	// assertions while letting the rest of the exit flow run on older clients.
 	let estimate_fee_supported = is_bark_version!(> "0.6.1");
 
@@ -53,10 +53,14 @@ async fn simple_exit() {
 	if estimate_fee_supported {
 		let est = bark.estimate_exit_fee_all().await;
 		assert_eq!(est.txs_to_broadcast, 1, "{:?}", est);
-		assert_eq!(est.exit_broadcast_fee, sat(1382), "{:?}", est);
+		if is_bark_version!(> "0.7.1") {
+			assert_eq!(est.exit_broadcast_fee, sat(1_659), "{:?}", est);
+		} else {
+			// Releases up to 0.7.1 ship the walk-priced estimator.
+			assert_eq!(est.exit_broadcast_fee, sat(1_382), "{:?}", est);
+		}
 		assert_eq!(est.claim_fee, sat(645), "{:?}", est);
 		assert_eq!(est.total_fee, est.exit_broadcast_fee + est.claim_fee, "{:?}", est);
-		assert!(est.fundable, "{:?}", est);
 	}
 
 	bark.start_exit_all().await;
@@ -92,10 +96,10 @@ async fn estimate_emergency_exit_fee_unknown_vtxo() {
 }
 
 #[tokio::test]
-async fn estimate_emergency_exit_fee_unfundable() {
+async fn estimate_emergency_exit_fee_without_onchain_funds() {
 	require_bark_version!(> "0.6.1");
 
-	let ctx = TestContext::new("exit/estimate_emergency_exit_fee_unfundable").await;
+	let ctx = TestContext::new("exit/estimate_emergency_exit_fee_without_onchain_funds").await;
 	let srv = ctx.captaind("server").create().await;
 
 	// The receiver gets a VTXO out-of-round but holds no on-chain funds of its own.
@@ -114,13 +118,26 @@ async fn estimate_emergency_exit_fee_unfundable() {
 	assert_eq!(vtxos.len(), 1, "{:?}", vtxos);
 	assert_eq!(receiver.onchain_balance().await, Amount::ZERO);
 
-	// No confirmed on-chain coins to fund the CPFP bumps, so the exit is priced but not fundable.
+	// The estimate is a funding target, not an affordability check: it is priced identically
+	// with zero on-chain funds.
 	let est = receiver.estimate_exit_fee_all().await;
 	assert_eq!(est.txs_to_broadcast, 3, "{:?}", est);
-	assert_eq!(est.exit_broadcast_fee, sat(4576), "{:?}", est);
+	if is_bark_version!(> "0.7.1") {
+		assert_eq!(est.exit_broadcast_fee, sat(5_492), "{:?}", est);
+	} else {
+		// Releases up to 0.7.1 ship the walk-priced estimator.
+		assert_eq!(est.exit_broadcast_fee, sat(4_576), "{:?}", est);
+	}
 	assert_eq!(est.claim_fee, sat(645), "{:?}", est);
 	assert_eq!(est.total_fee, est.exit_broadcast_fee + est.claim_fee, "{:?}", est);
-	assert!(!est.fundable, "{:?}", est);
+
+	// A unit margin strips the default 20% safety scaling from the broadcast leg. The
+	// --fee-margin flag doesn't exist in releases up to 0.7.1.
+	if is_bark_version!(> "0.7.1") {
+		let raw = receiver.estimate_exit_fee_all_with_margin(1.0).await;
+		assert_eq!(raw.exit_broadcast_fee, sat(4_576), "{:?}", raw);
+		assert_eq!(raw.claim_fee, est.claim_fee, "{:?}", raw);
+	}
 }
 
 #[tokio::test]
@@ -143,10 +160,14 @@ async fn estimate_emergency_exit_fee_ongoing_exit() {
 	// Cost of the whole exit tree before any transaction is broadcast.
 	let before = bark.estimate_exit_fee_vtxo(vtxo).await;
 	assert_eq!(before.txs_to_broadcast, 5, "{:?}", before);
-	assert_eq!(before.exit_broadcast_fee, sat(6910), "{:?}", before);
+	if is_bark_version!(> "0.7.1") {
+		assert_eq!(before.exit_broadcast_fee, sat(8_292), "{:?}", before);
+	} else {
+		// Releases up to 0.7.1 ship the walk-priced estimator.
+		assert_eq!(before.exit_broadcast_fee, sat(6_910), "{:?}", before);
+	}
 	assert_eq!(before.claim_fee, sat(645), "{:?}", before);
 	assert_eq!(before.total_fee, before.exit_broadcast_fee + before.claim_fee, "{:?}", before);
-	assert!(before.fundable, "{:?}", before);
 
 	// Broadcast and confirm part of the exit tree, leaving the rest pending.
 	bark.start_exit_vtxos([vtxo]).await;
@@ -158,10 +179,14 @@ async fn estimate_emergency_exit_fee_ongoing_exit() {
 	// Broadcasted transactions cost nothing now, so only the pending ones are priced.
 	let after = bark.estimate_exit_fee_vtxo(vtxo).await;
 	assert_eq!(after.txs_to_broadcast, 3, "{:?}", after);
-	assert_eq!(after.exit_broadcast_fee, sat(4146), "{:?}", after);
+	if is_bark_version!(> "0.7.1") {
+		assert_eq!(after.exit_broadcast_fee, sat(4_976), "{:?}", after);
+	} else {
+		// Releases up to 0.7.1 ship the walk-priced estimator.
+		assert_eq!(after.exit_broadcast_fee, sat(4_146), "{:?}", after);
+	}
 	assert_eq!(after.claim_fee, sat(645), "{:?}", after);
 	assert_eq!(after.total_fee, after.exit_broadcast_fee + after.claim_fee, "{:?}", after);
-	assert!(after.fundable, "{:?}", after);
 
 	bark.progress_exit().await;
 	ctx.generate_blocks(1).await;
@@ -171,9 +196,13 @@ async fn estimate_emergency_exit_fee_ongoing_exit() {
 	// Broadcasted transactions cost nothing now, so only the pending ones are priced.
 	let after = bark.estimate_exit_fee_vtxo(vtxo).await;
 	assert_eq!(after.txs_to_broadcast, 1, "{:?}", after);
-	assert_eq!(after.exit_broadcast_fee, sat(1382), "{:?}", after);
+	if is_bark_version!(> "0.7.1") {
+		assert_eq!(after.exit_broadcast_fee, sat(1_659), "{:?}", after);
+	} else {
+		// Releases up to 0.7.1 ship the walk-priced estimator.
+		assert_eq!(after.exit_broadcast_fee, sat(1_382), "{:?}", after);
+	}
 	assert_eq!(after.total_fee, after.exit_broadcast_fee + after.claim_fee, "{:?}", after);
-	assert!(after.fundable, "{:?}", after);
 
 	bark.progress_exit().await;
 	ctx.generate_blocks(1).await;
@@ -183,7 +212,6 @@ async fn estimate_emergency_exit_fee_ongoing_exit() {
 	assert_eq!(after.txs_to_broadcast, 0, "{:?}", after);
 	assert_eq!(after.exit_broadcast_fee, Amount::ZERO, "{:?}", after);
 	assert_eq!(after.total_fee, after.exit_broadcast_fee + after.claim_fee, "{:?}", after);
-	assert!(after.fundable, "{:?}", after);
 }
 
 #[tokio::test]
@@ -475,14 +503,18 @@ async fn double_exit_call() {
 	let vtxos = bark1.vtxos().await;
 
 	// Fee estimation to exit a full wallet with 3 vtxos.
-	// The estimate-fee subcommand isn't in any release up to 0.6.1.
+	// The estimate-fee subcommand first shipped in bark 0.6.2.
 	if is_bark_version!(> "0.6.1") {
 		let est = bark1.estimate_exit_fee_all().await;
 		assert_eq!(est.txs_to_broadcast, 6, "{:?}", est);
-		assert_eq!(est.exit_broadcast_fee, sat(8923), "{:?}", est);
+		if is_bark_version!(> "0.7.1") {
+			assert_eq!(est.exit_broadcast_fee, sat(10_708), "{:?}", est);
+		} else {
+			// Releases up to 0.7.1 ship the walk-priced estimator.
+			assert_eq!(est.exit_broadcast_fee, sat(8_923), "{:?}", est);
+		}
 		assert_eq!(est.claim_fee, sat(1400), "{:?}", est);
 		assert_eq!(est.total_fee, est.exit_broadcast_fee + est.claim_fee, "{:?}", est);
-		assert!(est.fundable, "{:?}", est);
 	}
 
 	bark1.start_exit_all().await;
@@ -1159,14 +1191,18 @@ async fn exit_spend_anchor_single_utxo_required() {
 	bark.board_and_confirm_and_register(&ctx, sat(500_000)).await;
 
 	// A board exit is a single tree transaction funded by one confirmed UTXO.
-	// The estimate-fee subcommand isn't in any release up to 0.6.1.
+	// The estimate-fee subcommand first shipped in bark 0.6.2.
 	if is_bark_version!(> "0.6.1") {
 		let est = bark.estimate_exit_fee_all().await;
 		assert_eq!(est.txs_to_broadcast, 1, "{:?}", est);
-		assert_eq!(est.exit_broadcast_fee, sat(1382), "{:?}", est);
+		if is_bark_version!(> "0.7.1") {
+			assert_eq!(est.exit_broadcast_fee, sat(1_659), "{:?}", est);
+		} else {
+			// Releases up to 0.7.1 ship the walk-priced estimator.
+			assert_eq!(est.exit_broadcast_fee, sat(1_382), "{:?}", est);
+		}
 		assert_eq!(est.claim_fee, sat(645), "{:?}", est);
 		assert_eq!(est.total_fee, est.exit_broadcast_fee + est.claim_fee, "{:?}", est);
-		assert!(est.fundable, "{:?}", est);
 	}
 
 	bark.start_exit_all().await;
@@ -1200,17 +1236,21 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark.sync().await;
 
-	// The first child is measured against real coin selection, which funds the bump with a varying
-	// number of the tiny UTXOs, so the broadcast fee isn't fixed. It can't be cheaper than the
-	// single-input bump, so assert a lower bound rather than an exact value.
-	// The estimate-fee subcommand isn't in any release up to 0.6.1.
+	// The estimate-fee subcommand first shipped in bark 0.6.2.
 	if is_bark_version!(> "0.6.1") {
 		let est = bark.estimate_exit_fee_all().await;
 		assert_eq!(est.txs_to_broadcast, 1, "{:?}", est);
-		assert!(est.exit_broadcast_fee >= sat(1382), "broadcast fee too low: {:?}", est);
+		if is_bark_version!(> "0.7.1") {
+			// Canonical-weight pricing doesn't depend on coin selection, so the fee is
+			// exact even with multiple funding UTXOs.
+			assert_eq!(est.exit_broadcast_fee, sat(1_659), "{:?}", est);
+		} else {
+			// Up to 0.7.1 the walk funds the bump with a varying number of the tiny UTXOs,
+			// so only a lower bound is fixed.
+			assert!(est.exit_broadcast_fee >= sat(1_382), "broadcast fee too low: {:?}", est);
+		}
 		assert_eq!(est.claim_fee, sat(645), "{:?}", est);
 		assert_eq!(est.total_fee, est.exit_broadcast_fee + est.claim_fee, "{:?}", est);
-		assert!(est.fundable, "{:?}", est);
 	}
 
 	bark.start_exit_all().await;

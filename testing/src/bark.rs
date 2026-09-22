@@ -924,6 +924,13 @@ impl Bark {
 		self.run_json(["exit", "estimate-fee", "--all"]).await
 	}
 
+	pub async fn estimate_exit_fee_all_with_margin(
+		&self,
+		margin: f64,
+	) -> json::web::EmergencyExitFeeEstimateResponse {
+		self.run_json(["exit", "estimate-fee", "--all", "--fee-margin", &margin.to_string()]).await
+	}
+
 	pub async fn estimate_exit_fee_vtxo(&self, vtxo: impl fmt::Display) -> json::web::EmergencyExitFeeEstimateResponse {
 		self.run_json(["exit", "estimate-fee", "--vtxo", &vtxo.to_string()]).await
 	}

@@ -1,0 +1,8 @@
+- Drop `fundable` from `EmergencyExitFeeEstimateResponse`
+  The estimate is a funding target rather than an affordability check.
+  `EmergencyExitFeeEstimateQuery` gains an optional `fee_margin`.
+  [#2511](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2511)
+  - **BREAKING:** `fundable` is removed from `EmergencyExitFeeEstimateResponse`
+  - `fee_rate_sat_per_vb` on `EmergencyExitFeeEstimateQuery` and
+    `EmergencyExitFeeEstimateResponse` is now a float, so fractional sat/vB
+    rates round-trip

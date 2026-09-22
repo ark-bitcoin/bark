@@ -1,0 +1,5 @@
+- Add `--fee-margin` to `bark exit estimate-fee`
+  The estimate is deterministic weight arithmetic scaled by the margin
+  (default 1.2) and no longer depends on the wallet's funds; the `fundable`
+  output field is removed.
+  [#2511](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2511)

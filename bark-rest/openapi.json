@@ -321,7 +321,7 @@
           "exits"
         ],
         "summary": "Estimate emergency exit fee",
-        "description": "Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid now from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. `fundable` is false when the wallet's confirmed on-chain balance can't cover the full broadcast walk, which would stall the exit midway.",
+        "description": "Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. The broadcast fee includes the `fee_margin` scaling and is the on-chain balance to fund the exit with at that margin; the wallet's actual funds are never consulted.",
         "operationId": "emergency_exit_fee",
         "parameters": [
           {
@@ -336,12 +336,11 @@
           {
             "name": "fee_rate_sat_per_vb",
             "in": "query",
-            "description": "Fee rate in sat/vB applied to both legs; omit to price the broadcast leg at the current fast rate and the claim leg at the regular rate",
+            "description": "Fee rate in sat/vB (fractions allowed) applied to both legs; omit to price the broadcast leg at the current fast rate and the claim leg at the regular rate",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64",
-              "minimum": 0
+              "type": "number",
+              "format": "double"
             }
           },
           {
@@ -351,6 +350,16 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "fee_margin",
+            "in": "query",
+            "description": "Scales the broadcast leg to cover feerate movement and UTXO consolidation; must be finite and non-negative, defaults to 1.2",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
             }
           }
         ],
@@ -4036,14 +4045,21 @@
             ],
             "description": "The destination address for the claim. Only affects the claim-fee weight; when omitted a\nplaceholder of the configured network is used."
           },
-          "fee_rate_sat_per_vb": {
+          "fee_margin": {
             "type": [
-              "integer",
+              "number",
               "null"
             ],
-            "format": "int64",
-            "description": "The fee rate to price the estimate at, in sat/vB. Applied to both the broadcast and claim\nlegs. When omitted, the broadcast leg uses the current `fast` rate and the claim leg the\n`regular` rate.",
-            "minimum": 0
+            "format": "double",
+            "description": "Scales the broadcast leg to cover feerate movement and UTXO consolidation. Must be finite\nand non-negative; defaults to 1.2."
+          },
+          "fee_rate_sat_per_vb": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The fee rate to price the estimate at, in sat/vB (fractions allowed). Applied to both the\nbroadcast and claim legs. When omitted, the broadcast leg uses the current `fast` rate and\nthe claim leg the `regular` rate."
           },
           "vtxo_ids": {
             "type": [
@@ -4062,8 +4078,7 @@
           "claim_fee_sat",
           "total_fee_sat",
           "fee_rate_sat_per_vb",
-          "txs_to_broadcast",
-          "fundable"
+          "txs_to_broadcast"
         ],
         "properties": {
           "claim_fee_sat": {
@@ -4075,18 +4090,13 @@
           "exit_broadcast_fee_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "The CPFP fees to broadcast every not-yet-confirmed exit transaction (in satoshis). Paid now\nfrom confirmed on-chain funds.",
+            "description": "The CPFP fees to broadcast every not-yet-confirmed exit transaction (in satoshis),\nincluding the fee margin. Paid from confirmed on-chain funds; this is the on-chain balance\nto fund the exit with at the chosen margin.",
             "minimum": 0
           },
           "fee_rate_sat_per_vb": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The fee rate the exit-broadcast leg was priced at (sat/vB). Unless an explicit fee rate was\nsupplied, the claim leg is priced separately at the chain's `regular` rate.",
-            "minimum": 0
-          },
-          "fundable": {
-            "type": "boolean",
-            "description": "Whether the wallet's current on-chain balance covers the full serial exit-broadcast walk."
+            "type": "number",
+            "format": "double",
+            "description": "The fee rate the exit-broadcast leg was priced at (sat/vB), before the fee margin. Unless\nan explicit fee rate was supplied, the claim leg is priced separately at the chain's\n`regular` rate."
           },
           "total_fee_sat": {
             "type": "integer",
@@ -4698,6 +4708,24 @@
                 "type": "string",
                 "enum": [
                   "invalid-exit-transaction-status"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "margin",
+              "type"
+            ],
+            "properties": {
+              "margin": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "invalid-fee-margin"
                 ]
               }
             }

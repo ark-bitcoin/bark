@@ -111,21 +111,25 @@ pub struct EmergencyExitFeeEstimateQuery {
 	/// Comma-separated VTXO ids to estimate the exit for. When omitted, every spendable VTXO in
 	/// the wallet is used (i.e. exit the entire wallet).
 	pub vtxo_ids: Option<String>,
-	/// The fee rate to price the estimate at, in sat/vB. Applied to both the broadcast and claim
-	/// legs. When omitted, the broadcast leg uses the current `fast` rate and the claim leg the
-	/// `regular` rate.
-	pub fee_rate_sat_per_vb: Option<u64>,
+	/// The fee rate to price the estimate at, in sat/vB (fractions allowed). Applied to both the
+	/// broadcast and claim legs. When omitted, the broadcast leg uses the current `fast` rate and
+	/// the claim leg the `regular` rate.
+	pub fee_rate_sat_per_vb: Option<f64>,
 	/// The destination address for the claim. Only affects the claim-fee weight; when omitted a
 	/// placeholder of the configured network is used.
 	pub destination: Option<String>,
+	/// Scales the broadcast leg to cover feerate movement and UTXO consolidation. Must be finite
+	/// and non-negative; defaults to 1.2.
+	pub fee_margin: Option<f64>,
 }
 
 /// A fee breakdown for unilaterally (emergency) exiting a set of VTXOs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct EmergencyExitFeeEstimateResponse {
-	/// The CPFP fees to broadcast every not-yet-confirmed exit transaction (in satoshis). Paid now
-	/// from confirmed on-chain funds.
+	/// The CPFP fees to broadcast every not-yet-confirmed exit transaction (in satoshis),
+	/// including the fee margin. Paid from confirmed on-chain funds; this is the on-chain balance
+	/// to fund the exit with at the chosen margin.
 	#[serde(rename = "exit_broadcast_fee_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub exit_broadcast_fee: Amount,
@@ -138,13 +142,12 @@ pub struct EmergencyExitFeeEstimateResponse {
 	#[serde(rename = "total_fee_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub total_fee: Amount,
-	/// The fee rate the exit-broadcast leg was priced at (sat/vB). Unless an explicit fee rate was
-	/// supplied, the claim leg is priced separately at the chain's `regular` rate.
-	pub fee_rate_sat_per_vb: u64,
+	/// The fee rate the exit-broadcast leg was priced at (sat/vB), before the fee margin. Unless
+	/// an explicit fee rate was supplied, the claim leg is priced separately at the chain's
+	/// `regular` rate.
+	pub fee_rate_sat_per_vb: f64,
 	/// The number of exit transactions that still need to be broadcast and CPFP-bumped.
 	pub txs_to_broadcast: usize,
-	/// Whether the wallet's current on-chain balance covers the full serial exit-broadcast walk.
-	pub fundable: bool,
 }
 
 impl From<bark::exit::ExitFeeEstimate> for EmergencyExitFeeEstimateResponse {
@@ -153,9 +156,8 @@ impl From<bark::exit::ExitFeeEstimate> for EmergencyExitFeeEstimateResponse {
 			total_fee: e.total(),
 			exit_broadcast_fee: e.exit_broadcast_fee,
 			claim_fee: e.claim_fee,
-			fee_rate_sat_per_vb: e.fee_rate.to_sat_per_vb_ceil(),
+			fee_rate_sat_per_vb: e.fee_rate.to_sat_per_kwu() as f64 / 250.0,
 			txs_to_broadcast: e.txs_to_broadcast,
-			fundable: e.fundable,
 		}
 	}
 }

@@ -127,6 +127,9 @@ pub enum ExitError {
 		error: String
 	},
 
+	#[error("Invalid Fee Margin: {margin} must be finite and non-negative and keep the fee in range")]
+	InvalidFeeMargin { margin: String },
+
 	#[error("Invalid LockTime ({tip}): {error}")]
 	InvalidLocktime {
 		#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
@@ -234,6 +237,9 @@ impl From<bark::exit::ExitError> for ExitError {
 			},
 			bark::exit::ExitError::InvalidExitTransactionStatus { txid, status, error } => {
 				ExitError::InvalidExitTransactionStatus { txid, status: status.into(), error }
+			},
+			bark::exit::ExitError::InvalidFeeMargin { margin } => {
+				ExitError::InvalidFeeMargin { margin }
 			},
 			bark::exit::ExitError::InvalidLocktime { tip, error } => {
 				ExitError::InvalidLocktime { tip, error }

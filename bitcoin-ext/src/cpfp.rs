@@ -1,4 +1,4 @@
-use bitcoin::{Amount, FeeRate, Txid};
+use bitcoin::{Amount, FeeRate, Txid, Weight};
 
 /// Returned by the bark API when creating a P2A CPFP transaction fails.
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +47,23 @@ impl MakeCpfpFees {
 		match self {
 			MakeCpfpFees::Effective(fr) => *fr,
 			MakeCpfpFees::Rbf { min_effective_fee_rate, .. } => *min_effective_fee_rate,
+		}
+	}
+
+	/// The fee a child of `child_weight` must pay for a zero-fee parent of `parent_weight`: the
+	/// effective rate over the whole package, or for a replacement at least the replaced package's
+	/// fee plus the minimum relay fee over the new package (BIP125).
+	pub fn package_fee(&self, parent_weight: Weight, child_weight: Weight) -> Amount {
+		let package_weight = parent_weight + child_weight;
+		match self {
+			MakeCpfpFees::Effective(fr) => package_weight * *fr,
+			MakeCpfpFees::Rbf { min_effective_fee_rate, current_package_fee } => {
+				let min_tx_relay_fee = FeeRate::from_sat_per_vb(1).unwrap();
+				let min_package_fee = *current_package_fee +
+					parent_weight * min_tx_relay_fee +
+					child_weight * min_tx_relay_fee;
+				(package_weight * *min_effective_fee_rate).max(min_package_fee)
+			},
 		}
 	}
 }

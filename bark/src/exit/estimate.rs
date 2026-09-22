@@ -11,8 +11,6 @@
 //! [`Exit::estimate_emergency_exit_fee`] reports both as a breakdown for a set of VTXOs, reflecting
 //! the current chain state (already-confirmed tree transactions cost nothing).
 
-use std::collections::{HashMap, HashSet};
-
 use bitcoin::transaction::{predict_weight, InputWeightPrediction};
 use bitcoin::{
 	Address, Amount, FeeRate, Sequence, Transaction, TxIn, TxOut, Weight, Witness, ScriptBuf,
@@ -23,14 +21,17 @@ use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use ark::Vtxo;
 use ark::vtxo::Full;
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::TxStatus;
 
 use ark::VtxoId;
 
 use crate::Wallet;
-use crate::exit::bdk::should_rbf;
-use crate::exit::{Exit, ExitError, ExitState, ExitTxStatus};
-use crate::onchain::MakeCpfpFees;
+use crate::exit::{Exit, ExitError};
+
+/// The default safety margin applied to the exit-broadcast fee estimate.
+///
+/// Covers feerate movement between estimating and exiting, and UTXO consolidation making the
+/// real CPFP children heavier than the canonical single-input child used for pricing.
+pub const DEFAULT_BROADCAST_FEE_MARGIN: f64 = 1.2;
 
 /// A breakdown of the estimated onchain cost of unilaterally exiting a set of VTXOs.
 ///
@@ -39,31 +40,26 @@ use crate::onchain::MakeCpfpFees;
 /// each leg is priced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExitFeeEstimate {
-	/// The total fees required to broadcast every not-yet-confirmed exit transaction.
+	/// The total fees required to broadcast every not-yet-confirmed exit transaction, including
+	/// the fee margin — deliberately above `fee_rate × weight`.
 	///
-	/// This is the minimum offchain-balance required to pay for an emergency exit.
+	/// The onchain balance to fund the exit with at the chosen margin; the unscaled fee is the
+	/// floor below which the exit cannot complete.
 	pub exit_broadcast_fee: Amount,
 	/// Fee for transaction that drains the exit outputs. It is substracted from
 	/// the exited VTXO amount.
 	pub claim_fee: Amount,
-	/// The fee rate used to price the exit-broadcast (CPFP) leg. Unless an explicit fee rate was
-	/// supplied, the claim leg is priced separately at the chain's `regular` rate, so this is not
-	/// necessarily the rate behind `claim_fee`.
+	/// The fee rate used to price the exit-broadcast (CPFP) leg, before the fee margin. Unless an
+	/// explicit fee rate was supplied, the claim leg is priced separately at the chain's `regular`
+	/// rate, so this is not necessarily the rate behind `claim_fee`.
 	pub fee_rate: FeeRate,
 	/// The number of exit transactions that still need to be broadcast and CPFP-bumped.
 	pub txs_to_broadcast: usize,
-	/// Whether the wallet's current confirmed onchain balance covers the full exit-broadcast walk.
-	///
-	/// A unilateral exit is funded serially across confirmed UTXOs (a CPFP child can only spend
-	/// confirmed coins, so each bump's change must confirm before it can fund the next one). An
-	/// exit can therefore stall midway if confirmed funds run short even when a single per-step fee
-	/// looks affordable. The walk is simulated bump by bump against a replica of the wallet;
-	/// `false` means confirmed funds ran out partway through it.
-	pub fundable: bool,
 }
 
 impl ExitFeeEstimate {
-	/// The total estimated cost: `exit_broadcast_fee + claim_fee`.
+	/// The total estimated cost: `exit_broadcast_fee + claim_fee`, kept within
+	/// [Amount::MAX_MONEY] by [Exit::estimate_emergency_exit_fee].
 	pub fn total(&self) -> Amount {
 		self.exit_broadcast_fee + self.claim_fee
 	}
@@ -73,7 +69,9 @@ impl Exit {
 	/// Estimate the onchain fees needed to unilaterally exit the given VTXOs.
 	///
 	/// The result takes the current chain state into account: any exit transactions
-	/// that are already confirmed onchain have no extra cost.
+	/// that are already confirmed onchain have no extra cost. The estimate is pure weight
+	/// arithmetic — it never touches the onchain wallet, so it can be taken before the wallet
+	/// holds any funds.
 	///
 	/// # Parameters
 	///  - `fee_rate` applies to both the broadcast and claim. If not provided, the
@@ -81,8 +79,12 @@ impl Exit {
 	/// rate.
 	///  - `destination` influences only the claim transaction weight. If not set, a dummy P2TR address
 	/// for the wallet's network is used.
+	///  - `fee_margin` scales the broadcast leg, defaulting to [DEFAULT_BROADCAST_FEE_MARGIN].
+	/// Must be finite and non-negative.
 	///
 	/// # Errors
+	/// - [ExitError::InvalidFeeMargin] if `fee_margin` is not finite and non-negative, or scales
+	///   the fee out of range.
 	/// - [ExitError::UnknownVtxo] if a VTXO id isn't known to the wallet.
 	/// - [ExitError::DustLimit] if a VTXO is below the dust limit (it can't be exited).
 	/// - [ExitError::VtxoAlreadyExited] if a VTXO has already completed its exit.
@@ -93,7 +95,13 @@ impl Exit {
 		wallet: &Wallet,
 		fee_rate: Option<FeeRate>,
 		destination: Option<Address>,
+		fee_margin: Option<f64>,
 	) -> anyhow::Result<ExitFeeEstimate, ExitError> {
+		let fee_margin = fee_margin.unwrap_or(DEFAULT_BROADCAST_FEE_MARGIN);
+		if !fee_margin.is_finite() || fee_margin < 0.0 {
+			return Err(ExitError::InvalidFeeMargin { margin: fee_margin.to_string() });
+		}
+
 		let (broadcast_fee_rate, claim_fee_rate) = match fee_rate {
 			Some(fr) => (fr, fr),
 			None => (
@@ -102,161 +110,45 @@ impl Exit {
 			),
 		};
 
-		// Resolve each VTXO, collecting (in chain order) the exit transactions that still need
-		// broadcasting plus the full VTXOs we'll drain.
-		let mut full_vtxos = HashMap::with_capacity(vtxos.len());
-		let mut seen = HashSet::new();
-		let mut unconfirmed_parents = Vec::new();
-		let mut pending_status = Vec::new();
-
-		{
-			let guard = self.inner.read().await;
-			for &vtxo_id in vtxos {
-				if full_vtxos.contains_key(&vtxo_id) {
+		// Resolve each VTXO into the exit transactions that still need broadcasting (already-
+		// confirmed ones cost nothing) plus the full VTXOs we'll drain.
+		let exits = self.collect_unconfirmed_exit_parents(vtxos).await?;
+		let mut txs_to_broadcast = 0;
+		let mut exit_broadcast_fee = Amount::ZERO;
+		let mut full_vtxos = Vec::with_capacity(exits.len());
+		for exit in exits {
+			for (parent, child) in &exit.parents {
+				// Packages already in the mempool at a sufficient feerate cost nothing extra.
+				let Some(fees) = child.required_cpfp_fees(broadcast_fee_rate) else {
 					continue;
-				}
-
-				let vtxo = wallet.inner.db.get_full_vtxo(vtxo_id).await
-					.map_err(|e| ExitError::InvalidWalletState { error: e.to_string() })?
-					.ok_or(ExitError::UnknownVtxo { vtxo: vtxo_id })?;
-
-				if let Err(error) = vtxo.check_standard() {
-					return Err(ExitError::NonStandardVtxo { vtxo: vtxo_id, error }.into());
-				}
-
-				match guard.exit_vtxos.iter().find(|ev| ev.id() == vtxo_id).map(|ev| ev.state()) {
-					Some(ExitState::Claimed(_)) => {
-						return Err(ExitError::VtxoAlreadyExited { vtxo: vtxo_id });
-					},
-					// The VTXO was consumed by something other than this exit (e.g. forfeited in a
-					// round), so no exit transactions can be broadcast — there's nothing to price.
-					Some(ExitState::VtxoAlreadySpent(_)) => {
-						return Err(ExitError::VtxoAlreadySpent { vtxo: vtxo_id });
-					},
-					Some(ExitState::Processing(s)) => {
-						// An in-progress exit: confirmed transactions cost nothing. A package
-						// already in the mempool is priced as an RBF replacement of its current
-						// child at the requested rate — or skipped when the child's committed fee
-						// can't be determined — and everything else needs a fresh wallet-funded
-						// bump. Confirmation is read from tracked state, so no chain query is
-						// needed here.
-						for exit_tx in &s.transactions {
-							let fees = match &exit_tx.status {
-								ExitTxStatus::Confirmed { .. } => continue,
-								ExitTxStatus::AwaitingConfirmation { .. } => {
-									match guard.tx_manager.get_child_status(exit_tx.txid).await {
-										Ok(Some(c)) => match c.fee_info {
-											// If the tx is already in the mempool and we don't need to RBF it, we can just skip it.
-											Some(fi) if should_rbf(broadcast_fee_rate, fi.fee_rate) => {
-												MakeCpfpFees::Rbf {
-													min_effective_fee_rate: broadcast_fee_rate,
-													current_package_fee: fi.total_fee,
-												}
-											},
-											_ => continue,
-										},
-										_ => continue,
-									}
-								},
-								ExitTxStatus::VerifyInputs |
-								ExitTxStatus::AwaitingCpfpBroadcast |
-								ExitTxStatus::AwaitingInputConfirmation { .. } => {
-									MakeCpfpFees::Effective(broadcast_fee_rate)
-								},
-							};
-							if !seen.insert(exit_tx.txid) {
-								continue;
-							}
-							let package = guard.tx_manager.get_package(exit_tx.txid)?;
-							let tx = package.read().await.exit.tx.clone();
-							unconfirmed_parents.push((tx, fees));
-						}
-					},
-					// All exit txs are confirmed, so there's nothing left to broadcast but the claim.
-					Some(ExitState::AwaitingDelta(_)) |
-					Some(ExitState::Claimable(_)) |
-					Some(ExitState::ClaimInProgress(_)) => {},
-					// Exit not started: price the whole tree, deferring the per-tx confirmation
-					// check until after we drop the lock.
-					Some(ExitState::Start(_)) | Some(ExitState::Canceled(_)) | None => {
-						for item in vtxo.transactions() {
-							pending_status.push(item.tx);
-						}
-					},
-				}
-
-				full_vtxos.insert(vtxo_id, vtxo);
+				};
+				let fee = fees.package_fee(parent.weight(), canonical_cpfp_child_weight());
+				exit_broadcast_fee = exit_broadcast_fee.checked_add(fee)
+					.filter(|total| *total <= Amount::MAX_MONEY)
+					.ok_or_else(|| ExitError::InternalError {
+						error: format!("exit broadcast fee exceeds {}", Amount::MAX_MONEY),
+					})?;
+				txs_to_broadcast += 1;
 			}
+			full_vtxos.push(exit.vtxo);
 		}
-
-		// Now query the chain for the not-yet-started candidates, skipping any already confirmed
-		// onchain (they cost nothing) and any duplicate shared txid.
-		for tx in pending_status {
-			let txid = tx.compute_txid();
-			if seen.contains(&txid) {
-				continue;
-			}
-			let mut guard = self.inner.write().await;
-			let status = guard.tx_manager.tx_status(txid).await
-				.map_err(|e| ExitError::TransactionRetrievalFailure { txid, error: e.to_string() })?;
-
-			let rbf = match status {
-				TxStatus::NotFound => {
-					MakeCpfpFees::Effective(broadcast_fee_rate)
-				},
-				TxStatus::Mempool => {
-					match guard.tx_manager.get_child_status(txid).await {
-						Ok(Some(c)) => c.fee_info.map(|f| MakeCpfpFees::Rbf {
-							min_effective_fee_rate: broadcast_fee_rate,
-							current_package_fee: f.total_fee,
-						}),
-						_ => None,
-					}.unwrap_or(MakeCpfpFees::Effective(broadcast_fee_rate))
-				},
-				TxStatus::Confirmed(_) => {
-					continue;
-				},
-			};
-
-			seen.insert(txid);
-			unconfirmed_parents.push((tx, rbf));
+		let scaled = (exit_broadcast_fee.to_sat() as f64 * fee_margin).ceil();
+		if scaled > Amount::MAX_MONEY.to_sat() as f64 {
+			return Err(ExitError::InvalidFeeMargin { margin: fee_margin.to_string() });
 		}
-
-		// CPFP-bump every unconfirmed exit transaction.
-		let txs_to_broadcast = unconfirmed_parents.len();
-		let (children, fundable) = match wallet.onchain() {
-			Some(onchain) => {
-				let walk = onchain.read().await
-					.estimate_p2a_cpfp_walk(&unconfirmed_parents)
-					.map_err(|e| ExitError::InternalError { error: e.to_string() })?;
-
-				// The walk funds each child from confirmed coins, recycling change exactly like the real
-				// serial broadcast, so it completing is the precise version of "the confirmed balance
-				// covers the whole walk".
-				let fundable = walk.shortfall.is_none();
-
-				(walk.children, fundable)
-			},
-			None => (vec![], false)
-		};
-
-		let mut exit_broadcast_fee = children.iter().map(|(_, fee)| *fee).sum::<Amount>();
-		// The walk stops when confirmed funds run out; each remaining parent is then priced with
-		// a canonical one-input P2TR-funded child at the requested rate.
-		for (parent, _) in unconfirmed_parents.iter().skip(children.len()) {
-			exit_broadcast_fee += broadcast_fee_rate * (parent.weight() + canonical_cpfp_child_weight());
-		}
+		let exit_broadcast_fee = Amount::from_sat(scaled as u64);
 
 		// a single batched drain of every VTXO to one destination.
-		let vtxos = full_vtxos.into_iter().map(|(_, vtxo)| vtxo).collect::<Vec<_>>();
-		let claim_fee = self.estimate_claim_fee(&vtxos, wallet, claim_fee_rate, destination).await?;
+		let claim_fee = self.estimate_claim_fee(&full_vtxos, wallet, claim_fee_rate, destination).await?;
+		if exit_broadcast_fee.checked_add(claim_fee).is_none_or(|total| total > Amount::MAX_MONEY) {
+			return Err(ExitError::InvalidFeeMargin { margin: fee_margin.to_string() });
+		}
 
 		Ok(ExitFeeEstimate {
 			exit_broadcast_fee,
 			claim_fee,
 			fee_rate: broadcast_fee_rate,
 			txs_to_broadcast,
-			fundable,
 		})
 	}
 

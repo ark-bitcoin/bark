@@ -582,8 +582,9 @@ pub async fn get_finished_exits(
 	summary = "Estimate emergency exit fee",
 	params(
 		("vtxo_ids" = Option<String>, Query, description = "Comma-separated VTXO ids to exit; omit to exit the entire wallet"),
-		("fee_rate_sat_per_vb" = Option<u64>, Query, description = "Fee rate in sat/vB applied to both legs; omit to price the broadcast leg at the current fast rate and the claim leg at the regular rate"),
+		("fee_rate_sat_per_vb" = Option<f64>, Query, description = "Fee rate in sat/vB (fractions allowed) applied to both legs; omit to price the broadcast leg at the current fast rate and the claim leg at the regular rate"),
 		("destination" = Option<String>, Query, description = "Claim destination address; omit to use a placeholder for weighing"),
+		("fee_margin" = Option<f64>, Query, description = "Scales the broadcast leg to cover feerate movement and UTXO consolidation; must be finite and non-negative, defaults to 1.2"),
 	),
 	responses(
 		(status = 200, description = "Returns the emergency exit fee breakdown", body = bark_json::web::EmergencyExitFeeEstimateResponse),
@@ -592,11 +593,12 @@ pub async fn get_finished_exits(
 	),
 	description = "Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs \
 		without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every \
-		not-yet-confirmed transaction in each VTXO's exit tree, paid now from confirmed on-chain \
+		not-yet-confirmed transaction in each VTXO's exit tree, paid from confirmed on-chain \
 		funds—from the claim cost of the single batched transaction that later drains the matured \
 		outputs. The estimate reflects current chain state, so exit transactions already confirmed \
-		cost nothing. `fundable` is false when the wallet's confirmed on-chain balance can't cover \
-		the full broadcast walk, which would stall the exit midway.",
+		cost nothing. The broadcast fee includes the `fee_margin` scaling and is the on-chain \
+		balance to fund the exit with at that margin; the wallet's actual funds are never \
+		consulted.",
 	tag = "exits"
 )]
 #[debug_handler]
@@ -622,7 +624,8 @@ pub async fn emergency_exit_fee(
 	};
 
 	let fee_rate = match query.fee_rate_sat_per_vb {
-		Some(v) => Some(FeeRate::from_sat_per_vb(v).badarg("Fee rate too large")?),
+		Some(v) => Some(FeeRate::from_sat_per_vb_decimal_checked_ceil(v)
+			.badarg("Fee rate must be finite and non-negative")?),
 		None => None,
 	};
 
@@ -638,14 +641,15 @@ pub async fn emergency_exit_fee(
 		None => None,
 	};
 
-	// Sync the on-chain wallet so the `fundable` check sees current confirmed funds.
-	wallet.sync_onchain().await.context("error syncing on-chain wallet")?;
+	let fee_margin = query.fee_margin;
+
 	let result = wallet
-		.estimate_emergency_exit_fee(&vtxo_ids, fee_rate, destination)
+		.estimate_emergency_exit_fee(&vtxo_ids, fee_rate, destination, fee_margin)
 		.await;
 
 	let estimate = match &result {
 		Err(ExitError::DustLimit { vtxo, .. }) => badarg!("Provided VTXO {} is dust", vtxo),
+		Err(ExitError::InvalidFeeMargin { margin }) => badarg!("Invalid fee margin {}", margin),
 		Err(ExitError::UnknownVtxo { vtxo }) => badarg!("Provided VTXO {} is unknown", vtxo),
 		Err(ExitError::VtxoAlreadyExited { vtxo }) => badarg!("Provided VTXO {} has already exited", vtxo),
 		Err(ExitError::VtxoAlreadySpent { vtxo }) => badarg!("Provided VTXO {} has already been spent", vtxo),

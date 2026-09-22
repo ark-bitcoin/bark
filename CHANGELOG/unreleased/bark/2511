@@ -1,0 +1,13 @@
+- Rework `estimate_emergency_exit_fee` into deterministic weight arithmetic
+  Each remaining package is priced at the requested feerate with a canonical
+  CPFP child, scaled by a caller-supplied `fee_margin` (default 1.2) that
+  covers feerate movement and UTXO consolidation. The estimate no longer
+  touches the onchain wallet, so it works with any wallet. It also rejects
+  VTXOs spent outside the exit flow and no longer bumps packages that
+  already pay the requested rate.
+  [#2511](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2511)
+  - **BREAKING:** `ExitFeeEstimate::fundable` is removed; the estimate is a
+    funding target to compare against your on-chain balance
+  - **BREAKING:** `estimate_emergency_exit_fee` takes a `fee_margin` parameter
+  - **BREAKING:** `OnchainWalletTrait::estimate_p2a_cpfp_walk`,
+    `CpfpWalkEstimate` and `FundingShortfall` are removed
