@@ -443,6 +443,7 @@ use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::attestations::VtxoStatusAttestation;
 use ark::address::VtxoDelivery;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
+use ark::mailbox::MailboxIdentifier;
 use ark::rounds::{RoundAttempt, RoundEvent};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef, VTXO_DUST};
 use ark::vtxo::policy::signing::VtxoSigner;
@@ -595,6 +596,17 @@ pub struct LightningReceiveBalance {
 	pub total: Amount,
 	/// Sum of all invoices for which we received the HTLC VTXOs
 	pub claimable: Amount,
+}
+
+/// Useful Bark wallet info
+#[derive(Debug, Clone)]
+pub struct DebugInfo {
+	/// The bitcoin network the wallet operates on
+	pub network: Network,
+	/// The ID of the wallet's server mailbox
+	pub mailbox_id: MailboxIdentifier,
+	/// The xpub from which all VTXO keypairs are derived
+	pub vtxo_xpub: bip32::Xpub,
 }
 
 pub struct UtxoInfo {
@@ -1428,6 +1440,15 @@ impl Wallet {
 	/// Returns the xpub from which all VTXO keypairs are derived.
 	pub fn vtxo_xpub(&self) -> bip32::Xpub {
 		bip32::Xpub::from_priv(&SECP, &self.inner.seed.vtxo)
+	}
+
+	/// Returns wallet information that helps to debug issues.
+	pub async fn debug_info(&self) -> anyhow::Result<DebugInfo> {
+		Ok(DebugInfo {
+			network: self.network().await?,
+			mailbox_id: self.mailbox_identifier(),
+			vtxo_xpub: self.vtxo_xpub(),
+		})
 	}
 
 	async fn connect_to_server(

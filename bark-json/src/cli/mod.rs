@@ -222,6 +222,21 @@ pub struct MessageVerification {
 	pub valid: bool,
 }
 
+/// Wallet information that helps to debug issues.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct DebugInfo {
+	/// The bitcoin network the wallet operates on
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub network: bitcoin::Network,
+	/// The ID of the wallet's server mailbox
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub mailbox_id: PublicKey,
+	/// The xpub from which all VTXO keypairs are derived
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub vtxo_xpub: bitcoin::bip32::Xpub,
+}
+
 /// The different balances of a Bark wallet.
 ///
 /// `spendable_sat` counts the spendable VTXOs, `needs_refresh_sat` the ones
@@ -286,6 +301,16 @@ pub struct Balance {
 	#[serde(default, rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64, required))]
 	pub pending_exit: Amount,
+}
+
+impl From<bark::DebugInfo> for DebugInfo {
+	fn from(v: bark::DebugInfo) -> Self {
+		DebugInfo {
+			network: v.network,
+			mailbox_id: v.mailbox_id.as_pubkey(),
+			vtxo_xpub: v.vtxo_xpub,
+		}
+	}
 }
 
 impl From<bark::Balance> for Balance {

@@ -165,6 +165,10 @@ enum Command {
 	#[command()]
 	ArkInfo,
 
+	/// Print wallet information that helps to debug issues
+	#[command()]
+	DebugInfo,
+
 	/// Get an address to receive VTXOs
 	#[command()]
 	Address {
@@ -458,6 +462,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				Ok(info) => output_json(&bark_json::cli::ArkInfo::from(info)),
 				Err(_) => warn!("Could not connect with Ark server."),
 			}
+		},
+		Command::DebugInfo => {
+			output_json(&json::cli::DebugInfo::from(wallet.debug_info().await?))
 		},
 		Command::Address { index, subcommand } => {
 			match subcommand {
