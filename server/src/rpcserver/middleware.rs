@@ -27,7 +27,7 @@ pub struct RpcMethodDetails {
 	system: &'static str,
 	service: &'static str,
 	method: &'static str,
-	client: &'static str,
+	user_agent_name: &'static str,
 }
 
 impl RpcMethodDetails {
@@ -126,7 +126,7 @@ fn report_grpc_status(
 				KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
 				KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
 				KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
-				KeyValue::new(telemetry::RPC_CLIENT, rpc_method_details.client),
+				KeyValue::new(telemetry::USER_AGENT_NAME, rpc_method_details.user_agent_name),
 				KeyValue::new(telemetry::ATTRIBUTE_ERROR, tonic::Code::from_i32(code).to_string()),
 			]);
 
@@ -149,7 +149,7 @@ fn report_grpc_status(
 				KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
 				KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
 				KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
-				KeyValue::new(telemetry::RPC_CLIENT, rpc_method_details.client),
+				KeyValue::new(telemetry::USER_AGENT_NAME, rpc_method_details.user_agent_name),
 				KeyValue::new(telemetry::ATTRIBUTE_ERROR, "missing_grpc_status"),
 			]);
 
@@ -190,7 +190,7 @@ impl<B> TrailerCapturingBody<B> {
 			inner,
 			rpc_method_details: RpcMethodDetails {
 				system: RPC_SYSTEM_GRPC, service: "health", method: "check",
-				client: "unknown",
+				user_agent_name: "unknown",
 			},
 			start_time: Instant::now(),
 			skip_telemetry: true,
@@ -223,7 +223,7 @@ where
 					KeyValue::new(telemetry::RPC_SYSTEM, self.rpc_method_details.system),
 					KeyValue::new(telemetry::RPC_SERVICE, self.rpc_method_details.service),
 					KeyValue::new(telemetry::RPC_METHOD, self.rpc_method_details.method),
-					KeyValue::new(telemetry::RPC_CLIENT, self.rpc_method_details.client),
+					KeyValue::new(telemetry::USER_AGENT_NAME, self.rpc_method_details.user_agent_name),
 					KeyValue::new(telemetry::ATTRIBUTE_ERROR, "body_error"),
 				]);
 
@@ -304,7 +304,7 @@ where
 		// leaked the bucketed value into the `user_agent` columns.
 		let user_agent: Option<Arc<str>> = match raw_ua {
 			None => None,
-			Some(raw) if telemetry::parse_client_name(raw).is_some() => Some(Arc::from(raw)),
+			Some(raw) if telemetry::parse_user_agent_name(raw).is_some() => Some(Arc::from(raw)),
 			Some(_) => {
 				// Header is present but doesn't match `<name>/<version>`.
 				// Reject the request with a trailers-only invalid_argument
@@ -321,7 +321,7 @@ where
 		};
 
 		// Span/metric attributes take the narrowed label; the task-local keeps raw.
-		let client = telemetry::bucket_user_agent(raw_ua);
+		let user_agent_name = telemetry::bucket_user_agent(raw_ua);
 
 		let rpc_method_details = if is_grpc {
 			// Log protocol version used by user.
@@ -338,10 +338,10 @@ where
 			}
 
 			let (service, method) = lookup_grpc_method(req.uri().path());
-			RpcMethodDetails { system: RPC_SYSTEM_GRPC, service, method, client }
+			RpcMethodDetails { system: RPC_SYSTEM_GRPC, service, method, user_agent_name }
 		} else {
 			RpcMethodDetails {
-				system: RPC_SYSTEM_HTTP, service: "unknown", method: "unknown", client,
+				system: RPC_SYSTEM_HTTP, service: "unknown", method: "unknown", user_agent_name,
 			}
 		};
 
@@ -349,7 +349,7 @@ where
 			KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
 			KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
 			KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
-			KeyValue::new(telemetry::RPC_CLIENT, rpc_method_details.client),
+			KeyValue::new(telemetry::USER_AGENT_NAME, rpc_method_details.user_agent_name),
 		];
 		telemetry::add_grpc_in_progress(&attributes);
 
@@ -363,7 +363,7 @@ where
 			{ telemetry::RPC_SYSTEM } = rpc_method_details.system,
 			{ telemetry::RPC_SERVICE } = rpc_method_details.service,
 			{ telemetry::RPC_METHOD } = rpc_method_details.method,
-			{ telemetry::RPC_CLIENT } = rpc_method_details.client,
+			{ telemetry::USER_AGENT_NAME } = rpc_method_details.user_agent_name,
 			{ telemetry::RPC_ACCESS_TOKEN } = req.headers().get(ACCESS_TOKEN_HEADER)
 				.and_then(|v| v.to_str().ok()),
 		);
@@ -371,7 +371,7 @@ where
 
 		// Raw agent on a task-local so emitters deep in the handler reach it
 		// without threading it through every signature. Metrics narrow it via
-		// current_client; anything stored uses current_user_agent.
+		// current_user_agent_name; anything stored uses current_user_agent.
 		Box::pin(telemetry::USER_AGENT.scope(user_agent, async move {
 			let res = future.instrument(grpc_span.clone()).await;
 			let _enter = grpc_span.enter();
@@ -388,7 +388,7 @@ where
 						KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
 						KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
 						KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
-						KeyValue::new(telemetry::RPC_CLIENT, rpc_method_details.client),
+						KeyValue::new(telemetry::USER_AGENT_NAME, rpc_method_details.user_agent_name),
 						KeyValue::new(telemetry::ATTRIBUTE_ERROR, "protocol_error"),
 					]);
 

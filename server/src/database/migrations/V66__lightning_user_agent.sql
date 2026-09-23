@@ -1,6 +1,6 @@
 -- `user_agent` is the raw `x-user-agent` the initiating client sent, verbatim
 -- (validated as `<name>/<version>`, so it is well-formed). Not the bucketed
--- `rpc.client` metric label: that drops the version and collapses names past
+-- `user_agent.name` metric label: that drops the version and collapses names past
 -- the bucket budget to `other`, neither of which a text column needs.
 -- Written once at initiation, on the RPC task that still has the task-local in
 -- scope; every later status transition is emitted by the xpay monitor, which
