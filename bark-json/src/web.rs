@@ -943,3 +943,148 @@ pub struct WalletDeleteResponse {
 	pub fingerprint: Option<String>,
 	pub message: String,
 }
+
+/// The NWC methods a connection may call, one field per method bark supports.
+///
+/// A method that is not set is allowed, so only the methods an app should not
+/// have need to be named. Unknown fields are refused rather than ignored: a
+/// misspelt method would otherwise leave the method it meant to turn off
+/// allowed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct NwcMethods {
+	/// Read the wallet's network, block height and supported methods.
+	pub get_info: Option<bool>,
+	/// Read the wallet's spendable balance.
+	pub get_balance: Option<bool>,
+	/// Create lightning invoices that pay into the wallet.
+	pub make_invoice: Option<bool>,
+	/// Look up an invoice or payment of the wallet.
+	pub lookup_invoice: Option<bool>,
+	/// Pay lightning invoices from the wallet, which lets the app spend.
+	pub pay_invoice: Option<bool>,
+	/// Read the wallet's lightning payment history.
+	pub list_transactions: Option<bool>,
+}
+
+impl NwcMethods {
+	/// The names of the methods that are allowed, unset ones included.
+	pub fn allowed(&self) -> Vec<&'static str> {
+		let methods = [
+			("get_info", self.get_info),
+			("get_balance", self.get_balance),
+			("make_invoice", self.make_invoice),
+			("lookup_invoice", self.lookup_invoice),
+			("pay_invoice", self.pay_invoice),
+			("list_transactions", self.list_transactions),
+		];
+		methods.into_iter()
+			.filter(|(_, allowed)| allowed.unwrap_or(true))
+			.map(|(method, _)| method)
+			.collect()
+	}
+
+	/// Every method set, to whether it is in `allowed`.
+	pub fn from_allowed<'a>(allowed: impl IntoIterator<Item = &'a str>) -> Self {
+		let allowed = allowed.into_iter().collect::<Vec<_>>();
+		let is_allowed = |method: &str| Some(allowed.contains(&method));
+		NwcMethods {
+			get_info: is_allowed("get_info"),
+			get_balance: is_allowed("get_balance"),
+			make_invoice: is_allowed("make_invoice"),
+			lookup_invoice: is_allowed("lookup_invoice"),
+			pay_invoice: is_allowed("pay_invoice"),
+			list_transactions: is_allowed("list_transactions"),
+		}
+	}
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct NwcConnectionRequest {
+	/// A name for this connection, shown when listing and revoking it.
+	pub name: String,
+	/// The methods this connection may call. Every method is allowed unless it
+	/// is set to `false` here, so leaving this out grants all of them,
+	/// `pay_invoice` included.
+	pub methods: Option<NwcMethods>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct NwcConnectionResponse {
+	/// The `nostr+walletconnect://` URI to give the app.
+	///
+	/// This is the only time the client secret is returned. It is not stored,
+	/// so a connection that is lost has to be revoked and recreated.
+	pub uri: String,
+	/// The connection's client public key, used to revoke it later.
+	pub client_pubkey: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct NwcConnectionInfo {
+	pub name: String,
+	/// The connection's client public key, used to revoke it.
+	pub client_pubkey: String,
+	/// The methods this connection may call, each set to whether it may.
+	pub methods: NwcMethods,
+	pub created_at: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct NwcConnectionListResponse {
+	pub connections: Vec<NwcConnectionInfo>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct NwcRelayRequest {
+	/// A nostr relay, as a `ws://` or `wss://` url.
+	pub relay: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct NwcRelaysResponse {
+	/// The relays NWC is served on.
+	pub relays: Vec<String>,
+}
+
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	/// Every method is allowed unless turned off, so turning one off must leave
+	/// the others as they were.
+	#[test]
+	fn turning_one_method_off_keeps_the_others_allowed() {
+		let methods = serde_json::from_str::<NwcMethods>(r#"{"get_info": false}"#).unwrap();
+
+		assert_eq!(methods.allowed(), vec![
+			"get_balance", "make_invoice", "lookup_invoice", "pay_invoice", "list_transactions",
+		]);
+	}
+
+	/// A misspelt method that was ignored would leave the method it meant to
+	/// turn off allowed, which for pay_invoice hands out spend authority.
+	#[test]
+	fn an_unknown_method_is_refused() {
+		let err = serde_json::from_str::<NwcMethods>(r#"{"pay_invoce": false}"#).unwrap_err();
+		assert!(err.to_string().contains("pay_invoce"), "{err}");
+	}
+
+	/// What a connection was granted is read back from its stored method names.
+	#[test]
+	fn allowed_methods_round_trip() {
+		let methods = NwcMethods { pay_invoice: Some(false), ..Default::default() };
+		let read_back = NwcMethods::from_allowed(methods.allowed());
+
+		assert_eq!(read_back.pay_invoice, Some(false));
+		assert_eq!(read_back.allowed(), methods.allowed());
+	}
+}
