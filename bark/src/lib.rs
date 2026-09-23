@@ -1425,6 +1425,11 @@ impl Wallet {
 		self.inner.seed.fingerprint()
 	}
 
+	/// Returns the xpub from which all VTXO keypairs are derived.
+	pub fn vtxo_xpub(&self) -> bip32::Xpub {
+		bip32::Xpub::from_priv(&SECP, &self.inner.seed.vtxo)
+	}
+
 	async fn connect_to_server(
 		config: &Config,
 		network: Network,
