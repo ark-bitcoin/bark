@@ -298,21 +298,7 @@ fn new_action_id() -> String {
 async fn run_cosign(wallet: &Wallet, send: &ArkoorSend) -> Result<Progress, AdvanceError> {
 	let _ = wallet.require_server().await?;
 
-	let locked = wallet.get_vtxos_locked_by_action(&send.id).await?;
-	if locked.len() != send.input_vtxo_ids.len() {
-		return Err(anyhow!(
-			"action {}: expected {} locked inputs, found {}",
-			send.id, send.input_vtxo_ids.len(), locked.len(),
-		).into());
-	}
-	for expected in &send.input_vtxo_ids {
-		if !locked.iter().any(|v| v.id() == *expected) {
-			return Err(anyhow!(
-				"action {}: locked input {} missing from set", send.id, expected,
-			).into());
-		}
-	}
-
+	let inputs = wallet.inner.db.get_wallet_vtxos(&send.input_vtxo_ids).await?;
 	let change_keypair = wallet.peek_keypair(send.change_key_index).await
 		.with_context(|| format!(
 			"action {}: stored change_key_index {} not in keystore",
@@ -329,7 +315,7 @@ async fn run_cosign(wallet: &Wallet, send: &ArkoorSend) -> Result<Progress, Adva
 	// becomes `AdvanceError::Server` so the executor can route a genuine
 	// rejection to on_rejection instead of retrying forever.
 	let arkoor = wallet.create_checkpointed_arkoor_with_vtxos(
-		dest, locked.into_iter(), change_keypair, send.change_pieces.clone(),
+		dest, inputs, change_keypair, send.change_pieces.clone(),
 	).await?;
 
 	let initial_update = MovementUpdate::new()
