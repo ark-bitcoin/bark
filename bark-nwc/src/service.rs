@@ -323,3 +323,236 @@ pub fn not_implemented(method: &Method) -> NIP47Error {
 		message: format!("{method} is not supported by bark"),
 	}
 }
+
+
+/// End-to-end tests for the service against an in-process relay.
+#[cfg(test)]
+mod test {
+	use std::pin::Pin;
+	use std::sync::Arc;
+	use std::time::Duration;
+
+	use futures::StreamExt;
+	use nostr::event::{EventBuilder, FinalizeEvent, Kind, Tag};
+	use nostr::filter::Filter;
+	use nostr::key::{Keys, PublicKey};
+	use nostr::nips::nip44::{self, Version};
+	use nostr::nips::nip47::{
+		ErrorCode, GetBalanceResponse, Method, NIP47Error, Request, RequestParams, Response,
+		ResponseResult,
+	};
+	use nostr::types::Timestamp;
+	use nostr_sdk::client::Client;
+	use nostr_sdk::local_relay::MockRelay;
+	use tokio_util::sync::CancellationToken;
+
+	use crate::handler::RequestHandler;
+	use super::NwcService;
+
+	// Spelled out rather than taken from the parent module, so that the tests
+	// drive the service the way an outside client does. Reusing the service's
+	// own constants would make a wrong one agree with itself.
+	const REQUEST_KIND: Kind = Kind::Custom(23194);
+	const RESPONSE_KIND: Kind = Kind::Custom(23195);
+
+	/// Answers `get_balance` with a fixed amount and rejects everything else, so
+	/// the tests exercise the transport rather than a wallet.
+	struct StubHandler;
+
+	impl RequestHandler for StubHandler {
+		fn handle(
+			&self,
+			_client: PublicKey,
+			request: Request,
+		) -> Pin<Box<dyn Future<Output = Result<ResponseResult, NIP47Error>> + Send + '_>> {
+			Box::pin(async move {
+				match request.params {
+					RequestParams::GetBalance => {
+						Ok(ResponseResult::GetBalance(GetBalanceResponse { balance: 12_345_000 }))
+					},
+					_ => Err(NIP47Error {
+						code: ErrorCode::NotImplemented,
+						message: "stub".into(),
+					}),
+				}
+			})
+		}
+
+		fn supported_methods(&self) -> Vec<Method> {
+			vec![Method::GetBalance]
+		}
+	}
+
+	/// Spawn the service against a fresh mock relay, returning the relay url, the
+	/// service pubkey and the shutdown token.
+	async fn spawn_service() -> (String, PublicKey, CancellationToken) {
+		let relay = MockRelay::run().await.unwrap();
+		let url = relay.url().await.to_string();
+
+		let keys = Keys::generate();
+		let service_key = keys.public_key();
+		let shutdown = CancellationToken::new();
+
+		let service = NwcService::new(
+			keys,
+			vec![nostr::types::RelayUrl::parse(&url).unwrap()],
+			Arc::new(StubHandler),
+		);
+
+		tokio::spawn({
+			let shutdown = shutdown.clone();
+			// The relay is dropped when the test ends, so keep it alive here.
+			async move {
+				let _relay = relay;
+				service.run(shutdown).await.unwrap();
+			}
+		});
+
+		// Give the service time to connect and subscribe before a request is sent.
+		tokio::time::sleep(Duration::from_millis(500)).await;
+
+		(url, service_key, shutdown)
+	}
+
+	/// Send a NIP-47 request as a client would and wait for the response event.
+	async fn round_trip(
+		url: &str,
+		service_key: PublicKey,
+		client_keys: &Keys,
+		request: &Request,
+	) -> Response {
+		let client = Client::new();
+		client.add_relay(url).await.unwrap();
+		client.connect().await;
+
+		let mut notifications = client.notifications();
+
+		client.subscribe(
+			Filter::new().kind(RESPONSE_KIND).pubkey(client_keys.public_key()).since(Timestamp::now()),
+		).await.unwrap();
+
+		let content = nip44::encrypt(
+			client_keys.secret_key(), &service_key, request.as_json(), Version::V2,
+		).unwrap();
+
+		let event = EventBuilder::new(REQUEST_KIND, content)
+			.tag(Tag::public_key(service_key))
+			.tag(Tag::custom("encryption", ["nip44_v2"]))
+			.finalize(client_keys)
+			.unwrap();
+		client.send_event(&event).await.unwrap();
+
+		let response = tokio::time::timeout(Duration::from_secs(10), async {
+			while let Some(notification) = notifications.next().await {
+				if let nostr_sdk::client::ClientNotification::Event { event, .. } = notification {
+					if event.kind == RESPONSE_KIND {
+						let plaintext = nip44::decrypt(
+							client_keys.secret_key(), &service_key, &event.content,
+						).unwrap();
+						return Response::from_json(&plaintext).unwrap();
+					}
+				}
+			}
+			panic!("notification stream ended before a response arrived");
+		}).await.expect("timed out waiting for the NWC response");
+
+		client.disconnect().await;
+		response
+	}
+
+	/// The happy path: a request reaches the handler and its result comes back
+	/// encrypted to the client.
+	#[tokio::test]
+	async fn request_reaches_the_handler_and_the_result_comes_back() {
+		let (url, service_key, shutdown) = spawn_service().await;
+		let client_keys = Keys::generate();
+
+		let request = Request {
+			method: Method::GetBalance,
+			params: RequestParams::GetBalance,
+		};
+		let response = round_trip(&url, service_key, &client_keys, &request).await;
+
+		assert_eq!(response.result_type, Method::GetBalance);
+		assert!(response.error.is_none(), "unexpected error: {:?}", response.error);
+		match response.result {
+			Some(ResponseResult::GetBalance(r)) => assert_eq!(r.balance, 12_345_000),
+			other => panic!("unexpected result: {:?}", other),
+		}
+
+		shutdown.cancel();
+	}
+
+	/// A handler error has to come back as a NIP-47 error response rather than
+	/// silence, otherwise the client waits until it times out.
+	#[tokio::test]
+	async fn handler_errors_are_reported_to_the_client() {
+		let (url, service_key, shutdown) = spawn_service().await;
+		let client_keys = Keys::generate();
+
+		let request = Request {
+			method: Method::PayKeysend,
+			params: RequestParams::PayKeysend(nostr::nips::nip47::PayKeysendRequest {
+				id: None,
+				amount: 1000,
+				pubkey: Keys::generate().public_key().to_hex(),
+				preimage: None,
+				tlv_records: Vec::new(),
+			}),
+		};
+		let response = round_trip(&url, service_key, &client_keys, &request).await;
+
+		assert_eq!(response.result_type, Method::PayKeysend);
+		assert!(response.result.is_none());
+		assert_eq!(response.error.unwrap().code, ErrorCode::NotImplemented);
+
+		shutdown.cancel();
+	}
+
+	/// An expired request must be dropped rather than executed. A client that gave
+	/// up on a payment may well have paid another way by the time we see it.
+	#[tokio::test]
+	async fn expired_requests_are_not_executed() {
+		let (url, service_key, shutdown) = spawn_service().await;
+		let client_keys = Keys::generate();
+
+		let client = Client::new();
+		client.add_relay(url.as_str()).await.unwrap();
+		client.connect().await;
+
+		let mut notifications = client.notifications();
+		client.subscribe(
+			Filter::new().kind(RESPONSE_KIND).pubkey(client_keys.public_key()).since(Timestamp::now()),
+		).await.unwrap();
+
+		let request = Request { method: Method::GetBalance, params: RequestParams::GetBalance };
+		let content = nip44::encrypt(
+			client_keys.secret_key(), &service_key, request.as_json(), Version::V2,
+		).unwrap();
+
+		let expired = Timestamp::now().as_secs() - 60;
+		let event = EventBuilder::new(REQUEST_KIND, content)
+			.tag(Tag::public_key(service_key))
+			.tag(Tag::custom("encryption", ["nip44_v2"]))
+			.tag(Tag::custom("expiration", [expired.to_string()]))
+			.finalize(&client_keys)
+			.unwrap();
+		client.send_event(&event).await.unwrap();
+
+		let got_response = tokio::time::timeout(Duration::from_secs(3), async {
+			while let Some(notification) = notifications.next().await {
+				if let nostr_sdk::client::ClientNotification::Event { event, .. } = notification {
+					if event.kind == RESPONSE_KIND {
+						return true;
+					}
+				}
+			}
+			false
+		}).await;
+
+		assert!(got_response.is_err(), "an expired request must not be answered");
+
+		client.disconnect().await;
+		shutdown.cancel();
+	}
+}
