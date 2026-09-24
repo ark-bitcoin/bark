@@ -902,6 +902,12 @@ struct WalletInner {
 	/// Deterministic seed material used to generate wallet keypairs.
 	seed: WalletSeed,
 
+	/// The running Nostr Wallet Connect services, once a persister has been
+	/// registered with [Wallet::init_nwc]. NWC is tied to the daemon: it starts
+	/// with [Wallet::start_daemon] and stops with [Wallet::stop_daemon].
+	#[cfg(feature = "nwc")]
+	nwc: parking_lot::Mutex<Option<std::sync::Arc<crate::nwc::NwcManager>>>,
+
 	/// Live connection to an Ark server for round participation and synchronization.
 	///
 	/// Lazily initialised on first use via [`Wallet::require_server`]. A
@@ -1457,6 +1463,8 @@ impl Wallet {
 			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
 			onchain,
 			daemon: parking_lot::Mutex::new(None),
+			#[cfg(feature = "nwc")]
+			nwc: parking_lot::Mutex::new(None),
 			last_force_exit_scan_tip: tokio::sync::Mutex::new(None),
 			round_secret_nonces: RoundSecretNonces::new(),
 			finished_recovery: parking_lot::Mutex::new(None),
@@ -1538,6 +1546,8 @@ impl Wallet {
 			finished_recovery: parking_lot::Mutex::new(None),
 			last_force_exit_scan_tip: tokio::sync::Mutex::new(None),
 			round_secret_nonces: RoundSecretNonces::new(),
+			#[cfg(feature = "nwc")]
+			nwc: parking_lot::Mutex::new(None),
 		})};
 		(wallet, conn)
 	}
@@ -2600,11 +2610,59 @@ impl Wallet {
 		let handle = crate::daemon::start_daemon(self);
 		let _ = daemon.insert(handle);
 
+		// NWC is part of the daemon's lifetime rather than the host process's,
+		// so a wallet that is closed and reopened stops and restarts serving.
+		#[cfg(feature = "nwc")]
+		if let Some(manager) = self.inner.nwc.lock().as_ref() {
+			manager.start_all();
+		}
+
 		Ok(())
+	}
+
+	/// Register Nostr Wallet Connect, serving the connections in `connections`
+	/// on the relays stored with them.
+	///
+	/// Call before [Wallet::start_daemon]; serving begins when the daemon
+	/// starts. With no relays, which is the default, nothing is served and no
+	/// relay is dialled until some are set on the returned manager.
+	///
+	/// The `persister` is supplied by the caller because where connections and
+	/// relays belong differs by embedder: a daemon has a datadir, a browser
+	/// wallet does not. `connections` is whatever that persister loaded.
+	#[cfg(feature = "nwc")]
+	pub fn init_nwc(
+		&self,
+		connections: crate::nwc::ConnectionStore,
+		persister: std::sync::Arc<dyn crate::nwc::ConnectionPersister>,
+	) -> anyhow::Result<std::sync::Arc<crate::nwc::NwcManager>> {
+		// The handler and the manager share one store: the manager serves the
+		// connections that the handler authorises against and charges.
+		let connections = std::sync::Arc::new(parking_lot::RwLock::new(connections));
+		let handler = std::sync::Arc::new(crate::nwc::WalletHandler::new(
+			self.clone(),
+			std::sync::Arc::clone(&connections),
+		));
+
+		let manager = crate::nwc::NwcManager::new(handler, connections, persister);
+		*self.inner.nwc.lock() = Some(std::sync::Arc::clone(&manager));
+
+		Ok(manager)
+	}
+
+	/// The running NWC services, if [Wallet::init_nwc] registered any.
+	#[cfg(feature = "nwc")]
+	pub fn nwc(&self) -> Option<std::sync::Arc<crate::nwc::NwcManager>> {
+		self.inner.nwc.lock().clone()
 	}
 
 	/// Stops the daemon for the wallet if it is running, otherwise does nothing.
 	pub fn stop_daemon(&self) {
+		#[cfg(feature = "nwc")]
+		if let Some(manager) = self.inner.nwc.lock().as_ref() {
+			manager.stop_all();
+		}
+
 		let mut daemon = self.inner.daemon.lock();
 		if let Some(handle) = daemon.take() {
 			handle.stop();
@@ -2614,6 +2672,11 @@ impl Wallet {
 	/// Stops the daemon for the wallet if it is running and waits until its
 	/// tasks have finished.
 	pub async fn stop_daemon_wait(&self) -> anyhow::Result<()> {
+		#[cfg(feature = "nwc")]
+		if let Some(manager) = self.inner.nwc.lock().as_ref() {
+			manager.stop_all();
+		}
+
 		let handle = self.inner.daemon.lock().take();
 		if let Some(handle) = handle {
 			handle.stop_wait().await?;

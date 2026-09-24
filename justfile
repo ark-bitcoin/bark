@@ -47,6 +47,12 @@ check-wasm-nwc:
 		--no-default-features --features nwc,wasm-web,indexed-db,onchain-bdk \
 		--target wasm32-unknown-unknown
 
+# barkd leaves NWC out by default, so nothing compiles the wiring behind
+# "barkd-nwc" unless it is asked for. bark-rest's own "nwc" feature is covered
+# both ways by check-bark-as-libs.
+check-nwc:
+	cargo check -p bark-cli --features barkd-nwc --tests
+
 check-lib-arithmetic:
 	cargo clippy -p ark-lib --tests
 
@@ -77,7 +83,7 @@ check-use-bark-as-dependency:
 	cargo init barktest
 	cd barktest && cargo add bark-wallet && cargo update && cargo build
 
-checks: prechecks check-lib-arithmetic check-wasm-tests check-wasm-nwc check
+checks: prechecks check-lib-arithmetic check-wasm-tests check-wasm-nwc check-nwc check
 
 check-commits:
 	bash contrib/check-commits.sh

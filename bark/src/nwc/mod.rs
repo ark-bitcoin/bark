@@ -31,4 +31,13 @@ pub use bark_nwc::{
 	handler::RequestHandler,
 	parse_relays,
 };
+// Relays cross the API as this type, so an embedder can name it without
+// depending on nostr itself.
+pub use nostr::types::RelayUrl;
 
+/// The NWC manager a bark wallet serves through.
+///
+/// [bark_nwc::manager::NwcManager] is generic over the handler, because running
+/// relay services is not wallet work. This is that machinery bound to the one
+/// handler that answers out of a wallet.
+pub type NwcManager = bark_nwc::manager::NwcManager<WalletHandler>;
