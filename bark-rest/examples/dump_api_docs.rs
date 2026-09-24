@@ -1,9 +1,6 @@
-use bark_rest::ApiDoc;
-use utoipa::OpenApi;
-
 fn main() {
 	// Generate the OpenAPI specification
-	let openapi = ApiDoc::openapi();
+	let openapi = bark_rest::api_doc();
 
 	// Convert to pretty-printed JSON
 	let json = serde_json::to_string_pretty(&openapi)

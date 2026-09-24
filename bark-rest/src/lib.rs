@@ -117,6 +117,23 @@ All endpoints return JSON. Amounts are denominated in satoshis.";
 )]
 pub struct ApiDoc;
 
+/// The API this build serves.
+///
+/// Feature-gated sections are nested here rather than in [ApiDoc]'s `nest`
+/// list, because entries inside the derive attribute cannot be conditioned on
+/// a feature.
+pub fn api_doc() -> utoipa::openapi::OpenApi {
+	#[allow(unused_mut)]
+	let mut doc = ApiDoc::openapi();
+
+	#[cfg(feature = "nwc")]
+	{
+		doc = doc.nest("/api/v1/nwc", api::v1::nwc::NwcApiDoc::openapi());
+	}
+
+	doc
+}
+
 struct BearerSecurity;
 
 impl Modify for BearerSecurity {
@@ -404,7 +421,7 @@ impl RestServer {
 		state: Arc<ServerState>,
 		shutdown: CancellationToken,
 	) -> anyhow::Result<Self> {
-		let (router, _api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
+		let (router, _api) = OpenApiRouter::with_openapi(api_doc())
 			.split_for_parts();
 
 		let socket_addr = config.socket_addr();

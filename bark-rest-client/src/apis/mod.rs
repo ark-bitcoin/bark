@@ -120,6 +120,7 @@ pub mod history_api;
 pub mod lightning_api;
 pub mod message_api;
 pub mod notifications_api;
+pub mod nwc_api;
 pub mod onchain_api;
 pub mod wallet_api;
 

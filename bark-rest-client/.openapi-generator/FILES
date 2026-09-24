@@ -150,6 +150,14 @@ docs/MovementTimestamp.md
 docs/NextRoundStart.md
 docs/NotFoundError.md
 docs/NotificationsApi.md
+docs/NwcApi.md
+docs/NwcConnectionInfo.md
+docs/NwcConnectionListResponse.md
+docs/NwcConnectionRequest.md
+docs/NwcConnectionResponse.md
+docs/NwcMethods.md
+docs/NwcRelayRequest.md
+docs/NwcRelaysResponse.md
 docs/OffboardAllFeeEstimateQuery.md
 docs/OffboardAllRequest.md
 docs/OffboardFeeEstimateRequest.md
@@ -232,6 +240,7 @@ src/apis/lightning_api.rs
 src/apis/message_api.rs
 src/apis/mod.rs
 src/apis/notifications_api.rs
+src/apis/nwc_api.rs
 src/apis/onchain_api.rs
 src/apis/wallet_api.rs
 src/lib.rs
@@ -374,6 +383,13 @@ src/models/movement_subsystem.rs
 src/models/movement_timestamp.rs
 src/models/next_round_start.rs
 src/models/not_found_error.rs
+src/models/nwc_connection_info.rs
+src/models/nwc_connection_list_response.rs
+src/models/nwc_connection_request.rs
+src/models/nwc_connection_response.rs
+src/models/nwc_methods.rs
+src/models/nwc_relay_request.rs
+src/models/nwc_relays_response.rs
 src/models/offboard_all_fee_estimate_query.rs
 src/models/offboard_all_request.rs
 src/models/offboard_fee_estimate_request.rs

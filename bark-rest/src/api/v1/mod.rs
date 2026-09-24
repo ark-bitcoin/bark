@@ -8,6 +8,8 @@ pub mod onchain;
 pub mod boards;
 pub mod wallet;
 pub mod bitcoin;
+#[cfg(feature = "nwc")]
+pub mod nwc;
 
 use std::sync::Arc;
 
@@ -17,7 +19,8 @@ use crate::ServerState;
 use crate::auth::authed_router;
 
 pub fn router(state: &Arc<ServerState>) -> Router<Arc<ServerState>> {
-	Router::new()
+	#[allow(unused_mut)]
+	let mut router = Router::new()
 		.nest("/lightning", authed_router(state, lightning::router()))
 		.nest("/onchain", authed_router(state, onchain::router()))
 		.nest("/boards", authed_router(state, boards::router()))
@@ -27,5 +30,12 @@ pub fn router(state: &Arc<ServerState>) -> Router<Arc<ServerState>> {
 		.nest("/message", authed_router(state, message::router()))
 		.nest("/wallet", authed_router(state, wallet::router()))
 		.nest("/bitcoin", authed_router(state, bitcoin::router()))
-		.nest("/notifications", notifications::router())
+		.nest("/notifications", notifications::router());
+
+	#[cfg(feature = "nwc")]
+	{
+		router = router.nest("/nwc", authed_router(state, nwc::router()));
+	}
+
+	router
 }
