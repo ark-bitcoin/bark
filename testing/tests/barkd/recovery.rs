@@ -399,7 +399,7 @@ async fn recovered_wallet_finds_lightning_send_change() {
 	// leaving two change VTXOs.
 	let invoice = lightning.external.invoice(Some(sat(300_000)), "send", "send").await;
 	lightning.sync().await;
-	barkd.pay_lightning(&invoice).await;
+	barkd.pay_lightning(&invoice, None).await;
 
 	// The REST send returns before the payment resolves, so drive it via sync
 	// until the change VTXOs have replaced the board VTXO. Require them
@@ -457,7 +457,7 @@ async fn recovered_wallet_finds_lightning_send_revocation() {
 	// with three VTXOs — two change pieces and the revoked payment amount.
 	let invoice = lightning.external.invoice(Some(sat(300_000)), "send", "send").await;
 	lightning.sync().await;
-	barkd.pay_lightning(&invoice).await;
+	barkd.pay_lightning(&invoice, None).await;
 
 	// Wait for all VTXOs to settle spendable: this skips the transient
 	// {change, locked-htlc} state and captures the settled {change, revocation}

@@ -1,11 +1,16 @@
 
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use ark_testing::{btc, lightning_test, require_bark_version, sat, Captaind, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::context::LightningPaymentSetup;
+use ark_testing::util::{FutureExt, poll_interval};
+use ark::lightning::Invoice;
 use bark_rest_client::apis::lightning_api;
+use bark_rest_client::models::LightningPayRequest;
+use server::database::Db;
 
 /// Verify that lightning receives are claimed via the mailbox path by
 /// running barkd in `daemon_manual_sync` mode and driving the claim with
@@ -89,4 +94,57 @@ async fn lightning_send_status_unknown_for_unseen_hash() {
 
 	lightning_api::get_send_status(&config, "lnbc1invalid").await
 		.expect_err("an identifier that is neither a hash nor an invoice should be rejected");
+}
+
+/// Both REST payment endpoints pass `retry_for_secs` on to the server.
+#[tokio::test]
+async fn pay_with_retry_for() {
+	// Older barkd binaries don't know the field and silently drop it.
+	require_bark_version!(> "0.7.1");
+
+	let ctx = TestContext::new("barkd/pay_with_retry_for").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	let barkd = ctx.barkd("barkd", &srv).funded(btc(5)).create().await;
+	barkd.onchain_sync().await;
+	barkd.board_amount(btc(3)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	barkd.sync().await;
+	lightning.sync().await;
+
+	let max = srv.config().cln_xpay_max_retry_for.as_secs();
+	let config = barkd.client_config();
+	let db = Db::connect(&srv.config().postgres).await.expect("connect to server db");
+
+	// Above the maximum is capped to it.
+	let pay_invoice = lightning.external.invoice(Some(btc(0.1)), "pay", "pay").await;
+	let resp = lightning_api::pay(&config, LightningPayRequest {
+		destination: pay_invoice,
+		amount_sat: None,
+		comment: None,
+		retry_for_secs: Some(max + 1),
+	}).await.expect("lightning pay");
+
+	let send_invoice = lightning.external.invoice(Some(btc(0.1)), "send", "send").await;
+	barkd.pay_lightning(&send_invoice, Some(max - 2)).await;
+	let send_payment_hash = Invoice::from_str(&send_invoice).expect("invoice").payment_hash();
+
+	for (payment_hash, retry_for_secs) in [
+		(resp.payment_hash.expect("payment hash"), max),
+		(send_payment_hash, max - 2),
+	] {
+		let attempt = async {
+			loop {
+				let attempt = db.read(async |t|
+					t.get_latest_payment_attempt_by_payment_hash(payment_hash).await
+				).await.expect("db read");
+				if let Some(attempt) = attempt {
+					break attempt;
+				}
+				tokio::time::sleep(poll_interval()).await;
+			}
+		}.wait_millis(10_000).await;
+		assert_eq!(attempt.retry_for, Some(Duration::from_secs(retry_for_secs)));
+	}
 }

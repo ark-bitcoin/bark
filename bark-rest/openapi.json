@@ -5916,6 +5916,15 @@
           "destination": {
             "type": "string",
             "description": "The invoice, offer, or lightning address to pay"
+          },
+          "retry_for_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How many seconds the Ark server should keep trying to pay, capped to\nthe server's maximum. The server picks its default when empty.",
+            "minimum": 0
           }
         }
       },
@@ -6987,6 +6996,15 @@
           "destination": {
             "type": "string",
             "description": "The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address"
+          },
+          "retry_for_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "For lightning destinations, how many seconds the Ark server should keep\ntrying to pay, capped to the server's maximum. The server picks its\ndefault when empty.",
+            "minimum": 0
           }
         }
       },

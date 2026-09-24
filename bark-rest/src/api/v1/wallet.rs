@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use axum::extract::{Path, Query, State};
@@ -14,7 +15,7 @@ use ark::VtxoId;
 use ark::lightning::{Bolt11Invoice, Offer};
 use ark::ProtocolEncoding;
 
-use bark::ImportVtxoError;
+use bark::{ImportVtxoError, LightningSendOptions};
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::lnurllib::lnurl::LnUrl;
 use bark::payment_request::ArkAddressType;
@@ -714,6 +715,8 @@ pub async fn send(
 	let wallet = state.require_wallet()?;
 
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
+	let opts = LightningSendOptions::default()
+		.retry_for(body.retry_for_secs.map(Duration::from_secs));
 
 	match ArkAddressType::from_str(&body.destination) {
 		Ok(ArkAddressType::Bark(addr)) => {
@@ -738,18 +741,18 @@ pub async fn send(
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-11 invoices");
 		}
-		wallet.pay_lightning_invoice(inv, amount, false).await?
+		wallet.pay_lightning_invoice_with(inv, amount, opts).await?
 	} else if let Ok(offer) = Offer::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-12 offers");
 		}
-		wallet.pay_lightning_offer(offer, amount, false).await?
+		wallet.pay_lightning_offer_with(offer, amount, opts).await?
 	} else if let Ok(addr) = LightningAddress::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for Lightning addresses")?;
-		wallet.pay_lightning_address(&addr, amount, body.comment, false).await?
+		wallet.pay_lightning_address_with(&addr, amount, body.comment, opts).await?
 	} else if let Ok(lnurl) = LnUrl::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for LNURL")?;
-		wallet.pay_lnurl(&lnurl, amount, body.comment, false).await?
+		wallet.pay_lnurl_with(&lnurl, amount, body.comment, opts).await?
 	} else if let Ok(addr) = bitcoin::Address::from_str(&body.destination) {
 		let _checked_addr = addr
 			.require_network(wallet.network().await?)
