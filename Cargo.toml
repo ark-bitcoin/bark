@@ -8,6 +8,7 @@ members = [
   "bark-runtime",
   "bark-cli",
   "bark-json",
+  "bark-nwc",
   "bark-rest",
   "server",
   "server-log",
@@ -83,6 +84,13 @@ humantime = "2.1.0"
 base64 = "0.22"
 semver = "1.0.26"
 subtle = "2.6.1"
+# nostr wallet connect (NIP-47), behind bark's off-by-default "nwc" feature.
+# Carries its own secp256k1 and bitcoin_hashes versions, so keys cross into
+# bark as raw bytes.
+nostr = { version = "0.45.5", default-features = false, features = [ "std", "os-rng", "nip47", "nip44", "nip04" ] }
+# Relay transport for NWC. TLS features are selected per target: native picks
+# ring and the webpki roots, wasm leaves TLS to the browser.
+nostr-sdk = { version = "0.45.3", default-features = false }
 # async + gRPC stack
 parking_lot = "0.12.4"
 prost = "0.14.1"

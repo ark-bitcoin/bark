@@ -1,0 +1,38 @@
+[package]
+name = "bark-nwc"
+version = "0.7.1"
+license = "MIT"
+authors = [ "Team Second <hello@second.tech>" ]
+repository = "https://gitlab.com/ark-bitcoin/bark"
+description = "Nostr Wallet Connect (NIP-47) protocol and transport"
+edition = "2024"
+
+[features]
+default = [ "native" ]
+
+# Native relays need a TLS stack of their own; in the browser the WebSocket
+# API terminates TLS, so wasm takes nostr-sdk without any.
+native = [ "nostr-sdk/ring", "nostr-sdk/rustls-tls-webpki-roots", "tokio/rt" ]
+wasm-web = [ "dep:wasm-bindgen-futures" ]
+
+[dependencies]
+anyhow.workspace = true
+bitcoin.workspace = true
+chrono.workspace = true
+log.workspace = true
+nostr.workspace = true
+nostr-sdk.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
+serde = { workspace = true, features = [ "derive" ] }
+thiserror.workspace = true
+tokio = { workspace = true, features = [ "macros" ] }
+tokio-util.workspace = true
+
+wasm-bindgen-futures = { version = "0.4.56", optional = true }
+
+[dev-dependencies]
+# "local-relay" gives an in-process relay, so the service can be tested against
+# a real websocket instead of a stubbed transport.
+nostr-sdk = { workspace = true, features = [ "local-relay" ] }
+tokio = { workspace = true, features = [ "macros", "rt-multi-thread" ] }

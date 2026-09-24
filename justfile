@@ -37,6 +37,7 @@ check-wasm-tests:
 		--no-default-features --features wasm \
 		--target wasm32-unknown-unknown
 
+
 check-lib-arithmetic:
 	cargo clippy -p ark-lib --tests
 
@@ -55,6 +56,8 @@ check-bark-as-libs:
 	cargo check -p bark-wallet -F native --no-default-features
 	cargo check -p bark-json
 	cargo check -p bark-json --no-default-features
+	cargo check -p bark-nwc
+	cargo check -p bark-nwc --no-default-features
 	cargo check -p bark-rest
 	cargo check -p bark-rest --no-default-features
 	cargo check -p bark-rest-client
