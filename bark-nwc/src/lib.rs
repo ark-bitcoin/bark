@@ -21,11 +21,13 @@
 pub mod amount;
 pub mod connection;
 pub mod handler;
+pub mod manager;
 pub mod persist;
 pub mod service;
 
 pub use self::connection::{Connection, ConnectionStore};
 pub use self::persist::ConnectionPersister;
+
 
 /// Parse the configured relay urls.
 ///
@@ -39,6 +41,27 @@ pub fn parse_relays(relays: &[String]) -> anyhow::Result<Vec<nostr::types::Relay
 		.map(|r| nostr::types::RelayUrl::parse(r)
 			.with_context(|| format!("invalid NWC relay url: {r}")))
 		.collect()
+}
+
+/// Spawn a service task.
+///
+/// Native builds get a join handle, which lets the manager abort a service
+/// still inside its startup connect. wasm has no join handles, so there a
+/// service stops a fraction later, once it next reaches its select loop.
+#[cfg(not(feature = "wasm-web"))]
+pub(crate) fn spawn<F>(fut: F) -> tokio::task::JoinHandle<F::Output>
+where
+	F: Future<Output = ()> + Send + 'static,
+{
+	tokio::spawn(fut)
+}
+
+#[cfg(feature = "wasm-web")]
+pub(crate) fn spawn<F>(fut: F)
+where
+	F: Future<Output = ()> + 'static,
+{
+	wasm_bindgen_futures::spawn_local(fut)
 }
 
 
