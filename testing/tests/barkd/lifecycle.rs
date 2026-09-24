@@ -3,11 +3,64 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use ark_testing::TestContext;
-use ark_testing::daemon::barkd::Barkd;
+use tokio::process::Command;
+
+use ark_testing::{TestContext, require_bark_version};
+use ark_testing::constants::env::BARK_EXEC;
+use ark_testing::daemon::barkd::{Barkd, BarkdChainSource};
 use ark_testing::ports::pick_port;
+use ark_testing::util::resolve_path;
 use bark_rest_client::apis::wallet_api;
 use bark_rest_client::models::WalletDeleteRequest;
+
+/// CLI creation must not change a datadir that a daemon owns, even without a wallet.
+#[tokio::test]
+async fn cli_create_refuses_running_daemon() {
+	require_bark_version!(> "0.7.1");
+	let bark_exec = resolve_path(std::env::var(BARK_EXEC).expect("BARK_EXEC env not set"))
+		.expect("failed to resolve BARK_EXEC");
+	let ctx = TestContext::new_minimal("barkd/cli_create_refuses_running_daemon").await;
+	let datadir = ctx.datadir.join("barkd");
+	// No wallet is created, so neither endpoint is contacted.
+	let barkd = Barkd::new("barkd", datadir.clone(), "http://127.0.0.1:1".into(),
+		BarkdChainSource::Esplora("http://127.0.0.1:1".into()), None);
+	barkd.start().await.unwrap();
+	let token = std::fs::read(datadir.join("auth_token")).unwrap();
+	let sentinel = datadir.join("creation-sentinel");
+	std::fs::write(&sentinel, b"keep").unwrap();
+	let lock = std::fs::File::options().read(true).write(true)
+		.open(datadir.join("barkd.lock")).unwrap();
+
+	for force in [true, false] {
+		let mut cmd = Command::new(&bark_exec);
+		cmd.arg("--datadir").arg(&datadir).args(["--no-logfile", "create", "--regtest"]);
+		if force { cmd.arg("--force"); }
+		let output = tokio::time::timeout(Duration::from_secs(30), cmd.kill_on_drop(true).output())
+			.await.expect("CLI creation hung").unwrap();
+		let stderr = String::from_utf8_lossy(&output.stderr);
+		assert!(!output.status.success());
+		assert!(stderr.contains("another barkd is already running"), "{stderr}");
+		assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
+		assert_eq!(std::fs::read(datadir.join("auth_token")).unwrap(), token);
+		assert!(matches!(lock.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
+		barkd.ping().await;
+	}
+
+	barkd.stop().await.unwrap();
+	// After shutdown, creation must reach validation and release its lock on failure.
+	for _ in 0..2 {
+		let output = tokio::time::timeout(Duration::from_secs(30), Command::new(&bark_exec)
+			.arg("--datadir").arg(&datadir)
+			.args(["--no-logfile", "create", "--regtest", "--force"])
+			.kill_on_drop(true).output(),
+		).await.expect("CLI creation hung after daemon shutdown").unwrap();
+		let stderr = String::from_utf8_lossy(&output.stderr);
+		assert!(!output.status.success());
+		assert!(stderr.contains("You need to provide a chain source"), "{stderr}");
+		lock.try_lock().expect("failed creation left the lifecycle lock held");
+		lock.unlock().unwrap();
+	}
+}
 
 /// A second barkd on the same datadir must fail fast, leaving the incumbent untouched.
 #[tokio::test]

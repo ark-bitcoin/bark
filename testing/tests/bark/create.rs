@@ -1,9 +1,69 @@
+use std::fs;
+use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::net::TcpListener;
+use tokio::process::Command;
 
 use bark::BarkNetwork;
 
-use ark_testing::{Bark, TestContext};
-use ark_testing::util::ToAltString;
+use ark_testing::{Bark, TestContext, require_bark_version};
+use ark_testing::constants::env::BARK_EXEC;
+use ark_testing::util::{resolve_path, ToAltString};
+
+#[tokio::test]
+async fn cli_create_releases_lock_after_failure() {
+	require_bark_version!(> "0.7.1");
+	let bark_exec = resolve_path(std::env::var(BARK_EXEC).expect("BARK_EXEC env not set"))
+		.expect("failed to resolve BARK_EXEC");
+	let ctx = TestContext::new_minimal("bark/cli_create_releases_lock_after_failure").await;
+	let datadir = ctx.datadir.join("new-wallet");
+	assert!(!datadir.exists());
+	for _ in 0..2 {
+		let output = tokio::time::timeout(Duration::from_secs(30), Command::new(&bark_exec)
+			.arg("--datadir").arg(&datadir).args(["--no-logfile", "create", "--regtest"])
+			.kill_on_drop(true).output(),
+		).await.expect("CLI creation hung").unwrap();
+		let stderr = String::from_utf8_lossy(&output.stderr);
+		assert!(!output.status.success());
+		assert!(stderr.contains("You need to provide a chain source"), "{stderr}");
+		// Keep the stable lock filename, but no wallet data from the failed create.
+		let remaining: Vec<_> = fs::read_dir(&datadir).unwrap()
+			.map(|entry| entry.unwrap().file_name()).collect();
+		assert_eq!(remaining, ["barkd.lock"]);
+		let lock = fs::File::options().read(true).write(true).open(datadir.join("barkd.lock")).unwrap();
+		lock.try_lock().expect("failed creation left the lifecycle lock held");
+	}
+}
+
+#[tokio::test]
+async fn cli_create_refuses_another_cli_create() {
+	require_bark_version!(> "0.7.1");
+	let bark_exec = resolve_path(std::env::var(BARK_EXEC).expect("BARK_EXEC env not set"))
+		.expect("failed to resolve BARK_EXEC");
+	let ctx = TestContext::new_minimal("bark/cli_create_refuses_another_cli_create").await;
+	let datadir = ctx.datadir.join("new-wallet");
+	let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let esplora = format!("http://{}", listener.local_addr().unwrap());
+	let mut first = Command::new(&bark_exec).arg("--datadir").arg(&datadir)
+		.args(["create", "--regtest", "--esplora", &esplora, "--ark", "http://127.0.0.1:1"])
+		.stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).spawn().unwrap();
+	// Hold the first creation inside a real chain-source request. This catches a
+	// lock that is only checked at entry and dropped before creation completes.
+	let (_request, _) = tokio::time::timeout(Duration::from_secs(30), listener.accept())
+		.await.expect("first CLI did not reach its chain source").unwrap();
+	let result = tokio::time::timeout(Duration::from_secs(30), Command::new(&bark_exec)
+		.arg("--datadir").arg(&datadir)
+		.args(["create", "--regtest", "--force", "--esplora", &esplora, "--ark", "http://127.0.0.1:1"])
+		.kill_on_drop(true).output(),
+	).await;
+	first.kill().await.unwrap();
+	let output = result.expect("second CLI creation hung").unwrap();
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert!(!output.status.success());
+	assert!(stderr.contains("another barkd is already running"), "{stderr}");
+}
 
 #[tokio::test]
 async fn bark_create_is_atomic() {

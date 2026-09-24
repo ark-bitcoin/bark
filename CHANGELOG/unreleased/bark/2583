@@ -1,0 +1,6 @@
+- Prevent CLI wallet creation from conflicting with a daemon or another CLI creator
+  `bark create` now refuses to run while `barkd` or another CLI creation holds
+  the lifecycle lock on the same datadir, even with `--force`. The lock remains
+  held through creation and failure cleanup to protect files in use by these
+  processes. Wallet creation through the daemon API remains unchanged.
+  [#2583](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2583)
