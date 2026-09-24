@@ -466,6 +466,7 @@ dependencies = [
  "lightning-invoice",
  "lnurl-rs",
  "log",
+ "parking_lot",
  "reqwest 0.13.4",
  "rustls",
  "serde",
