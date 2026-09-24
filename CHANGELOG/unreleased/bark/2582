@@ -1,0 +1,8 @@
+- Let the caller choose how long the server tries to pay a lightning invoice
+  New `LightningSendOptions` with `wait` and `retry_for`, taken by new
+  `_with` variants of the payment methods: `pay_lightning_invoice_with`,
+  `pay_lightning_offer_with`, `pay_lightning_address_with`,
+  `pay_lnurl_with`, `make_lightning_payment_with` and `send_payment_with`.
+  A `retry_for` above the server maximum is capped to it, and 0 makes a
+  single attempt.
+  [#2582](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2582)

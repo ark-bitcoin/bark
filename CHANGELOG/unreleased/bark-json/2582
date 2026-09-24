@@ -1,0 +1,4 @@
+- Add `retry_for_secs` to `SendRequest` and `LightningPayRequest`
+  [#2582](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2582)
+  - **BREAKING:** Code that builds these structs with a struct literal must
+    set the new fields

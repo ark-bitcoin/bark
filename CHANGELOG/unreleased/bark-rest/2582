@@ -1,0 +1,5 @@
+- Add `retry_for_secs` to `POST /api/v1/wallet/send` and
+  `POST /api/v1/lightning/pay`
+  Sets how many seconds the server keeps trying to pay, capped to the
+  server's maximum.
+  [#2582](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2582)

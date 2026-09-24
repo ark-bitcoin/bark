@@ -1,0 +1,4 @@
+- Add `--retry-for` to `bark send` and `bark lightning pay invoice`
+  Sets how many seconds the server keeps trying to pay, capped to the
+  server's maximum.
+  [#2582](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2582)
