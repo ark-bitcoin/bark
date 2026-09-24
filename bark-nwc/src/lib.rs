@@ -19,6 +19,11 @@
 //! are deliberately unrelated to wallet keys.
 
 pub mod amount;
+pub mod connection;
+pub mod persist;
+
+pub use self::connection::{Connection, ConnectionStore};
+pub use self::persist::ConnectionPersister;
 
 /// Parse the configured relay urls.
 ///
