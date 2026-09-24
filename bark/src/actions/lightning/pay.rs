@@ -532,6 +532,7 @@ pub(crate) async fn initiate_lightning_send_payment(
 		htlc_vtxo_ids: htlcs.vtxo_ids.iter().map(|v| v.to_bytes().to_vec()).collect(),
 		payment_amount_sat: send.payment_amount.to_sat(),
 		mailbox_id: Some(htlcs.mailbox_id.serialize()),
+		retry_for_secs: None,
 	};
 	srv.client.initiate_lightning_payment(req).await
 		.map_err(AdvanceError::Server)?;

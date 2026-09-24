@@ -1504,6 +1504,46 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 }
 
 #[tokio::test]
+async fn should_cap_retry_for_at_maximum() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/should_cap_retry_for_at_maximum").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	// The wallet checks the maximum itself, so ask for more on its behalf.
+	#[derive(Clone)]
+	struct Proxy;
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn initiate_lightning_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::InitiateLightningPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			req.retry_for_secs = Some(u32::MAX);
+			Ok(upstream.initiate_lightning_payment(req).await?.into_inner())
+		}
+	}
+
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
+
+	let bark_1 = ctx.bark("bark-1", &proxy.address).funded(btc(3)).create().await;
+	bark_1.board_and_confirm_and_register(&ctx, btc(2)).await;
+	lightning.sync().await;
+
+	let invoice = lightning.external.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
+	let payment_hash = *Bolt11Invoice::from_str(&invoice).unwrap().payment_hash();
+	bark_1.pay_lightning_wait(invoice, None).await;
+
+	let max = srv.config().cln_xpay_max_retry_for;
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let attempt = db.read(async |t|
+		t.get_latest_payment_attempt_by_payment_hash(payment_hash.into()).await
+	).await.unwrap().expect("payment attempt");
+	assert_eq!(attempt.retry_for, Some(max));
+}
+
+#[tokio::test]
 async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	require_bark_version!(> "0.5.0");
 

@@ -247,6 +247,7 @@ impl ClnXpayClient {
 #[derive(Debug, Clone)]
 pub struct ClnXpayConfig {
 	pub invoice_check_interval: Duration,
+	/// Retry time for attempts that were stored without one.
 	pub cln_xpay_timeout: Duration,
 	pub check_base_delay: Duration,
 	pub max_check_delay: Duration,
@@ -399,9 +400,10 @@ impl ClnXpayProcess {
 			}
 
 			// We don't want to go further if we aren't sure CLN
-			// didn't finished retrying payment attempts
-			let safe_delay_cln_stopped_retries =
-				self.config.cln_xpay_timeout + XPAY_TIMEOUT_BUFFER;
+			// didn't finished retrying payment attempts. Each attempt carries
+			// the retry time it was started with; older rows predate that.
+			let retry_for = attempt.retry_for.unwrap_or(self.config.cln_xpay_timeout);
+			let safe_delay_cln_stopped_retries = retry_for + XPAY_TIMEOUT_BUFFER;
 			if attempt.created_at > Local::now() - safe_delay_cln_stopped_retries {
 				trace!("Lightning payment attempt ({}): Skipping since it was just created.",
 					attempt.id,

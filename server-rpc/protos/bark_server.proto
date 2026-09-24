@@ -283,6 +283,10 @@ message InitiateLightningPaymentRequest {
 	repeated bytes htlc_vtxo_ids = 2;
 	uint64 payment_amount_sat = 3;
 	optional bytes mailbox_id = 4;
+	// How long the server should keep trying to pay the invoice; 0 makes a
+	// single attempt. Values above the server's maximum are capped to it.
+	// The server picks its default when unset.
+	optional uint32 retry_for_secs = 5;
 }
 
 message CheckLightningPaymentRequest {

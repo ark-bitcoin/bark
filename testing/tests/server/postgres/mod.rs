@@ -2,6 +2,7 @@ mod pool;
 mod tree;
 
 use std::str::FromStr;
+use std::time::Duration;
 
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::Transaction;
@@ -1611,7 +1612,7 @@ async fn lightning_payment_attempt_lifecycle() {
 
 	// Start a payment
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(2), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"),
+		node_id, &invoice, sat(2), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"), Duration::from_secs(60),
 	).await).await.unwrap();
 
 	// One open attempt
@@ -1659,7 +1660,7 @@ async fn lightning_payment_attempt_with_error() {
 	let invoice = Invoice::Bolt11(bolt11);
 
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(1), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"),
+		node_id, &invoice, sat(1), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"), Duration::from_secs(60),
 	).await).await.unwrap();
 
 	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
@@ -1695,7 +1696,7 @@ async fn lightning_payment_attempt_result_update() {
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(1000), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"),
+		node_id, &invoice, sat(1000), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"), Duration::from_secs(60),
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1742,7 +1743,7 @@ async fn mark_htlc_send_vtxos_ln_spent_for_settled_attempt() {
 
 	// Open attempt linked to the HTLC-send vtxo.
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(2), None, &[vtxo.id()], None, BlockHeight::new(1), sat(1), Some("bark"),
+		node_id, &invoice, sat(2), None, &[vtxo.id()], None, BlockHeight::new(1), sat(1), Some("bark"), Duration::from_secs(60),
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1791,9 +1792,10 @@ async fn lightning_payment_attempt_stores_protocol_fee() {
 	let expected_block_height = BlockHeight::new(850_000);
 	let expected_user_fee = sat(1_234);
 	let expected_user_agent = "bark-wasm";
+	let expected_retry_for = Duration::from_secs(123);
 	db.write(async |t| t.store_lightning_payment_start(
 		node_id, &invoice, sat(50_000), None, &[vtxo.id()],
-		None, expected_block_height, expected_user_fee, Some(expected_user_agent),
+		None, expected_block_height, expected_user_fee, Some(expected_user_agent), expected_retry_for,
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1805,6 +1807,8 @@ async fn lightning_payment_attempt_stores_protocol_fee() {
 		"user_fee must round-trip through the INSERT + SELECT");
 	assert_eq!(attempt.user_agent.as_deref(), Some(expected_user_agent),
 		"user_agent must round-trip through the INSERT + SELECT");
+	assert_eq!(attempt.retry_for, Some(expected_retry_for),
+		"retry_for must round-trip through the INSERT + SELECT");
 
 	// `get_latest_payment_attempt_by_payment_hash` is the read path used by
 	// the success-recording site, so verify it carries the values too.
@@ -1814,6 +1818,7 @@ async fn lightning_payment_attempt_stores_protocol_fee() {
 	assert_eq!(latest.block_height, Some(expected_block_height));
 	assert_eq!(latest.user_fee, Some(expected_user_fee));
 	assert_eq!(latest.user_agent.as_deref(), Some(expected_user_agent));
+	assert_eq!(latest.retry_for, Some(expected_retry_for));
 }
 
 #[tokio::test]

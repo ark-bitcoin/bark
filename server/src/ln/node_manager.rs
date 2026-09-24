@@ -89,7 +89,6 @@ pub struct LightningManager {
 	invoice_poll_interval: Duration,
 	invoice_expiry: Duration,
 	htlc_expiry_delta: BlockDelta,
-	cln_xpay_timeout: Duration,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 
 	/// This channel is to manage individual CLN integrations.
@@ -176,7 +175,6 @@ impl LightningManager {
 			invoice_poll_interval: config.invoice_poll_interval,
 			invoice_expiry: config.invoice_expiry,
 			htlc_expiry_delta: config.htlc_expiry_delta,
-			cln_xpay_timeout: config.cln_xpay_timeout,
 		})
 	}
 
@@ -243,6 +241,7 @@ impl LightningManager {
 		htlc_vtxo_ids: Vec<VtxoId>,
 		user_fee: Amount,
 		attempt_block_height: BlockHeight,
+		retry_for: Duration,
 	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
@@ -257,6 +256,7 @@ impl LightningManager {
 			&htlc_vtxo_ids,
 			user_fee,
 			attempt_block_height,
+			retry_for,
 		).await {
 			// The attempt is already recorded as failed and the client sees the
 			// failure via CheckLightningPayment. Benign races (someone else paid
@@ -297,6 +297,7 @@ impl LightningManager {
 		htlc_vtxo_ids: &[VtxoId],
 		user_fee: Amount,
 		attempt_block_height: BlockHeight,
+		retry_for: Duration,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 		let node = self.active_node().context("no active cln node")?;
@@ -325,7 +326,7 @@ impl LightningManager {
 			t.store_lightning_payment_start(
 				node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids,
 				lightning_htlc_subscription_id,
-				attempt_block_height, user_fee, user_agent.as_deref(),
+				attempt_block_height, user_fee, user_agent.as_deref(), retry_for,
 			).await
 		).await?;
 
@@ -370,7 +371,6 @@ impl LightningManager {
 		// sendpay stream is the source of truth.
 		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", amount, invoice);
 		let xpay_client = node.xpay.clone();
-		let retry_for = self.cln_xpay_timeout;
 		tokio::spawn(async move {
 			xpay_client.pay(
 				invoice,
