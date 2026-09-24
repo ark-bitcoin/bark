@@ -581,7 +581,13 @@ async fn list_movements() {
 
 	assert_eq!(movements.len(), 4);
 	assert_eq!(movements.last().unwrap().input_vtxos.len(), 0);
-	assert_eq!(movements.last().unwrap().output_vtxos.len(), 1);
+
+	// See https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2579 for why
+	// the behavior changed
+	if is_bark_version!(> "0.7.1") {
+		assert_eq!(movements.last().unwrap().output_vtxos.len(), 2);
+	}
+
 	assert_eq!(movements.last().unwrap().effective_balance, signed_sat(330_000));
 	assert_eq!(movements.last().unwrap().offchain_fee, Amount::ZERO);
 	assert!(movements.last().unwrap().sent_to.first().is_none());
