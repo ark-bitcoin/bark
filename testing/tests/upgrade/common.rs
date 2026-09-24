@@ -62,10 +62,14 @@ fn version_of(build: &str) -> &str {
 /// Assert the two sides are different builds, so a stale `target/debug/bark`
 /// cannot turn every test here into a same-build run that checks nothing.
 ///
-/// Identity is the whole `--version` line, hash included: the version alone
-/// cannot separate two dev builds, since everything after a release tag reports
-/// `X.Y.Z-dev`. That also lets the suite bisect a migration between two dev
-/// builds. A downgrade only warns, being a legitimate thing to run.
+/// Identity is the whole `bark --version` line, including the commit hash,
+/// because the version alone cannot tell two builds apart: everything built
+/// after a release tag reports the same `X.Y.Z-dev`. Comparing builds rather
+/// than versions also lets the suite run between two dev builds, which is how
+/// you bisect the commit that broke a migration.
+///
+/// Going backwards only warns. A downgrade is usually a mistake, but running
+/// one deliberately is a legitimate way to check a migration is survivable.
 pub(crate) async fn assert_upgrade_spans_builds(old: &Bark, new: &Bark) {
 	let from = old.instance_build().await;
 	let to = new.instance_build().await;
@@ -112,10 +116,13 @@ pub(crate) async fn assert_parked_at(bark: &Bark, expected: &str) {
 	);
 }
 
-/// The action finished and left nothing behind. Two failures, not one: a
-/// surviving checkpoint means the executor never reached `Advance::Done`, a
-/// surviving lock means it did but `stop_wallet_action` failed to release —
-/// a path that only warns, so nothing else would notice.
+/// The action is finished and left nothing behind.
+///
+/// Two separate failures, because either can happen without the other. A
+/// surviving checkpoint means the executor never reached `Advance::Done`, which
+/// the balance cannot show. A surviving lock means it did, but `stop_wallet_action`
+/// failed to release the VTXOs — the executor only warns on that path, so
+/// nothing else would notice.
 pub(crate) async fn assert_action_completed(bark: &Bark) {
 	let steps = bark.checkpoint_steps().await;
 	assert!(

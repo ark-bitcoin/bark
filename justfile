@@ -171,17 +171,17 @@ alias int-server-migrations := test-integration-server-migrations
 # migration doesn't strand an in-flight payment. See
 # contrib/agents/skills/upgrade-tests.md.
 #
-#   BARK_UPGRADE_FROM_EXEC=$(python3 contrib/fetch-bark-release.py --version 0.7.1) \
+#   OLD_BARK_EXEC=$(python3 contrib/fetch-bark-release.py --version 0.7.1) \
 #     just int-upgrade
 #
 # USE_FILESTORE=1 runs the same upgrades on the filestore backend. TEST is a
 # plain substring, not a nextest `-E` expression: it is interpolated unquoted.
-[doc("run the upgrade tests (needs BARK_UPGRADE_FROM_EXEC)")]
+[doc("run the upgrade tests (needs OLD_BARK_EXEC)")]
 test-integration-upgrade TEST="": ensure-build-bins docker-pull
 	#!/usr/bin/env bash
 	set -euo pipefail
-	if [[ -z "${BARK_UPGRADE_FROM_EXEC:-}" ]]; then
-		echo "BARK_UPGRADE_FROM_EXEC is not set; see the recipe comment" >&2
+	if [[ -z "${OLD_BARK_EXEC:-}" ]]; then
+		echo "OLD_BARK_EXEC is not set; see the recipe comment" >&2
 		exit 1
 	fi
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \

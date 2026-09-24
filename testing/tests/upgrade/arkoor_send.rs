@@ -6,7 +6,7 @@ use server_rpc::protos;
 
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient, MailboxClient};
-use ark_testing::util::upgrade_from_exec;
+use ark_testing::util::old_bark_exec;
 
 use crate::common::{
 	assert_parked_at, assert_upgrade_spans_builds, assert_action_completed, cut_off_timeout,
@@ -69,7 +69,7 @@ async fn arkoor_send_parked_at_delivery_completes_after_upgrade() {
 	let send_amount = sat(100_000);
 
 	let mut old = ctx.bark("sender", &proxy)
-		.exec(upgrade_from_exec())
+		.exec(old_bark_exec())
 		.funded(btc(3))
 		.create().await;
 	// The receiver holds nothing offchain, so its spendable balance goes
@@ -118,7 +118,7 @@ async fn arkoor_send_parked_at_cosigning_completes_after_upgrade() {
 	let send_amount = sat(100_000);
 
 	let mut old = ctx.bark("sender", &proxy)
-		.exec(upgrade_from_exec())
+		.exec(old_bark_exec())
 		.funded(btc(3))
 		.create().await;
 	let receiver = ctx.bark("receiver", &proxy).create().await;

@@ -14,7 +14,7 @@ use tokio::time::Instant;
 
 use crate::constants::DEFAULT_POLL_INTERVAL;
 use crate::constants::env::{
-	BARK_DOUBLE_DRIVE_ACTIONS, BARK_UPGRADE_FROM_EXEC, CHAIN_SOURCE, TEST_DIRECTORY,
+	BARK_DOUBLE_DRIVE_ACTIONS, OLD_BARK_EXEC, CHAIN_SOURCE, TEST_DIRECTORY,
 	TEST_POLL_INTERVAL_MS,
 	TX_PROPAGATION_TIMEOUT_MILLIS,
 };
@@ -209,15 +209,15 @@ pub fn action_drive_factor() -> usize {
 
 /// The released bark binary an upgrade test starts from. Panics rather than
 /// skipping when unset, so the job cannot go green while testing nothing.
-pub fn upgrade_from_exec() -> PathBuf {
-	let raw = env::var(BARK_UPGRADE_FROM_EXEC).unwrap_or_else(|_| panic!(
+pub fn old_bark_exec() -> PathBuf {
+	let raw = env::var(OLD_BARK_EXEC).unwrap_or_else(|_| panic!(
 		"{} is not set. The upgrade tests need a released bark binary to start \
 		 from; fetch one with contrib/fetch-bark-release.py and point this at it.",
-		BARK_UPGRADE_FROM_EXEC,
+		OLD_BARK_EXEC,
 	));
 	let path = resolve_path(&raw)
-		.unwrap_or_else(|e| panic!("failed to resolve {}={}: {:#}", BARK_UPGRADE_FROM_EXEC, raw, e));
-	assert!(path.exists(), "{}={} does not exist", BARK_UPGRADE_FROM_EXEC, path.display());
+		.unwrap_or_else(|e| panic!("failed to resolve {}={}: {:#}", OLD_BARK_EXEC, raw, e));
+	assert!(path.exists(), "{}={} does not exist", OLD_BARK_EXEC, path.display());
 	path
 }
 

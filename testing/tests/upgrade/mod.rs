@@ -1,5 +1,5 @@
 //! An action started under an older bark release must finish under the build
-//! being tested. Each test creates the wallet with `BARK_UPGRADE_FROM_EXEC`,
+//! being tested. Each test creates the wallet with `OLD_BARK_EXEC`,
 //! cuts it off mid-action, then reopens the same datadir with `BARK_EXEC`,
 //! which runs any new migration against a real in-flight checkpoint.
 //!

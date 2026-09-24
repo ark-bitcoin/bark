@@ -713,7 +713,7 @@ upgrade-bark-0.7.1:
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - >-
-      export BARK_UPGRADE_FROM_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
+      export OLD_BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
@@ -760,7 +760,7 @@ upgrade-bark-0.7.1-filestore:
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - >-
-      export BARK_UPGRADE_FROM_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
+      export OLD_BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")

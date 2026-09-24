@@ -1,7 +1,7 @@
 //! Board cut off mid-flight across an upgrade.
 
 use ark_testing::{btc, constants, TestContext};
-use ark_testing::util::upgrade_from_exec;
+use ark_testing::util::old_bark_exec;
 
 use crate::common::{assert_action_completed, assert_parked_at, assert_upgrade_spans_builds};
 
@@ -16,7 +16,7 @@ async fn board_started_before_upgrade_registers_after_upgrade() {
 
 	let board_amount = btc(2);
 	let old = ctx.bark("bark", &srv)
-		.exec(upgrade_from_exec())
+		.exec(old_bark_exec())
 		.funded(btc(3))
 		.create().await;
 

@@ -6,7 +6,7 @@ use server_rpc::protos;
 
 use ark_testing::{btc, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::upgrade_from_exec;
+use ark_testing::util::old_bark_exec;
 
 use crate::common::{
 	assert_parked_at, cut_off_timeout, maintain_until, assert_upgrade_spans_builds, assert_action_completed, Gate,
@@ -78,7 +78,7 @@ async fn lightning_send_parked_at_htlc_received_completes_after_upgrade() {
 
 	let board_amount = btc(2);
 	let mut old = ctx.bark("bark", &proxy)
-		.exec(upgrade_from_exec())
+		.exec(old_bark_exec())
 		.funded(btc(3))
 		.create().await;
 	old.board_and_confirm_and_register(&ctx, board_amount).await;
@@ -134,7 +134,7 @@ async fn lightning_send_parked_at_payment_initiated_completes_after_upgrade() {
 
 	let board_amount = btc(2);
 	let mut old = ctx.bark("bark", &proxy)
-		.exec(upgrade_from_exec())
+		.exec(old_bark_exec())
 		.funded(btc(3))
 		.create().await;
 	old.board_and_confirm_and_register(&ctx, board_amount).await;
@@ -189,7 +189,7 @@ async fn lightning_send_parked_at_start_completes_after_upgrade() {
 
 	let board_amount = btc(2);
 	let mut old = ctx.bark("bark", &proxy)
-		.exec(upgrade_from_exec())
+		.exec(old_bark_exec())
 		.funded(btc(3))
 		.create().await;
 	old.board_and_confirm_and_register(&ctx, board_amount).await;

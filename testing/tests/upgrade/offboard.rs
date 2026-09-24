@@ -8,7 +8,7 @@ use server_rpc::protos;
 
 use ark_testing::{btc, Bark, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::upgrade_from_exec;
+use ark_testing::util::old_bark_exec;
 
 use crate::common::{
 	assert_parked_at, assert_upgrade_spans_builds, assert_action_completed, cut_off_timeout,
@@ -74,7 +74,7 @@ async fn offboard_parked_at_tx_prepared_completes_after_upgrade() {
 
 	let board_amount = btc(2);
 	let mut old = ctx.bark("bark", &proxy)
-		.exec(upgrade_from_exec())
+		.exec(old_bark_exec())
 		.cfg(|c| c.offboard_required_confirmations = BlockDelta::new(1))
 		.funded(btc(3))
 		.create().await;
@@ -116,7 +116,7 @@ async fn offboard_parked_at_ready_for_offboard_completes_after_upgrade() {
 
 	let board_amount = btc(2);
 	let mut old = ctx.bark("bark", &proxy)
-		.exec(upgrade_from_exec())
+		.exec(old_bark_exec())
 		.cfg(|c| c.offboard_required_confirmations = BlockDelta::new(1))
 		.funded(btc(3))
 		.create().await;
@@ -154,7 +154,7 @@ async fn offboard_parked_at_awaiting_confirmations_completes_after_upgrade() {
 
 	let board_amount = btc(2);
 	let mut old = ctx.bark("bark", &srv)
-		.exec(upgrade_from_exec())
+		.exec(old_bark_exec())
 		.cfg(|c| c.offboard_required_confirmations = BlockDelta::new(2))
 		.funded(btc(3))
 		.create().await;
