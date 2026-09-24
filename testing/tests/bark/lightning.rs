@@ -2455,8 +2455,11 @@ async fn lightning_receive_claim_ignores_max_exit_depth() {
 		info!("lightning receive #{} claimed", i);
 	}
 
-	assert_eq!(bark.spendable_balance().await,
-		btc(2) + pay_amount * NB_RECEIVES as u64);
+	// The deepest claim outputs sit past the maximum exit depth, so they
+	// need a refresh before they can be spent again.
+	let balance = bark.offchain_balance().await;
+	assert_eq!(balance.spendable + balance.needs_refresh,
+		btc(2) + pay_amount * NB_RECEIVES as u64, "{balance:?}");
 
 	// Prove the boundary was actually crossed: a claim output sits two levels
 	// below its HTLC-recv input, so a claimed vtxo deeper than the maximum
@@ -2595,7 +2598,10 @@ async fn lightning_pay_revocation_ignores_max_exit_depth() {
 
 	// The payment failed and the HTLC-send vtxos were revoked: the full
 	// balance is restored as change + revocation vtxo, nothing stays locked.
-	assert_eq!(bark.spendable_balance().await, board_amount);
+	// Both sit at or beyond the maximum exit depth, so they need a refresh
+	// before they can be spent again.
+	let balance = bark.offchain_balance().await;
+	assert_eq!(balance.spendable + balance.needs_refresh, board_amount, "{balance:?}");
 	let vtxos = bark.vtxos().await;
 	let revocation = vtxos.iter().find(|v| v.amount == invoice_amount)
 		.expect("should have a revocation vtxo of the payment amount");

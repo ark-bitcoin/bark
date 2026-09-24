@@ -3589,19 +3589,35 @@
       },
       "Balance": {
         "type": "object",
-        "description": "The different balances of a Bark wallet, broken down by state.\n\nAll amounts are in sats.",
+        "description": "The different balances of a Bark wallet.\n\n`spendable_sat` counts the spendable VTXOs, `needs_refresh_sat` the ones\nthat have to be refreshed before they can be sent again, and every other\nfield what an operation in progress holds, so the fields never overlap.\n\nSee [BalanceSummary] for the totals to show a user.\n\nAll amounts are in sats.",
         "required": [
           "spendable_sat",
+          "needs_refresh_sat",
           "pending_lightning_send_sat",
           "claimable_lightning_receive_sat",
           "pending_in_round_sat",
-          "pending_board_sat"
+          "pending_board_sat",
+          "pending_arkoor_send_sat",
+          "pending_offboard_sat",
+          "pending_exit_sat"
         ],
         "properties": {
           "claimable_lightning_receive_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "Sats from an incoming Lightning payment that can be claimed but\nhave not yet been swept into a spendable VTXO.",
+            "description": "Sats in HTLC VTXOs of an incoming Lightning payment whose preimage has\nbeen revealed but which have not been swapped for spendable VTXOs yet.\nA payment that can still be cancelled is not counted.",
+            "minimum": 0
+          },
+          "needs_refresh_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sats in VTXOs that can no longer be sent in an arkoor payment because\nthey have expired or their exit depth has reached the server's limit.\nThey can still be offboarded, exited or refreshed, but are not part of\n`spendable_sat` until maintenance has refreshed them.",
+            "minimum": 0
+          },
+          "pending_arkoor_send_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sats locked in an outgoing arkoor payment that has not completed yet:\nthe whole input amount, until the send finalizes and the change comes\nback as spendable.",
             "minimum": 0
           },
           "pending_board_sat": {
@@ -3611,12 +3627,9 @@
             "minimum": 0
           },
           "pending_exit_sat": {
-            "type": [
-              "integer",
-              "null"
-            ],
+            "type": "integer",
             "format": "int64",
-            "description": "Sats held in VTXOs whose unilateral exit chain is confirmed on-chain but which\nhaven't yet been drained to the onchain wallet. Equivalent to the sum of\n`Exited` VTXOs whose exit state hasn't reached `Claimed`.\n`null` if the exit subsystem is unavailable.",
+            "description": "Sats held in VTXOs whose unilateral exit has committed on-chain but which\nhaven't yet been drained to the onchain wallet: their state is\n[`VtxoStateInfo::Exited`] and their exit has not reached\n[`ExitStateKind::Claimed`].",
             "minimum": 0
           },
           "pending_in_round_sat": {
@@ -3629,6 +3642,12 @@
             "type": "integer",
             "format": "int64",
             "description": "Sats locked in an outgoing Lightning payment that has not yet\nsettled.",
+            "minimum": 0
+          },
+          "pending_offboard_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sats locked in an offboard whose transaction has not been broadcast\nyet, including any change that comes back. Once the transaction is on\nthe network the sats belong to the on-chain wallet.",
             "minimum": 0
           },
           "spendable_sat": {

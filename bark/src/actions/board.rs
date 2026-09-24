@@ -159,6 +159,15 @@ impl WalletAction for Board {
 		}
 	}
 
+	/// The board VTXO once its funding transaction has been seen on the
+	/// network; nothing has moved before that.
+	fn pending_balance_vtxo_ids(&self) -> Vec<VtxoId> {
+		match &self.progress {
+			Progress::Broadcasting { .. } => Vec::new(),
+			Progress::Confirming { .. } => vec![self.vtxo_id],
+		}
+	}
+
 	async fn on_rejection(
 		self,
 		_wallet: &Wallet,

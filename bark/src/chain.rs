@@ -388,6 +388,12 @@ impl ChainSource {
 		Ok(self.tip_ref().await?.height)
 	}
 
+	/// The tip the chain source saw last, however long ago. `None` if it
+	/// never reached the backend.
+	pub async fn last_observed_tip(&self) -> Option<BlockHeight> {
+		self.tip_cache.read().await.map(|(block_ref, _)| block_ref.height)
+	}
+
 	/// Store an observed tip as the current `tip_cache` entry.
 	async fn record_observed_tip(&self, block_ref: BlockRef) {
 		*self.tip_cache.write().await = Some((block_ref, Instant::now()));

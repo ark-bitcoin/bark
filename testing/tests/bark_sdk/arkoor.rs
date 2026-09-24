@@ -6,6 +6,7 @@ use ark::VtxoPolicy;
 use ark::address::VtxoDelivery;
 
 use ark_testing::{TestContext, sat};
+use ark_testing::balance::assert_balance_consistent;
 
 /// An address that lists no delivery mechanism this bark can use is refused
 /// before the arkoor is built, so the sender keeps its funds.
@@ -35,7 +36,7 @@ async fn send_to_unsupported_delivery_is_refused() {
 
 	// The send never started: no action is pending and no VTXO was spent.
 	assert!(sender.pending_arkoor_sends().await.unwrap().is_empty());
-	assert_eq!(sender.balance().await.unwrap().spendable, sat(400_000));
+	assert_eq!(assert_balance_consistent(&sender, false).await.spendable, sat(400_000));
 }
 
 /// An address that lists no delivery mechanism at all is the receiver's
@@ -67,5 +68,5 @@ async fn send_to_address_without_delivery_succeeds() {
 
 	// The send ran to completion and only the change remains spendable.
 	assert!(sender.pending_arkoor_sends().await.unwrap().is_empty());
-	assert_eq!(sender.balance().await.unwrap().spendable, sat(300_000));
+	assert_eq!(assert_balance_consistent(&sender, false).await.spendable, sat(300_000));
 }

@@ -551,7 +551,14 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 		"One VTXO which was not consolidated",
 	);
 
-	assert_eq!(bark2.spendable_balance().await, sat(200_331) - expected_fee);
+	// The expired VTXO needs a refresh before it can be sent again.
+	let balance = bark2.offchain_balance().await;
+	if is_bark_version!(> "0.7.1") {
+		assert_eq!(balance.spendable, sat(200_000) - expected_fee, "{balance:?}");
+		assert_eq!(balance.needs_refresh, sat(331), "{balance:?}");
+	} else {
+		assert_eq!(balance.spendable, sat(200_331) - expected_fee, "{balance:?}");
+	}
 
 	// Verify movement
 	let movements = bark2.history().await;

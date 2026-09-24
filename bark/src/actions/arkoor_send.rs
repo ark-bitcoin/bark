@@ -178,6 +178,12 @@ impl WalletAction for ArkoorSend {
 		Ok(Advance::Next(ArkoorSend { progress: new_progress, ..self }))
 	}
 
+	/// The inputs. They stay locked, and the change is not stored, until the
+	/// send finalizes, which spends the inputs and releases the change.
+	fn pending_balance_vtxo_ids(&self) -> Vec<VtxoId> {
+		self.input_vtxo_ids.clone()
+	}
+
 	async fn on_rejection(
 		self,
 		wallet: &Wallet,

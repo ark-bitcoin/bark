@@ -1,0 +1,28 @@
+- Wallet balance overhaul
+  `Wallet::balance` had multiple issues which needed addressing. Instead
+  of trying to calculate the pending balance of each subsystem we now use
+  an action-based approach, multiple new categories have been added and
+  we now differentiate between VTXOs which are immediately spendable by
+  any operation and those which require a refresh to remain usable.
+  Finally, a new summary type has been added to better display the most
+  important balance numbers to users.
+  [#2509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2509)
+  - `pending_in_round` counts the locked inputs of a round instead of its
+    requested outputs. `Wallet::pending_round_balance` still reports the
+    requested outputs.
+  - `claimable_lightning_receive` only counts an incoming payment once its
+    preimage has been revealed; before that the payment can still be
+    cancelled.
+  - Add `pending_arkoor_send` and `pending_offboard` for sats held by an
+    arkoor send or an offboard in progress. These sats used to be missing
+    from every field. An offboard stops holding its sats once its transaction
+    is on the network, where the on-chain wallet sees them.
+  - Add `needs_refresh` for VTXOs that can no longer be sent in an arkoor
+    payment: expired ones and ones whose exit depth has reached the server's
+    limit. They can still be offboarded, exited or refreshed, but used to be
+    counted as spendable.
+  - `pending_exit` is an `Amount` instead of an `Option<Amount>`.
+    `Exit::try_pending_total` is removed.
+  - Add `Balance::total`, `Balance::pending`, `Balance::has_pending` and
+    `Balance::summary`. Show `spendable` as what a user can pay with and
+    `total` as what a user owns.

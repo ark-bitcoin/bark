@@ -549,25 +549,6 @@ impl Exit {
 		guard.exit_vtxos.iter().any(|ev| ev.state().is_pending())
 	}
 
-	/// Total balance held in VTXOs whose exit chain is confirmed onchain but hasn't yet
-	/// been drained back into the onchain wallet (exit state in `{AwaitingDelta,
-	/// Claimable, ClaimInProgress}` — i.e. the VTXO is `Exited` but not yet `Claimed`).
-	///
-	/// Returns [None] if the lock is currently held by a writer.
-	pub fn try_pending_total(&self) -> Option<Amount> {
-		self.inner.try_read().ok().map(|guard| {
-			guard.exit_vtxos.iter()
-				.filter(|ev| matches!(
-					ev.state(),
-					ExitState::AwaitingDelta(_)
-					| ExitState::Claimable(_)
-					| ExitState::ClaimInProgress(_),
-				))
-				.map(|ev| ev.amount())
-				.sum()
-		})
-	}
-
 	/// Returns the earliest block height at which all tracked exits will be claimable
 	pub async fn all_claimable_at_height(&self) -> Option<BlockHeight> {
 		let guard = self.inner.read().await;

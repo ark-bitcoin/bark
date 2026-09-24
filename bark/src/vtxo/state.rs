@@ -25,6 +25,7 @@ use std::fmt;
 use std::ops::Deref;
 
 use bitcoin::Weight;
+use bitcoin_ext::BlockHeight;
 
 use ark::Vtxo;
 use ark::vtxo::{Bare, Full, VtxoRef};
@@ -223,6 +224,24 @@ impl<'a> VtxoRef for &'a WalletVtxo {
 impl AsRef<Vtxo<Bare>> for WalletVtxo {
 	fn as_ref(&self) -> &Vtxo<Bare> {
 		&self.vtxo
+	}
+}
+
+impl WalletVtxo {
+	/// Whether this VTXO has to be refreshed in a round before it can be sent
+	/// in an arkoor payment again: it has expired at `tip`, or its exit depth
+	/// has reached the server's limit. Such a VTXO can still be offboarded,
+	/// exited or refreshed, and an expired one can still fund a lightning
+	/// payment.
+	///
+	/// `max_exit_depth` is the server's [ark::ArkInfo::max_vtxo_exit_depth],
+	/// which the wallet only knows once it has connected to the server. With
+	/// `None` only expiry is checked.
+	///
+	/// This is the strict part of [crate::vtxo::RefreshStrategy::must_refresh],
+	/// which also selects VTXOs about to expire.
+	pub fn needs_refresh(&self, tip: BlockHeight, max_exit_depth: Option<u16>) -> bool {
+		self.expiry_height() <= tip || max_exit_depth.is_some_and(|max| self.exit_depth >= max)
 	}
 }
 

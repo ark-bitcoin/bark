@@ -304,6 +304,24 @@ impl WalletAction for Offboard {
 		Ok(Advance::Next(Offboard { progress: new_progress, ..self }))
 	}
 
+	/// The inputs, then the exact-sized VTXOs and their change while the
+	/// split is being registered, then the VTXOs being offboarded. Nothing
+	/// once the offboard transaction is on the network: the sats are the
+	/// on-chain wallet's from then on.
+	fn pending_balance_vtxo_ids(&self) -> Vec<VtxoId> {
+		match &self.progress {
+			Progress::Start | Progress::SplitWithArkoor => self.kind.vtxo_ids().clone(),
+			Progress::ArkoorRegistrationRequired { offboard_vtxo_ids, change_vtxo_ids } => {
+				offboard_vtxo_ids.iter().chain(change_vtxo_ids).copied().collect()
+			},
+			Progress::ReadyForOffboard { offboard_vtxo_ids, .. }
+				| Progress::OffboardTxPrepared { offboard_vtxo_ids, .. }
+				| Progress::ReadyForBroadcast { offboard_vtxo_ids, .. }
+			=> offboard_vtxo_ids.clone(),
+			Progress::AwaitingConfirmations { .. } => Vec::new(),
+		}
+	}
+
 	async fn on_retry(
 		self,
 		_wallet: &Wallet,

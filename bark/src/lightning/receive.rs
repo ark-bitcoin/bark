@@ -8,7 +8,7 @@ use server_rpc::protos;
 use ark::lightning::{Bolt11InvoiceExt, Preimage, PaymentHash};
 
 use crate::Wallet;
-use crate::actions::DriveMode;
+use crate::actions::{DriveMode, WalletAction};
 use crate::actions::lightning::receive::{
 	Htlcs, LightningReceive, LightningReceiveState, Progress,
 	ln_recv_action_id, start_lightning_receive
@@ -29,26 +29,19 @@ impl Wallet {
 		Ok(result)
 	}
 
-	/// Calculates how much balance can currently be claimed via inbound
-	/// lightning payments. Invoices that have not yet been paid (and so hold
-	/// no HTLC vtxos) are not included.
+	/// The sats held in HTLC VTXOs of inbound lightning payments whose
+	/// preimage has been revealed but which have not been swapped for
+	/// spendable VTXOs yet. Same as [crate::Balance::claimable_lightning_receive].
 	///
-	/// HTLC vtxos already spent into their claim arkoor are skipped: the
-	/// checkpoint outlives the spend, so counting them would double up with
+	/// An HTLC vtxo already spent into its claim arkoor is skipped: the
+	/// checkpoint outlives the spend, so counting it would double up with
 	/// [`crate::Balance::spendable`].
 	pub async fn claimable_lightning_receive_balance(&self) -> anyhow::Result<Amount> {
 		let mut total = Amount::ZERO;
 		for recv in self.pending_lightning_receives().await? {
-			let vtxo_ids = match &recv.progress {
-				Progress::AwaitingPayment => continue,
-				Progress::HtlcsReady(htlcs) => &htlcs.vtxo_ids,
-				Progress::PreimageRevealed(htlcs) => &htlcs.vtxo_ids,
-				// Claim outputs are destined to another wallet's address.
-				Progress::Delivering(_) => continue,
-			};
-			for id in vtxo_ids {
-				let vtxo = self.get_vtxo_by_id(*id).await?;
-				if VtxoStateKind::UNSPENT_STATES.contains(&vtxo.state.kind()) {
+			for id in recv.pending_balance_vtxo_ids() {
+				let vtxo = self.get_vtxo_by_id(id).await?;
+				if vtxo.state.kind() == VtxoStateKind::Locked {
 					total += vtxo.vtxo.amount();
 				}
 			}

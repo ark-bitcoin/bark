@@ -5,6 +5,7 @@ use futures::StreamExt;
 use ark::lightning::{PaymentHash, Preimage};
 use bitcoin_ext::BlockDelta;
 use ark_testing::{TestContext, btc, util::{FutureExt, poll_interval}};
+use ark_testing::balance::assert_balance_consistent;
 
 use bark::actions::lightning::pay::LightningSendState;
 use bark::actions::lightning::receive::LightningReceiveState;
@@ -82,7 +83,7 @@ async fn pay_hold_succeeds() {
 	match status {
 		LightningSendState::InProgress(pending) => {
 			let pending_balance = pending.payment_amount + pending.fee;
-			let balance = wallet.balance().await.expect("balance");
+			let balance = assert_balance_consistent(&wallet, false).await;
 			assert_eq!(balance.spendable, board_amount - pending_balance);
 			assert_eq!(balance.pending_lightning_send, pending_balance);
 		}
@@ -120,7 +121,7 @@ async fn pay_hold_succeeds() {
 	let new_status =  wallet.check_lightning_payment(payment_hash, false).await.expect("Failed to query lightning send");
 	assert_eq!(new_status, status.unwrap());
 
-	let balance = wallet.balance().await.expect("balance");
+	let balance = assert_balance_consistent(&wallet, false).await;
 	assert_eq!(balance.spendable, board_amount - invoice_amount);
 }
 
@@ -141,8 +142,9 @@ async fn pay_hold_with_near_expiry_inputs_succeeds() {
 		.boarded(board_amount)
 		.create().await;
 
-	// Push the boarded VTXO inside the wallet's refresh-expiry threshold.
-	// The lightning send used to spuriously fail this scenario because it
+	// Push the boarded VTXO past its expiry. An expired VTXO can still fund
+	// a lightning payment; it and its change count as needs_refresh. The
+	// lightning send used to spuriously fail this scenario because it
 	// conflated input-VTXO expiry with HTLC expiry; the fresh HTLC's own
 	// CLTV (htlc_send_expiry_delta blocks ahead) is still comfortably far
 	// out, so the payment should still settle normally.
@@ -177,8 +179,8 @@ async fn pay_hold_with_near_expiry_inputs_succeeds() {
 	match status {
 		LightningSendState::InProgress(pending) => {
 			let pending_balance = pending.payment_amount + pending.fee;
-			let balance = wallet.balance().await.expect("balance");
-			assert_eq!(balance.spendable, board_amount - pending_balance);
+			let balance = assert_balance_consistent(&wallet, false).await;
+			assert_eq!(balance.needs_refresh, board_amount - pending_balance);
 			assert_eq!(balance.pending_lightning_send, pending_balance);
 		}
 		other => panic!("Payment should be pending was {:?}", other),
@@ -215,8 +217,8 @@ async fn pay_hold_with_near_expiry_inputs_succeeds() {
 	let new_status =  wallet.check_lightning_payment(payment_hash, false).await.expect("Failed to query lightning send");
 	assert_eq!(new_status, status.unwrap());
 
-	let balance = wallet.balance().await.expect("balance");
-	assert_eq!(balance.spendable, board_amount - invoice_amount);
+	let balance = assert_balance_consistent(&wallet, false).await;
+	assert_eq!(balance.needs_refresh, board_amount - invoice_amount);
 }
 
 #[tokio::test]
@@ -263,7 +265,7 @@ async fn pay_hold_refused() {
 	match status {
 		LightningSendState::InProgress(pending) => {
 			let pending_balance = pending.payment_amount + pending.fee;
-			let balance = wallet.balance().await.expect("balance");
+			let balance = assert_balance_consistent(&wallet, false).await;
 			assert_eq!(balance.spendable, board_amount - pending_balance);
 			assert_eq!(balance.pending_lightning_send, pending_balance);
 		}
@@ -304,7 +306,7 @@ async fn pay_hold_refused() {
 	assert_eq!(new_status, LightningSendState::Unknown);
 
 	// After revocation the HTLC vtxos come back as spendable
-	let balance = wallet.balance().await.expect("balance");
+	let balance = assert_balance_consistent(&wallet, false).await;
 	assert_eq!(balance.spendable, board_amount);
 	assert_eq!(balance.pending_lightning_send, btc(0));
 }
@@ -368,7 +370,7 @@ async fn receive_claim_on_mailbox_notification() {
 	assert_eq!(recv_mvt.status, MovementStatus::Successful,
 		"lightning receive movement should be successful, got {:?}", recv_mvt.status);
 
-	let balance = wallet.balance().await.expect("balance");
+	let balance = assert_balance_consistent(&wallet, false).await;
 	assert_eq!(balance.spendable, invoice_amount);
 }
 
@@ -436,6 +438,6 @@ async fn receive_claim_after_hold_invoice_already_settled() {
 
 	pay_result.expect("lightning payment failed");
 
-	let balance = wallet.balance().await.expect("balance");
+	let balance = assert_balance_consistent(&wallet, false).await;
 	assert_eq!(balance.spendable, invoice_amount);
 }

@@ -408,24 +408,18 @@ impl<'a> RefreshStrategy<'a> {
 
 	/// Checks if a VTXO must be refreshed based on its exit depth and expiry height.
 	async fn check_must_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
-		// Check if the VTXO's exit depth has reached the server maximum.
-		if let Some(max_depth) = self.server_max_arkoor_depth().await? {
-			if vtxo.exit_depth >= max_depth {
-				warn!(
-					"VTXO {} exit depth {} has reached the server maximum of {}; \
-					 must be refreshed before further OOR payments are possible",
-					vtxo.id(), vtxo.exit_depth, max_depth,
-				);
-				return Ok(true);
-			}
+		let max_depth = self.server_max_arkoor_depth().await?;
+		if vtxo.needs_refresh(self.tip, max_depth) {
+			warn!(
+				"VTXO {} must be refreshed: expiry {} at tip {}, exit depth {} with limit {:?}",
+				vtxo.id(), vtxo.expiry_height(), self.tip, vtxo.exit_depth, max_depth,
+			);
+			return Ok(true);
 		}
 
 		// Check if the VTXO's expiry height is within the refresh threshold.
 		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
-		if self.tip > vtxo.expiry_height() {
-			warn!("VTXO {} is expired, must be refreshed", vtxo.id());
-			return Ok(true)
-		} else if self.tip > vtxo.expiry_height().saturating_sub(threshold) {
+		if self.tip > vtxo.expiry_height().saturating_sub(threshold) {
 			debug!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
 			return Ok(true);
 		}

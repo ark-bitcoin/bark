@@ -1,0 +1,6 @@
+- Add `needs_refresh_sat`, `pending_arkoor_send_sat` and `pending_offboard_sat`
+  to the `Balance` schema
+  A client can now tell the sats that need a refresh before they can be
+  sent again from the spendable ones, and sees the sats held by an arkoor send or
+  an offboard in progress. `pending_exit_sat` is no longer nullable.
+  [#2509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2509)

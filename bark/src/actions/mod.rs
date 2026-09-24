@@ -17,6 +17,8 @@ use std::time::Duration;
 use log::{debug, trace, warn};
 use server_rpc::StatusExt;
 
+use ark::VtxoId;
+
 use crate::{Wallet, WalletVtxo};
 use crate::actions::arkoor_send::ArkoorSend;
 use crate::actions::board::Board;
@@ -282,6 +284,14 @@ pub trait WalletAction: Sized + Send + Sync {
 	/// The `id` returned MUST be stable across calls on the same logical
 	/// action (different states of the same action share an id).
 	fn id(&self) -> WalletActionId;
+
+	/// The IDs of VTXOs which are currently in-use, either being spent or being
+	/// created, by the action and should be included in the wallet's balance.
+	/// The VTXOs should not be stored as spendable in the wallet, but they should
+	/// be retrievable via [BarkPersister].
+	///
+	/// See [crate::Wallet::balance] for more information.
+	fn pending_balance_vtxo_ids(&self) -> Vec<VtxoId>;
 
 	/// Called to advance the action state
 	///

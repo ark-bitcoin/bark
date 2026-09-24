@@ -883,6 +883,11 @@ impl RoundState {
 		}
 	}
 
+	/// The holder under which this round locks its inputs.
+	pub fn lock_holder(&self) -> Option<VtxoLockHolder> {
+		self.movement_id.map(|id| VtxoLockHolder::Movement { id })
+	}
+
 	/// Returns the input VTXOs that are locked in this round, but only
 	/// if no output VTXOs were issued yet.
 	pub fn locked_pending_inputs(&self) -> &[Vtxo<Full>] {
@@ -1799,14 +1804,16 @@ async fn persist_round_success(
 	// we first try all actions that need to happen and only afterwards return errors
 	// so that we achieve maximum success
 
-	let store_result = wallet.store_spendable_vtxos(new_vtxos).await
-		.context("failed to store new VTXOs");
+	// Spend the inputs before storing the outputs: in between, the balance
+	// misses these sats for a moment rather than counting them twice.
 	// The server completed the round, so the inputs are forfeited whatever
 	// state the wallet has for them locally. A recovered wallet can hold
 	// them in any state.
 	let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 	let spent_result = wallet.inner.db.steal_lock_to_spent(&input_ids).await
 		.context("failed to mark input VTXOs as spent");
+	let store_result = wallet.store_spendable_vtxos(new_vtxos).await
+		.context("failed to store new VTXOs");
 	let update_result = if let Some(mid) = movement_id {
 		wallet.inner.movements.finish_movement_with_update(
 			mid,
@@ -2402,7 +2409,13 @@ impl Wallet {
 		Ok(states)
 	}
 
-	/// Balance locked in pending rounds
+	/// The amount the pending rounds will produce as new VTXOs, including
+	/// participations still awaiting their round.
+	///
+	/// This is not the amount locked in rounds: an interactive participation
+	/// locks its inputs once a round attempt starts and a delegated one once
+	/// the server has issued the round. Use [Wallet::balance] for the amount
+	/// locked.
 	pub async fn pending_round_balance(&self) -> anyhow::Result<Amount> {
 		let mut ret = Amount::ZERO;
 		for round in self.pending_round_states().await? {
@@ -2420,7 +2433,7 @@ impl Wallet {
 	pub async fn pending_round_input_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut ret = Vec::new();
 		for round in self.pending_round_states().await? {
-			let holder = round.state().movement_id.map(|id| VtxoLockHolder::Movement { id });
+			let holder = round.state().lock_holder();
 			let inputs = round.state().locked_pending_inputs();
 			ret.reserve(inputs.len());
 			for input in inputs {
