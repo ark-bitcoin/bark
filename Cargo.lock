@@ -516,6 +516,7 @@ name = "bark-nwc"
 version = "0.7.1"
 dependencies = [
  "anyhow",
+ "bark-bitcoin-ext",
  "bitcoin",
  "chrono",
  "futures",

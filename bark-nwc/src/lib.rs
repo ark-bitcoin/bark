@@ -18,6 +18,7 @@
 //! as raw bytes. This costs nothing in practice, because NWC connection keys
 //! are deliberately unrelated to wallet keys.
 
+pub mod amount;
 
 /// Parse the configured relay urls.
 ///
