@@ -1,0 +1,12 @@
+- Let clients choose how long the server tries to pay a lightning invoice
+  Clients can set `retry_for_secs` on `InitiateLightningPaymentRequest`,
+  up to the new `cln_xpay_max_retry_for` setting (default 5m). The server
+  caps larger values to it and makes a single attempt at 0.
+  [#2580](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2580)
+  - `cln_xpay_timeout` may not exceed `cln_xpay_max_retry_for`. When
+    `cln_xpay_max_retry_for` is unset, its default is raised to at least
+    `cln_xpay_timeout`.
+- Don't fail a lightning send when the connection to CLN breaks during xpay
+  xpay may still be paying, so the server now waits out the retry time
+  before it checks the payment, instead of revoking HTLCs CLN may still use.
+  [#2580](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2580)
