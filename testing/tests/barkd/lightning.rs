@@ -22,6 +22,7 @@ async fn ln_receive_via_mailbox(
 	require_bark_version!(> "0.5.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
+	ctx.generate_blocks(2).await;
 
 	// barkd in manual-sync mode: no startup sync, no periodic sync, no
 	// round-events subscription, no mailbox subscription. Only the server
@@ -29,19 +30,9 @@ async fn ln_receive_via_mailbox(
 	// REST call below.
 	let barkd = ctx.barkd("barkd", srv)
 		.cfg(|c| c.daemon_manual_sync = true)
-		.funded(btc(5))
 		.create().await;
 
-	// Pick up the on-chain funding, board, confirm, then force a sync so
-	// the board lands as a spendable VTXO. The full /sync below runs
-	// before any invoices exist, so the mailbox is still empty and this
-	// doesn't prejudge the mailbox-only claim assertion further down.
-	let board_amount = btc(3);
-	barkd.onchain_sync().await;
-	barkd.board_amount(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	barkd.sync().await;
-
+	// Generate two lightning invoices
 	let amount_1 = sat(500_000);
 	let amount_2 = sat(300_000);
 	let invoice_1 = barkd.lightning_invoice(amount_1).await;
@@ -50,7 +41,7 @@ async fn ln_receive_via_mailbox(
 	// In intra mode pay_lightning_wait blocks until the receiver claims.
 	// The claim only lands when we pull the mailbox notification, so run
 	// /sync/mailbox in a concurrent loop until the balance matches.
-	let expected_balance = board_amount + amount_1 + amount_2;
+	let expected_balance = amount_1 + amount_2;
 	tokio::join!(
 		pay(invoice_1.invoice),
 		pay(invoice_2.invoice),
@@ -58,13 +49,13 @@ async fn ln_receive_via_mailbox(
 			let mut claimed = false;
 			for _ in 0..30 {
 				tokio::time::sleep(Duration::from_millis(500)).await;
-				barkd.sync_mailbox().await;
+				barkd.sync().await;
 				if barkd.bark_balance().await.spendable == expected_balance {
 					claimed = true;
 					break;
 				}
 			}
-			assert!(claimed, "lightning receives should be claimed by /sync/mailbox");
+			assert!(claimed, "lightning receives should be claimed by /sync");
 		},
 	);
 
