@@ -20,6 +20,7 @@
 
 pub mod amount;
 pub mod connection;
+pub mod handler;
 pub mod persist;
 
 pub use self::connection::{Connection, ConnectionStore};
