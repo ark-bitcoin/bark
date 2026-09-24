@@ -436,6 +436,8 @@ pub mod exit;
 pub use bark_common::fs_perms;
 pub use bark_common::secret;
 pub mod movement;
+#[cfg(feature = "nwc")]
+pub mod nwc;
 pub mod onchain;
 pub mod payment_request;
 pub mod persist;
