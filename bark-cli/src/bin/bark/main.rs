@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 use std::{env, process};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 use bark::movement::PaymentMethod;
@@ -24,7 +25,7 @@ use futures::StreamExt;
 use log::{debug, info, warn};
 
 use ark::{ProtocolEncoding, VtxoId};
-use bark::PaymentInitOutput;
+use bark::{LightningSendOptions, PaymentInitOutput};
 use bark::vtxo::{VtxoFilter, VtxoStateKind};
 use bark_json as json;
 use bark_json::primitives::WalletVtxoInfo;
@@ -327,6 +328,11 @@ enum Command {
 		/// mode. It is ignored if the destination has only one valid payment method.
 		#[arg(long)]
 		method_index: Option<u32>,
+		/// For lightning payments, how many seconds the server should keep
+		/// trying to pay, capped to the server's maximum. Defaults to the
+		/// server's choice.
+		#[arg(long = "retry-for", value_name = "SECONDS")]
+		retry_for_secs: Option<u64>,
 	},
 
 	/// Send money from your vtxo's to an onchain address
@@ -677,7 +683,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 			output_json(&json::cli::PendingBoardInfo::from(board));
 		},
-		Command::Send { destination, amount, comment, no_sync, wait, method_index } => {
+		Command::Send { destination, amount, comment, no_sync, wait, method_index, retry_for_secs } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
@@ -762,8 +768,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 
 			// Send the payment.
-			let output = wallet.send_payment(
-				selected_method, effective_amount, comment, wait
+			let opts = LightningSendOptions::default()
+				.wait(wait)
+				.retry_for(retry_for_secs.map(Duration::from_secs));
+			let output = wallet.send_payment_with(
+				selected_method, effective_amount, comment, opts,
 			).await?;
 
 			// Wait for lightning payment settlement if requested.

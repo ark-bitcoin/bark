@@ -11,7 +11,9 @@ use bark::actions::lightning::pay::LightningSendState;
 use bark::actions::lightning::receive::LightningReceiveState;
 use bark::movement::MovementStatus;
 use bark::subsystem::Subsystem;
+use bark::LightningSendOptions;
 use cln_rpc::plugins::hold;
+use server::database::Db;
 use server_rpc::protos::mailbox_server::mailbox_message::Message as MailboxMsg;
 
 /// Wait until the hold plugin holds the payment's HTLCs. The invoice turns
@@ -440,4 +442,42 @@ async fn receive_claim_after_hold_invoice_already_settled() {
 
 	let balance = assert_balance_consistent(&wallet, false).await;
 	assert_eq!(balance.spendable, invoice_amount);
+}
+
+#[tokio::test]
+async fn pay_with_retry_for() {
+	let ctx = TestContext::new("bark_sdk/pay_with_retry_for").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	let board_amount = btc(2);
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.boarded(board_amount)
+		.create().await;
+
+	lightning.sync().await;
+
+	let max = srv.config().cln_xpay_max_retry_for;
+
+	// The server keeps the time on the attempt, which the xpay monitor waits
+	// out before reconciling it. 0 makes a single attempt, and a time above
+	// the maximum is capped to it.
+	let db = Db::connect(&srv.config().postgres).await.expect("connect to server db");
+	let one_sec = Duration::from_secs(1);
+	for (retry_for, expected) in [
+		(Duration::ZERO, Duration::ZERO),
+		(max - one_sec, max - one_sec),
+		(max + one_sec, max),
+	] {
+		let invoice = lightning.external.invoice(Some(btc(0.1)), format!("pay-{:?}", retry_for), "pay").await;
+		let opts = LightningSendOptions::default().wait(true).retry_for(Some(retry_for));
+		let invoice = wallet.pay_lightning_invoice_with(invoice, None, opts).await
+			.expect("pay_lightning_invoice failed");
+
+		let attempt = db.read(async |t|
+			t.get_latest_payment_attempt_by_payment_hash(invoice.payment_hash()).await
+		).await.expect("db read").expect("payment attempt");
+		assert_eq!(attempt.retry_for, Some(expected));
+	}
 }

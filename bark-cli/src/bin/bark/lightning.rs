@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
@@ -10,7 +11,7 @@ use lnurl::lnurl::LnUrl;
 use log::info;
 
 use ark::lightning::{PaymentHash, Preimage};
-use bark::Wallet;
+use bark::{LightningSendOptions, Wallet};
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, LightningSendInfo};
 
 use bark_cli::util::output_json;
@@ -94,6 +95,10 @@ pub enum PayCommand {
 		/// Wait for the payment to be settled
 		#[arg(long)]
 		wait: bool,
+		/// How many seconds the server should keep trying to pay, capped to the
+		/// server's maximum. Defaults to the server's choice.
+		#[arg(long = "retry-for", value_name = "SECONDS")]
+		retry_for_secs: Option<u64>,
 	},
 	/// Get the status of an outgoing lightning payment
 	#[command()]
@@ -207,28 +212,32 @@ async fn execute_pay_command(
 	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
 	match pay_command {
-		PayCommand::Invoice { invoice, amount, comment, no_sync, wait } => {
+		PayCommand::Invoice { invoice, amount, comment, no_sync, wait, retry_for_secs } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
 			}
 
+			let opts = LightningSendOptions::default()
+				.wait(wait)
+				.retry_for(retry_for_secs.map(Duration::from_secs));
+
 			if let Ok(invoice) = Bolt11Invoice::from_str(&invoice) {
 				if comment.is_some() {
 					bail!("comment is not supported for BOLT-11 invoices");
 				}
-				wallet.pay_lightning_invoice(invoice, amount, wait).await?;
+				wallet.pay_lightning_invoice_with(invoice, amount, opts).await?;
 			} else if let Ok(offer) = Offer::from_str(&invoice) {
 				if comment.is_some() {
 					bail!("comment is not supported for BOLT-12 offers");
 				}
-				wallet.pay_lightning_offer(offer, amount, wait).await?;
+				wallet.pay_lightning_offer_with(offer, amount, opts).await?;
 			} else if let Ok(lnaddr) = LightningAddress::from_str(&invoice) {
 				let amount = amount.context("amount is required for Lightning addresses")?;
-				wallet.pay_lightning_address(&lnaddr, amount, comment, wait).await?;
+				wallet.pay_lightning_address_with(&lnaddr, amount, comment, opts).await?;
 			} else if let Ok(lnurl) = LnUrl::from_str(&invoice) {
 				let amount = amount.context("amount is required for LNURL")?;
-				wallet.pay_lnurl(&lnurl, amount, comment, wait).await?;
+				wallet.pay_lnurl_with(&lnurl, amount, comment, opts).await?;
 			} else {
 				bail!("argument is not a valid BOLT-11 invoice, BOLT-12 offer, \
 					Lightning address or LNURL");

@@ -87,6 +87,11 @@ pub struct LightningSend {
 	#[serde(default)]
 	pub revocation_key: Option<PublicKey>,
 
+	/// How long the server should keep trying to pay the invoice. `None`
+	/// leaves it to the server, and for checkpoints predating this field.
+	#[serde(default)]
+	pub retry_for: Option<Duration>,
+
 	// Mutable state:
 	pub progress: Progress,
 	/// Unless a developer allows it, we will not auto-exit the HTLCs if revocation fails.
@@ -324,6 +329,7 @@ pub(crate) async fn start_lightning_send(
 	invoice: Invoice,
 	user_amount: Option<Amount>,
 	original_payment_method: PaymentMethod,
+	retry_for: Option<Duration>,
 ) -> anyhow::Result<LightningSend> {
 	let (_, ark_info) = wallet.require_server().await?;
 	let tip = wallet.inner.chain.tip().await?;
@@ -384,6 +390,7 @@ pub(crate) async fn start_lightning_send(
 		htlc_expiry,
 		movement_id: Some(movement_id),
 		revocation_key: Some(revocation_keypair.public_key()),
+		retry_for,
 		allow_exit_of_htlcs: false,
 		progress: Progress::Start,
 	})
@@ -532,7 +539,8 @@ pub(crate) async fn initiate_lightning_send_payment(
 		htlc_vtxo_ids: htlcs.vtxo_ids.iter().map(|v| v.to_bytes().to_vec()).collect(),
 		payment_amount_sat: send.payment_amount.to_sat(),
 		mailbox_id: Some(htlcs.mailbox_id.serialize()),
-		retry_for_secs: None,
+		// The server caps it to its own maximum.
+		retry_for_secs: send.retry_for.map(|d| d.as_secs().try_into().unwrap_or(u32::MAX)),
 	};
 	srv.client.initiate_lightning_payment(req).await
 		.map_err(AdvanceError::Server)?;
