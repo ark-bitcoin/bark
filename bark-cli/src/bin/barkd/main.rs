@@ -579,6 +579,11 @@ async fn main() -> anyhow::Result<()>{
 		.on_wallet_delete(on_wallet_delete)
 		.on_get_mnemonic(on_get_mnemonic);
 
+	#[cfg(feature = "barkd-nwc")]
+	let builder = builder.nwc(Arc::new(
+		nwc::NwcApiImpl::new(Arc::clone(&nwc_manager)),
+	) as Arc<dyn bark_rest::NwcApi>);
+
 	// Serve the embedded bark-web SPA from the same origin as the REST API.
 	#[cfg(feature = "barkd-web-ui")]
 	let builder = builder.web(if cli.no_ui {

@@ -46,6 +46,7 @@ barkd-web-ui = ["bark-rest/web-ui"]
 # and binary size.
 barkd-nwc = [
 	"bark-wallet/nwc",
+	"bark-rest/nwc",
 	"dep:parking_lot",
 	"dep:rustls",
 ]

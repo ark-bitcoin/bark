@@ -179,7 +179,7 @@ let
 					cargoBuildLog=$(mktemp cargoBuildLogXXXX.json)
 					cargo zigbuild --release --locked -p bark-cli --bin bark --bin bark-cli --bin bark-legacy --bin barkd \
 						--no-default-features \
-						--features tls-webpki-roots,sqlite-bundled,barkd-swagger-ui,barkd-web-ui \
+						--features tls-webpki-roots,sqlite-bundled,barkd-swagger-ui,barkd-web-ui,barkd-nwc \
 						--target ${zigbuildTarget target} \
 						--message-format json-render-diagnostics >"$cargoBuildLog"
 				'';
