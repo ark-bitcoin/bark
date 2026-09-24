@@ -1,4 +1,4 @@
-use std::{fs, io};
+use std::{cmp, fs, io};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -192,6 +192,12 @@ mod defaults {
 	/// can detect dead connections before the pool discards them.
 	pub fn idle_timeout_secs() -> u64 { 90 }
 
+	/// 5 minutes. A config that leaves the setting out gets at least its
+	/// `cln_xpay_timeout`, see `Config::load`.
+	pub fn cln_xpay_max_retry_for() -> std::time::Duration {
+		std::time::Duration::from_secs(5 * 60)
+	}
+
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -315,9 +321,13 @@ pub struct Config {
 	pub cln_reconnect_interval: Duration,
 	#[serde(with = "utils::serde::duration")]
 	pub invoice_check_interval: Duration,
-	/// The time we give xpay to try finish a payment
+	/// The time we give xpay to try finish a payment, unless the client
+	/// asks for a different time.
 	#[serde(with = "utils::serde::duration")]
 	pub cln_xpay_timeout: Duration,
+	/// The longest time a client may ask us to give xpay to finish a payment
+	#[serde(default = "defaults::cln_xpay_max_retry_for", with = "utils::serde::duration")]
+	pub cln_xpay_max_retry_for: Duration,
 	#[serde(with = "utils::serde::duration")]
 	pub invoice_check_base_delay: Duration,
 	#[serde(alias = "invoice_check_max_delay", with = "utils::serde::duration")]
@@ -502,9 +512,17 @@ impl Config {
 				config and make sure the watchmand wallet stays funded.");
 		}
 
+		let max_retry_for_set = raw_cfg.get::<Value>("cln_xpay_max_retry_for").is_ok();
+
 		let mut cfg = raw_cfg.try_deserialize::<Config>().context("error parsing config")?;
 		// merge the json parsed cln_array
 		cfg.cln_array.extend(cln_array);
+
+		// A config from before cln_xpay_max_retry_for existed may give xpay
+		// more than the default maximum. Keep such a config starting up.
+		if !max_retry_for_set {
+			cfg.cln_xpay_max_retry_for = cmp::max(cfg.cln_xpay_max_retry_for, cfg.cln_xpay_timeout);
+		}
 
 		Ok(cfg)
 	}
@@ -547,6 +565,18 @@ impl Config {
 			bail!("Invalid configuration: min_trusted_confs must be at least 1, \
 				otherwise unconfirmed deposits from third parties count as trusted.",
 			);
+		}
+
+		// Clients that don't pick a retry time get cln_xpay_timeout, so it has
+		// to be a value they would be allowed to pick themselves.
+		if self.cln_xpay_timeout > self.cln_xpay_max_retry_for {
+			bail!("Invalid configuration: cln_xpay_timeout ({:?}) may not exceed \
+				cln_xpay_max_retry_for ({:?})",
+				self.cln_xpay_timeout, self.cln_xpay_max_retry_for,
+			);
+		}
+		if i32::try_from(self.cln_xpay_max_retry_for.as_secs()).is_err() {
+			bail!("Invalid configuration: cln_xpay_max_retry_for is too large");
 		}
 
 		// At 0 mailbox pages are empty while have_more stays true, so readers page forever.
@@ -752,6 +782,42 @@ mod test {
 	}
 
 	#[test]
+	fn cln_xpay_max_retry_for_defaults_to_at_least_cln_xpay_timeout() {
+		let dir = std::env::temp_dir().join("captaind-config-test");
+		std::fs::create_dir_all(&dir).unwrap();
+
+		let default = std::fs::read_to_string(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+		let without_max = default.lines()
+			.filter(|l| !l.starts_with("cln_xpay_max_retry_for"))
+			.collect::<Vec<_>>().join("\n");
+		let path = dir.join("without-cln-xpay-max-retry-for.toml");
+		std::fs::write(&path, without_max).unwrap();
+
+		let load = |path: &Path, timeout: &str| {
+			let env = [("BARK_SERVER__CLN_XPAY_TIMEOUT", timeout)].into_iter()
+				.map(|(k, v)| (k.into(), v.into())).collect::<HashMap<String, String>>();
+			let mut cfg = Config::load_with_custom_env(path, Some(env)).unwrap();
+			cfg.bitcoind.cookie = Some(".cookie".into());
+			cfg
+		};
+
+		// Left out, the maximum is the default...
+		let cfg = load(&path, "60s");
+		assert_eq!(cfg.cln_xpay_max_retry_for, defaults::cln_xpay_max_retry_for());
+		cfg.validate().expect("valid config");
+
+		// ...unless the configured timeout is longer.
+		let cfg = load(&path, "10m");
+		assert_eq!(cfg.cln_xpay_max_retry_for, Duration::from_secs(10 * 60));
+		cfg.validate().expect("a config without the setting keeps starting up");
+
+		// Set explicitly below the timeout, it is still refused.
+		let cfg = load(Path::new(DEFAULT_CAPTAIND_CONFIG_PATH), "10m");
+		assert_eq!(cfg.cln_xpay_max_retry_for, Duration::from_secs(5 * 60));
+		cfg.validate().expect_err("explicit maximum below the timeout");
+	}
+
+	#[test]
 	fn parse_validate_default_watchmand_config_file() {
 		let mut cfg = watchmand::Config::load(DEFAULT_WATCHMAND_CONFIG_PATH)
 			.expect("error loading config");
@@ -848,6 +914,31 @@ mod test {
 
 		cfg.max_offboard_amount = Some(Amount::ZERO);
 		cfg.validate().expect("disabling both together is valid");
+	}
+
+	#[test]
+	fn validate_cln_xpay_timeout_against_max_retry_for() {
+		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+		cfg.bitcoind.cookie = Some(".cookie".into());
+
+		cfg.cln_xpay_max_retry_for = Duration::from_secs(60);
+		cfg.cln_xpay_timeout = Duration::from_secs(60);
+		cfg.validate().expect("a default at the maximum is valid");
+
+		cfg.cln_xpay_timeout = Duration::from_secs(61);
+		let err = cfg.validate().expect_err("clients could not pick the default themselves");
+		assert!(err.to_string().contains("cln_xpay_max_retry_for"), "{}", err);
+
+		cfg.cln_xpay_timeout = Duration::ZERO;
+		cfg.validate().expect("a single attempt without retries is valid");
+
+		cfg.cln_xpay_timeout = Duration::from_secs(60);
+		cfg.cln_xpay_max_retry_for = Duration::from_secs(i32::MAX as u64);
+		cfg.validate().expect("the largest value retry_for_secs can store is valid");
+
+		cfg.cln_xpay_max_retry_for = Duration::from_secs(i32::MAX as u64 + 1);
+		let err = cfg.validate().expect_err("retry_for_secs can't store it");
+		assert!(err.to_string().contains("cln_xpay_max_retry_for is too large"), "{}", err);
 	}
 
 	#[test]

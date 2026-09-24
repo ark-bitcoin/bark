@@ -141,8 +141,12 @@ cln_reconnect_interval = "10s"
 # Interval to double check on pending invoices
 invoice_check_interval = "3s"
 
-# The time we give xpay to try finish a payment
+# The time we give xpay to try finish a payment, unless the client asks for a
+# different time
 cln_xpay_timeout = "60s"
+
+# The longest time a client may ask us to give xpay to finish a payment
+cln_xpay_max_retry_for = "5m"
 
 # FIXME
 invoice_check_base_delay = "10s"

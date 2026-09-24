@@ -489,6 +489,7 @@ impl TestContext {
 			cln_reconnect_interval: Duration::from_secs(10),
 			invoice_check_interval: Duration::from_secs(3),
 			cln_xpay_timeout: Duration::from_secs(5),
+			cln_xpay_max_retry_for: Duration::from_secs(60),
 			invoice_check_base_delay: Duration::from_secs(2),
 			max_invoice_check_delay: Duration::from_secs(10),
 			invoice_poll_interval: Duration::from_secs(10),
