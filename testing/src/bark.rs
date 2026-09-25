@@ -63,15 +63,6 @@ impl Bark {
 		resolve_path(e).expect("failed to resolve BARK_EXEC")
 	}
 
-	pub fn try_cmd() -> Option<TokioCommand> {
-		let e = env::var(BARK_EXEC).ok()?;
-		if e.is_empty() {
-			return None;
-		}
-		let exec = resolve_path(e).ok()?;
-		Some(TokioCommand::new(exec))
-	}
-
 	/// Version of the BARK_EXEC binary, e.g. `0.1.0-beta.8` or `0.6.0-dev`.
 	pub async fn version() -> String {
 		let build = Self::build_of(&Self::bark_exec()).await;
