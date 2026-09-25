@@ -17,7 +17,7 @@
 //! snapshot of `NodeHandle`s for the currently-online nodes into a shared
 //! `parking_lot::RwLock` whenever node state changes.
 //!
-//! Data-path operations (pay, generate/settle/cancel invoice, fetch bolt12)
+//! Data-path operations (pay, generate/settle invoice, fetch bolt12)
 //! run directly on the caller's task: they pick a node via one of the
 //! manager's getters (`active_node`, `hold_active_node`, `node_by_id`) and
 //! issue RPCs on the cloned handle. A small `Ctrl` mpsc channel survives only
@@ -25,7 +25,7 @@
 //!
 //! ## Routing
 //!
-//! `generate_invoice`/`settle_invoice`/`cancel_invoice` route to the backend's
+//! `generate_invoice`/`settle_invoice` route to the backend's
 //! receive monitor (e.g. `ClnHold` for CLN). `pay` routes to the backend's pay
 //! monitor (e.g. `ClnXpay`). `fetch_bolt12` calls the backend's gRPC directly.
 //! Intra-Ark payments short-circuit both paths: the manager updates the DB and
@@ -56,6 +56,7 @@ use crate::error::ContextExt;
 use crate::ln::cln::{ClnNodeInfo, ClnNodeOnlineState, NodeHandle};
 use crate::ln::cln::hold::ClnHoldConfig;
 use crate::ln::cln::xpay::ClnXpayConfig;
+use crate::ln::guard::PaymentGuards;
 use crate::ln::settler::HtlcSettler;
 use crate::ln::validate_intra_ark_payment;
 use crate::sync::SyncManager;
@@ -122,6 +123,7 @@ impl LightningManager {
 		sync_manager: Arc<SyncManager>,
 		mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 		settler: Arc<HtlcSettler>,
+		payment_guards: PaymentGuards,
 	) -> anyhow::Result<LightningManager> {
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
@@ -151,6 +153,7 @@ impl LightningManager {
 			sync_manager,
 			mailbox_manager: mailbox_manager.clone(),
 			settler: settler.clone(),
+			payment_guards,
 
 			payment_update_tx: payment_update_tx.clone(),
 
@@ -643,51 +646,6 @@ impl LightningManager {
 
 	}
 
-	pub async fn cancel_invoice(
-		&self,
-		subscription: LightningHtlcSubscription,
-	) -> anyhow::Result<()> {
-		let id = subscription.id;
-		let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());
-
-		// Cancel on the node that created the subscription.
-		let mut hold_client = self.node_by_id(subscription.lightning_node_id)
-			.context("invoice cannot be canceled: node is now offline")?
-			.hold_rpc.context("node doesn't support hold anymore")?;
-		hold_client.cancel(hold_plugin::CancelRequest {
-			payment_hash: payment_hash.to_vec(),
-		}).await?;
-
-		// The snapshot predates the hold RPC above, so guard on the status we
-		// saw. A subscription settled in the meantime keeps its settlement.
-		let newly_canceled = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
-			id,
-			LightningHtlcSubscriptionStatus::Canceled,
-			None,
-			Some(subscription.status),
-		).await).await?;
-		self.notify_payment_update(payment_hash);
-
-		// Only meter cancels after HTLCs were accepted (bare invoice timeouts
-		// don't count) and only on the caller that actually flipped the row.
-		if newly_canceled && subscription.accepted_at.is_some() {
-			// Restrict to open attempts so a stale failed attempt can't mislabel as self.
-			let is_self_payment = self.db
-				.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
-				.is_some_and(|a| a.is_self_payment());
-			telemetry::add_lightning_payment(
-				subscription.lightning_node_id,
-				subscription.amount().to_msat(),
-				telemetry::LightningPaymentMetricStatus::Canceled,
-				telemetry::LightningDirection::Receive,
-				is_self_payment,
-				subscription.user_agent.as_deref(),
-			);
-		}
-
-		Ok(())
-	}
-
 	/// Fetches and parse an invoice from a bolt-12 offer
 	pub async fn fetch_bolt12_invoice(
 		&self,
@@ -970,6 +928,7 @@ struct LightningManagerProcess {
 	sync_manager: Arc<SyncManager>,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 	settler: Arc<HtlcSettler>,
+	payment_guards: PaymentGuards,
 }
 
 impl LightningManagerProcess {
@@ -1062,6 +1021,7 @@ impl LightningManagerProcess {
 						&self.sync_manager,
 						&self.mailbox_manager,
 						&self.settler,
+						&self.payment_guards,
 					).await {
 						Ok(id) => {
 							info!("Successfully connected to CLN node at {}", uri);
