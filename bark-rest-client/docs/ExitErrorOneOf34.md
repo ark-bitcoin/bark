@@ -1,11 +1,11 @@
-# ExitErrorOneOf33
+# ExitErrorOneOf34
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**r#type** | **Type** |  (enum: vtxo-swept) | 
-**vtxo** | **String** |  | 
+**error** | **String** |  | 
+**r#type** | **Type** |  (enum: vtxo-script-pub-key-invalid) | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

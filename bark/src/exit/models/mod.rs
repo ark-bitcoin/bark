@@ -11,13 +11,13 @@ pub use self::error::ExitError;
 pub use self::states::{
 	ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState, ExitAwaitingDeltaState,
 	ExitClaimableState, ExitClaimInProgressState, ExitClaimedState, ExitVtxoAlreadySpentState,
-	ExitCanceledState,
+	ExitVtxoSweptState, ExitCanceledState,
 };
 
 use std::fmt;
 
 use ark::VtxoId;
-use bitcoin::Txid;
+use bitcoin::{OutPoint, Txid};
 
 use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef, TxStatus};
 
@@ -37,10 +37,14 @@ pub enum ExitState {
 	/// Note: The circumstances in which the latter can occur are typically when the user has stale
 	/// data and is trying to exit an already-spent VTXO.
 	Claimed(ExitClaimedState),
-	/// Terminal state: the exit cannot proceed because the VTXO has already been spent offchain. A
-	/// user can start a unilateral exit for a VTXO but later spend it via a refresh, arkoor, etc,
-	/// in that situation an exit will enter this state.
+	/// Terminal state: the VTXO was spent offchain, so no exit transaction can confirm any more.
+	/// A user can start a unilateral exit and later spend the VTXO via a refresh, arkoor, etc.
 	VtxoAlreadySpent(ExitVtxoAlreadySpentState),
+	/// Terminal state: an output the exit chain needs was spent on chain by someone else, which
+	/// is what happens when the server sweeps a VTXO that expired mid-exit.
+	///
+	/// The state is reached when a conflicting tx has reached 6 confirmations
+	VtxoSwept(ExitVtxoSweptState),
 	/// Resumable state: the user canceled the exit before its final transaction was broadcast;
 	/// ancestor transactions may already be on-chain. The VTXO is untouched and stays spendable,
 	/// so a new exit can be started later.
@@ -62,6 +66,7 @@ pub enum ExitStateKind {
 	ClaimInProgress,
 	Claimed,
 	VtxoAlreadySpent,
+	VtxoSwept,
 	Canceled,
 }
 
@@ -75,6 +80,7 @@ impl ExitStateKind {
 		ExitStateKind::ClaimInProgress,
 		ExitStateKind::Claimed,
 		ExitStateKind::VtxoAlreadySpent,
+		ExitStateKind::VtxoSwept,
 		ExitStateKind::Canceled,
 	];
 
@@ -92,6 +98,7 @@ impl ExitStateKind {
 	pub const FINISHED_STATES: &[ExitStateKind] = &[
 		ExitStateKind::Claimed,
 		ExitStateKind::VtxoAlreadySpent,
+		ExitStateKind::VtxoSwept,
 		ExitStateKind::Canceled,
 	];
 
@@ -107,6 +114,7 @@ impl ExitStateKind {
 			ExitStateKind::ClaimInProgress => "claim-in-progress",
 			ExitStateKind::Claimed => "claimed",
 			ExitStateKind::VtxoAlreadySpent => "vtxo-already-spent",
+			ExitStateKind::VtxoSwept => "vtxo-swept",
 			ExitStateKind::Canceled => "canceled",
 		}
 	}
@@ -129,6 +137,7 @@ impl ExitState {
 			ExitState::ClaimInProgress(_) => ExitStateKind::ClaimInProgress,
 			ExitState::Claimed(_) => ExitStateKind::Claimed,
 			ExitState::VtxoAlreadySpent(_) => ExitStateKind::VtxoAlreadySpent,
+			ExitState::VtxoSwept(_) => ExitStateKind::VtxoSwept,
 			ExitState::Canceled(_) => ExitStateKind::Canceled,
 		}
 	}
@@ -204,6 +213,10 @@ impl ExitState {
 
 	pub fn new_vtxo_already_spent(tip: BlockHeight) -> Self {
 		ExitState::VtxoAlreadySpent(ExitVtxoAlreadySpentState { tip_height: tip })
+	}
+
+	pub fn new_vtxo_swept(tip: BlockHeight, spent_inputs: Vec<OutPoint>) -> Self {
+		ExitState::VtxoSwept(ExitVtxoSweptState { tip_height: tip, spent_inputs })
 	}
 
 	pub fn new_canceled(tip: BlockHeight) -> Self {
@@ -290,6 +303,7 @@ impl ExitState {
 			ExitState::ClaimInProgress(_) => true,
 			ExitState::Claimed(_) => true,
 			ExitState::VtxoAlreadySpent(_) => false,
+			ExitState::VtxoSwept(_) => false,
 			ExitState::Canceled(_) => false,
 		}
 	}
@@ -345,7 +359,7 @@ mod test {
 	}
 
 	/// One [ExitState] per variant, for tests that need to cover the whole enum.
-	fn all_states() -> [ExitState; 8] {
+	fn all_states() -> [ExitState; 9] {
 		let tip = BlockHeight::new(1);
 		let block_ref = BlockRef { height: tip, hash: bitcoin::BlockHash::all_zeros() };
 		[
@@ -356,6 +370,7 @@ mod test {
 			ExitState::new_claim_in_progress(tip, block_ref, txid(1)),
 			ExitState::new_claimed(tip, txid(1), block_ref),
 			ExitState::new_vtxo_already_spent(tip),
+			ExitState::new_vtxo_swept(tip, vec![OutPoint::new(txid(1), 0)]),
 			ExitState::new_canceled(tip),
 		]
 	}
@@ -423,6 +438,7 @@ mod test {
 			ExitStateKind::ClaimInProgress => {},
 			ExitStateKind::Claimed => {},
 			ExitStateKind::VtxoAlreadySpent => {},
+			ExitStateKind::VtxoSwept => {},
 			ExitStateKind::Canceled => {},
 		}
 
@@ -442,6 +458,7 @@ mod test {
 				kind,
 				ExitStateKind::Claimed
 				| ExitStateKind::VtxoAlreadySpent
+				| ExitStateKind::VtxoSwept
 				| ExitStateKind::Canceled,
 			);
 			assert_eq!(

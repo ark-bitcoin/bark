@@ -1,8 +1,13 @@
 
-use bitcoin::{Amount, FeeRate, Weight};
+use bitcoin::{Amount, FeeRate, OutPoint, Weight};
 
 use crate::exit::models::{ExitTx, ExitTxStatus};
 use crate::WalletVtxo;
+
+/// Renders outpoints as a comma-separated `txid:vout` list, for log lines.
+pub(crate) fn format_outpoints(outpoints: &[OutPoint]) -> String {
+	outpoints.iter().map(|o| o.to_string()).collect::<Vec<_>>().join(", ")
+}
 
 /// Counts how many of the given ExitTx objects exist in either the mempool or the blockchain
 pub(crate) fn count_broadcast(status: &[ExitTx]) -> usize {

@@ -177,6 +177,10 @@ pub enum ExitError {
 	#[error("VTXO Already Spent: {vtxo} has already been spent and can no longer be exited")]
 	VtxoAlreadySpent { #[cfg_attr(feature = "utoipa", schema(value_type = String))] vtxo: VtxoId },
 
+	#[error("VTXO Swept: an output the exit chain of {vtxo} needs was spent on chain, so it can \
+		no longer be exited")]
+	VtxoSwept { #[cfg_attr(feature = "utoipa", schema(value_type = String))] vtxo: VtxoId },
+
 	#[error("VTXO ScriptPubKey Invalid: {error}")]
 	VtxoScriptPubKeyInvalid { error: String },
 }
@@ -282,6 +286,9 @@ impl From<bark::exit::ExitError> for ExitError {
 			},
 			bark::exit::ExitError::VtxoAlreadySpent { vtxo } => {
 				ExitError::VtxoAlreadySpent { vtxo }
+			},
+			bark::exit::ExitError::VtxoSwept { vtxo } => {
+				ExitError::VtxoSwept { vtxo }
 			},
 			bark::exit::ExitError::VtxoScriptPubKeyInvalid { error } => {
 				ExitError::VtxoScriptPubKeyInvalid { error }

@@ -142,6 +142,10 @@ pub enum ExitError {
 	#[error("VTXO Already Spent: {vtxo} has already been spent and can no longer be exited")]
 	VtxoAlreadySpent { vtxo: VtxoId },
 
+	#[error("VTXO Swept: an output the exit chain of {vtxo} needs was spent on chain, so it can \
+		no longer be exited")]
+	VtxoSwept { vtxo: VtxoId },
+
 	#[error("VTXO ScriptPubKey Invalid: {error}")]
 	VtxoScriptPubKeyInvalid { error: String },
 }

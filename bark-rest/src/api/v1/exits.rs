@@ -653,6 +653,10 @@ pub async fn emergency_exit_fee(
 		Err(ExitError::UnknownVtxo { vtxo }) => badarg!("Provided VTXO {} is unknown", vtxo),
 		Err(ExitError::VtxoAlreadyExited { vtxo }) => badarg!("Provided VTXO {} has already exited", vtxo),
 		Err(ExitError::VtxoAlreadySpent { vtxo }) => badarg!("Provided VTXO {} has already been spent", vtxo),
+		Err(ExitError::VtxoSwept { vtxo }) => badarg!(
+			"An intermediate output of VTXO {} has been swept and the exit cannot be completed. \
+			You can still attempt to do a refresh and get a fresh VTXO", vtxo,
+		),
 		_ => result.context("Failed to estimate emergency exit fee")?,
 	};
 

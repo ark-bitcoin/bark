@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
-use bitcoin::{Network, Transaction, Txid};
+use bitcoin::{Network, OutPoint, Transaction, Txid};
 use log::{debug, error, info, trace, warn};
 use tokio::sync::RwLock;
 
 use ark::vtxo::Full;
 use ark::Vtxo;
-use bitcoin_ext::{BlockHeight, TransactionExt, TxStatus, DEEPLY_CONFIRMED};
+use bitcoin_ext::{BlockDelta, BlockHeight, TransactionExt, TxStatus};
 
 use crate::chain::{BroadcastError, ChainSource};
 use crate::exit::models::{
@@ -15,6 +15,14 @@ use crate::exit::models::{
 	TransactionInfo,
 };
 use crate::persist::BarkPersister;
+
+/// How deep a spend of an exit input must be buried before it ends the exit.
+///
+/// Ending an exit is irreversible, so a spend that a reorg could still undo must not do it. It
+/// also bounds the block scan in [ExitTransactionManager::find_conflicting_spend]: a spend the
+/// scan doesn't find within this many blocks of the tip is older than the window, and therefore
+/// deep enough to act on.
+const SPEND_CONFIRMATIONS: BlockDelta = BlockDelta::new(6);
 
 pub struct ExitTransactionManager {
 	persister: Arc<dyn BarkPersister>,
@@ -129,9 +137,15 @@ impl ExitTransactionManager {
 			// Grab the package (and its child txid) before we drop it so we can purge every
 			// index entry that points at it.
 			let package = self.index.get(txid).and_then(|w| w.upgrade());
-			let child_txid = match &package {
-				Some(p) => p.read().await.child.as_ref().map(|c| c.info.txid),
-				None => None,
+			let (child_txid, _) = match &package {
+				Some(p) => {
+					let guard = p.read().await;
+					(
+						guard.child.as_ref().map(|c| c.info.txid),
+						guard.exit.tx.input.iter().map(|i| i.previous_output).collect::<Vec<_>>(),
+					)
+				},
+				None => (None, Vec::new()),
 			};
 
 			self.index.remove(txid);
@@ -172,7 +186,7 @@ impl ExitTransactionManager {
 			let status = self.status.get(&txid).unwrap();
 			if let TxStatus::Confirmed(block) = status {
 				trace!("Skipping deeply confirmed exit tx {}", txid);
-				if block.height <= tip.saturating_sub(DEEPLY_CONFIRMED) {
+				if block.height <= tip.saturating_sub(SPEND_CONFIRMATIONS) {
 					continue;
 				}
 			}
@@ -301,6 +315,116 @@ impl ExitTransactionManager {
 			self.status.insert(txid, status.clone());
 			Ok(status)
 		}
+	}
+
+	/// Returns the inputs of `exit_txid` that something else has already spent, which makes
+	/// `exit_txid` unconfirmable.
+	///
+	/// Only spends buried under [SPEND_CONFIRMATIONS] blocks are reported: a spend in the
+	/// mempool can still be replaced, and a freshly mined one can still be reorged out, while
+	/// ending an exit cannot be undone.
+	///
+	/// An empty result means no such spend was found, never that the lookup was inconclusive: a
+	/// chain failure is reported as `Err`.
+	pub async fn find_conflicting_spend(
+		&mut self,
+		tip: BlockHeight,
+		exit_txid: Txid,
+	) -> anyhow::Result<Vec<OutPoint>, ExitError> {
+		let inputs = {
+			let package = self.get_package(exit_txid)?;
+			let guard = package.read().await;
+			guard.exit.tx.input.iter().map(|i| i.previous_output).collect::<Vec<_>>()
+		};
+
+		// Until the parent confirms, the output doesn't exist on chain and nothing can have spent
+		// it.
+		let mut to_scan = Vec::with_capacity(inputs.len());
+		for input in inputs {
+			// Also what makes the utxo set usable below: `gettxout` reports a spent output and
+			// one whose tx isn't mined yet alike, so only a confirmed parent makes its absence
+			// mean "spent".
+			let TxStatus::Confirmed(_) = self.tx_status(input.txid).await? else {
+				// We are only called once every input has confirmed. Skipping quietly would
+				// report "no conflicting spend" for an input we never looked at.
+				warn!("Exit tx {} has unconfirmed input {}, skipping it while looking for \
+					conflicting spends", exit_txid, input,
+				);
+				continue;
+			};
+			// An input still in the utxo set has no confirmed spender, which is the whole
+			// question for every input but the rare swept one. The scan below is only needed to
+			// name the spender and the block it confirmed in.
+			let spent = self.chain_source.outpoint_spent_confirmed(input).await
+				.map_err(|e| ExitError::TransactionRetrievalFailure {
+					txid: exit_txid, error: e.to_string(),
+				})?;
+			if !spent {
+				continue;
+			}
+			to_scan.push(input);
+		}
+
+		// Every input is still in the utxo set, which is the answer for all but the rare swept
+		// exit. Returning here is what keeps the healthy case off the chain entirely, rather than
+		// walking the window and the mempool to find nothing.
+		if to_scan.is_empty() {
+			return Ok(Vec::new());
+		}
+
+		// The scan only has to answer how deep each spend is, not find it: the gate above already
+		// established that every input here is spent. A window of the last [SPEND_CONFIRMATIONS]
+		// blocks decides that, and bounds the walk to a constant instead of the whole chain since
+		// the input's parent confirmed.
+		let scan_start = tip.saturating_sub(SPEND_CONFIRMATIONS);
+
+		// One scan covers every input: the bitcoind backend walks blocks from the start height
+		// looking for the whole set at once, so asking per input would walk them once each.
+		let spends = self.chain_source
+			.txs_spending_inputs(to_scan.clone(), scan_start).await
+			.map_err(|e| ExitError::TransactionRetrievalFailure {
+				txid: exit_txid, error: e.to_string(),
+			})?;
+
+		// Reading the scan the other way round: every input here is spent, so finding its spender
+		// in the window means the spend is recent and a reorg could still undo it, while not
+		// finding one means the spend predates the window and is settled.
+		let mut deeply_spent = Vec::with_capacity(to_scan.len());
+		for input in to_scan {
+			match spends.get(&input) {
+				Some((txid, TxStatus::Confirmed(_) | TxStatus::Mempool)) => {
+					warn!("Exit tx {} has a spend of input {} by {} within the last {} blocks, \
+						too recent to end the exit on", exit_txid, input, txid, SPEND_CONFIRMATIONS,
+					);
+				},
+				// The scan only records spends it found, so it never reports this. Spelled out
+				// rather than folded into a catch-all so that changing that is a compile error
+				// here: a status we can't interpret must not end an exit.
+				Some((_, TxStatus::NotFound)) => {
+					warn!("Exit tx {} got an unexpected NotFound spend status for input {}, \
+						leaving the exit running", exit_txid, input,
+					);
+				},
+				None => deeply_spent.push(input),
+			}
+		}
+
+		// A confirmed exit tx spends its own inputs, and once it is older than the window the
+		// scan can no longer tell that apart from a sweep - it finds no spender either way. The
+		// caller refreshes statuses before asking, so a confirmed exit tx shouldn't reach here,
+		// but reading that off the chain rather than the cache keeps a successful exit from
+		// terminating as swept if it ever does.
+		if !deeply_spent.is_empty() {
+			if let TxStatus::Confirmed(block) = self.get_tx_status(exit_txid).await? {
+				warn!("Exit tx {} confirmed in block {} while its inputs looked spent, so the \
+					spends are its own", exit_txid, block.height,
+				);
+				self.status.insert(exit_txid, TxStatus::Confirmed(block));
+				return Ok(Vec::new());
+			}
+		}
+
+		Ok(deeply_spent)
 	}
 
 	pub async fn set_wallet_child_tx(
@@ -618,5 +742,77 @@ impl ExitTransactionManager {
 				None
 			},
 		}
+	}
+}
+
+// The manager needs a persister, and the sqlite one is the only in-memory implementation we
+// have. That rules these out for the wasm builds, which are compiled without that feature.
+#[cfg(all(test, feature = "sqlite"))]
+mod test {
+	use bitcoin::hashes::Hash;
+	use bitcoin::{absolute::LockTime, transaction::Version, Amount, ScriptBuf, Sequence, TxIn, TxOut, Witness};
+	use rusqlite::Connection;
+
+	use bitcoin_ext::BlockRef;
+
+	use crate::persist::sqlite::SqliteClient;
+	use crate::persist::sqlite::helpers::in_memory_db;
+
+	use super::*;
+
+	fn txid(n: u8) -> Txid {
+		Txid::from_byte_array([n; 32])
+	}
+
+	fn block(height: u32) -> BlockRef {
+		BlockRef {
+			height: BlockHeight::new(height),
+			hash: bitcoin::BlockHash::from_byte_array([7; 32]),
+		}
+	}
+
+	fn confirmed(height: u32) -> TxStatus {
+		TxStatus::Confirmed(block(height))
+	}
+
+	/// An exit tx spending each of `parents`, which stand in for the outputs of the tx above it
+	/// in the exit chain.
+	fn exit_tx(parents: &[OutPoint]) -> Transaction {
+		Transaction {
+			version: Version::TWO,
+			lock_time: LockTime::ZERO,
+			input: parents.iter().map(|p| TxIn {
+				previous_output: *p,
+				script_sig: ScriptBuf::new(),
+				sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+				witness: Witness::new(),
+			}).collect(),
+			output: vec![TxOut { value: Amount::from_sat(1_000), script_pubkey: ScriptBuf::new() }],
+		}
+	}
+
+	/// A manager whose chain source is unroutable, so any call that reaches the chain fails
+	/// instead of passing quietly. The connection is returned because dropping it drops the
+	/// in-memory database with it.
+	fn manager() -> (ExitTransactionManager, Connection) {
+		let (path, conn) = in_memory_db();
+		let db = SqliteClient::open(path).unwrap();
+		let chain = Arc::new(ChainSource::offline_for_test(Network::Regtest));
+		(ExitTransactionManager::new(Arc::new(db), chain).unwrap(), conn)
+	}
+
+	#[tokio::test]
+	async fn an_uncached_confirmed_input_reaches_for_the_chain() {
+		let (mut mgr, _conn) = manager();
+		let parent = OutPoint::new(txid(1), 0);
+		let exit = mgr.track_exit_tx(exit_tx(&[parent])).await.unwrap();
+		mgr.status.insert(parent.txid, confirmed(100));
+		// Passed in rather than fetched, so the failure under test is the lookup's own and not
+		// the tip fetch panicking on the same unroutable source before we get there.
+		let tip = BlockHeight::new(200);
+
+		// A confirmed parent is the one case that has to ask the chain. Reaching the unroutable
+		// chain source fails, which is what keeps this from passing by never getting that far.
+		assert!(mgr.find_conflicting_spend(tip, exit).await.is_err());
 	}
 }

@@ -198,6 +198,26 @@ impl ChainSource {
 		&self.inner
 	}
 
+	/// Builds a chain source pointed at an unroutable address, for tests exercising paths that
+	/// must not reach the network. A call that does reach it fails instead of succeeding quietly,
+	/// which is what turns "this path performs no chain access" into an assertion.
+	#[cfg(all(test, feature = "sqlite"))]
+	pub(crate) fn offline_for_test(network: Network) -> Self {
+		let inner = ChainSourceClient::Esplora(
+			esplora_client::Builder::new("http://127.0.0.1:1").build_async()
+				.expect("esplora client builds without connecting"),
+		);
+		let fee = FeeRate::BROADCAST_MIN;
+		Self {
+			inner,
+			network,
+			zmq_endpoint: None,
+			fee_rates: RwLock::new(FeeRates { fast: fee, regular: fee, slow: fee }),
+			fee_rates_fetched_at: RwLock::new(None),
+			tip_cache: RwLock::new(None),
+		}
+	}
+
 	/// Gets a cached copy of the calculated network [FeeRates]
 	pub async fn fee_rates(&self) -> FeeRates {
 		self.fee_rates.read().await.clone()

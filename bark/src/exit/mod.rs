@@ -538,6 +538,7 @@ impl Exit {
 			Some(ExitState::ClaimInProgress(_)) => true,
 			Some(ExitState::Claimed(_)) => true,
 			Some(ExitState::VtxoAlreadySpent(_)) => false,
+			Some(ExitState::VtxoSwept(_)) => false,
 			Some(ExitState::Canceled(_)) => false,
 			None => false,
 		}
@@ -1104,6 +1105,11 @@ impl Exit {
 					// in a round), so no exit transactions can be broadcast.
 					Some(ExitState::VtxoAlreadySpent(_)) => {
 						return Err(ExitError::VtxoAlreadySpent { vtxo: vtxo_id });
+					},
+					// An output the chain needs is gone, so nothing can be broadcast either, but
+					// the cause differs from an offchain spend so the caller gets its own error.
+					Some(ExitState::VtxoSwept(_)) => {
+						return Err(ExitError::VtxoSwept { vtxo: vtxo_id });
 					},
 					Some(ExitState::Processing(s)) => {
 						// An in-progress exit: confirmed transactions are done, a package awaiting
