@@ -1013,6 +1013,7 @@ mod tests {
 			status: LightningHtlcSubscriptionStatus::Created,
 			lowest_incoming_htlc_expiry: None,
 			accepted_at: None,
+			user_agent: None,
 			created_at: now,
 			updated_at: now,
 			htlc_vtxos: vec![],

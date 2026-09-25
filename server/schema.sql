@@ -241,10 +241,10 @@ CREATE FUNCTION public.lightning_htlc_subscription_update_trigger() RETURNS trig
 BEGIN
 	INSERT INTO lightning_htlc_subscription_history (
 		id, lightning_node_id, payment_hash, invoice, final_amount_msat,
-		receiver_mailbox_id, status, accepted_at, created_at, updated_at
+		receiver_mailbox_id, status, accepted_at, user_agent, created_at, updated_at
 	) VALUES (
 		OLD.id, OLD.lightning_node_id, OLD.payment_hash, OLD.invoice, OLD.final_amount_msat,
-		OLD.receiver_mailbox_id, OLD.status, OLD.accepted_at, OLD.created_at, OLD.updated_at
+		OLD.receiver_mailbox_id, OLD.status, OLD.accepted_at, OLD.user_agent, OLD.created_at, OLD.updated_at
 	);
 
 	IF NEW.updated_at = OLD.updated_at THEN
@@ -329,12 +329,12 @@ BEGIN
 	INSERT INTO lightning_payment_attempt_history (
 		id, lightning_node_id, payment_hash, amount_msat, final_amount_msat,
 		sender_mailbox_id, status, error,
-		block_height, user_fee_sat,
+		block_height, user_fee_sat, user_agent,
 		created_at, updated_at
 	) VALUES (
 		OLD.id, OLD.lightning_node_id, OLD.payment_hash, OLD.amount_msat, OLD.final_amount_msat,
 		OLD.sender_mailbox_id, OLD.status, OLD.error,
-		OLD.block_height, OLD.user_fee_sat,
+		OLD.block_height, OLD.user_fee_sat, OLD.user_agent,
 		OLD.created_at, OLD.updated_at
 	);
 
@@ -832,7 +832,8 @@ CREATE TABLE public.lightning_htlc_subscription (
     payment_hash text NOT NULL,
     invoice text NOT NULL,
     final_amount_msat bigint,
-    receiver_mailbox_id text
+    receiver_mailbox_id text,
+    user_agent text
 );
 
 
@@ -851,7 +852,8 @@ CREATE TABLE public.lightning_htlc_subscription_history (
     payment_hash text,
     invoice text,
     final_amount_msat bigint,
-    receiver_mailbox_id text
+    receiver_mailbox_id text,
+    user_agent text
 );
 
 
@@ -989,7 +991,8 @@ CREATE TABLE public.lightning_payment_attempt (
     sender_mailbox_id text,
     lightning_htlc_subscription_id bigint,
     block_height integer,
-    user_fee_sat bigint
+    user_fee_sat bigint,
+    user_agent text
 );
 
 
@@ -1011,7 +1014,8 @@ CREATE TABLE public.lightning_payment_attempt_history (
     sender_mailbox_id text,
     lightning_htlc_subscription_id bigint,
     block_height integer,
-    user_fee_sat bigint
+    user_fee_sat bigint,
+    user_agent text
 );
 
 

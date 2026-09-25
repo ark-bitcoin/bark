@@ -362,9 +362,19 @@ impl ClnHoldProcess {
 			(LightningHtlcSubscriptionStatus::Canceled, None)
 		};
 
-		self.db.write(async |t| t.store_lightning_htlc_subscription_status(
+		// The `Created` check at the top of this function ran before the hold
+		// RPCs above, so guard the transition on it here too: a subscription
+		// canceled or settled in the meantime must not be moved.
+		let applied = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			htlc_subscription.id, status, expiry,
+			Some(LightningHtlcSubscriptionStatus::Created),
 		).await).await?;
+		if !applied {
+			debug!("Lightning htlc subscription ({}) left Created while being accepted; \
+				skipping the {} transition.", htlc_subscription.id, status,
+			);
+			return Ok(false);
+		}
 
 		let payment_hash = PaymentHash::from(*htlc_subscription.invoice.payment_hash());
 		// Wake check_lightning_receive so the client sees the new status.
@@ -492,11 +502,22 @@ impl ClnHoldProcess {
 			htlc_subscription.id, reason,
 		);
 
-		self.db.write(async |t| t.store_lightning_htlc_subscription_status(
+		// The snapshot predates the hold RPCs the callers make, so guard on the
+		// status we saw. A subscription settled in the meantime keeps its
+		// settlement, and its payment attempt is left alone.
+		let canceled = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			htlc_subscription.id,
 			LightningHtlcSubscriptionStatus::Canceled,
 			None,
+			Some(htlc_subscription.status),
 		).await).await?;
+		if !canceled {
+			debug!("Lightning htlc subscription ({}) left {} before it could be \
+				canceled; not failing its payment attempt.",
+				htlc_subscription.id, htlc_subscription.status,
+			);
+			return Ok(());
+		}
 
 		// Fail the intra-Ark self-payment initiated against this
 		// subscription, if any. An unrelated outgoing payment that merely

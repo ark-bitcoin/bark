@@ -1611,7 +1611,7 @@ async fn lightning_payment_attempt_lifecycle() {
 
 	// Start a payment
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(2), None, &[], None, BlockHeight::new(1), sat(1),
+		node_id, &invoice, sat(2), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"),
 	).await).await.unwrap();
 
 	// One open attempt
@@ -1659,7 +1659,7 @@ async fn lightning_payment_attempt_with_error() {
 	let invoice = Invoice::Bolt11(bolt11);
 
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(1), None, &[], None, BlockHeight::new(1), sat(1)
+		node_id, &invoice, sat(1), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"),
 	).await).await.unwrap();
 
 	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
@@ -1695,7 +1695,7 @@ async fn lightning_payment_attempt_result_update() {
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(1000), None, &[], None, BlockHeight::new(1), sat(1),
+		node_id, &invoice, sat(1000), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"),
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1742,7 +1742,7 @@ async fn mark_htlc_send_vtxos_ln_spent_for_settled_attempt() {
 
 	// Open attempt linked to the HTLC-send vtxo.
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(2), None, &[vtxo.id()], None, BlockHeight::new(1), sat(1),
+		node_id, &invoice, sat(2), None, &[vtxo.id()], None, BlockHeight::new(1), sat(1), Some("bark"),
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1767,9 +1767,9 @@ async fn mark_htlc_send_vtxos_ln_spent_for_settled_attempt() {
 		"HTLC-send vtxo should be ln-spent for a settled payment attempt");
 }
 
-/// `store_lightning_payment_start` must persist `block_height` and
-/// `user_fee`. If these break, the lightning-send fee counter stops
-/// recording.
+/// `store_lightning_payment_start` must persist `block_height`, `user_fee`
+/// and `user_agent`. If these break, the lightning-send fee counter stops
+/// recording and the payment telemetry loses its per-integrator label.
 #[tokio::test]
 async fn lightning_payment_attempt_stores_protocol_fee() {
 	let mut ctx = TestContext::new_minimal("postgresd/lightning_payment_attempt_stores_protocol_fee").await;
@@ -1790,9 +1790,10 @@ async fn lightning_payment_attempt_stores_protocol_fee() {
 
 	let expected_block_height = BlockHeight::new(850_000);
 	let expected_user_fee = sat(1_234);
+	let expected_user_agent = "bark-wasm";
 	db.write(async |t| t.store_lightning_payment_start(
 		node_id, &invoice, sat(50_000), None, &[vtxo.id()],
-		None, expected_block_height, expected_user_fee,
+		None, expected_block_height, expected_user_fee, Some(expected_user_agent),
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1802,6 +1803,8 @@ async fn lightning_payment_attempt_stores_protocol_fee() {
 		"block_height must round-trip through the INSERT + SELECT");
 	assert_eq!(attempt.user_fee, Some(expected_user_fee),
 		"user_fee must round-trip through the INSERT + SELECT");
+	assert_eq!(attempt.user_agent.as_deref(), Some(expected_user_agent),
+		"user_agent must round-trip through the INSERT + SELECT");
 
 	// `get_latest_payment_attempt_by_payment_hash` is the read path used by
 	// the success-recording site, so verify it carries the values too.
@@ -1810,6 +1813,7 @@ async fn lightning_payment_attempt_stores_protocol_fee() {
 	).await).await.unwrap().expect("latest attempt present");
 	assert_eq!(latest.block_height, Some(expected_block_height));
 	assert_eq!(latest.user_fee, Some(expected_user_fee));
+	assert_eq!(latest.user_agent.as_deref(), Some(expected_user_agent));
 }
 
 #[tokio::test]
@@ -1827,7 +1831,7 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 
 	// Store as generated (receive-side) subscription
-	db.write(async |t| t.store_generated_lightning_receive(node_id, &bolt11, 3000, None).await).await.unwrap();
+	db.write(async |t| t.store_generated_lightning_receive(node_id, &bolt11, 3000, None, Some("bark")).await).await.unwrap();
 
 	// Find the htlc subscription (should be in Created state)
 	let payment_hash: ark::lightning::PaymentHash = (&bolt11).into();
@@ -1839,7 +1843,7 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 
 	// Update status to Accepted
 	db.write(async |t| t.store_lightning_htlc_subscription_status(
-		sub_id, LightningHtlcSubscriptionStatus::Accepted, Some(BlockHeight::new(200)),
+		sub_id, LightningHtlcSubscriptionStatus::Accepted, Some(BlockHeight::new(200)), None,
 	).await).await.unwrap();
 
 	let latest = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await.unwrap().unwrap();
@@ -1848,7 +1852,7 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 
 	// Calling Accepted again should NOT change accepted_at (idempotency)
 	db.write(async |t| t.store_lightning_htlc_subscription_status(
-		sub_id, LightningHtlcSubscriptionStatus::Accepted, None,
+		sub_id, LightningHtlcSubscriptionStatus::Accepted, None, None,
 	).await).await.unwrap();
 	let latest2 = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await.unwrap().unwrap();
 	assert_eq!(latest.accepted_at, latest2.accepted_at, "accepted_at must not change on duplicate");
@@ -1874,20 +1878,35 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 	// The claim and the hold settler both write `Settled` for the same
 	// subscription, so the second write must be a no-op.
 	db.write(async |t| t.store_lightning_htlc_subscription_status(
-		sub_id, LightningHtlcSubscriptionStatus::Settled, None,
+		sub_id, LightningHtlcSubscriptionStatus::Settled, None, None,
 	).await).await.unwrap();
 	let settled = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await)
 		.await.unwrap().unwrap();
 	assert_eq!(settled.status, LightningHtlcSubscriptionStatus::Settled);
 
 	db.write(async |t| t.store_lightning_htlc_subscription_status(
-		sub_id, LightningHtlcSubscriptionStatus::Settled, None,
+		sub_id, LightningHtlcSubscriptionStatus::Settled, None, None,
 	).await).await.expect("duplicate Settled write must not error");
 	let settled2 = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await)
 		.await.unwrap().unwrap();
 	assert_eq!(settled2.status, LightningHtlcSubscriptionStatus::Settled);
 	assert_eq!(settled.updated_at, settled2.updated_at,
 		"duplicate status write must not touch the row");
+
+	// A caller that decided on a stale `Created` read must not be able to
+	// move a row that has since advanced. Without the source guard this
+	// would drag the settled subscription back to Accepted.
+	let stale = db.write(async |t| t.store_lightning_htlc_subscription_status(
+		sub_id, LightningHtlcSubscriptionStatus::Accepted, None,
+		Some(LightningHtlcSubscriptionStatus::Created),
+	).await).await.unwrap();
+	assert!(!stale, "a guarded transition from the wrong source must not apply");
+	let after = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await)
+		.await.unwrap().unwrap();
+	assert_eq!(after.status, LightningHtlcSubscriptionStatus::Settled,
+		"the row must keep the status it had");
+	assert_eq!(settled2.updated_at, after.updated_at,
+		"a rejected transition must not touch the row");
 }
 
 #[tokio::test]
