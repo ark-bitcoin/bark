@@ -1,0 +1,5 @@
+- Add the `bark debug-info` command
+  The command prints usefull info to help on debug, such as the network,
+  the mailbox ID and the VTXO xpub of the wallet as JSON. Users can share
+  this output in support requests.
+  [#2578](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2578)
