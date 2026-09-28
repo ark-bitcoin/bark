@@ -304,7 +304,8 @@ where
 		// leaked the bucketed value into the `user_agent` columns.
 		let user_agent: Option<Arc<str>> = match raw_ua {
 			None => None,
-			Some(raw) if telemetry::parse_user_agent_name(raw).is_some() => Some(Arc::from(raw)),
+			Some(raw) if telemetry::parse_user_agent_name(raw).is_some() =>
+				Some(Arc::from(telemetry::cap_user_agent_version(raw))),
 			Some(_) => {
 				// Header is present but doesn't match `<name>/<version>`.
 				// Reject the request with a trailers-only invalid_argument

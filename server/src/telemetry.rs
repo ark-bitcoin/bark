@@ -262,8 +262,9 @@ pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attri
 /// known clients ([SEEN_USER_AGENT_NAMES]) the effective dynamic budget is slightly
 /// smaller than this number.
 const MAX_USER_AGENT_NAMES: usize = 1024;
-/// Max length of an accepted user agent name. Longer names are rejected.
-const MAX_USER_AGENT_NAME_LEN: usize = 32;
+/// Max length of each user agent part. Longer names are rejected, longer
+/// versions are truncated.
+const MAX_USER_AGENT_PART_LEN: usize = 32;
 
 /// Process-wide set of admitted `user_agent.name` label values. Pre-seeded with the
 /// canonical user agent names we ship (pure-Rust `bark` plus the per-binding flavors
@@ -290,18 +291,37 @@ static SEEN_USER_AGENT_NAMES: LazyLock<RwLock<HashSet<&'static str>>> = LazyLock
 /// Called on every request, so this is allocation-free. The schema is rigid:
 /// exactly one `/`, a non-empty name on the left, a non-empty version on the
 /// right. The name must be lowercase ASCII alphanumeric with optional `-`/`_`
-/// and no longer than [MAX_USER_AGENT_NAME_LEN]. We don't lowercase ourselves
+/// and no longer than [MAX_USER_AGENT_PART_LEN]. We don't lowercase ourselves
 /// (that would allocate); uppercase names are rejected so misbehaving clients
 /// get a clear signal rather than silently bucketing as something else.
 pub(crate) fn parse_user_agent_name(raw: &str) -> Option<&str> {
 	let (name, version) = raw.split_once('/')?;
-	if name.is_empty() || version.is_empty() || name.len() > MAX_USER_AGENT_NAME_LEN {
+	if name.is_empty() || version.is_empty() || name.len() > MAX_USER_AGENT_PART_LEN {
 		return None;
 	}
 	if !name.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_')) {
 		return None;
 	}
 	Some(name)
+}
+
+/// Truncate the version of a `<name>/<version>` user agent to
+/// [MAX_USER_AGENT_PART_LEN], so the stored raw value stays bounded.
+pub(crate) fn cap_user_agent_version(raw: &str) -> &str {
+	// Truncate before searching for the `/` so an oversized header is never
+	// scanned in full. A valid name has its `/` within this prefix.
+	let mut end = raw.len().min(2 * MAX_USER_AGENT_PART_LEN + 1);
+	while !raw.is_char_boundary(end) {
+		end -= 1;
+	}
+	let raw = &raw[..end];
+
+	let Some((name, version)) = raw.split_once('/') else { return raw };
+	let mut end = name.len() + 1 + version.len().min(MAX_USER_AGENT_PART_LEN);
+	while !raw.is_char_boundary(end) {
+		end -= 1;
+	}
+	&raw[..end]
 }
 
 /// Bucket a raw `x-user-agent` value into a stable `user_agent.name` telemetry label.
@@ -2021,8 +2041,17 @@ mod user_agent_bucketing_tests {
 		assert_eq!(parse_user_agent_name("bark!/0.2.3"), None);
 		assert_eq!(parse_user_agent_name(" bark/0.2.3"), None);
 		// Name too long.
-		let long = format!("{}/1.0", "a".repeat(MAX_USER_AGENT_NAME_LEN + 1));
+		let long = format!("{}/1.0", "a".repeat(MAX_USER_AGENT_PART_LEN + 1));
 		assert_eq!(parse_user_agent_name(&long), None);
+	}
+
+	#[test]
+	fn cap_user_agent_version_truncates_long_versions() {
+		assert_eq!(cap_user_agent_version("bark/0.2.3"), "bark/0.2.3");
+		let max = format!("bark/{}", "1".repeat(MAX_USER_AGENT_PART_LEN));
+		assert_eq!(cap_user_agent_version(&max), max);
+		let long = format!("bark/{}", "1".repeat(MAX_USER_AGENT_PART_LEN + 10));
+		assert_eq!(cap_user_agent_version(&long), max);
 	}
 
 	#[test]
