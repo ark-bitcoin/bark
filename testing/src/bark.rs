@@ -21,6 +21,8 @@ use tokio::sync::Mutex;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 use bark::{BarkNetwork, Config, OpenWalletArgs, WalletSeed};
+use bark::actions::{WalletActionCheckpoint as Cp, arkoor_send, board, offboard};
+use bark::actions::lightning::{pay, receive};
 use bark::lock_manager::memory::MemoryLockManager;
 use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
@@ -49,44 +51,75 @@ pub struct Bark {
 	timeout: Option<Duration>,
 	bitcoind: Option<Arc<Bitcoind>>,
 	command_log: Mutex<fs::File>,
+	/// Binary this instance drives. Defaults to `BARK_EXEC`; an upgrade test
+	/// points it at an older release so one wallet can be driven by two builds.
+	exec: PathBuf,
 }
 
 impl Bark {
-	pub fn cmd() -> TokioCommand {
+	/// The build under test, as named by `BARK_EXEC`.
+	fn bark_exec() -> PathBuf {
 		let e = env::var(BARK_EXEC).expect("BARK_EXEC env not set");
-		let exec = resolve_path(e).expect("failed to resolve BARK_EXEC");
-		TokioCommand::new(exec)
+		resolve_path(e).expect("failed to resolve BARK_EXEC")
 	}
 
-	pub fn try_cmd() -> Option<TokioCommand> {
-		let e = env::var(BARK_EXEC).ok()?;
-		if e.is_empty() {
-			return None;
-		}
-		let exec = resolve_path(e).ok()?;
-		Some(TokioCommand::new(exec))
-	}
-
-	/// Extract the version from the BARK_EXEC binary.
-	///
-	/// Returns the version string, e.g. "0.1.0-beta.8" or "0.6.0-dev".
+	/// Version of the BARK_EXEC binary, e.g. `0.1.0-beta.8` or `0.6.0-dev`.
 	pub async fn version() -> String {
-		let output = Self::cmd()
+		let build = Self::build_of(&Self::bark_exec()).await;
+		build.strip_prefix("bark ")
+			.and_then(|rest| rest.split_whitespace().next())
+			.unwrap_or_else(|| panic!("unexpected bark --version output: {}", build))
+			.to_string()
+	}
+
+	/// Full `--version` line of this instance's binary, e.g.
+	/// `bark 0.7.1-dev (a1b2c3d)`. The hash is what separates two builds: every
+	/// build after a release tag reports the same `X.Y.Z-dev`.
+	pub async fn instance_build(&self) -> String {
+		Self::build_of(&self.exec).await
+	}
+
+	async fn build_of(exec: &Path) -> String {
+		let output = TokioCommand::new(exec)
 			.arg("--version")
 			.output()
 			.await
 			.expect("failed to run bark --version");
 		assert!(output.status.success(), "bark --version failed");
 
-		// Output format: "bark 0.1.0-beta.8 (hash)"
 		let stdout = String::from_utf8(output.stdout).expect("invalid utf8 in bark --version");
-		let version = stdout.trim()
-			.strip_prefix("bark ")
-			.expect("unexpected bark --version format")
-			.split_whitespace()
-			.next()
-			.expect("no version found in bark --version output");
-		version.to_string()
+		stdout.trim().to_string()
+	}
+
+	/// Command for this instance's binary.
+	fn command(&self) -> TokioCommand {
+		TokioCommand::new(&self.exec)
+	}
+
+	/// The same wallet driven by `BARK_EXEC`, which is the upgrade an
+	/// [`crate::util::old_bark_exec`] wallet is subjected to: opening the
+	/// datadir runs any new migration.
+	///
+	/// The datadir is shared, not copied, so only one of the two handles may be
+	/// used at a time; the counter and command log carry over.
+	pub async fn upgraded(&self) -> Bark {
+		let command_log = fs::OpenOptions::new()
+			.append(true)
+			.create(true)
+			.open(self.datadir.join(COMMAND_LOG_FILE))
+			.await
+			.expect("failed to open command log");
+
+		Bark {
+			name: self.name.clone(),
+			datadir: self.datadir.clone(),
+			config: self.config.clone(),
+			counter: AtomicUsize::new(self.counter.load(Ordering::Relaxed)),
+			timeout: self.timeout,
+			bitcoind: self.bitcoind.clone(),
+			command_log: Mutex::new(command_log),
+			exec: Self::bark_exec(),
+		}
 	}
 
 	/// Creates Bark client with an optional bitcoind daemon.
@@ -107,9 +140,14 @@ impl Bark {
 		config: Config,
 		bitcoind: Option<Arc<Bitcoind>>,
 	) -> anyhow::Result<Bark> {
-		Self::try_new_with_create_opts(name, datadir, network, config, bitcoind, None, None, false).await
+		Self::try_new_with_create_opts(
+			name, datadir, network, config, bitcoind, None, None, false, None,
+		).await
 	}
 
+	/// `exec` picks the binary that creates the wallet, defaulting to `BARK_EXEC`.
+	/// Creating with the older release is what puts the database at the schema
+	/// the newer one migrates.
 	pub async fn try_new_with_create_opts(
 		name: impl AsRef<str>,
 		datadir: impl AsRef<Path>,
@@ -119,6 +157,7 @@ impl Bark {
 		mnemonic: Option<String>,
 		birthday: Option<BlockHeight>,
 		force: bool,
+		exec: Option<PathBuf>,
 	) -> anyhow::Result<Bark> {
 		let datadir = datadir.as_ref().to_path_buf();
 
@@ -133,7 +172,8 @@ impl Bark {
 		fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).await
 			.with_context(|| format!("error writing bark config file to {}", config_path.display()))?;
 
-		let mut cmd = Self::cmd();
+		let exec = exec.unwrap_or_else(Self::bark_exec);
+		let mut cmd = TokioCommand::new(&exec);
 		cmd
 			.arg("create")
 			.arg(format!("--{}", network))
@@ -178,6 +218,7 @@ impl Bark {
 			timeout: None,
 			command_log: Mutex::new(fs::File::create(datadir.join(COMMAND_LOG_FILE)).await?),
 			datadir: datadir,
+			exec,
 		})
 	}
 
@@ -240,6 +281,54 @@ impl Bark {
 		};
 
 		Ok(db)
+	}
+
+	/// Steps this wallet has checkpointed, sorted. Lets a test assert where it
+	/// parked instead of inferring it from the end state. The matches take no
+	/// wildcard, so a new step fails to compile here until it is named.
+	pub async fn checkpoint_steps(&self) -> Vec<String> {
+		let checkpoints = self.db_client().await
+			.expect("failed to open the wallet database")
+			.get_all_wallet_action_checkpoints().await
+			.expect("failed to read wallet action checkpoints");
+
+		let mut steps = checkpoints.into_iter().map(|cp| match cp {
+			Cp::Board(b) => format!("board.{}", match b.progress {
+				board::Progress::Broadcasting { .. } => "Broadcasting",
+				board::Progress::Confirming { .. } => "Confirming",
+			}),
+			Cp::ArkoorSend(s) => format!("arkoor.{}", match s.progress {
+				arkoor_send::Progress::Cosigning => "Cosigning",
+				arkoor_send::Progress::Registration { .. } => "Registration",
+				arkoor_send::Progress::Delivery { .. } => "Delivery",
+				arkoor_send::Progress::Finalizing { .. } => "Finalizing",
+			}),
+			Cp::Offboard(o) => format!("offboard.{}", match o.progress {
+				offboard::Progress::Start => "Start",
+				offboard::Progress::SplitWithArkoor => "SplitWithArkoor",
+				offboard::Progress::ArkoorRegistrationRequired { .. } =>
+					"ArkoorRegistrationRequired",
+				offboard::Progress::ReadyForOffboard { .. } => "ReadyForOffboard",
+				offboard::Progress::OffboardTxPrepared { .. } => "OffboardTxPrepared",
+				offboard::Progress::ReadyForBroadcast { .. } => "ReadyForBroadcast",
+				offboard::Progress::AwaitingConfirmations { .. } => "AwaitingConfirmations",
+			}),
+			Cp::LightningSend(s) => format!("ln_send.{}", match s.progress {
+				pay::Progress::Start => "Start",
+				pay::Progress::HtlcReceived(_) => "HtlcReceived",
+				pay::Progress::PaymentInitiated(_) => "PaymentInitiated",
+				pay::Progress::RevocableHtlcs { .. } => "RevocableHtlcs",
+				pay::Progress::RevocationStuck { .. } => "RevocationStuck",
+			}),
+			Cp::LightningReceive(r) => format!("ln_recv.{}", match r.progress {
+				receive::Progress::AwaitingPayment => "AwaitingPayment",
+				receive::Progress::HtlcsReady(_) => "HtlcsReady",
+				receive::Progress::PreimageRevealed(_) => "PreimageRevealed",
+				receive::Progress::Delivering(_) => "Delivering",
+			}),
+		}).collect::<Vec<_>>();
+		steps.sort();
+		steps
 	}
 
 	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet> {
@@ -1043,7 +1132,7 @@ impl Bark {
 	{
 		let args: Vec<String> = args.into_iter().map(|x| x.as_ref().to_string()).collect();
 
-		let mut command = Bark::cmd();
+		let mut command = self.command();
 
 		if let Ok(nb) = env::var(BARK_TOKIO_WORKER_THREADS) {
 			command.env("TOKIO_WORKER_THREADS", nb);
@@ -1087,23 +1176,19 @@ impl Bark {
 			}
 		});
 
-		// Take stdout out so we can drain it concurrently with `wait`. If the child
-		// produces enough output to fill the kernel pipe buffer (≈8 KiB on some
-		// container runtimes, 64 KiB on a typical desktop Linux) and we only read
-		// after `wait` returns, the child blocks on its next write and the wait
-		// deadlocks until the timeout fires. Joining a `read_to_string` future with
-		// `wait` keeps the pipe drained for the whole lifetime of the child.
+		// The child's stdout must be read while it runs: once the pipe buffer
+		// fills, the child blocks on its next write and never exits. The read
+		// goes on its own task because `read_to_string` ends only at EOF, which
+		// a hung child never reaches — awaiting it here would outlast the
+		// timeout below and never reach the kill.
 		let mut stdout = child.stdout.take().expect("stdout was piped");
-		let read_fut = async move {
+		let stdout_task = tokio::spawn(async move {
 			let mut buf = String::new();
 			stdout.read_to_string(&mut buf).await.unwrap();
 			buf
-		};
+		});
 
-		let (exit_result, read_result) = tokio::join!(
-			tokio::time::timeout(timeout, child.wait()),
-			read_fut,
-		);
+		let exit_result = tokio::time::timeout(timeout, child.wait()).await;
 
 		// on timeout, kill the child
 		if exit_result.is_err() {
@@ -1111,7 +1196,7 @@ impl Bark {
 			command_log.write_all("TIMED OUT\n".as_bytes()).await?;
 			child.kill().await.map_err(|e| anyhow!("can't kill timedout child: {}", e))?;
 		}
-		let out = read_result;
+		let out = stdout_task.await.expect("stdout reader panicked");
 		trace!("output of command '{}': {}", command_str, out);
 		let outfile = folder.join("stdout.log");
 		if let Err(e) = fs::write(&outfile, &out).await {
@@ -1199,6 +1284,7 @@ impl Bark {
 					.expect("failed to create command log"),
 			),
 			datadir,
+			exec: self.exec.clone(),
 		}
 	}
 }

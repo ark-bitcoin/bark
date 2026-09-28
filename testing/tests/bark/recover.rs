@@ -55,6 +55,7 @@ async fn recover_mnemonic() {
 		Some(mnemonic.to_string()),
 		None,
 		true,
+		None,
 	).await;
 
 	match get_bark_chain_source_from_env() {
@@ -90,6 +91,7 @@ async fn recover_mnemonic() {
 		Some(mnemonic.to_string()),
 		Some(BlockHeight::new(0)),
 		true,
+		None,
 	).await.expect("mnemonic + birthday should work");
 	assert_eq!(onchain, recovered.onchain_balance().await);
 	//TODO(stevenroose) implement offchain recovery

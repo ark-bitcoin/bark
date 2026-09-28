@@ -64,7 +64,7 @@ async fn bark_create_force_flag() {
 	let bitcoind = Arc::new(ctx.new_bitcoind("bark_bitcoind").await);
 	let cfg = ctx.bark_default_cfg(&srv, Some(&bitcoind));
 	Bark::try_new_with_create_opts(
-		"bark", datadir, BarkNetwork::Regtest, cfg, Some(bitcoind), None, None, true,
+		"bark", datadir, BarkNetwork::Regtest, cfg, Some(bitcoind), None, None, true, None,
 	).await.unwrap();
 
 	assert!(std::path::Path::is_dir(ctx.datadir.join("bark").as_path()));
