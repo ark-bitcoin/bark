@@ -20,6 +20,7 @@
 
 pub mod amount;
 pub mod connection;
+pub mod error;
 pub mod handler;
 pub mod manager;
 pub mod persist;
