@@ -22,8 +22,8 @@ use bark::actions::lightning::receive::{
 use crate::cli::fees::FeeSchedule;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
-use crate::exit::{ExitState, ExitStateKind};
-use crate::primitives::{TransactionInfo, VtxoStateInfo, WalletVtxoInfo};
+use crate::exit::ExitState;
+use crate::primitives::{TransactionInfo, WalletVtxoInfo};
 use crate::serde_utils;
 
 #[derive(Debug, Clone, Serialize)]
@@ -296,8 +296,8 @@ pub struct Balance {
 	pub pending_offboard: Amount,
 	/// Sats held in VTXOs whose unilateral exit has committed on-chain but which
 	/// haven't yet been drained to the onchain wallet: their state is
-	/// [`VtxoStateInfo::Exited`] and their exit has not reached
-	/// [`ExitStateKind::Claimed`].
+	/// [`crate::primitives::VtxoStateInfo::Exited`] and their exit has not reached
+	/// [`crate::exit::ExitStateKind::Claimed`].
 	#[serde(default, rename = "pending_exit_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64, required))]
 	pub pending_exit: Amount,
