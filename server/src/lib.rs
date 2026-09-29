@@ -3,6 +3,12 @@
 #[macro_use] extern crate serde;
 #[macro_use] extern crate server_log;
 
+// We assume a 64-bit target throughout the codebase, primarily so
+// that u32 and u64 values can be converted into usize using `as`
+// without truncation.
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("the server crate only supports 64-bit targets");
+
 #[macro_use]
 mod error;
 
