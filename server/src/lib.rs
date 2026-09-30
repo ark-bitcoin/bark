@@ -427,6 +427,7 @@ impl Server {
 		).await.context("Failed to start SyncManager")?);
 
 		let mailbox_manager = Arc::new(MailboxManager::new());
+		let payment_guards = PaymentGuards::new();
 
 		let cln = LightningManager::start(
 			rtmgr.clone(),
@@ -435,6 +436,7 @@ impl Server {
 			sync_manager.clone(),
 			mailbox_manager.clone(),
 			htlc_settler.clone(),
+			payment_guards.clone(),
 		).await.context("failed to start LightningManager")?;
 
 		let vtxopool = VtxoPool::new(cfg.vtxopool.clone(), &db).await
@@ -465,7 +467,7 @@ impl Server {
 			},
 			forfeit_nonces: parking_lot::Mutex::new(TimedEntryMap::new()),
 			vtxos_in_flux: VtxosInFlux::new(),
-			payment_guards: PaymentGuards::new(),
+			payment_guards,
 			config: cfg.clone(),
 			db,
 			server_pubkey: server_key.public_key(),

@@ -29,6 +29,7 @@ use ark::lightning::PaymentHash;
 use cln_rpc::node_client::NodeClient;
 
 use crate::ln::node_manager::NodeState;
+use crate::ln::guard::PaymentGuards;
 use crate::ln::settler::HtlcSettler;
 use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
@@ -118,6 +119,7 @@ impl ClnNodeInfo {
 		sync_manager: &Arc<SyncManager>,
 		mailbox_manager: &Arc<crate::mailbox_manager::MailboxManager>,
 		settler: &Arc<HtlcSettler>,
+		payment_guards: &PaymentGuards,
 	) -> anyhow::Result<LightningNodeId> {
 		let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
 		let hold_rpc = self.config.build_hold_client().await.context("failed to connect hold rpc")?;
@@ -150,6 +152,7 @@ impl ClnNodeInfo {
 			monitor_config.clone(),
 			sync_manager.clone(),
 			mailbox_manager.clone(),
+			payment_guards.clone(),
 		).await.context("failed to start ClnHold")?;
 
 		let xpay = ClnXpay::start(
