@@ -401,6 +401,15 @@ impl<'t> Tx<'t> {
 		query::get_vtxos_by_id(&self, ids).await
 	}
 
+	/// Like [Self::get_server_vtxos_by_id], but unknown ids are left out
+	/// instead of failing the lookup.
+	pub async fn get_existing_server_vtxos_by_id(
+		&self,
+		ids: &[VtxoId],
+	) -> anyhow::Result<HashMap<VtxoId, VtxoState<Full, ServerVtxoPolicy>>> {
+		query::get_existing_vtxos_by_id(&self, ids).await
+	}
+
 	pub async fn get_user_vtxo_by_id(&self, id: VtxoId) -> anyhow::Result<VtxoState> {
 		let v = self.get_server_vtxo_by_id(id).await?;
 		match v.try_into_user_vtxo_state() {

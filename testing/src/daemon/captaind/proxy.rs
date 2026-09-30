@@ -40,6 +40,10 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.get_vtxo_status(req).await?.into_inner())
 	}
 
+	async fn get_vtxos_by_ids(&self, upstream: &mut ArkClient, req: protos::GetVtxosByIdsRequest) -> Result<protos::GetVtxosByIdsResponse, tonic::Status> {
+		Ok(upstream.get_vtxos_by_ids(req).await?.into_inner())
+	}
+
 	async fn request_board_cosign(&self, upstream: &mut ArkClient, req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
 		Ok(upstream.request_board_cosign(req).await?.into_inner())
 	}
@@ -310,6 +314,13 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	) -> Result<tonic::Response<protos::GetVtxoStatusResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::get_vtxo_status(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
+	}
+
+	async fn get_vtxos_by_ids(
+		&self, req: tonic::Request<protos::GetVtxosByIdsRequest>,
+	) -> Result<tonic::Response<protos::GetVtxosByIdsResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
+		Ok(tonic::Response::new(ArkRpcProxy::get_vtxos_by_ids(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn request_board_cosign(
