@@ -112,7 +112,7 @@ pub async fn get_existing_vtxos_by_id(
 
 	let id_str = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
 	let rows = tx.query(&statement, &[&id_str]).await
-		.context("Query get_vtxos_by_id failed")?;
+		.context("Query get_existing_vtxos_by_id failed")?;
 
 	rows.into_iter()
 		.map(|row| {
