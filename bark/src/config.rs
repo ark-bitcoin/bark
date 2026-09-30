@@ -110,7 +110,7 @@ pub struct Config {
 	/// Format: `<name>/<version>`. The name must be 1-32 chars of lowercase
 	/// ASCII alphanumeric, `-`, or `_`. Anything else (uppercase, missing
 	/// slash, invalid chars, too long) gets the RPC rejected by the server
-	/// with `invalid_argument`.
+	/// with `invalid_argument`. Versions longer than 32 chars are truncated.
 	pub user_agent: Option<String>,
 
 	/// The address of the Esplora HTTP REST server to use.
