@@ -547,6 +547,10 @@ impl ChainSource {
 
 	/// For each provided outpoint, fetches the ID of any confirmed or unconfirmed in which the
 	/// outpoint is spent.
+	///
+	#[deprecated(
+		note = "This function is heavily inefficient on bitcoind and should be avoided if possible.",
+	)]
 	pub async fn txs_spending_inputs<T: IntoIterator<Item = OutPoint>>(
 		&self,
 		outpoints: T,

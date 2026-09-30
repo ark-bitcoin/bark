@@ -322,6 +322,7 @@ impl ExitStateProgress for ExitClaimableState {
 
 		// Check if the VTXO exit has been spent
 		let point = ctx.vtxo.point();
+		#[allow(deprecated)]
 		let result = ctx.wallet.inner.chain
 			.txs_spending_inputs(
 				vec![point],

@@ -574,6 +574,7 @@ impl ExitTransactionManager {
 				.ok_or_else(|| ExitError::MissingAnchorOutput { txid: guard.exit.txid })?;
 			outpoint
 		};
+		#[allow(deprecated)]
 		let spend_results = self.chain_source
 			.txs_spending_inputs([outpoint.clone()], block_scan_start)
 			.await
