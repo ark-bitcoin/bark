@@ -29,6 +29,7 @@ use bark::vtxo::{VtxoFilter, VtxoStateKind};
 use bark_json as json;
 use bark_json::primitives::WalletVtxoInfo;
 
+use bark_cli::connection;
 use bark_cli::wallet::{CreateOpts, create_wallet, open_wallet};
 use bark_cli::log::init_logging;
 use bark_cli::util::output_json;
@@ -154,6 +155,9 @@ enum Command {
 	///
 	/// Configuration will pass in default values when --signet is used, but will
 	/// require full configuration for regtest
+	///
+	/// Stop barkd before you use this command on its datadir, or create the wallet
+	/// through the daemon API.
 	#[command()]
 	Create(CreateOpts),
 
@@ -415,6 +419,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	// Handle create command differently.
 	if let Command::Create(opts) = cli.command {
+		// Hold the lifecycle lock through creation and rollback so cleanup cannot
+		// change a datadir that a daemon or another CLI creation owns.
+		let _barkd_lock = connection::acquire_barkd_lock(&datadir)?;
 		create_wallet(&datadir, USER_AGENT, opts).await?;
 		return Ok(())
 	}
