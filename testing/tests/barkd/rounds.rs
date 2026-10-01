@@ -188,6 +188,7 @@ async fn maintenance_refresh_skips_rejected_vtxo_barkd() {
 
 	// Age both so the daemon's auto-maintenance considers them due for refresh.
 	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
+	wait_for_tip(&barkd, ctx.bitcoind().get_block_count().await).await;
 
 	// A SINGLE round must refresh the healthy vtxo: the daemon submits
 	// [bad, good], the server rejects `bad`, and the daemon re-submits just
