@@ -266,28 +266,12 @@ impl ClnHoldProcess {
 						continue;
 					};
 
-					// Check if the hold invoice is still active (not an intra-ark payment)
-					let req = hold::ListRequest {
-						constraint: Some(hold::list_request::Constraint::PaymentHash(
-							payment_hash.to_byte_array().to_vec(),
-						)),
-					};
-					let res = hold_client.list(req).await?.into_inner();
-					let has_accepted_invoice = res.invoices.iter().any(|i| i.state == InvoiceState::Accepted as i32);
-
-					if has_accepted_invoice {
-						self.cancel_invoice_and_htlc_subscription(
-							&mut hold_client,
-							payment_hash,
-							&htlc_subscription,
-							"htlc vtxo setup timed out",
-						).await?;
-					} else {
-						// For intra-ark payments, the hold invoice is canceled after we set
-						// the subscription to Accepted, so there won't be an accepted invoice
-						// in the hold plugin.
-						self.cancel_htlc_subscription(&htlc_subscription, "htlc vtxo setup timed out").await?;
-					}
+					self.cancel_invoice_and_htlc_subscription(
+						&mut hold_client,
+						payment_hash,
+						&htlc_subscription,
+						"htlc vtxo setup timed out",
+					).await?;
 					continue;
 				}
 			}
@@ -525,20 +509,6 @@ impl ClnHoldProcess {
 			payment_hash: payment_hash.to_byte_array().to_vec(),
 		}).await?;
 
-		self.cancel_htlc_subscription(htlc_subscription, reason).await?;
-
-		Ok(())
-	}
-
-	/// Cancel a subscription without canceling the hold invoice.
-	///
-	/// This is used for intra-ark payments where the hold invoice was already
-	/// canceled when the subscription was set to Accepted.
-	async fn cancel_htlc_subscription(
-		&self,
-		htlc_subscription: &LightningHtlcSubscription,
-		reason: &str,
-	) -> anyhow::Result<()> {
 		debug!("Lightning htlc subscription ({}) canceled: {}.",
 			htlc_subscription.id, reason,
 		);
