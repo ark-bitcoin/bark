@@ -1105,7 +1105,10 @@ async fn test_participate_round_wrong_step() {
 	let proxy = srv.start_proxy_no_mailbox(ProxyB).await;
 	bark.set_timeout(srv.max_round_delay());
 	bark.set_ark_url(&proxy).await;
-	let err = bark.try_refresh_all_no_retry().await.expect_err("refresh should fail").to_alt_string();
+	let (err, _) = tokio::join!(
+		async { bark.try_refresh_all_no_retry().await.expect_err("refresh should fail").to_alt_string() },
+		srv.trigger_round(),
+	);
 	assert!(err.contains("Message arrived late or round was full."), "err: {err}");
 }
 
