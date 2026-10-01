@@ -247,9 +247,16 @@ impl Server {
 		payment_amount: Amount,
 		htlc_vtxo_ids: Vec<VtxoId>,
 		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
+		retry_for: Option<Duration>,
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
 		check_max_amount("lightning send", payment_amount, self.config.max_ln_send_amount)?;
+
+		let retry_for = match retry_for {
+			None => self.config.cln_xpay_timeout,
+			// Capped, not refused: a client may have picked it under a higher maximum.
+			Some(d) => cmp::min(d, self.config.cln_xpay_max_retry_for),
+		};
 
 		let payment_hash = invoice.payment_hash();
 
@@ -353,6 +360,7 @@ impl Server {
 			htlc_vtxo_ids,
 			user_fee,
 			attempt_block_height,
+			retry_for,
 		).await?;
 
 		Ok(())

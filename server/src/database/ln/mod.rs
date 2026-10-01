@@ -4,6 +4,7 @@ pub use model::*;
 
 
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
@@ -129,7 +130,7 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
+				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
 				lpa.user_agent, lpa.lightning_htlc_subscription_id,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
@@ -153,7 +154,7 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
+				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
 				lpa.user_agent, lpa.lightning_htlc_subscription_id,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
@@ -192,7 +193,7 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
+				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
 				lpa.user_agent, lpa.lightning_htlc_subscription_id,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
@@ -240,6 +241,7 @@ impl<'t> Tx<'t> {
 		block_height: BlockHeight,
 		user_fee: Amount,
 		user_agent: Option<&str>,
+		retry_for: Duration,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 
@@ -271,10 +273,11 @@ impl<'t> Tx<'t> {
 				block_height,
 				user_fee_sat,
 				user_agent,
+				retry_for_secs,
 				created_at,
 				updated_at,
 				lightning_htlc_subscription_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), $9)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), $10)
 			RETURNING id, updated_at;
 		").await?;
 
@@ -282,12 +285,13 @@ impl<'t> Tx<'t> {
 		let mailbox_str = sender_mailbox_id.map(|id| id.to_string());
 		let block_height_i32 = i32::try_from(block_height.to_u32())?;
 		let user_fee_sat_i64 = i64::try_from(user_fee.to_sat())?;
+		let retry_for_secs_i32 = i32::try_from(retry_for.as_secs())?;
 		let row = self.query_one(
 			&stmt,
 			&[
 				&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64),
 				&mailbox_str, &requested_status,
-				&block_height_i32, &user_fee_sat_i64, &user_agent,
+				&block_height_i32, &user_fee_sat_i64, &user_agent, &retry_for_secs_i32,
 				&lightning_htlc_subscription_id,
 			],
 		).await?;
@@ -400,7 +404,7 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat,
+				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
 				lpa.user_agent, lpa.lightning_htlc_subscription_id,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa

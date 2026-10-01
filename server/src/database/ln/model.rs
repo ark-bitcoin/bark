@@ -1,6 +1,7 @@
 
 use std::fmt;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
@@ -108,6 +109,9 @@ pub struct LightningPaymentAttempt {
 	/// the metric label at emission time. `None` when the client sent no
 	/// header, and for pre-V66 rows.
 	pub user_agent: Option<String>,
+	/// How long the lightning node was told to keep retrying the payment.
+	/// `None` for pre-V66 rows, for which `cln_xpay_timeout` applies.
+	pub retry_for: Option<Duration>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
 }
@@ -147,6 +151,8 @@ impl TryFrom<Row> for LightningPaymentAttempt {
 			user_fee: row.get::<_, Option<i64>>("user_fee_sat")
 				.map(|f| Amount::from_sat(u64::try_from(f).expect("negative user_fee_sat in db row"))),
 			user_agent: row.get("user_agent"),
+			retry_for: row.get::<_, Option<i32>>("retry_for_secs")
+				.map(|s| Duration::from_secs(u64::try_from(s).expect("negative retry_for_secs in db row"))),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})

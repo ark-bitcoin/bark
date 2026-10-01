@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 use ark::attestations::DelegatedRoundParticipationAttestation;
 use ark::attestations::OffboardRequestAttestation;
@@ -356,7 +356,9 @@ impl rpc::server::ArkService for Server {
 			.transpose()
 			.map_err(|_| tonic::Status::invalid_argument("invalid mailbox_id"))?;
 
-		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids, mailbox_id)
+		let retry_for = req.retry_for_secs.map(|s| Duration::from_secs(s as u64));
+
+		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids, mailbox_id, retry_for)
 			.await
 			.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
