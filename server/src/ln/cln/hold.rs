@@ -38,7 +38,7 @@ use tracing::{debug, error, info, warn};
 
 use ark::lightning::PaymentHash;
 use ark::vtxo::policy::{check_block_delta, check_block_height};
-use bitcoin_ext::BlockDelta;
+use bitcoin_ext::{AmountExt, BlockDelta};
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 
@@ -572,6 +572,15 @@ impl ClnHoldProcess {
 				marking as failed: {}", payment_attempt.id,
 			);
 			self.payment_handler().fail_payment_attempt(&payment_attempt, Some(reason)).await?;
+		} else {
+			telemetry::add_lightning_payment(
+				htlc_subscription.lightning_node_id,
+				htlc_subscription.amount().to_msat(),
+				telemetry::LightningPaymentMetricStatus::Canceled,
+				telemetry::LightningDirection::Receive,
+				false,
+				htlc_subscription.user_agent.as_deref(),
+			);
 		}
 
 		Ok(())
