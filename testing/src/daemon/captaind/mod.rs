@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
+use ark::lightning::PaymentHash;
 use bitcoin_ext::BlockHeight;
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::address::{Address, NetworkUnchecked};
@@ -26,7 +27,7 @@ use crate::{Bitcoind, Daemon, DaemonHelper, TestContext};
 use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
 use crate::constants::env::{CAPTAIND_EXEC, OLD_CAPTAIND_EXEC};
 use crate::ports::pick_port;
-use crate::util::{poll_interval, resolve_path};
+use crate::util::{poll_interval, resolve_path, wait_timeout, FutureExt};
 
 pub type Captaind = Daemon<CaptaindHelper>;
 
@@ -246,6 +247,21 @@ impl Captaind {
 
 	pub async fn get_mailbox_public_rpc(&self) -> MailboxClient {
 		MailboxClient::connect(self.ark_url()).await.expect("can't connect server public rpc")
+	}
+
+	/// Wait until the server has seen the HTLCs of a lightning receive.
+	///
+	/// The hold plugin accepts the invoice before the server picks that up,
+	/// and a claim in between finds nothing to claim.
+	pub async fn wait_for_lightning_receive_accepted(&self, payment_hash: PaymentHash) {
+		let mut rpc = self.get_public_rpc().await;
+		let status = rpc.check_lightning_receive(protos::CheckLightningReceiveRequest {
+			hash: payment_hash.to_vec(),
+			wait: true,
+		}).wait(wait_timeout()).await.expect("check_lightning_receive failed").into_inner().status();
+		assert!(matches!(status,
+			protos::LightningReceiveStatus::Accepted | protos::LightningReceiveStatus::HtlcsReady,
+		), "unexpected lightning receive status: {status:?}");
 	}
 
 	pub async fn start_proxy_no_mailbox(&self, proxy: impl ArkRpcProxy) -> ArkRpcProxyServer {
