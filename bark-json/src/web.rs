@@ -419,6 +419,11 @@ pub struct SendRequest {
 	pub amount_sat: Option<u64>,
 	/// An optional comment, only supported when paying to lightning addresses
 	pub comment: Option<String>,
+	/// For lightning destinations, how many seconds the Ark server should keep
+	/// trying to pay, capped to the server's maximum. The server picks its
+	/// default when empty.
+	#[serde(default)]
+	pub retry_for_secs: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -554,6 +559,10 @@ pub struct LightningPayRequest {
 	pub amount_sat: Option<u64>,
 	/// An optional comment, only supported when paying to lightning addresses
 	pub comment: Option<String>,
+	/// How many seconds the Ark server should keep trying to pay, capped to
+	/// the server's maximum. The server picks its default when empty.
+	#[serde(default)]
+	pub retry_for_secs: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]

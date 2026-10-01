@@ -204,6 +204,7 @@ fn send_at_start() -> LightningSend {
 		htlc_expiry: BlockHeight::new(100),
 		movement_id: Some(MovementId::new(1)),
 		revocation_key: Some(test_pubkey()),
+		retry_for: None,
 		progress: Progress::Start,
 		allow_exit_of_htlcs: false,
 	}

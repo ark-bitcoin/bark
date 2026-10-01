@@ -29,7 +29,7 @@ use bip321::{Bip321Error, Bip321Uri, ExtensionHandler, FieldWithAttributes};
 use bitcoin_ext::AmountExt;
 use log::debug;
 
-use crate::{FeeEstimate, Wallet};
+use crate::{FeeEstimate, LightningSendOptions, Wallet};
 use crate::arkoor::ArkoorAddressError;
 use crate::onchain::OnchainWalletTrait;
 
@@ -742,10 +742,27 @@ impl Wallet {
 		comment: Option<impl AsRef<str>>,
 		wait: bool,
 	) -> anyhow::Result<PaymentInitOutput> {
+		let opts = LightningSendOptions::default().wait(wait);
+		self.send_payment_with(payment_method, input_amount, comment, opts).await
+	}
+
+	/// Same as [`Self::send_payment`], with [`LightningSendOptions`] for
+	/// lightning methods. A warning is logged if `retry_for` is supplied for
+	/// others.
+	pub async fn send_payment_with(
+		&self,
+		payment_method: &PaymentMethod,
+		input_amount: Option<Amount>,
+		comment: Option<impl AsRef<str>>,
+		opts: LightningSendOptions,
+	) -> anyhow::Result<PaymentInitOutput> {
 		let network = self.network().await?;
 
 		if comment.is_some() && !payment_method.supports_comment() {
 			warn!("comment ignored for payment method {}", payment_method.type_str());
+		}
+		if opts.retry_for.is_some() && !payment_method.is_lightning() {
+			warn!("retry_for ignored for payment method {}", payment_method.type_str());
 		}
 
 		let output = match payment_method {
@@ -756,16 +773,16 @@ impl Wallet {
 				PaymentInitOutput::Onchain(txid)
 			},
 			PaymentMethod::Invoice(invoice) => {
-				let paid_invoice = self.pay_lightning_invoice(invoice.clone(), input_amount, wait).await?;
+				let paid_invoice = self.pay_lightning_invoice_with(invoice.clone(), input_amount, opts).await?;
 				PaymentInitOutput::Lightning(paid_invoice)
 			},
 			PaymentMethod::Offer(offer) => {
-				let paid_invoice = self.pay_lightning_offer(offer.clone(), input_amount, wait).await?;
+				let paid_invoice = self.pay_lightning_offer_with(offer.clone(), input_amount, opts).await?;
 				PaymentInitOutput::Lightning(paid_invoice)
 			},
 			PaymentMethod::LightningAddress(address) => {
 				let amount = input_amount.context("amount is required for lightning address")?;
-				let paid_invoice = self.pay_lightning_address(&address, amount, comment, wait).await?;
+				let paid_invoice = self.pay_lightning_address_with(&address, amount, comment, opts).await?;
 				PaymentInitOutput::Lightning(paid_invoice)
 			},
 			PaymentMethod::Ark(address) => {
@@ -775,7 +792,7 @@ impl Wallet {
 			},
 			PaymentMethod::Lnurl(lnurl) => {
 				let amount = input_amount.context("amount is required for lnurl payment")?;
-				let paid_invoice = self.pay_lnurl(&lnurl, amount, comment, wait).await?;
+				let paid_invoice = self.pay_lnurl_with(&lnurl, amount, comment, opts).await?;
 				PaymentInitOutput::Lightning(paid_invoice)
 			},
 			PaymentMethod::OutputScript(_) => {

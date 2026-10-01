@@ -419,6 +419,7 @@ pub use self::config::{
 };
 pub use self::daemon::{tip_watcher, DaemonHandle};
 pub use self::fees::FeeEstimate;
+pub use self::lightning::LightningSendOptions;
 pub use self::import::{ImportVtxoArgs, ImportVtxoError};
 pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::recovery::{RecoveryReport, RecoveryReportEntry, RecoveryStatus};

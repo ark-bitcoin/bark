@@ -279,14 +279,16 @@ impl Barkd {
 	}
 
 	/// Pay a BOLT-11 `invoice` (lightning send), using the amount from the
-	/// invoice. The REST send does not wait for the payment to resolve, so
-	/// callers should drive resolution with [`Barkd::sync`].
-	pub async fn pay_lightning(&self, invoice: &str) {
+	/// invoice. `retry_for_secs` is how long the server keeps trying to pay,
+	/// `None` for its default. The REST send does not wait for the payment to
+	/// resolve, so callers should drive resolution with [`Barkd::sync`].
+	pub async fn pay_lightning(&self, invoice: &str, retry_for_secs: Option<u64>) {
 		let config = self.client_config();
 		wallet_api::send(&config, SendRequest {
 			destination: invoice.to_string(),
 			amount_sat: None,
 			comment: None,
+			retry_for_secs,
 		}).await.expect("barkd lightning send failed");
 	}
 
@@ -724,6 +726,7 @@ impl Barkd {
 			destination: destination.into(),
 			amount_sat: Some(amount.to_sat()),
 			comment: None,
+			retry_for_secs: None,
 		};
 		wallet_api::send(&config, req).await.expect("barkd send failed");
 	}

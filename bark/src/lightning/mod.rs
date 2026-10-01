@@ -2,6 +2,8 @@
 mod pay;
 mod receive;
 
+pub use self::pay::LightningSendOptions;
+
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hashes::Hash;

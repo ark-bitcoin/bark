@@ -1,4 +1,5 @@
 use std::fmt;
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
@@ -22,6 +23,30 @@ use crate::actions::lightning::pay::{
 };
 use crate::lightning::{lnaddr_invoice, lnurlp_invoice};
 use crate::movement::PaymentMethod;
+
+/// Options for a lightning send, see [`Wallet::pay_lightning_invoice_with`].
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct LightningSendOptions {
+	/// Keep the call open until the payment settles or fails, instead of
+	/// returning once it has been kicked off.
+	pub wait: bool,
+	/// How long the server keeps trying to pay, capped to the server's
+	/// maximum. `None` leaves it to the server.
+	pub retry_for: Option<Duration>,
+}
+
+impl LightningSendOptions {
+	pub fn wait(mut self, wait: bool) -> Self {
+		self.wait = wait;
+		self
+	}
+
+	pub fn retry_for(mut self, retry_for: Option<Duration>) -> Self {
+		self.retry_for = retry_for;
+		self
+	}
+}
 
 impl Wallet {
 	/// Returns every in-progress lightning send checkpoint.
@@ -174,10 +199,25 @@ impl Wallet {
 		T: TryInto<Invoice>,
 		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
 	{
+		let opts = LightningSendOptions::default().wait(wait);
+		self.pay_lightning_invoice_with(invoice, user_amount, opts).await
+	}
+
+	/// Same as [`Self::pay_lightning_invoice`], with [`LightningSendOptions`].
+	pub async fn pay_lightning_invoice_with<T>(
+		&self,
+		invoice: T,
+		user_amount: Option<Amount>,
+		opts: LightningSendOptions,
+	) -> anyhow::Result<Invoice>
+	where
+		T: TryInto<Invoice>,
+		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
+	{
 		let invoice = invoice.try_into().context("failed to parse invoice")?;
 		let amount = invoice.get_payment_amount(user_amount)?;
 		info!("Sending bolt11 payment of {} to invoice {}", amount, invoice);
-		self.make_lightning_payment(&invoice, invoice.clone().into(), user_amount, wait).await?;
+		self.make_lightning_payment_with(&invoice, invoice.clone().into(), user_amount, opts).await?;
 		Ok(invoice)
 	}
 
@@ -190,11 +230,23 @@ impl Wallet {
 		comment: Option<impl AsRef<str>>,
 		wait: bool,
 	) -> anyhow::Result<Invoice> {
+		let opts = LightningSendOptions::default().wait(wait);
+		self.pay_lightning_address_with(addr, amount, comment, opts).await
+	}
+
+	/// Same as [`Self::pay_lightning_address`], with [`LightningSendOptions`].
+	pub async fn pay_lightning_address_with(
+		&self,
+		addr: &LightningAddress,
+		amount: Amount,
+		comment: Option<impl AsRef<str>>,
+		opts: LightningSendOptions,
+	) -> anyhow::Result<Invoice> {
 		let comment = comment.as_ref();
 		let invoice: Invoice = lnaddr_invoice(addr, amount, comment).await
 			.context("lightning address error")?.into();
 		info!("Sending {} to lightning address {}", amount, addr);
-		self.make_lightning_payment(&invoice, addr.clone().into(), None, wait).await?;
+		self.make_lightning_payment_with(&invoice, addr.clone().into(), None, opts).await?;
 		info!("Paid invoice {}", invoice);
 		Ok(invoice)
 	}
@@ -210,10 +262,22 @@ impl Wallet {
 		comment: Option<impl AsRef<str>>,
 		wait: bool,
 	) -> anyhow::Result<Invoice> {
+		let opts = LightningSendOptions::default().wait(wait);
+		self.pay_lnurl_with(lnurl, amount, comment, opts).await
+	}
+
+	/// Same as [`Self::pay_lnurl`], with [`LightningSendOptions`].
+	pub async fn pay_lnurl_with(
+		&self,
+		lnurl: &LnUrl,
+		amount: Amount,
+		comment: Option<impl AsRef<str>>,
+		opts: LightningSendOptions,
+	) -> anyhow::Result<Invoice> {
 		let invoice: Invoice = lnurlp_invoice(&lnurl.url, amount, comment).await
 			.context("lnurl-pay error")?.into();
 		info!("Sending {} to lnurl {}", amount, lnurl);
-		self.make_lightning_payment(&invoice, lnurl.clone().into(), None, wait).await?;
+		self.make_lightning_payment_with(&invoice, lnurl.clone().into(), None, opts).await?;
 		info!("Paid invoice {}", invoice);
 		Ok(invoice)
 	}
@@ -224,6 +288,17 @@ impl Wallet {
 		offer: Offer,
 		user_amount: Option<Amount>,
 		wait: bool,
+	) -> anyhow::Result<Invoice> {
+		let opts = LightningSendOptions::default().wait(wait);
+		self.pay_lightning_offer_with(offer, user_amount, opts).await
+	}
+
+	/// Same as [`Self::pay_lightning_offer`], with [`LightningSendOptions`].
+	pub async fn pay_lightning_offer_with(
+		&self,
+		offer: Offer,
+		user_amount: Option<Amount>,
+		opts: LightningSendOptions,
 	) -> anyhow::Result<Invoice> {
 		let (mut srv, _) = self.require_server().await?;
 
@@ -258,7 +333,7 @@ impl Wallet {
 			.context("invalid BOLT12 invoice received from offer")?;
 
 		let invoice: Invoice = invoice.into();
-		self.make_lightning_payment(&invoice, offer.into(), Some(amount), wait).await?;
+		self.make_lightning_payment_with(&invoice, offer.into(), Some(amount), opts).await?;
 		info!("Paid invoice: {}", invoice);
 		Ok(invoice)
 	}
@@ -272,12 +347,24 @@ impl Wallet {
 		user_amount: Option<Amount>,
 		wait: bool,
 	) -> anyhow::Result<()> {
+		let opts = LightningSendOptions::default().wait(wait);
+		self.make_lightning_payment_with(invoice, original_payment_method, user_amount, opts).await
+	}
+
+	/// Same as [`Self::make_lightning_payment`], with [`LightningSendOptions`].
+	pub async fn make_lightning_payment_with(
+		&self,
+		invoice: &Invoice,
+		original_payment_method: PaymentMethod,
+		user_amount: Option<Amount>,
+		opts: LightningSendOptions,
+	) -> anyhow::Result<()> {
 		if !original_payment_method.is_lightning() && !original_payment_method.is_custom() {
 			bail!("Invalid original payment method for lightning payment");
 		}
 
 		let payment_hash = invoice.payment_hash();
-		let mode = if wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
+		let mode = if opts.wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
 
 		if self.is_invoice_paid(payment_hash).await? {
 			bail!("Invoice has already been paid");
@@ -287,12 +374,13 @@ impl Wallet {
 		let guard = self.inner.lock_manager.try_lock(&key).await
 			.context("Payment operation already in progress for this invoice")?;
 
-		// Resume an existing checkpoint, or build a fresh send.
+		// Resume an existing checkpoint, or build a fresh send. A resumed
+		// send keeps the retry time it was started with.
 		let action = match self.lightning_send_checkpoint(payment_hash).await? {
 			Some(existing) => existing,
 			None => {
 				let start = start_lightning_send(
-					self, invoice.clone(), user_amount, original_payment_method,
+					self, invoice.clone(), user_amount, original_payment_method, opts.retry_for,
 				).await?;
 
 				self.inner.db.upsert_wallet_action_checkpoint(

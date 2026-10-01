@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
@@ -9,6 +10,7 @@ use anyhow::Context;
 use utoipa::OpenApi;
 
 use ark::lightning::Offer;
+use bark::LightningSendOptions;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::lnurllib::lnurl::LnUrl;
@@ -290,23 +292,25 @@ pub async fn pay(
 	let wallet = state.require_wallet()?;
 
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
+	let opts = LightningSendOptions::default()
+		.retry_for(body.retry_for_secs.map(Duration::from_secs));
 
 	let invoice = if let Ok(invoice) = Bolt11Invoice::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-11 invoices");
 		}
-		wallet.pay_lightning_invoice(invoice, amount, false).await?
+		wallet.pay_lightning_invoice_with(invoice, amount, opts).await?
 	} else if let Ok(offer) = Offer::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-12 offers");
 		}
-		wallet.pay_lightning_offer(offer, amount, false).await?
+		wallet.pay_lightning_offer_with(offer, amount, opts).await?
 	} else if let Ok(lnaddr) = LightningAddress::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for Lightning addresses")?;
-		wallet.pay_lightning_address(&lnaddr, amount, body.comment, false).await?
+		wallet.pay_lightning_address_with(&lnaddr, amount, body.comment, opts).await?
 	} else if let Ok(lnurl) = LnUrl::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for LNURL")?;
-		wallet.pay_lnurl(&lnurl, amount, body.comment, false).await?
+		wallet.pay_lnurl_with(&lnurl, amount, body.comment, opts).await?
 	} else {
 		badarg!("argument is not a valid BOLT-11 invoice, BOLT-12 offer, Lightning address or LNURL");
 	};
