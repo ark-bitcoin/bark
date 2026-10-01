@@ -207,6 +207,8 @@ async fn maintenance_refresh_skips_rejected_vtxo_barkd() {
 			break;
 		}
 	}
+	// Inputs are marked spent before the outputs and movement are persisted.
+	wait_for_rounds_complete(&ctx, &barkd).await;
 
 	let final_ids = barkd.vtxos(None).await.into_iter().map(|v| v.vtxo.id).collect::<Vec<_>>();
 	assert!(refreshed,
