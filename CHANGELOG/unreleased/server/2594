@@ -1,0 +1,9 @@
+- Add the `GetVtxosStatusByIds` rpc
+  This new rpc method enables batch request of VTXO status, up to 1000
+  VTXOs per request.
+  Each entry carries its own `VtxoStatusAttestation`, and the response
+  lists one state per entry in request order. A wallet that recovers or
+  reconciles many VTXOs makes far fewer requests and stays under the
+  server's rate limit. An unknown id is skipped and listed in
+  `missing_vtxo_ids`.
+  [#2594](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2594)
