@@ -338,7 +338,9 @@ impl TestContext {
 		// P2P stalled. Push blocks one at a time to avoid retriggering the
 		// batch race; `submitblock` is idempotent on already-known blocks.
 		let ctx_rpc = ctx.async_client();
-		let node_rpc = node.async_client();
+		// The async client reports a null result as an error, and null is how
+		// `submitblock` reports an accepted block.
+		let node_rpc = node.sync_client();
 		let mut have = node.get_block_count().await;
 		while have < target {
 			let next = have + 1;
@@ -350,9 +352,9 @@ impl TestContext {
 			// `submitblock`: null = accepted, "duplicate" = already had it,
 			// any other string = rejected. On rejection, only advance if the
 			// tip actually moved (e.g. via P2P); otherwise panic.
-			let resp: serde_json::Value = node_rpc.call_raw(
+			let resp: serde_json::Value = node_rpc.call(
 				"submitblock", &[hex.into()],
-			).await.expect("submitblock on stalled secondary bitcoind");
+			).expect("submitblock on stalled secondary bitcoind");
 			match &resp {
 				serde_json::Value::Null => {},
 				serde_json::Value::String(s) if s == "duplicate" => {},
