@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI8, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use bitcoin::Amount;
+
 use ark::VtxoId;
 use ark::lightning::{Invoice, Offer, OfferAmountExt, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
@@ -1013,11 +1015,10 @@ async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 
 	// Both clients share the same server (and proxy) -> intra-ark self-payment.
 	let bark_payer = ctx.bark("bark-payer", &proxy.address).funded(btc(3)).create().await;
-	let bark_payee = Arc::new(ctx.bark("bark-payee", &proxy.address).funded(btc(3)).create().await);
+	let bark_payee = Arc::new(ctx.bark("bark-payee", &proxy.address).create().await);
 
 	let board_amount = btc(2);
 	bark_payer.board_and_confirm_and_register(&ctx, board_amount).await;
-	bark_payee.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	let pay_amount = btc(1);
 	let invoice_info = bark_payee.bolt11_invoice(pay_amount).await;
@@ -1050,14 +1051,14 @@ async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 	let payee_balance = bark_payee.spendable_balance().await;
 
 	// The payee genuinely received the payment...
-	assert!(payee_balance > board_amount,
+	assert!(payee_balance > Amount::ZERO,
 		"payee should have received the lightning payment, balance: {payee_balance}");
 	// ...and the revoke was refused, so the payer was NOT also refunded.
-	// Conservation: both funded only `board_amount`, so together they can never
-	// hold more than `2 * board_amount` without the server having been drained.
-	assert!(payer_balance + payee_balance <= board_amount + board_amount,
+	// Conservation: only the payer boarded, so together they can never hold
+	// more than `board_amount` without the server having been drained.
+	assert!(payer_balance + payee_balance <= board_amount,
 		"conservation violated: payer {payer_balance} + payee {payee_balance} exceeds \
-		2 x {board_amount}; the server was drained by the revoke-then-claim ordering");
+		{board_amount}; the server was drained by the revoke-then-claim ordering");
 }
 
 /// Regression test for the intra-ark forged-invoice server drain.
@@ -1112,11 +1113,10 @@ async fn intra_ark_forged_invoice_does_not_drain_server() {
 
 	// Both clients share the same server (and proxy) -> intra-ark payment.
 	let bark_payer = ctx.bark("bark-payer", &proxy.address).funded(btc(3)).create().await;
-	let bark_payee = ctx.bark("bark-payee", &proxy.address).funded(btc(3)).create().await;
+	let bark_payee = ctx.bark("bark-payee", &proxy.address).create().await;
 
 	let board_amount = btc(2);
 	bark_payer.board_and_confirm_and_register(&ctx, board_amount).await;
-	bark_payee.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	// The payee invoices 1 BTC through the server.
 	let invoice_amount = btc(1);
@@ -1156,13 +1156,13 @@ async fn intra_ark_forged_invoice_does_not_drain_server() {
 	let payee_balance = bark_payee.spendable_balance().await;
 
 	// The payee was never paid out of the vtxopool for the forged invoice.
-	assert!(payee_balance <= board_amount,
+	assert_eq!(payee_balance, Amount::ZERO,
 		"payee was paid for a forged invoice, balance: {payee_balance}");
-	// Conservation: both funded only `board_amount`, so together they can never
-	// hold more than `2 * board_amount` without the server having been drained.
-	assert!(payer_balance + payee_balance <= board_amount + board_amount,
+	// Conservation: only the payer boarded, so together they can never hold
+	// more than `board_amount` without the server having been drained.
+	assert!(payer_balance + payee_balance <= board_amount,
 		"conservation violated: payer {payer_balance} + payee {payee_balance} exceeds \
-		2 x {board_amount}; the server was drained by the forged invoice");
+		{board_amount}; the server was drained by the forged invoice");
 }
 
 #[tokio::test]
