@@ -21,7 +21,7 @@ use tokio::process::{Command, Child};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::constants::env::DAEMON_INIT_TIMEOUT_MILLIS;
-use crate::util::{FutureExt, poll_interval, wait_for_completion};
+use crate::util::{FutureExt, poll_interval, wait_for_completion, wait_timeout};
 
 /// The file inside the datadir where stderr output is logged.
 pub const STDERR_LOGFILE: &str = "stderr.log";
@@ -241,7 +241,7 @@ impl<T> Daemon<T>
 			signal::kill(pid, signal::Signal::SIGTERM).expect("sending SIGTERM failed");
 		}
 
-		match child.wait().try_wait_millis(30_000).await {
+		match child.wait().try_wait(wait_timeout()).await {
 			Ok(Ok(s)) => if s.success() {
 				info!("Daemon {} succesfully shut down gracefully", self.name);
 			} else {
