@@ -1033,7 +1033,7 @@ impl Server {
 		Ok(Keypair::from_secret_key(&*SECP, &seckey))
 	}
 
-	#[tracing::instrument(skip(self, vtxos))]
+	#[tracing::instrument(skip(self, vtxos, unlock_preimage))]
 	pub async fn cosign_vtxo_tree(
 		&self,
 		vtxos: impl IntoIterator<Item = VtxoRequest>,

@@ -932,8 +932,8 @@ impl<'t> Tx<'t> {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<()> {
-		if let Some(preimage) = self.get_htlc_settlement_by_payment_hash(payment_hash).await? {
-			return badarg!("invoice has already been paid, preimage: {}", preimage);
+		if self.get_htlc_settlement_by_payment_hash(payment_hash).await?.is_some() {
+			return badarg!("invoice has already been paid");
 		}
 		Ok(())
 	}
