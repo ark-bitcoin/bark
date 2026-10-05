@@ -746,6 +746,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tonic 0.14.6",
+ "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

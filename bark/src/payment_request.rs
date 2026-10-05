@@ -4,9 +4,9 @@
 //!
 //! - **Parsing**: [`Wallet::parse_payment_request`] accepts any payment string
 //!   the wallet understands (BIP 321 URIs, `lightning:` URIs, BOLT11
-//!   invoices, BOLT12 offers, lightning addresses, LNURL-pay links, output
-//!   scripts, bitcoin addresses, ark addresses) and returns structured
-//!   [`PaymentRequest`] with per-method validation errors.
+//!   invoices, BOLT12 offers, lightning addresses, LNURL-pay links, LUD-17
+//!   `lnurlp://` URIs, output scripts, bitcoin addresses, ark addresses) and
+//!   returns structured [`PaymentRequest`] with per-method validation errors.
 //!
 //! - **Construction**: [`Wallet::bip321_uri`] returns a [`BarkBip321UriBuilder`]
 //!   for creating BIP 321 URIs backed by the wallet's Ark and Lightning
@@ -19,10 +19,12 @@ use std::str::FromStr;
 use anyhow::Context;
 use ark::address::ParseAddressError;
 use bitcoin::{Amount, Network, Txid};
+use bitcoin::bech32::{self, Bech32, Hrp};
 use bitcoin::constants::ChainHash;
 use lnurllib::lightning_address::LightningAddress;
 use lnurllib::lnurl::LnUrl;
 use log::warn;
+use url::Url;
 
 use ark::lightning::{Bolt11Invoice, Invoice, Offer, OfferAmountExt};
 use bip321::{Bip321Error, Bip321Uri, ExtensionHandler, FieldWithAttributes};
@@ -596,6 +598,14 @@ impl Wallet {
 			return Ok(request);
 		}
 
+		// LUD-17 `lnurlp://` scheme URI. Some wallets use this form of LNURL-pay
+		// instead of bech32.
+		if let Some(lnurl) = lnurlp_scheme_to_lnurl(payment_str) {
+			if let Some(details) = Self::details_for_lnurl(&lnurl) {
+				return Ok(details.into());
+			}
+		}
+
 		// Ark address
 		if let Ok(addr) = ArkAddressType::from_str(payment_str) {
 			return Ok(self.details_for_ark_address(&addr).await.into());
@@ -665,7 +675,8 @@ impl Wallet {
 	///
 	/// Accepts any format supported by the wallet: BIP 321 URIs, `lightning:`
 	/// URIs, BOLT11 invoices, BOLT12 offers, lightning addresses, LNURL-pay
-	/// links, hex output scripts, bare bitcoin addresses, and ark addresses.
+	/// links, LUD-17 `lnurlp://` URIs, hex output scripts, bare bitcoin
+	/// addresses, and ark addresses.
 	///
 	/// Formats are attempted in this order:
 	/// 1. `lightning:` URI (the payload must be a BOLT11 invoice, a BOLT12
@@ -675,9 +686,10 @@ impl Wallet {
 	/// 4. Bare BOLT12 offer
 	/// 5. Lightning address (`user@domain`)
 	/// 6. Raw LNURL-pay link (`lnurl1…`)
-	/// 7. Ark address
-	/// 8. Bare bitcoin address
-	/// 9. Hex-encoded output script
+	/// 7. LUD-17 `lnurlp://` scheme URI
+	/// 8. Ark address
+	/// 9. Bare bitcoin address
+	/// 10. Hex-encoded output script
 	///
 	/// Returns a [`PaymentRequest`] with one or more [`AvailablePaymentMethod`]
 	/// the caller can present to the user. Returns an error if no valid payment
@@ -852,6 +864,56 @@ fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a st
 	}
 }
 
+/// Convert a LUD-17 `lnurlp://` scheme URI into an [`LnUrl`]. LUD-17 replaces
+/// the scheme with HTTPS, or with HTTP for a `.onion` host. The URL parser
+/// normalizes the rest of the URI. For example, it lowercases the host and
+/// removes the default port of the new scheme.
+///
+/// The function recognizes only the pay scheme (`lnurlp`). The withdraw
+/// (`lnurlw`), channel (`lnurlc`), and auth (`keyauth`) schemes are not
+/// payment destinations. For these schemes, the function returns `None`. The
+/// function also returns `None` for a URI that is not a valid URL, that has
+/// extra slashes before the host, that contains userinfo, or that is too long
+/// to encode as bech32.
+fn lnurlp_scheme_to_lnurl(s: &str) -> Option<LnUrl> {
+	/// `LnUrl` encodes itself as bech32 with this HRP.
+	const LNURL_HRP: Hrp = Hrp::parse_unchecked("lnurl");
+
+	let rest = strip_prefix_ignore_ascii_case(s, "lnurlp://")?;
+
+	// The URL parser skips extra slashes before the host, so `lnurlp:///host`
+	// would otherwise parse as `lnurlp://host`.
+	if rest.starts_with(['/', '\\']) {
+		return None;
+	}
+
+	// Parse the authority the same way the HTTP client does, so the `.onion`
+	// check sees the host the request actually goes to. HTTP and HTTPS parse
+	// authorities identically.
+	let url = Url::parse(&format!("https://{}", rest)).ok()?;
+
+	// LNURL endpoints take no credentials, and userinfo can make the
+	// authority look like a different host.
+	if !url.username().is_empty() || url.password().is_some() {
+		return None;
+	}
+
+	// A fully qualified host (`abc.onion.`) ends with a dot.
+	//
+	// Parse the URI again with the HTTP scheme, so an explicit `:443` stays.
+	let url = if url.host_str()?.trim_end_matches('.').ends_with(".onion") {
+		Url::parse(&format!("http://{}", rest)).ok()?
+	} else {
+		url
+	};
+
+	// `LnUrl` encodes itself as bech32 when displayed or serialized, and
+	// panics if the result is over the bech32 length limit.
+	bech32::encode::<Bech32>(LNURL_HRP, url.as_str().as_bytes()).ok()?;
+
+	Some(LnUrl::from_url(url.into()))
+}
+
 #[cfg(test)]
 mod test {
 	use std::str::FromStr;
@@ -947,9 +1009,64 @@ mod test {
 
 		assert!(parse("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_none());
 		assert!(parse("bitcoin:tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_none());
+		assert!(parse("lnurlp://example.com/pay").is_none());
 		assert!(parse("0014751e76e8199196d454941c45d1b3a323f1433bd6").is_none());
 		// BOLT 11 uses `lightning:`, not `lightning://`.
 		assert!(parse(&format!("//{}", INVOICE)).is_none());
+	}
+
+	/// A LUD-17 `lnurlp://` URI maps to an HTTPS URL. A `.onion` host maps to
+	/// HTTP.
+	#[test]
+	fn lnurlp_scheme_to_lnurl_cases() {
+		let url = |s| lnurlp_scheme_to_lnurl(s).map(|l| l.url);
+
+		assert_eq!(url("lnurlp://example.com/pay").as_deref(), Some("https://example.com/pay"));
+		// The scheme match ignores case.
+		assert_eq!(url("LNURLP://example.com/.well-known/lnurlp/ben").as_deref(),
+			Some("https://example.com/.well-known/lnurlp/ben"));
+		// The port and the query do not change.
+		assert_eq!(url("lnurlp://1.2.3.4:8080/p?amount=1").as_deref(),
+			Some("https://1.2.3.4:8080/p?amount=1"));
+		// A Tor `.onion` host maps to HTTP, with or without a port. A fully
+		// qualified host has a trailing dot.
+		assert_eq!(url("lnurlp://abc.onion/pay").as_deref(), Some("http://abc.onion/pay"));
+		assert_eq!(url("lnurlp://abc.onion:8080/pay").as_deref(), Some("http://abc.onion:8080/pay"));
+		assert_eq!(url("lnurlp://ABC.ONION/pay").as_deref(), Some("http://abc.onion/pay"));
+		assert_eq!(url("lnurlp://abc.onion:443/pay").as_deref(), Some("http://abc.onion:443/pay"));
+		assert_eq!(url("lnurlp://abc.onion./pay").as_deref(), Some("http://abc.onion./pay"));
+
+		// Only the real host decides the protocol: a backslash is a path
+		// separator, so the host here is `example.com`.
+		assert_eq!(url("lnurlp://example.com\\x.onion/pay").as_deref(),
+			Some("https://example.com/x.onion/pay"));
+		// Userinfo can disguise the host, so the function rejects it.
+		assert_eq!(url("lnurlp://x.onion:pw@example.com/pay"), None);
+		assert_eq!(url("lnurlp://user@example.com/pay"), None);
+		// The function rejects a malformed authority.
+		assert_eq!(url("lnurlp://foo bar/pay"), None);
+		assert_eq!(url("lnurlp://[/pay"), None);
+		// The function rejects extra slashes before the host.
+		assert_eq!(url("lnurlp:///example.com/pay"), None);
+		assert_eq!(url("lnurlp://\\example.com/pay"), None);
+
+		// The function rejects a URL that is too long to encode as bech32. A URL
+		// just under the limit converts and displays.
+		let too_long = format!("lnurlp://example.com/{}", "a".repeat(620));
+		assert_eq!(url(&too_long), None);
+		let just_fits = format!("lnurlp://example.com/{}", "a".repeat(600));
+		let lnurl = lnurlp_scheme_to_lnurl(&just_fits).unwrap();
+		assert!(lnurl.to_string().starts_with("lnurl1"));
+
+		// Other schemes and bare hosts are not LNURL-pay destinations.
+		assert_eq!(url("lnurlw://example.com/withdraw"), None);
+		assert_eq!(url("lnurlc://example.com/channel"), None);
+		assert_eq!(url("keyauth://example.com/login?tag=login&k1=00"), None);
+		assert_eq!(url("lnurl1dp68gurn8ghj7"), None);
+		assert_eq!(url("https://example.com/pay"), None);
+		assert_eq!(url("lnurlp://"), None);
+		// A multi-byte character across the scheme boundary is not a match.
+		assert_eq!(url("lnurlp:/€x"), None);
 	}
 
 	/// The upper-cased URI must parse back to an equal URI, which only holds
