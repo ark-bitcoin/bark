@@ -3,10 +3,10 @@
 //! This module provides two main capabilities:
 //!
 //! - **Parsing**: [`Wallet::parse_payment_request`] accepts any payment string
-//!   the wallet understands (BIP 321 URIs, BOLT11 invoices, BOLT12 offers,
-//!   lightning addresses, output scripts, bitcoin addresses, ark addresses)
-//!   and returns structured [`PaymentRequest`] with per-method validation
-//!   errors.
+//!   the wallet understands (BIP 321 URIs, `lightning:` URIs, BOLT11
+//!   invoices, BOLT12 offers, lightning addresses, LNURL-pay links, output
+//!   scripts, bitcoin addresses, ark addresses) and returns structured
+//!   [`PaymentRequest`] with per-method validation errors.
 //!
 //! - **Construction**: [`Wallet::bip321_uri`] returns a [`BarkBip321UriBuilder`]
 //!   for creating BIP 321 URIs backed by the wallet's Ark and Lightning
@@ -574,64 +574,26 @@ impl Wallet {
 	}
 
 	/// Try each supported payment format in priority order and return the
-	/// first successful parse as a [`PaymentRequest`].
-	///
-	/// Formats are attempted in this order:
-	/// 1. BIP 321 `bitcoin:` URI (may yield multiple options from destinations)
-	/// 2. Bare BOLT11 invoice
-	/// 3. Bare BOLT12 offer
-	/// 4. Lightning address (`user@domain`)
-	/// 5. Raw LNURL-pay link (`lnurl1…`)
-	/// 6. Ark address
-	/// 7. Bare bitcoin address
-	/// 8. Hex-encoded output script
-	///
-	/// Returns `None` when `payment_str` does not match any known format.
+	/// first successful parse as a [`PaymentRequest`]. See
+	/// [`Self::parse_payment_request`] for the formats and their order.
 	async fn inner_parse_payment_request(
 		&self,
 		network: Network,
 		payment_str: &str,
 	) -> anyhow::Result<PaymentRequest> {
+		if let Some(payload) = strip_prefix_ignore_ascii_case(payment_str, "lightning:") {
+			return Self::parse_lightning_payload(network, payload)
+				.context("The lightning: URI does not contain a lightning payment destination");
+		}
+
 		// BIP 321 URI
 		if let Ok(uri) = BarkBip321Uri::from_str(payment_str) {
 			return self.parse_bip321_uri(network, &uri).await;
 		}
 
-		// Bare BOLT11 invoice
-		if let Ok(bolt11) = Bolt11Invoice::from_str(payment_str) {
-			let details = Self::details_for_bolt11(&bolt11, network, None);
-
-			return Ok(PaymentRequest {
-				label: None,
-				amount: bolt11.amount_milli_satoshis().map(|a| Amount::from_msat_ceil(a)),
-				message: Some(bolt11.description().to_string()),
-				options: vec![details],
-			});
-		}
-
-		// Bare BOLT12 offer
-		if let Ok(offer) = Offer::from_str(payment_str) {
-			let details = Self::details_for_offer(&offer, network, None);
-
-			return Ok(PaymentRequest {
-				label: None,
-				amount: offer.amount().map(|a| a.to_bitcoin_amount().unwrap()),
-				message: offer.description().map(|d| d.to_string()),
-				options: vec![details],
-			});
-		}
-
-		// Lightning address
-		if let Ok(addr) = LightningAddress::from_str(payment_str) {
-			return Ok(Self::details_for_lightning_address(&addr).into());
-		}
-
-		// Raw LNURL link (`lnurl1…`). Only matches the `lnurl` HRP, so it
-		// won't collide with bolt11 (`lnbc…`) handled above.
-		if let Ok(lnurl) = LnUrl::from_str(payment_str) {
-			if let Some(details) = Self::details_for_lnurl(&lnurl) {
-				return Ok(details.into());
-			}
+		// BOLT11 invoice, BOLT12 offer, lightning address, or LNURL-pay link
+		if let Some(request) = Self::parse_lightning_payload(network, payment_str) {
+			return Ok(request);
 		}
 
 		// Ark address
@@ -652,21 +614,70 @@ impl Wallet {
 		bail!("No valid payment option found")
 	}
 
+	/// Parse the lightning payment formats: a bare BOLT11 invoice, a bare
+	/// BOLT12 offer, a lightning address, or a raw LNURL-pay link (`lnurl1…`).
+	/// A `lightning:` URI can contain each of these formats.
+	///
+	/// Returns `None` when `payment_str` does not match one of these formats,
+	/// or when it is an LNURL-auth link.
+	fn parse_lightning_payload(network: Network, payment_str: &str) -> Option<PaymentRequest> {
+		// Bare BOLT11 invoice
+		if let Ok(bolt11) = Bolt11Invoice::from_str(payment_str) {
+			let details = Self::details_for_bolt11(&bolt11, network, None);
+
+			return Some(PaymentRequest {
+				label: None,
+				amount: bolt11.amount_milli_satoshis().map(|a| Amount::from_msat_ceil(a)),
+				message: Some(bolt11.description().to_string()),
+				options: vec![details],
+			});
+		}
+
+		// Bare BOLT12 offer
+		if let Ok(offer) = Offer::from_str(payment_str) {
+			let details = Self::details_for_offer(&offer, network, None);
+
+			return Some(PaymentRequest {
+				label: None,
+				amount: offer.amount().map(|a| a.to_bitcoin_amount().unwrap()),
+				message: offer.description().map(|d| d.to_string()),
+				options: vec![details],
+			});
+		}
+
+		// Lightning address
+		if let Ok(addr) = LightningAddress::from_str(payment_str) {
+			return Some(Self::details_for_lightning_address(&addr).into());
+		}
+
+		// Raw LNURL link (`lnurl1…`). Only matches the `lnurl` HRP, so it
+		// won't collide with bolt11 (`lnbc…`) handled above.
+		if let Ok(lnurl) = LnUrl::from_str(payment_str) {
+			if let Some(details) = Self::details_for_lnurl(&lnurl) {
+				return Some(details.into());
+			}
+		}
+
+		None
+	}
+
 	/// Parse a payment request into structured payment options.
 	///
-	/// Accepts any format supported by the wallet: BIP 321 URIs, BOLT11
-	/// invoices, BOLT12 offers, lightning addresses, hex output scripts,
-	/// bare bitcoin addresses, and ark addresses.
+	/// Accepts any format supported by the wallet: BIP 321 URIs, `lightning:`
+	/// URIs, BOLT11 invoices, BOLT12 offers, lightning addresses, LNURL-pay
+	/// links, hex output scripts, bare bitcoin addresses, and ark addresses.
 	///
 	/// Formats are attempted in this order:
-	/// 1. BIP 321 `bitcoin:` URI (may yield multiple options from destinations)
-	/// 2. Bare BOLT11 invoice
-	/// 3. Bare BOLT12 offer
-	/// 4. Lightning address (`user@domain`)
-	/// 5. Raw LNURL-pay link (`lnurl1…`)
-	/// 6. Ark address
-	/// 7. Bare bitcoin address
-	/// 8. Hex-encoded output script
+	/// 1. `lightning:` URI (the payload must be a BOLT11 invoice, a BOLT12
+	///    offer, a lightning address, or an LNURL-pay link)
+	/// 2. BIP 321 `bitcoin:` URI (may yield multiple options from destinations)
+	/// 3. Bare BOLT11 invoice
+	/// 4. Bare BOLT12 offer
+	/// 5. Lightning address (`user@domain`)
+	/// 6. Raw LNURL-pay link (`lnurl1…`)
+	/// 7. Ark address
+	/// 8. Bare bitcoin address
+	/// 9. Hex-encoded output script
 	///
 	/// Returns a [`PaymentRequest`] with one or more [`AvailablePaymentMethod`]
 	/// the caller can present to the user. Returns an error if no valid payment
@@ -830,6 +841,17 @@ impl Wallet {
 	}
 }
 
+/// Remove `prefix` from the start of `s`. The match ignores ASCII case, because
+/// URI schemes are case-insensitive.
+fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+	let head = s.get(..prefix.len())?;
+	if head.eq_ignore_ascii_case(prefix) {
+		Some(&s[prefix.len()..])
+	} else {
+		None
+	}
+}
+
 #[cfg(test)]
 mod test {
 	use std::str::FromStr;
@@ -893,6 +915,41 @@ mod test {
 
 		assert!(request(vec![ark_option(err.clone()), onchain_option(err)]).default_option().is_none());
 		assert!(request(vec![]).default_option().is_none());
+	}
+
+	/// The prefix match ignores ASCII case.
+	#[test]
+	fn strip_prefix_ignore_ascii_case_cases() {
+		fn strip(s: &str) -> Option<&str> { strip_prefix_ignore_ascii_case(s, "lightning:") }
+
+		assert_eq!(strip(&format!("lightning:{}", INVOICE)), Some(INVOICE));
+		assert_eq!(strip(&format!("LIGHTNING:{}", INVOICE)), Some(INVOICE));
+		assert_eq!(strip(&format!("Lightning:{}", INVOICE)), Some(INVOICE));
+
+		// A bare invoice has no scheme to strip.
+		assert_eq!(strip(INVOICE), None);
+		// A BIP 321 `bitcoin:` URI does not match.
+		assert_eq!(strip("bitcoin:?lightning=lnbc"), None);
+		// A multi-byte character across the scheme boundary is not a match.
+		assert_eq!(strip("lightnin€x"), None);
+	}
+
+	/// The payload of a `lightning:` URI must be a lightning payment
+	/// destination. Other formats do not match.
+	#[test]
+	fn parse_lightning_payload_cases() {
+		let parse = |s| Wallet::parse_lightning_payload(Network::Signet, s);
+		let upper_invoice = INVOICE.to_uppercase();
+
+		assert!(parse(INVOICE).is_some());
+		assert!(parse(&upper_invoice).is_some());
+		assert!(parse("satoshi@example.com").is_some());
+
+		assert!(parse("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_none());
+		assert!(parse("bitcoin:tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_none());
+		assert!(parse("0014751e76e8199196d454941c45d1b3a323f1433bd6").is_none());
+		// BOLT 11 uses `lightning:`, not `lightning://`.
+		assert!(parse(&format!("//{}", INVOICE)).is_none());
 	}
 
 	/// The upper-cased URI must parse back to an equal URI, which only holds
