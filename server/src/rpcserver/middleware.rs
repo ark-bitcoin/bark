@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 use http::HeaderMap;
 use http_body::Body as HttpBody;
 use opentelemetry::KeyValue;
-#[allow(deprecated)]
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
 use tracing::{debug, info_span, trace, Instrument};
@@ -16,7 +15,7 @@ use tracing::{debug, info_span, trace, Instrument};
 #[allow(deprecated)]
 use server_rpc::client::ACCESS_TOKEN_HEADER;
 use server_rpc::client::USER_AGENT_HEADER;
-use server_rpc::lookup_grpc_method;
+use server_rpc::{lookup_grpc_method, PROTOCOL_VERSION_HEADER};
 
 use crate::telemetry;
 use super::MAX_PROTOCOL_VERSION;
@@ -329,18 +328,17 @@ where
 			.map(telemetry::bucket_user_agent_name)
 			.unwrap_or("unknown");
 
-		let rpc_method_details = if is_grpc {
-			// Log protocol version used by user.
-			// We allow +50 above MAX to detect clients using newer versions,
-			// while still capping the range to prevent cardinality explosion
-			// from malicious clients sending arbitrary values.
-			let pver = req.headers().get("pver")
-				.and_then(|hv| hv.to_str().ok())
-				.and_then(|s| u64::from_str(s).ok())
-				.filter(|&v| v <= MAX_PROTOCOL_VERSION + 50);
+		// The protocol version the client speaks.
+		let pver = req.headers().get(PROTOCOL_VERSION_HEADER)
+			.and_then(|hv| hv.to_str().ok())
+			.and_then(|s| u64::from_str(s).ok());
 
-			if let Some(pver) = pver {
-				telemetry::count_protocol_version(pver);
+		let rpc_method_details = if is_grpc {
+			// Cap pver range to prevent cardinality explosion from malicious
+			// clients sending arbitrary values.
+			// We allow +50 above MAX to detect clients using newer versions,
+			if let Some(v) = pver && v <= MAX_PROTOCOL_VERSION + 50 {
+				telemetry::count_protocol_version(v);
 			}
 
 			let (service, method) = lookup_grpc_method(req.uri().path());
@@ -375,6 +373,11 @@ where
 			{ telemetry::USER_AGENT_NAME } = rpc_method_details.user_agent_name,
 			{ telemetry::RPC_ACCESS_TOKEN } = req.headers().get(ACCESS_TOKEN_HEADER)
 				.and_then(|v| v.to_str().ok()),
+
+			// Fields hoisted onto every log line emitted while serving this
+			// request as top-level fields (see server_log::InheritedFields).
+			{ server_log::USER_AGENT_FIELD } = user_agent.as_deref(),
+			{ server_log::PVER_FIELD } = pver,
 		);
 		let future = self.inner.call(req);
 

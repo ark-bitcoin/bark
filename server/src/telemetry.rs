@@ -609,6 +609,7 @@ impl Metrics {
 		let registry = tracing_subscriber::registry()
 			.with(filter)
 			.with(server_log::slog_json_layer(std::io::stdout))
+			.with(server_log::InheritedFieldsLayer)
 			.with(tracing_opentelemetry::layer().with_tracer(tracer));
 
 		// Spawns the console-subscriber server (default 127.0.0.1:6669) and
