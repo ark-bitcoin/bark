@@ -12,10 +12,10 @@ use tokio::fs;
 use tokio::process::Child;
 use tokio::time::Instant;
 
-use crate::constants::DEFAULT_POLL_INTERVAL;
+use crate::constants::{DEFAULT_POLL_INTERVAL, DEFAULT_WAIT_TIMEOUT};
 use crate::constants::env::{
 	BARK_DOUBLE_DRIVE_ACTIONS, OLD_BARK_EXEC, CHAIN_SOURCE, TEST_DIRECTORY,
-	TEST_POLL_INTERVAL_MS,
+	TEST_POLL_INTERVAL_MS, TEST_WAIT_TIMEOUT_MILLIS,
 	TX_PROPAGATION_TIMEOUT_MILLIS,
 };
 use crate::daemon::electrs::ElectrsType;
@@ -195,6 +195,19 @@ pub fn poll_interval() -> Duration {
 			.expect(&format!("{} should be in milliseconds", TEST_POLL_INTERVAL_MS)))
 	} else {
 		DEFAULT_POLL_INTERVAL
+	}
+}
+
+/// How long test helpers wait for a daemon to reach a state.
+///
+/// Defaults to [DEFAULT_WAIT_TIMEOUT], can be overridden with the
+/// TEST_WAIT_TIMEOUT_MILLIS env var.
+pub fn wait_timeout() -> Duration {
+	if let Ok(timeout) = env::var(TEST_WAIT_TIMEOUT_MILLIS) {
+		Duration::from_millis(timeout.parse::<u64>()
+			.expect(&format!("{} should be in milliseconds", TEST_WAIT_TIMEOUT_MILLIS)))
+	} else {
+		DEFAULT_WAIT_TIMEOUT
 	}
 }
 

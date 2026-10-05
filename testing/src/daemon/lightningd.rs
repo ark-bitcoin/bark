@@ -25,7 +25,7 @@ use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER}
 use crate::constants::env::{LIGHTNINGD_DOCKER_IMAGE, LIGHTNINGD_EXEC, LIGHTNINGD_PLUGIN_DIR};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
-use crate::util::{poll_interval, resolve_path, FutureExt};
+use crate::util::{poll_interval, resolve_path, wait_timeout, FutureExt};
 
 pub type Lightningd = Daemon<LightningDHelper>;
 
@@ -463,7 +463,7 @@ impl Lightningd {
 				}
 				tokio::time::sleep(poll_interval()).await;
 			}
-		}.wait_millis(30_000).await
+		}.wait(wait_timeout()).await
 	}
 
 	pub async fn port(&self) -> Option<u16> {

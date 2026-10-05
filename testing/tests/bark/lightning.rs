@@ -1644,12 +1644,12 @@ async fn bark_rejects_htlc_recv_vtxo_from_short_lived_tree() {
 		external.try_pay_bolt11(invoice).await
 	});
 
-	// Wait for the HTLCs to be held: a receive with nothing to claim yet
-	// looks the same as one that rejected.
+	// Wait for the server to see the held HTLCs: a receive with nothing to
+	// claim yet looks the same as one that rejected.
 	let payment_hash = PaymentHash::from(
 		&Bolt11Invoice::from_str(&invoice_info.invoice).expect("valid bolt11 invoice"),
 	);
-	lightning.internal.wait_for_hold_invoice_accepted(payment_hash).await;
+	srv.wait_for_lightning_receive_accepted(payment_hash).await;
 
 	let rejection = bark.try_lightning_receive_no_wait(&invoice_info.invoice)
 		.try_wait_millis(15_000).await.expect("claim command timed out")
@@ -1711,12 +1711,12 @@ async fn bark_rejects_htlc_recv_vtxo_with_unexpected_exit_delta() {
 		external.try_pay_bolt11(invoice).await
 	});
 
-	// Wait for the HTLCs to be held: a receive with nothing to claim yet
-	// looks the same as one that rejected.
+	// Wait for the server to see the held HTLCs: a receive with nothing to
+	// claim yet looks the same as one that rejected.
 	let payment_hash = PaymentHash::from(
 		&Bolt11Invoice::from_str(&invoice_info.invoice).expect("valid bolt11 invoice"),
 	);
-	lightning.internal.wait_for_hold_invoice_accepted(payment_hash).await;
+	srv.wait_for_lightning_receive_accepted(payment_hash).await;
 
 	let rejection = bark.try_lightning_receive_no_wait(&invoice_info.invoice)
 		.try_wait_millis(15_000).await.expect("claim command timed out")

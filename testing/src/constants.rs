@@ -6,6 +6,9 @@ pub const OFFBOARD_CONFIRMATIONS: u32 = 0;
 /// Default interval between attempts in poll loops.
 /// Can be overridden with the TEST_POLL_INTERVAL_MS env var.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// Default time test helpers wait for a daemon to reach a state.
+/// Can be overridden with the TEST_WAIT_TIMEOUT_MILLIS env var.
+pub const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub mod env {
 	pub const TEST_DIRECTORY: &str = "TEST_DIRECTORY";
@@ -41,6 +44,9 @@ pub mod env {
 	/// The interval between attempts in poll loops, in milliseconds.
 	/// Defaults to [super::DEFAULT_POLL_INTERVAL].
 	pub const TEST_POLL_INTERVAL_MS: &str = "TEST_POLL_INTERVAL_MS";
+	/// How long test helpers wait for a daemon to reach a state, in
+	/// milliseconds. Defaults to [super::DEFAULT_WAIT_TIMEOUT].
+	pub const TEST_WAIT_TIMEOUT_MILLIS: &str = "TEST_WAIT_TIMEOUT_MILLIS";
 	/// The env var to reach postgres binaries folder
 	pub const POSTGRES_BINS: &str = "POSTGRES_BINS";
 	/// By default, all artifacts of a tests are deleted after a succesful run.
