@@ -3629,7 +3629,7 @@
           "pending_exit_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "Sats held in VTXOs whose unilateral exit has committed on-chain but which\nhaven't yet been drained to the onchain wallet: their state is\n[`VtxoStateInfo::Exited`] and their exit has not reached\n[`ExitStateKind::Claimed`].",
+            "description": "Sats held in VTXOs whose unilateral exit has committed on-chain but which\nhaven't yet been drained to the onchain wallet: their state is\n[`crate::primitives::VtxoStateInfo::Exited`] and their exit has not reached\n[`crate::exit::ExitStateKind::Claimed`].",
             "minimum": 0
           },
           "pending_in_round_sat": {
