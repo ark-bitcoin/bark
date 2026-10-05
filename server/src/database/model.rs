@@ -230,7 +230,7 @@ impl<G, P: Policy> VtxoState<G, P> {
 		self.check_not_banned(chain_tip)
 	}
 
-	fn check_not_banned(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
+	pub fn check_not_banned(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
 		if let Some(until) = self.banned_until_height {
 			if chain_tip.to_u32() < until {
 				return badarg!("vtxo {} is banned until block {}", self.vtxo_id, until);

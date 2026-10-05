@@ -431,8 +431,11 @@ impl Server {
 		}
 
 		let htlc_vtxo_ids = cosign_request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&htlc_vtxo_ids).await).await?.into_iter()
-			.map(|v| v.vtxo).collect::<Vec<_>>();
+		let htlc_vtxo_states = self.db.read(async |t| t.get_user_vtxos_by_id(&htlc_vtxo_ids).await).await?;
+		for v in &htlc_vtxo_states {
+			v.check_not_banned(tip)?;
+		}
+		let htlc_vtxos = htlc_vtxo_states.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
 		let input_policy = htlc_vtxos.iter()
 			.all_same(|v| v.policy())
