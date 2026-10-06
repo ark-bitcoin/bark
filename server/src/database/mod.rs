@@ -50,7 +50,7 @@ use futures::Stream;
 use tokio_postgres::{Client, NoTls, RowStream};
 use tokio_postgres::types::Type;
 use tracing::{info, warn};
-use ark::{ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId};
+use ark::{ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::encode::ProtocolEncoding;
@@ -409,6 +409,14 @@ impl<'t> Tx<'t> {
 		ids: &[VtxoId],
 	) -> anyhow::Result<HashMap<VtxoId, VtxoState<Full, ServerVtxoPolicy>>> {
 		query::get_existing_vtxos_by_id(&self, ids).await
+	}
+
+	/// The VTXOs owned by any of the given policies, whatever their spend state.
+	pub async fn get_vtxos_by_policy(
+		&self,
+		policies: &[VtxoPolicy],
+	) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>> {
+		query::get_vtxos_by_policy(&self, policies).await
 	}
 
 	pub async fn get_user_vtxo_by_id(&self, id: VtxoId) -> anyhow::Result<VtxoState> {
