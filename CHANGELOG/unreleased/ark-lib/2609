@@ -1,0 +1,4 @@
+- Added `recovery::XpubRecoveryAuthorization`
+  It authorizes listing the VTXOs of an xpub, signed by the private key of the
+  xpub for one server.
+  [#2609](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2609)
