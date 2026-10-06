@@ -507,6 +507,7 @@ impl TestContext {
 			ln_receive_anti_dos_required: false,
 			ln_max_fee_ppm: 900_000,
 			max_read_mailbox_items: 100,
+			recovery_xpub_nb_keys: 100_000,
 			fees: FeeSchedule {
 				board: BoardFees {
 					min_fee: Amount::ZERO,

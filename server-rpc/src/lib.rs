@@ -132,6 +132,10 @@ pub const PROTOCOL_VERSION_HEADER: &str = "pver";
 /// The maximum number of recovery IDs that the server accepts per request.
 pub const MAX_NB_MAILBOX_RECOVERY_IDS: usize = 20;
 
+/// The number of child keys the server derives from a client xpub and looks
+/// up in one batch when recovering VTXOs by xpub.
+pub const RECOVERY_XPUB_CHUNK_SIZE: u32 = 10_000;
+
 /// The maximum number of vtxo IDs that the server accepts per forfeit nonces request.
 pub const MAX_NB_FORFEIT_NONCE_IDS: usize = 1000;
 

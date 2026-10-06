@@ -198,6 +198,8 @@ mod defaults {
 		std::time::Duration::from_secs(5 * 60)
 	}
 
+	/// Seed recovery scans this many child keys of the client's xpub.
+	pub fn recovery_xpub_nb_keys() -> u32 { 100_000 }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -426,6 +428,13 @@ pub struct Config {
 	/// than this.
 	#[serde(alias = "read_mailbox_max_items")]
 	pub max_read_mailbox_items: usize,
+
+	/// Number of child keys derived from a client xpub by the
+	/// `RecoverVtxosByXpub` rpc, scanned from index 0.
+	///
+	/// Default value: 100000
+	#[serde(default = "defaults::recovery_xpub_nb_keys")]
+	pub recovery_xpub_nb_keys: u32,
 
 	/// The fee schedule outlining any fees that must be paid to interact with the Ark server.
 	pub fees: FeeSchedule,

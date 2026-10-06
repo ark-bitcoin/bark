@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use ark::attestations::DelegatedRoundParticipationAttestation;
 use ark::attestations::OffboardRequestAttestation;
@@ -12,7 +12,7 @@ use ark::attestations::VtxoStatusAttestation;
 use ark::rounds::RoundAttemptAttestation;
 use bitcoin::consensus::serialize;
 use bitcoin::Txid;
-use bitcoin::{Amount, OutPoint};
+use bitcoin::{bip32, Amount, NetworkKind, OutPoint};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, PublicKey};
 use tokio::sync::oneshot;
@@ -26,6 +26,7 @@ use tracing::info;
 use ark::{musig, ProtocolEncoding, Vtxo, VtxoId};
 use ark::arkoor::package::ArkoorPackageCosignRequest;
 use ark::mailbox::MailboxIdentifier;
+use ark::recovery::XpubRecoveryAuthorization;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{
 	offer_request_amount, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage,
@@ -38,6 +39,7 @@ use server_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
 use crate::database::SpendState;
 
 use crate::database::rounds::StoredRoundOutput;
+use crate::recovery::NB_NORMAL_CHILDREN;
 use crate::round::DelegatedInput;
 use crate::round::SelfSignedInput;
 use crate::Server;
@@ -277,6 +279,60 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::GetVtxosStatusByIdsResponse {
 			vtxos,
 			missing_vtxo_ids: missing.iter().map(|id| id.to_bytes().to_vec()).collect(),
+		}))
+	}
+
+	#[tracing::instrument(skip(self, req))]
+	async fn recover_vtxos_by_xpub(
+		&self,
+		req: tonic::Request<protos::RecoverVtxosByXpubRequest>,
+	) -> Result<tonic::Response<protos::RecoverVtxosByXpubResponse>, tonic::Status> {
+		let req = req.into_inner();
+
+		if self.config.recovery_xpub_nb_keys == 0 {
+			return Err(tonic::Status::unimplemented("xpub recovery is disabled on this server"));
+		}
+
+		let xpub = bip32::Xpub::from_bytes(&req.xpub)?;
+		if xpub.network != NetworkKind::from(self.config.network) {
+			macros::badarg!("xpub is for a different network");
+		}
+
+		let auth = XpubRecoveryAuthorization::deserialize(&req.authorization)
+			.badarg("invalid xpub recovery authorization")?;
+		if !auth.is_valid_now() {
+			macros::badarg!("xpub recovery authorization expired or too long-lived");
+		}
+		if !auth.verify(&xpub, self.server_pubkey()) {
+			macros::badarg!("invalid xpub recovery authorization signature");
+		}
+
+		if req.start_index >= NB_NORMAL_CHILDREN {
+			macros::badarg!("start_index {} is not a non-hardened child index", req.start_index);
+		}
+
+		let start = Instant::now();
+		let res = self.recover_vtxos_by_xpub(xpub, req.start_index).await.to_status()?;
+		slog!(XpubRecoveryScanned, start_index: req.start_index, nb_keys: res.nb_keys_scanned,
+			nb_vtxos: res.vtxos.len(), duration: start.elapsed(),
+		);
+
+		// The request is signed by the key every one of these VTXOs derives
+		// from, so their status needs no attestation of its own. A VTXO in a
+		// server-internal state is left out, as GetVtxoStatus reports it as
+		// not found.
+		let vtxos = res.vtxos.into_iter().filter_map(|v| {
+			Some(protos::RecoveredVtxo {
+				spend_state: client_spend_state(v.spend_state)? as i32,
+				vtxo: v.vtxo.serialize(),
+				derivation_index: v.derivation_index,
+			})
+		}).collect();
+
+		Ok(tonic::Response::new(protos::RecoverVtxosByXpubResponse {
+			vtxos,
+			nb_keys_scanned: res.nb_keys_scanned,
+			have_more: res.have_more,
 		}))
 	}
 
