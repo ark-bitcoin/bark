@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::fs;
 
+use ark::VtxoId;
 use bark::vtxo::VtxoState;
 use server_rpc::protos;
 
 use ark_testing::{sat, TestContext};
-use ark_testing::daemon::captaind::{self, MailboxClient};
+use ark_testing::daemon::captaind::{self, ArkClient, MailboxClient};
 
 /// The gap limit must tolerate a run of unused key indices *between* matches,
 /// not only before the first one.
@@ -160,4 +163,203 @@ async fn recovered_wallet_keeps_arkoor_batch_inputs_spent() {
 	for vtxo in vtxos {
 		assert_eq!(vtxo.state, VtxoState::Spent, "vtxo {} must be spent", vtxo.id());
 	}
+}
+
+async fn read_mnemonic(ctx: &TestContext, wallet: &str) -> bip39::Mnemonic {
+	let mnemonic = fs::read_to_string(ctx.datadir.join(wallet).join("mnemonic")).await
+		.expect("mnemonic file");
+	bip39::Mnemonic::from_str(mnemonic.trim()).expect("parse mnemonic")
+}
+
+#[derive(Default)]
+struct VtxoRpcCounts {
+	get_vtxo: AtomicUsize,
+	get_vtxo_status: AtomicUsize,
+	get_vtxos_by_ids: AtomicUsize,
+	get_vtxos_status_by_ids: AtomicUsize,
+}
+
+/// Counts the vtxo lookup rpcs and fails the first `fail_status_batches`
+/// GetVtxosStatusByIds requests with Unavailable.
+#[derive(Clone)]
+struct CountVtxoRpcs {
+	counts: Arc<VtxoRpcCounts>,
+	fail_status_batches: Arc<AtomicUsize>,
+}
+
+impl CountVtxoRpcs {
+	fn new(counts: &Arc<VtxoRpcCounts>, fail_status_batches: usize) -> Self {
+		Self {
+			counts: counts.clone(),
+			fail_status_batches: Arc::new(AtomicUsize::new(fail_status_batches)),
+		}
+	}
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for CountVtxoRpcs {
+	async fn get_vtxo(
+		&self, upstream: &mut ArkClient, req: protos::GetVtxoRequest,
+	) -> Result<protos::GetVtxoResponse, tonic::Status> {
+		self.counts.get_vtxo.fetch_add(1, Ordering::Relaxed);
+		Ok(upstream.get_vtxo(req).await?.into_inner())
+	}
+
+	async fn get_vtxo_status(
+		&self, upstream: &mut ArkClient, req: protos::GetVtxoStatusRequest,
+	) -> Result<protos::GetVtxoStatusResponse, tonic::Status> {
+		self.counts.get_vtxo_status.fetch_add(1, Ordering::Relaxed);
+		Ok(upstream.get_vtxo_status(req).await?.into_inner())
+	}
+
+	async fn get_vtxos_by_ids(
+		&self, upstream: &mut ArkClient, req: protos::GetVtxosByIdsRequest,
+	) -> Result<protos::GetVtxosByIdsResponse, tonic::Status> {
+		self.counts.get_vtxos_by_ids.fetch_add(1, Ordering::Relaxed);
+		Ok(upstream.get_vtxos_by_ids(req).await?.into_inner())
+	}
+
+	async fn get_vtxos_status_by_ids(
+		&self, upstream: &mut ArkClient, req: protos::GetVtxosStatusByIdsRequest,
+	) -> Result<protos::GetVtxosStatusByIdsResponse, tonic::Status> {
+		self.counts.get_vtxos_status_by_ids.fetch_add(1, Ordering::Relaxed);
+		let fail = self.fail_status_batches
+			.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+		if fail.is_ok() {
+			return Err(tonic::Status::unavailable("status batch dropped by test proxy"));
+		}
+		Ok(upstream.get_vtxos_status_by_ids(req).await?.into_inner())
+	}
+}
+
+/// Recovery resolves the VTXOs of a mailbox page with the batch rpcs, not
+/// with one request per VTXO.
+#[tokio::test]
+async fn recovery_uses_batch_rpcs() {
+	let ctx = TestContext::new("bark_sdk/recovery_uses_batch_rpcs").await;
+	let srv = ctx.captaind("server").create().await;
+
+	// The boards post their ids to the recovery mailbox; the arkoor receive
+	// leaves its body in the regular mailbox. Both must go through the batch
+	// rpcs.
+	let source = ctx.bark_sdk("source", &srv).boarded(sat(400_000)).create().await;
+	let target = ctx.bark_sdk("target", &srv)
+		.boarded(sat(100_000))
+		.boarded(sat(200_000))
+		.boarded(sat(300_000))
+		.create().await;
+	let address = target.new_address().await.expect("new address");
+	source.send_arkoor_payment(&address, sat(10_000)).await.expect("arkoor send");
+	target.sync().await;
+	let mut expected = target.spendable_vtxos().await.expect("list target vtxos")
+		.iter().map(|v| v.id()).collect::<Vec<_>>();
+	expected.sort();
+	assert!(expected.len() >= 4, "expected at least four vtxos, got {}", expected.len());
+
+	let counts = Arc::new(VtxoRpcCounts::default());
+	let proxy = srv.start_proxy_with_mailbox(CountVtxoRpcs::new(&counts, 0), ()).await;
+
+	let recovered = ctx.bark_sdk("recovered", &proxy)
+		.mnemonic(read_mnemonic(&ctx, "target").await)
+		.create().await;
+
+	let mut recovered_ids = recovered.spendable_vtxos().await.expect("list recovered vtxos")
+		.iter().map(|v| v.id()).collect::<Vec<_>>();
+	recovered_ids.sort();
+	assert_eq!(recovered_ids, expected, "every vtxo must be recovered spendable");
+
+	assert_eq!(counts.get_vtxo.load(Ordering::Relaxed), 0,
+		"recovery must not fetch vtxo bodies one by one");
+	assert_eq!(counts.get_vtxo_status.load(Ordering::Relaxed), 0,
+		"recovery must not query vtxo status one by one");
+	assert!(counts.get_vtxos_by_ids.load(Ordering::Relaxed) >= 1,
+		"recovery must fetch the boarded vtxo bodies in batch");
+	assert!(counts.get_vtxos_status_by_ids.load(Ordering::Relaxed) >= 1,
+		"recovery must query vtxo status in batch");
+}
+
+/// A failed status batch leaves its VTXOs failed, and a retry pass asks for
+/// them again in batch.
+#[tokio::test]
+async fn recovery_retries_a_failed_status_batch() {
+	let ctx = TestContext::new("bark_sdk/recovery_retries_a_failed_status_batch").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let target = ctx.bark_sdk("target", &srv)
+		.boarded(sat(100_000))
+		.boarded(sat(200_000))
+		.create().await;
+	let mut expected = target.spendable_vtxos().await.expect("list target vtxos")
+		.iter().map(|v| v.id()).collect::<Vec<_>>();
+	expected.sort();
+	assert_eq!(expected.len(), 2);
+
+	let counts = Arc::new(VtxoRpcCounts::default());
+	let proxy = srv.start_proxy_with_mailbox(CountVtxoRpcs::new(&counts, 1), ()).await;
+
+	let recovered = ctx.bark_sdk("recovered", &proxy)
+		.mnemonic(read_mnemonic(&ctx, "target").await)
+		.create().await;
+
+	let mut recovered_ids = recovered.spendable_vtxos().await.expect("list recovered vtxos")
+		.iter().map(|v| v.id()).collect::<Vec<_>>();
+	recovered_ids.sort();
+	assert_eq!(recovered_ids, expected, "the retry pass must recover every vtxo");
+	assert!(counts.get_vtxos_status_by_ids.load(Ordering::Relaxed) >= 2,
+		"the retry pass must query vtxo status in batch again");
+	assert_eq!(counts.get_vtxo_status.load(Ordering::Relaxed), 0,
+		"a failed batch must not fall back to single status requests");
+}
+
+/// An id in the recovery mailbox the server does not know is reported as
+/// missing, and the other VTXOs of the same batch are still recovered.
+#[tokio::test]
+async fn recovery_tolerates_an_unknown_vtxo_id() {
+	let ctx = TestContext::new("bark_sdk/recovery_tolerates_an_unknown_vtxo_id").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let target = ctx.bark_sdk("target", &srv)
+		.boarded(sat(100_000))
+		.boarded(sat(200_000))
+		.create().await;
+	let mut expected = target.spendable_vtxos().await.expect("list target vtxos")
+		.iter().map(|v| v.id()).collect::<Vec<_>>();
+	expected.sort();
+	assert_eq!(expected.len(), 2);
+
+	// Inject a well-formed id no server has ever seen into every mailbox read.
+	#[derive(Clone)]
+	struct InjectUnknownId { unknown: VtxoId }
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::MailboxRpcProxy for InjectUnknownId {
+		async fn read_mailbox(
+			&self, upstream: &mut MailboxClient, req: protos::mailbox_server::MailboxRequest,
+		) -> Result<protos::mailbox_server::MailboxMessages, tonic::Status> {
+			use protos::mailbox_server::{mailbox_message, MailboxMessage, RecoveryVtxoIdsMessage};
+
+			let mut resp = upstream.read_mailbox(req).await?.into_inner();
+			resp.messages.push(MailboxMessage {
+				message: Some(mailbox_message::Message::RecoveryVtxoIds(RecoveryVtxoIdsMessage {
+					vtxo_ids: vec![self.unknown.to_bytes().to_vec()],
+				})),
+				checkpoint: 0,
+			});
+			Ok(resp)
+		}
+	}
+
+	let unknown = VtxoId::from_slice(&[0u8; 36]).unwrap();
+	let proxy = srv.start_proxy_with_mailbox((), InjectUnknownId { unknown }).await;
+
+	let recovered = ctx.bark_sdk("recovered", &proxy)
+		.mnemonic(read_mnemonic(&ctx, "target").await)
+		.create().await;
+
+	let mut recovered_ids = recovered.spendable_vtxos().await.expect("list recovered vtxos")
+		.iter().map(|v| v.id()).collect::<Vec<_>>();
+	recovered_ids.sort();
+	assert_eq!(recovered_ids, expected, "the known vtxos of the batch must be recovered");
+	assert!(recovered.all_vtxos().await.expect("list all vtxos").iter().all(|v| v.id() != unknown),
+		"the unknown id must not be stored");
 }
