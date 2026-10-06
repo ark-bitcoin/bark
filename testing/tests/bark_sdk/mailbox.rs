@@ -96,7 +96,7 @@ async fn recovery_leaves_regular_mailbox_checkpoint_untouched() {
 	);
 
 	// Recover from the same seed into a fresh in-process wallet. The open
-	// call runs recover_from_mailbox as part of its create-if-not-exists
+	// call runs recover_from_seed as part of its create-if-not-exists
 	// path (bark/src/lib.rs); the recovery mailbox above will feed it the
 	// vtxo id.
 	let target_mnemonic = fs::read_to_string(ctx.datadir.join("target/mnemonic")).await
