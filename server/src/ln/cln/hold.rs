@@ -288,6 +288,13 @@ impl ClnHoldProcess {
 			if htlc_subscription.status == LightningHtlcSubscriptionStatus::HtlcsReady
 				&& htlc_recvs_may_be_live(&htlc_subscription, tip, self.config.htlc_expiry_delta)
 			{
+				if htlc_subscription.invoice.is_expired() {
+					slog!(LightningReceiveKeptCommitted,
+						payment_hash: htlc_subscription.payment_hash,
+						lowest_incoming_htlc_expiry: htlc_subscription.lowest_incoming_htlc_expiry,
+						tip,
+					);
+				}
 				continue;
 			}
 
@@ -524,8 +531,9 @@ impl ClnHoldProcess {
 			payment_hash: payment_hash.to_byte_array().to_vec(),
 		}).await?;
 
-		debug!("Lightning htlc subscription ({}) canceled: {}.",
-			htlc_subscription.id, reason,
+		slog!(LightningReceiveCanceled,
+			payment_hash: htlc_subscription.payment_hash,
+			reason: reason.to_owned(),
 		);
 
 		// The snapshot predates the hold RPCs the callers make, so guard on the

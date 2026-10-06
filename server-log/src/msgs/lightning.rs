@@ -88,6 +88,23 @@ pub struct LightningReceiveClaimed {
 impl_slog!(LightningReceiveClaimed, DEBUG, "claimed lightning receive");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LightningReceiveCanceled {
+	pub payment_hash: PaymentHash,
+	pub reason: String,
+}
+impl_slog!(LightningReceiveCanceled, DEBUG, "canceled lightning receive");
+
+/// The invoice of a receive expired, but its granted HTLC-recv vtxos may
+/// still be claimed, so the receive stays committed until they expire.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LightningReceiveKeptCommitted {
+	pub payment_hash: PaymentHash,
+	pub lowest_incoming_htlc_expiry: Option<BlockHeight>,
+	pub tip: BlockHeight,
+}
+impl_slog!(LightningReceiveKeptCommitted, TRACE, "kept an expired lightning receive committed: its HTLC-recv vtxos may be live");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct XpayStarted {
 	pub node_id: i64,
 	pub created_index: u64,

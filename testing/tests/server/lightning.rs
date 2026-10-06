@@ -11,6 +11,7 @@ use futures::future::join_all;
 use log::{info, trace};
 
 use ark::{ProtocolEncoding, Vtxo, SECP};
+use ark::lightning::PaymentHash;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use bitcoin_ext::rpc::RpcApi;
 use ark::arkoor::ArkoorDestination;
@@ -21,6 +22,7 @@ use ark::vtxo::policy::VtxoPolicyKind;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
+use server_log::LightningReceiveKeptCommitted;
 use server_rpc::protos;
 use server::database::Db;
 use server::vtxopool::VtxoTarget;
@@ -343,9 +345,10 @@ async fn reject_revocation_when_settled_but_status_regressed() {
 	);
 }
 
-/// The invoice-expiry sweep cancels an `HtlcsReady` intra-ark receive and
-/// fails the payer's attempt, which makes the HTLC-send vtxos revocable while
-/// the payee still holds the granted HTLC-recv vtxos.
+/// The invoice-expiry sweep used to cancel an `HtlcsReady` intra-ark receive
+/// and fail the payer's attempt, which made the HTLC-send vtxos revocable
+/// while the payee still held the granted HTLC-recv vtxos. The sweep must
+/// leave such a receive alone until the HTLC-recv vtxos expired.
 #[tokio::test]
 async fn intra_ark_invoice_expiry_after_grant_does_not_allow_revoke() {
 	let ctx = TestContext::new("server/intra_ark_invoice_expiry_after_grant_does_not_allow_revoke").await;
@@ -402,7 +405,8 @@ async fn intra_ark_invoice_expiry_after_grant_does_not_allow_revoke() {
 	let pay_amount = btc(1);
 	let invoice_info = bark_payee.bolt11_invoice(pay_amount).await;
 	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
-	let payment_hash = invoice.payment_hash().to_byte_array().to_vec();
+	let typed_payment_hash = PaymentHash::from(&invoice);
+	let payment_hash = typed_payment_hash.to_vec();
 
 	bark_payer.pay_lightning(invoice_info.invoice.clone(), None).await;
 
@@ -422,8 +426,13 @@ async fn intra_ark_invoice_expiry_after_grant_does_not_allow_revoke() {
 	}).await.unwrap().into_inner().status;
 	assert_eq!(status, protos::LightningReceiveStatus::HtlcsReady as i32);
 
-	// Let the invoice expire and give the sweep a few rounds.
-	tokio::time::sleep(invoice.duration_until_expiry() + Duration::from_secs(5)).await;
+	// Let the invoice expire and wait until the sweep has seen the expired
+	// invoice and kept the receive committed.
+	let kept = srv.wait_for_log_and::<LightningReceiveKeptCommitted, _>(move |log| {
+		log.payment_hash == typed_payment_hash
+	}).wait_millis(60_000).await;
+	assert!(kept.lowest_incoming_htlc_expiry.is_some_and(|e| e > kept.tip),
+		"the sweep kept a receive whose HTLC-recvs are not live: {kept:?}");
 
 	let _ = bark_payer.try_run(["maintain"]).await;
 	let payer_balance = bark_payer.spendable_balance().await;
