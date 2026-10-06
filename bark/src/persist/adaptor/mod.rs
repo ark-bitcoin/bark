@@ -938,6 +938,22 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		self.inner.write().await.put(record).await
 	}
 
+	async fn store_vtxo_keys(&self, keys: &[(u32, PublicKey)]) -> anyhow::Result<()> {
+		// Hold the write lock for the whole batch rather than per key.
+		let mut store = self.inner.write().await;
+		for (index, public_key) in keys {
+			let vtxo_key = SerdeVtxoKey { index: *index, public_key: *public_key };
+			let record = Record::from_data(
+				partition::PUBLIC_KEY,
+				&public_key.serialize()[..],
+				Some(sort::SortKey::u64_desc(*index as u64)),
+				&vtxo_key,
+			)?;
+			store.put(record).await?;
+		}
+		Ok(())
+	}
+
 	async fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
 		// pks are sorted descending, so the first one is the highest index
 		let query = Query::new_full_range(partition::PUBLIC_KEY).limit(1);

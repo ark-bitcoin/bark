@@ -271,6 +271,13 @@ impl BarkPersister for SqliteClient {
 		query::store_vtxo_key(&conn, index, public_key)
 	}
 
+	async fn store_vtxo_keys(&self, keys: &[(u32, PublicKey)]) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction().context("Failed to start transaction")?;
+		query::store_vtxo_keys(&tx, keys)?;
+		tx.commit().context("Failed to commit transaction")
+	}
+
 	async fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
 		let conn = self.connect()?;
 		query::get_last_vtxo_key_index(&conn)

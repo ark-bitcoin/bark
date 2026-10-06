@@ -67,6 +67,7 @@ macro_rules! bark_persister_tests {
 			test_vtxo_keys_empty,
 			test_vtxo_key_roundtrip,
 			test_vtxo_key_last_index_advances,
+			test_vtxo_keys_batch,
 
 			test_store_and_get_vtxo,
 			test_get_vtxos_by_state,
@@ -362,6 +363,29 @@ pub async fn test_vtxo_key_last_index_advances(db: &impl BarkPersister) {
 
 	let last = db.get_last_vtxo_key_index().await.expect("get_last_vtxo_key_index");
 	assert_eq!(last, Some(2), "last index after storing indices 0..=2");
+}
+
+pub async fn test_vtxo_keys_batch(db: &impl BarkPersister) {
+	let secp = Secp256k1::new();
+	let keys = (0u32..5).map(|i| {
+		let seed = u8::try_from(i).unwrap() + 20;
+		let sk = SecretKey::from_slice(&[seed; 32]).unwrap();
+		(i, Keypair::from_secret_key(&secp, &sk).public_key())
+	}).collect::<Vec<_>>();
+
+	db.store_vtxo_keys(&keys).await.expect("store_vtxo_keys");
+
+	let last = db.get_last_vtxo_key_index().await.expect("get_last_vtxo_key_index");
+	assert_eq!(last, Some(4), "last index after storing a batch of indices 0..=4");
+	for (i, pk) in &keys {
+		let idx = db.get_public_key_idx(pk).await.expect("get_public_key_idx");
+		assert_eq!(idx, Some(*i), "batch-stored public key maps back to its index");
+	}
+
+	// Storing the same batch again is a no-op.
+	db.store_vtxo_keys(&keys).await.expect("re-storing the same keys");
+	let last = db.get_last_vtxo_key_index().await.expect("get_last_vtxo_key_index");
+	assert_eq!(last, Some(4), "re-storing keys keeps the last index");
 }
 
 // ---------------------------------------------------------------------------

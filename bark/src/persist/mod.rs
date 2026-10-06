@@ -424,6 +424,18 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the mapping cannot be stored.
 	async fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()>;
 
+	/// Store many derivation index to [PublicKey] mappings at once.
+	///
+	/// Same semantics as [Self::store_vtxo_key] for each pair. The default
+	/// stores them one by one; backends should override this with a single
+	/// transaction, since recovery can store up to a hundred thousand keys.
+	async fn store_vtxo_keys(&self, keys: &[(u32, PublicKey)]) -> anyhow::Result<()> {
+		for (index, public_key) in keys {
+			self.store_vtxo_key(*index, *public_key).await?;
+		}
+		Ok(())
+	}
+
 	/// Get the last revealed/used [Vtxo] key index.
 	///
 	/// Returns:
