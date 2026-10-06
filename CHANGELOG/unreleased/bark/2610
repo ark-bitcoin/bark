@@ -1,0 +1,9 @@
+- Stop finished exits from changing their movement on every sync
+  An exit that stopped because its VTXO was already spent finished its
+  movement again each time the chain tip moved. This moved `completed_at`
+  forward, sent a new `MovementUpdated` notification and grew the exit
+  history, so apps that sort history by completion time showed old canceled
+  exits at the top. Wallets that already have a moved `completed_at` keep it.
+  [#2610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2610)
+  - `MovementManager::finish_movement` does nothing when the movement already
+    has the requested status
