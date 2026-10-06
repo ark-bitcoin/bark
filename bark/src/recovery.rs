@@ -391,12 +391,20 @@ impl Wallet {
 		candidates: Vec<(VtxoId, Option<Vtxo<Full>>)>,
 		gap_limit: u32,
 	) -> anyhow::Result<()> {
+		// A repeated id finds its fetched body already taken and would be
+		// reported failed.
+		let mut seen = HashSet::new();
+		let candidates = candidates.into_iter()
+			.filter(|(id, _)| seen.insert(*id))
+			.collect::<Vec<_>>();
+
 		let to_fetch = candidates.iter()
 			.filter(|(_, vtxo)| vtxo.is_none())
 			.map(|(id, _)| *id)
 			.collect::<Vec<_>>();
 		let (mut fetched, missing) = self.fetch_vtxos(&to_fetch).await?;
 
+		let mut to_query = Vec::new();
 		for (id, vtxo) in candidates {
 			// The fetch logged why the body is missing.
 			let Some(vtxo) = vtxo.or_else(|| fetched.remove(&id)) else {
@@ -428,11 +436,20 @@ impl Wallet {
 				continue;
 			}
 
-			// The server is the authority on whether it was spent elsewhere,
-			// and recovery has nothing else to go on.
-			let adoption = self.fetch_vtxo_spend_state(id, keypair).await
-				.and_then(ServerStatusAdoption::from_spend_state);
-			self.adopt_recovery_status(report, &vtxo, adoption).await?;
+			to_query.push((vtxo, *keypair));
+		}
+
+		// The server is the authority on whether a vtxo was spent elsewhere,
+		// and recovery has nothing else to go on.
+		let queries = to_query.iter().map(|(vtxo, keypair)| (vtxo.id(), keypair)).collect::<Vec<_>>();
+		let states = self.fetch_vtxo_spend_states(&queries).await?;
+		for (vtxo, _) in &to_query {
+			// The fetch logged why an answer is missing.
+			let adoption = match states.get(&vtxo.id()) {
+				Some(state) => ServerStatusAdoption::from_spend_state(*state),
+				None => Err(anyhow::anyhow!("no answer from the server")),
+			};
+			self.adopt_recovery_status(report, vtxo, adoption).await?;
 		}
 
 		Ok(())
