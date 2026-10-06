@@ -533,7 +533,7 @@ async fn watchman_sweeps_offboard_connectors() {
 	let max_expiry = vtxos.iter().map(|v| v.vtxo.expiry_height()).max().unwrap();
 
 	let payout = ctx.bitcoind().get_new_address();
-	let offboard_txid = bark.offboard_all(payout).await.unwrap();
+	let offboard_txid = bark.offboard_all(payout).await.unwrap().txid;
 	let tip = ctx.generate_blocks(1).await;
 	// the connector output is the second output of the offboard tx
 	let connector_point = bitcoin::OutPoint::new(offboard_txid, 1);

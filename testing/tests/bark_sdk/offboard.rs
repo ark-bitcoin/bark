@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicUsize};
 use std::time::Duration;
 
-use bitcoin::{Amount, FeeRate, Transaction, Witness};
+use bitcoin::{Amount, FeeRate, Transaction, Txid, Witness};
 use bitcoin_ext::BlockDelta;
 use bitcoin_ext::rpc::RpcApi;
 
@@ -320,7 +320,7 @@ async fn offboard_rebroadcasts_evicted_tx_within_grace_period() {
 		.create().await;
 
 	let address = ctx.bitcoind().get_new_address();
-	let txid = wallet.offboard_all(address.clone()).await.expect("offboard");
+	let txid = wallet.offboard_all(address.clone()).await.expect("offboard").txid;
 	// Make sure the tx relayed to the mining node before evicting it.
 	ctx.bitcoind().await_transaction(txid).await;
 
@@ -380,7 +380,7 @@ async fn offboard_reports_lost_tx_after_grace_period() {
 		.create().await;
 
 	let address = ctx.bitcoind().get_new_address();
-	let txid = wallet.offboard_all(address.clone()).await.expect("offboard");
+	let txid = wallet.offboard_all(address.clone()).await.expect("offboard").txid;
 
 	// While the tx sits in the mempool, syncs keep waiting patiently,
 	// even with a zero grace period.
@@ -527,4 +527,36 @@ async fn offboard_cancels_when_fees_change_after_lost_session() {
 	ctx.generate_blocks(1).await;
 	assert_eq!(ctx.bitcoind().get_received_by_address(&address), sat(799_756));
 	assert_eq!(assert_balance_consistent(&wallet, false).await.spendable, sat(0));
+}
+
+/// Offboards and on-chain sends return the movement that records them.
+#[tokio::test]
+async fn offboard_returns_its_movement_id() {
+	const OFFBOARD_CONFIRMATIONS: u32 = 2;
+
+	let ctx = TestContext::new("bark_sdk/offboard_returns_its_movement_id").await;
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.offboard_required_confirmations = OFFBOARD_CONFIRMATIONS.try_into().unwrap())
+		.boarded(sat(800_000))
+		.create().await;
+
+	let address = ctx.bitcoind().get_new_address();
+	let sent = wallet.send_onchain(address.clone(), sat(100_000)).await.expect("send onchain");
+	ctx.generate_blocks(OFFBOARD_CONFIRMATIONS).await;
+	wallet.sync().await;
+	let offboard = wallet.offboard_all(address.clone()).await.expect("offboard");
+	assert_ne!(sent.movement_id, offboard.movement_id);
+
+	let history = wallet.history().await.expect("history");
+	for result in [sent, offboard] {
+		let movement = history.iter().find(|m| m.id == result.movement_id)
+			.expect("returned id should be in history");
+		assert_eq!(movement.subsystem.name, "bark.offboard");
+		let txid = movement.metadata.get("offboard_txid")
+			.map(|v| serde_json::from_value::<Txid>(v.clone()).unwrap())
+			.expect("offboard movement has a txid");
+		assert_eq!(txid, result.txid);
+	}
 }

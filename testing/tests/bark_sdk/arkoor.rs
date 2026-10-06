@@ -4,6 +4,7 @@ use bitcoin::secp256k1::PublicKey;
 
 use ark::VtxoPolicy;
 use ark::address::VtxoDelivery;
+use bark::movement::MovementStatus;
 
 use ark_testing::{TestContext, sat};
 use ark_testing::balance::assert_balance_consistent;
@@ -69,4 +70,34 @@ async fn send_to_address_without_delivery_succeeds() {
 	// The send ran to completion and only the change remains spendable.
 	assert!(sender.pending_arkoor_sends().await.unwrap().is_empty());
 	assert_eq!(assert_balance_consistent(&sender, false).await.spendable, sat(300_000));
+}
+
+/// Each arkoor send returns the movement that records it, also when two
+/// payments have the same amount and destination.
+#[tokio::test]
+async fn send_returns_its_movement_id() {
+	let ctx = TestContext::new("bark_sdk/send_returns_its_movement_id").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let sender = ctx.bark_sdk("bark", &srv)
+		.boarded(sat(400_000))
+		.create().await;
+	let receiver = ctx.bark_sdk("bark2", &srv).create().await;
+
+	let address = receiver.new_address().await.expect("new address");
+	let first = sender.send_arkoor_payment(&address, sat(10_000)).await.expect("first send");
+	let second = sender.send_arkoor_payment(&address, sat(10_000)).await.expect("second send");
+	assert_ne!(first, second);
+
+	let history = sender.history().await.expect("history");
+	let mut arkoor_ids = history.iter()
+		.filter(|m| m.subsystem.name == "bark.arkoor")
+		.map(|m| m.id)
+		.collect::<Vec<_>>();
+	arkoor_ids.sort();
+	assert_eq!(arkoor_ids, vec![first, second]);
+	for id in [first, second] {
+		let movement = history.iter().find(|m| m.id == id).unwrap();
+		assert_eq!(movement.status, MovementStatus::Successful);
+	}
 }

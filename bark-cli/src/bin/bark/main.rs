@@ -783,12 +783,18 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			).await?;
 
 			// Wait for lightning payment settlement if requested.
-			if let PaymentInitOutput::Lightning(invoice) = output {
-				if wait {
-					info!("Payment completed: hash = {}", invoice.payment_hash());
-				} else {
-					info!("Payment initiated: hash = {}", invoice.payment_hash());
-				}
+			match output {
+				PaymentInitOutput::Lightning(invoice) => {
+					if wait {
+						info!("Payment completed: hash = {}", invoice.payment_hash());
+					} else {
+						info!("Payment initiated: hash = {}", invoice.payment_hash());
+					}
+				},
+				PaymentInitOutput::Ark(movement_id) => {
+					info!("Payment sent: movement id = {}", movement_id);
+				},
+				PaymentInitOutput::Onchain(_) => {},
 			}
 		},
 		Command::SendOnchain { destination, amount, no_sync } => {
@@ -803,8 +809,11 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				info!("Sending on-chain payment of {} to {}", amount, addr);
-				let offboard_txid = wallet.send_onchain(addr, amount).await?;
-				output_json(&json::cli::OffboardResult { offboard_txid });
+				let offboard = wallet.send_onchain(addr, amount).await?;
+				output_json(&json::cli::OffboardResult {
+					offboard_txid: offboard.txid,
+					movement_id: offboard.movement_id,
+				});
 			} else {
 				bail!("Invalid destination");
 			}
@@ -824,7 +833,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				wallet.onchain().context("no onchain wallet configured")?.write().await.address().await?
 			};
 
-			let offboard_txid = if let Some(vtxos) = vtxos {
+			let offboard = if let Some(vtxos) = vtxos {
 				let vtxos = vtxos
 					.into_iter()
 					.map(|vtxo| {
@@ -849,7 +858,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			};
-			output_json(&json::cli::OffboardResult { offboard_txid });
+			output_json(&json::cli::OffboardResult {
+				offboard_txid: offboard.txid,
+				movement_id: offboard.movement_id,
+			});
 		},
 		Command::Onchain(onchain_command) => {
 			onchain::execute_onchain_command(onchain_command, &wallet).await?;
