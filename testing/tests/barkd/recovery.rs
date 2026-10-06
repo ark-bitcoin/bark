@@ -70,6 +70,45 @@ async fn recovered_wallet_finds_boarded_vtxo() {
 	recovered.send(&recipient.ark_address().await, Amount::from_sat(99_443)).await;
 }
 
+/// A round output that was claimed and then spent is recovered as spent: its
+/// unlock hash must not make recovery rebuild the round participation and
+/// store the output as spendable again.
+#[tokio::test]
+async fn recovered_wallet_keeps_spent_round_vtxo_spent() {
+	require_bark_version!(> "0.7.1");
+
+	let ctx = TestContext::new("barkd/recovered_wallet_keeps_spent_round_vtxo_spent").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
+	tokio::join!(barkd.refresh_all(), srv.trigger_round());
+	wait_for_rounds_complete(&ctx, &barkd).await;
+
+	let after_refresh = barkd.vtxos(None).await;
+	assert_eq!(after_refresh.len(), 1, "should hold one round-output VTXO after refresh");
+	let round_id = after_refresh[0].vtxo.id;
+
+	// Spend the round output; the change goes to a new arkoor VTXO.
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	barkd.send(&recipient.ark_address().await, Amount::from_sat(50_000)).await;
+	let change = barkd.vtxos(None).await;
+	assert_eq!(change.len(), 1, "should hold one change VTXO after the send");
+
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("bark_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let (after, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
+	assert_eq!(after.len(), 1, "only the change should be spendable, got {:?}", after);
+	assert_eq!(after[0].vtxo.id, change[0].vtxo.id, "the spendable VTXO should be the change");
+	assert!(spent.iter().any(|v| v.vtxo.id == round_id),
+		"the spent round output should be recorded as spent",
+	);
+}
+
 /// Wallet recovery of a scheduled delegated refresh completed while the
 /// wallet was gone.
 #[tokio::test]

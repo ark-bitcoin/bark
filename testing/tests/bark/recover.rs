@@ -450,3 +450,237 @@ async fn recovery_catchup_includes_exited_vtxos() {
 		"a caught-up wallet should not re-post recovery vtxo IDs",
 	);
 }
+
+/// Hides every mailbox message from the wallet behind it and counts how often
+/// the xpub lookup is used.
+#[derive(Clone)]
+struct NoMailbox {
+	xpub_calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for NoMailbox {
+	async fn recover_vtxos_by_xpub(
+		&self, upstream: &mut ArkClient, req: protos::RecoverVtxosByXpubRequest,
+	) -> Result<protos::RecoverVtxosByXpubResponse, tonic::Status> {
+		self.xpub_calls.fetch_add(1, Ordering::Relaxed);
+		Ok(upstream.recover_vtxos_by_xpub(req).await?.into_inner())
+	}
+}
+#[async_trait::async_trait]
+impl captaind::proxy::MailboxRpcProxy for NoMailbox {
+	async fn read_mailbox(
+		&self, _upstream: &mut MailboxClient, _req: protos::mailbox_server::MailboxRequest,
+	) -> Result<protos::mailbox_server::MailboxMessages, tonic::Status> {
+		Ok(protos::mailbox_server::MailboxMessages { messages: vec![], have_more: false })
+	}
+}
+
+/// A wallet restored from its mnemonic gets its VTXOs back from the server's
+/// xpub lookup alone: the proxy makes sure neither mailbox has anything to
+/// offer, so the recovery can only have come from the xpub rpc.
+#[tokio::test]
+async fn recovered_wallet_finds_vtxos_via_xpub_without_mailbox() {
+	require_bark_version!(> "0.7.1");
+
+	let ctx = TestContext::new("bark/recovered_wallet_finds_vtxos_via_xpub_without_mailbox").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	// bark2 receives two arkoors on two different keys through the real
+	// server; it registers them itself on sync, so the server holds the
+	// signed vtxos.
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(190_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(180_000)).await;
+	bark1.send_oor(&bark2.address().await, sat(30_000)).await;
+	bark1.send_oor(&bark2.address().await, sat(40_000)).await;
+
+	let original = bark2.vtxos().await;
+	assert_eq!(original.len(), 2);
+	let mut original_ids = original.iter().map(|v| v.id).collect::<Vec<_>>();
+	original_ids.sort();
+
+	// Restore from the same seed behind the proxy, so neither mailbox can
+	// feed the recovery. Wallet creation runs the recovery.
+	let xpub_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+	let proxy = srv.start_proxy_with_mailbox(
+		NoMailbox { xpub_calls: xpub_calls.clone() },
+		NoMailbox { xpub_calls: xpub_calls.clone() },
+	).await;
+	let mnemonic = bark2.mnemonic().await.expect("bark2 has a mnemonic");
+	let recovered = ctx.bark("bark2_recovered", &proxy.address).mnemonic(mnemonic).create().await;
+	assert_eq!(xpub_calls.load(Ordering::Relaxed), 1,
+		"wallet creation should look up the xpub exactly once",
+	);
+
+	let mut recovered_ids = recovered.vtxos().await.iter().map(|v| v.id).collect::<Vec<_>>();
+	recovered_ids.sort();
+	assert_eq!(recovered_ids, original_ids, "recovered wallet should hold the same vtxos");
+	assert_eq!(recovered.spendable_balance().await, sat(70_000));
+
+	// Both keys were revealed, so the wallet can address them, and it can
+	// sign with them: spending is the proof that the keys were recovered.
+	recovered.address_at_idx(1).await;
+	let bark1_balance = bark1.spendable_balance().await;
+	recovered.send_oor(&bark1.address().await, sat(50_000)).await;
+	assert_eq!(bark1.spendable_balance().await, bark1_balance + sat(50_000));
+}
+
+/// With the xpub lookup disabled on the server, a restored wallet still
+/// recovers through the recovery mailbox.
+#[tokio::test]
+async fn recovered_wallet_falls_back_to_mailbox_when_xpub_disabled() {
+	require_bark_version!(> "0.7.1");
+
+	let ctx = TestContext::new("bark/recovered_wallet_falls_back_to_mailbox_when_xpub_disabled").await;
+	let srv = ctx.captaind("server").funded(btc(10))
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
+
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(190_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(180_000)).await;
+	bark1.send_oor(&bark2.address().await, sat(30_000)).await;
+
+	let original = bark2.vtxos().await;
+	assert_eq!(original.len(), 1);
+
+	let mnemonic = bark2.mnemonic().await.expect("bark2 has a mnemonic");
+	let recovered = ctx.bark("bark2_recovered", &srv).mnemonic(mnemonic).create().await;
+
+	let recovered = recovered.vtxos().await;
+	assert_eq!(recovered.len(), 1);
+	assert_eq!(recovered[0].id, original[0].id);
+}
+
+/// A wallet whose keys reach past the range the server scans per call asks
+/// for the next range, starting where the previous call stopped, until the
+/// server reports that nothing more may follow.
+#[tokio::test]
+async fn recovered_wallet_continues_xpub_lookup_past_server_range() {
+	require_bark_version!(> "0.7.1");
+
+	let ctx = TestContext::new("bark/recovered_wallet_continues_xpub_lookup_past_server_range").await;
+	let srv = ctx.captaind("server").funded(btc(10))
+		.cfg(|c| c.recovery_xpub_nb_keys = 2)
+		.create().await;
+
+	// bark2 receives on its first key and on the key two indices further,
+	// which lies in the second range the server scans.
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(190_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(180_000)).await;
+	let first = bark2.address().await;
+	bark2.address().await;
+	let third = bark2.address().await;
+	bark1.send_oor(&first, sat(30_000)).await;
+	bark1.send_oor(&third, sat(40_000)).await;
+
+	let mut original_ids = bark2.vtxos().await.iter().map(|v| v.id).collect::<Vec<_>>();
+	assert_eq!(original_ids.len(), 2);
+	original_ids.sort();
+
+	let xpub_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+	let proxy = srv.start_proxy_with_mailbox(
+		NoMailbox { xpub_calls: xpub_calls.clone() },
+		NoMailbox { xpub_calls: xpub_calls.clone() },
+	).await;
+	let mnemonic = bark2.mnemonic().await.expect("bark2 has a mnemonic");
+	let recovered = ctx.bark("bark2_recovered", &proxy.address).mnemonic(mnemonic).create().await;
+
+	// The third call scans a range without vtxos and ends the lookup.
+	assert_eq!(xpub_calls.load(Ordering::Relaxed), 3,
+		"wallet creation should look up each range once, plus one empty range",
+	);
+
+	let mut recovered_ids = recovered.vtxos().await.iter().map(|v| v.id).collect::<Vec<_>>();
+	recovered_ids.sort();
+	assert_eq!(recovered_ids, original_ids, "recovered wallet should hold the same vtxos");
+	assert_eq!(recovered.spendable_balance().await, sat(70_000));
+}
+
+/// The xpub lookup lists a VTXO whatever its spend state: a spent one comes
+/// back too, with its state, and the restored wallet keeps it out of its
+/// balance without asking the server anything else about it.
+#[tokio::test]
+async fn recovered_wallet_xpub_lookup_returns_spent_vtxos() {
+	require_bark_version!(> "0.7.1");
+
+	let ctx = TestContext::new("bark/recovered_wallet_xpub_lookup_returns_spent_vtxos").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	// Records the vtxos the xpub lookup returns, and counts the requests
+	// for single vtxos or their status.
+	#[derive(Clone)]
+	struct RecordXpubVtxos {
+		returned: Arc<Mutex<Vec<(VtxoId, protos::VtxoSpendState)>>>,
+		vtxo_requests: Arc<std::sync::atomic::AtomicUsize>,
+	}
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for RecordXpubVtxos {
+		async fn recover_vtxos_by_xpub(
+			&self, upstream: &mut ArkClient, req: protos::RecoverVtxosByXpubRequest,
+		) -> Result<protos::RecoverVtxosByXpubResponse, tonic::Status> {
+			let resp = upstream.recover_vtxos_by_xpub(req).await?.into_inner();
+			self.returned.lock().unwrap().extend(resp.vtxos.iter().map(|v| (
+				Vtxo::<Full>::deserialize(&v.vtxo).unwrap().id(),
+				protos::VtxoSpendState::try_from(v.spend_state).unwrap(),
+			)));
+			Ok(resp)
+		}
+		async fn get_vtxo(
+			&self, upstream: &mut ArkClient, req: protos::GetVtxoRequest,
+		) -> Result<protos::GetVtxoResponse, tonic::Status> {
+			self.vtxo_requests.fetch_add(1, Ordering::Relaxed);
+			Ok(upstream.get_vtxo(req).await?.into_inner())
+		}
+		async fn get_vtxo_status(
+			&self, upstream: &mut ArkClient, req: protos::GetVtxoStatusRequest,
+		) -> Result<protos::GetVtxoStatusResponse, tonic::Status> {
+			self.vtxo_requests.fetch_add(1, Ordering::Relaxed);
+			Ok(upstream.get_vtxo_status(req).await?.into_inner())
+		}
+		async fn get_vtxos_by_ids(
+			&self, upstream: &mut ArkClient, req: protos::GetVtxosByIdsRequest,
+		) -> Result<protos::GetVtxosByIdsResponse, tonic::Status> {
+			self.vtxo_requests.fetch_add(1, Ordering::Relaxed);
+			Ok(upstream.get_vtxos_by_ids(req).await?.into_inner())
+		}
+		async fn get_vtxos_status_by_ids(
+			&self, upstream: &mut ArkClient, req: protos::GetVtxosStatusByIdsRequest,
+		) -> Result<protos::GetVtxosStatusByIdsResponse, tonic::Status> {
+			self.vtxo_requests.fetch_add(1, Ordering::Relaxed);
+			Ok(upstream.get_vtxos_status_by_ids(req).await?.into_inner())
+		}
+	}
+
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(190_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(180_000)).await;
+	bark1.send_oor(&bark2.address().await, sat(30_000)).await;
+
+	let original = bark2.vtxos().await;
+	assert_eq!(original.len(), 1);
+	let spent_id = original[0].id;
+
+	// Spending the whole vtxo leaves bark2 without any.
+	bark2.send_oor(&bark1.address().await, sat(30_000)).await;
+	assert!(bark2.vtxos().await.is_empty());
+
+	let returned = Arc::new(Mutex::new(Vec::new()));
+	let vtxo_requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+	let proxy = srv.start_proxy_no_mailbox(RecordXpubVtxos {
+		returned: returned.clone(),
+		vtxo_requests: vtxo_requests.clone(),
+	}).await;
+	let mnemonic = bark2.mnemonic().await.expect("bark2 has a mnemonic");
+	let recovered = ctx.bark("bark2_recovered", &proxy.address).mnemonic(mnemonic).create().await;
+
+	assert!(returned.lock().unwrap().contains(&(spent_id, protos::VtxoSpendState::Spent)),
+		"the xpub lookup should return the spent vtxo as spent",
+	);
+	assert_eq!(vtxo_requests.load(Ordering::Relaxed), 0,
+		"the xpub lookup should carry everything recovery needs",
+	);
+	assert!(recovered.vtxos().await.is_empty(), "a spent vtxo is not recovered as spendable");
+	assert_eq!(recovered.spendable_balance().await, sat(0));
+}

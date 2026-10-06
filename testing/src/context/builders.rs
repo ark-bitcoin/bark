@@ -11,6 +11,7 @@ use bark::persist::BarkPersister;
 use bark::persist::sqlite::SqliteClient;
 use bark::movement::MovementId;
 use bitcoin::Amount;
+use bitcoin_ext::BlockHeight;
 use futures::StreamExt;
 use log::warn;
 use server::wallet::MNEMONIC_FILE;
@@ -380,6 +381,7 @@ pub struct BarkBuilder<'a> {
 	socks5_proxy: Option<String>,
 	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
 	exec: Option<PathBuf>,
+	mnemonic: Option<bip39::Mnemonic>,
 }
 
 impl<'a> BarkBuilder<'a> {
@@ -396,7 +398,15 @@ impl<'a> BarkBuilder<'a> {
 			socks5_proxy: None,
 			mod_cfg: None,
 			exec: None,
+			mnemonic: None,
 		}
+	}
+
+	/// Restore the wallet from the given BIP-39 mnemonic instead of
+	/// generating a fresh one, with the chain birthday at genesis.
+	pub fn mnemonic(mut self, mnemonic: bip39::Mnemonic) -> Self {
+		self.mnemonic = Some(mnemonic);
+		self
 	}
 
 	/// Create and drive this wallet with a specific bark binary rather than
@@ -477,8 +487,10 @@ impl<'a> BarkBuilder<'a> {
 		}
 
 		let datadir = self.ctx.datadir.join(&self.name);
+		let mnemonic = self.mnemonic.map(|m| m.to_string());
+		let birthday = mnemonic.as_ref().map(|_| BlockHeight::new(0));
 		let bark = Bark::try_new_with_create_opts(
-			&self.name, datadir, BarkNetwork::Regtest, cfg, bitcoind, None, None, false, self.exec,
+			&self.name, datadir, BarkNetwork::Regtest, cfg, bitcoind, mnemonic, birthday, false, self.exec,
 		).await?;
 
 		let fund_amount = self.fund_amount.or_else(|| {
