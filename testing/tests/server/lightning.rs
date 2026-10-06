@@ -341,6 +341,121 @@ async fn reject_revocation_when_settled_but_status_regressed() {
 	);
 }
 
+/// The invoice-expiry sweep cancels an `HtlcsReady` intra-ark receive and
+/// fails the payer's attempt, which makes the HTLC-send vtxos revocable while
+/// the payee still holds the granted HTLC-recv vtxos.
+#[tokio::test]
+#[ignore = "the invoice-expiry sweep cancels a granted receive"]
+async fn intra_ark_invoice_expiry_after_grant_does_not_allow_revoke() {
+	let ctx = TestContext::new("server/intra_ark_invoice_expiry_after_grant_does_not_allow_revoke").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let invoice_expiry = Duration::from_secs(15);
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(move |cfg| {
+		cfg.invoice_expiry = invoice_expiry;
+		cfg.invoice_check_interval = Duration::from_secs(1);
+	}).create().await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	/// Parks the first `claim_lightning_receive` until the test releases it,
+	/// so the preimage never reaches the server while the payee holds its
+	/// grant.
+	#[derive(Clone)]
+	struct HoldClaim {
+		held: Arc<std::sync::atomic::AtomicBool>,
+		arrived: Arc<tokio::sync::Notify>,
+		release: Arc<tokio::sync::Notify>,
+	}
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for HoldClaim {
+		async fn claim_lightning_receive(
+			&self,
+			upstream: &mut ArkClient,
+			req: protos::ClaimLightningReceiveRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			if !self.held.swap(true, std::sync::atomic::Ordering::SeqCst) {
+				self.arrived.notify_one();
+				self.release.notified().await;
+			}
+			Ok(upstream.claim_lightning_receive(req).await?.into_inner())
+		}
+	}
+
+	let arrived = Arc::new(tokio::sync::Notify::new());
+	let release = Arc::new(tokio::sync::Notify::new());
+	let proxy = srv.start_proxy_no_mailbox(HoldClaim {
+		held: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+		arrived: arrived.clone(),
+		release: release.clone(),
+	}).await;
+
+	let bark_payer = ctx.bark("bark-payer", &proxy.address).funded(btc(3)).create().await;
+	let bark_payee = Arc::new(ctx.bark("bark-payee", &proxy.address).create().await);
+
+	let board_amount = btc(2);
+	bark_payer.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	let pay_amount = btc(1);
+	let invoice_info = bark_payee.bolt11_invoice(pay_amount).await;
+	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	let payment_hash = invoice.payment_hash().to_byte_array().to_vec();
+
+	bark_payer.pay_lightning(invoice_info.invoice.clone(), None).await;
+
+	// The payee prepares (-> HtlcsReady, HTLC-recv vtxos granted) and the
+	// proxy parks its claim.
+	let cloned_payee = bark_payee.clone();
+	let cloned_invoice = invoice_info.invoice.clone();
+	let payee_task = tokio::spawn(async move {
+		cloned_payee.try_lightning_receive(&cloned_invoice).wait_millis(120_000).await
+	});
+	arrived.notified().wait_millis(60_000).await;
+
+	let mut rpc = srv.get_public_rpc().await;
+	let status = rpc.check_lightning_receive(protos::CheckLightningReceiveRequest {
+		hash: payment_hash.clone(),
+		wait: false,
+	}).await.unwrap().into_inner().status;
+	assert_eq!(status, protos::LightningReceiveStatus::HtlcsReady as i32);
+
+	// Let the invoice expire and give the sweep a few rounds.
+	tokio::time::sleep(invoice.duration_until_expiry() + Duration::from_secs(5)).await;
+
+	let _ = bark_payer.try_run(["maintain"]).await;
+	let payer_balance = bark_payer.spendable_balance().await;
+
+	// The payee still holds HTLC-recv vtxos it can claim on-chain with the
+	// preimage, so a refund here pays the same payment twice.
+	assert!(payer_balance <= board_amount - pay_amount,
+		"payer was refunded ({payer_balance}) while the payee holds a granted HTLC-recv");
+
+	// The receive is committed, so the sweep must have left it alone.
+	let status = rpc.check_lightning_receive(protos::CheckLightningReceiveRequest {
+		hash: payment_hash.clone(),
+		wait: false,
+	}).await.unwrap().into_inner().status;
+	assert_eq!(status, protos::LightningReceiveStatus::HtlcsReady as i32,
+		"the sweep canceled a granted receive");
+
+	// Release the parked claim: the committed receive still pays out.
+	release.notify_one();
+	payee_task.wait_millis(120_000).await
+		.expect("payee claim task panicked")
+		.expect("claim should still succeed after the invoice expired");
+
+	let payee_balance = bark_payee.spendable_balance().await;
+	assert!(payee_balance > Amount::ZERO,
+		"payee should have received the lightning payment, balance: {payee_balance}");
+	// Only the payer boarded, so together they can never hold more than
+	// `board_amount` without the server having paid twice.
+	assert!(payer_balance + payee_balance <= board_amount,
+		"conservation violated: payer {payer_balance} + payee {payee_balance} exceeds \
+		{board_amount}");
+}
+
 /// Requests the server to sign a HTLC while using a HTCL VTXO as an input
 async fn request_second_htlc_cosign(
 	ctx: &TestContext,
