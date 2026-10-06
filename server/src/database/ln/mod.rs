@@ -547,19 +547,23 @@ impl<'t> Tx<'t> {
 	/// Only subscriptions still in a revocable state (`Created`/`Accepted`)
 	/// are canceled. The status the subscription had *before* this call is
 	/// returned (or `None` when no subscription exists, i.e. a plain outgoing
-	/// payment). When that status is `HtlcsReady` or `Settled` the row is left
-	/// untouched and the caller MUST refuse the revocation.
+	/// payment), together with whether HTLC-recv vtxos were ever granted for
+	/// it. When that status is `HtlcsReady` or `Settled`, or it is `Canceled`
+	/// with HTLC-recv vtxos granted, the caller MUST refuse the revocation.
 	pub async fn cancel_revocable_htlc_subscription(
 		&self,
 		payment_hash: PaymentHash,
-	) -> anyhow::Result<Option<LightningHtlcSubscriptionStatus>> {
+	) -> anyhow::Result<Option<(LightningHtlcSubscriptionStatus, bool)>> {
 		// The row is locked `FOR UPDATE` so this serializes against
 		// `prepare_lightning_claim`'s grant: the receive side cannot transition
 		// to `HtlcsReady` between our read and our cancel, and a concurrent grant
 		// blocks until we commit.
 		let select = self.prepare("
-			SELECT id, status FROM lightning_htlc_subscription
-			WHERE payment_hash = $1
+			SELECT lhs.id, lhs.status, EXISTS(
+				SELECT 1 FROM vtxo WHERE vtxo.lightning_htlc_subscription_id = lhs.id
+			) AS htlc_recvs_granted
+			FROM lightning_htlc_subscription lhs
+			WHERE lhs.payment_hash = $1
 			FOR UPDATE;
 		").await?;
 		let Some(row) = self.query_opt(&select, &[&payment_hash.to_string()]).await? else {
@@ -568,6 +572,7 @@ impl<'t> Tx<'t> {
 
 		let id = row.get::<_, i64>("id");
 		let status = row.get::<_, LightningHtlcSubscriptionStatus>("status");
+		let htlc_recvs_granted = row.get::<_, bool>("htlc_recvs_granted");
 
 		if matches!(status,
 			LightningHtlcSubscriptionStatus::Created | LightningHtlcSubscriptionStatus::Accepted,
@@ -580,7 +585,7 @@ impl<'t> Tx<'t> {
 			self.execute(&update, &[&id]).await?;
 		}
 
-		Ok(Some(status))
+		Ok(Some((status, htlc_recvs_granted)))
 	}
 
 	/// Update the lightning receive with the HTLC VTXOs allocated

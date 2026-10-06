@@ -345,7 +345,6 @@ async fn reject_revocation_when_settled_but_status_regressed() {
 /// fails the payer's attempt, which makes the HTLC-send vtxos revocable while
 /// the payee still holds the granted HTLC-recv vtxos.
 #[tokio::test]
-#[ignore = "the invoice-expiry sweep cancels a granted receive"]
 async fn intra_ark_invoice_expiry_after_grant_does_not_allow_revoke() {
 	let ctx = TestContext::new("server/intra_ark_invoice_expiry_after_grant_does_not_allow_revoke").await;
 

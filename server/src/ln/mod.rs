@@ -74,6 +74,23 @@ fn validate_htlc_recv_expiry(
 	Ok(())
 }
 
+/// Whether the payee may still claim the HTLC-recv vtxos granted for `sub`.
+///
+/// [validate_htlc_recv_expiry] caps every granted HTLC-recv expiry at
+/// `htlc_expiry_delta` blocks below the lowest incoming HTLC expiry, so past
+/// that height all of them expired. Without a known incoming expiry we
+/// assume they are live.
+pub(crate) fn htlc_recvs_may_be_live(
+	sub: &LightningHtlcSubscription,
+	tip: BlockHeight,
+	htlc_expiry_delta: BlockDelta,
+) -> bool {
+	match sub.lowest_incoming_htlc_expiry {
+		Some(expiry) => tip <= expiry.saturating_sub(htlc_expiry_delta),
+		None => true,
+	}
+}
+
 /// Validate a sender's side of an intra-Ark payment against the receive
 /// subscription that it will settle.
 ///
@@ -493,11 +510,20 @@ impl Server {
 			// the receive here so a later claim is refused, and bail if the
 			// receive is already committed (HtlcsReady/Settled) - otherwise the
 			// server would refund the sender AND pay the payee for one payment.
-			if let Some(status) = t.cancel_revocable_htlc_subscription(payment_hash).await? {
-				if matches!(status,
+			//
+			// A receive canceled after its HTLC-recv vtxos were granted is just
+			// as committed: the payee can still claim them on-chain.
+			if let Some((status, htlc_recvs_granted)) =
+				t.cancel_revocable_htlc_subscription(payment_hash).await?
+			{
+				let committed = match status {
 					LightningHtlcSubscriptionStatus::HtlcsReady
-						| LightningHtlcSubscriptionStatus::Settled,
-				) {
+						| LightningHtlcSubscriptionStatus::Settled => true,
+					LightningHtlcSubscriptionStatus::Canceled => htlc_recvs_granted,
+					LightningHtlcSubscriptionStatus::Created
+						| LightningHtlcSubscriptionStatus::Accepted => false,
+				};
+				if committed {
 					return badarg!(
 						"invoice receive is already committed (status: {status}), \
 						cannot revoke: the payment can still be claimed",
