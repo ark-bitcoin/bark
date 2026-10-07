@@ -1,0 +1,4 @@
+- Add `GET /api/v1/wallet/debug-info`
+  It returns the network, the mailbox ID and the VTXO xpub of the wallet,
+  which you can share in support requests.
+  [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)

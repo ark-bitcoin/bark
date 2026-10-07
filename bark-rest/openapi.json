@@ -2539,6 +2539,38 @@
         }
       }
     },
+    "/api/v1/wallet/debug-info": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "summary": "Get wallet debug info",
+        "description": "Returns wallet information that helps to debug issues: the bitcoin network, the ID of the wallet's server mailbox and the xpub from which all VTXO keypairs are derived.",
+        "operationId": "debug_info",
+        "responses": {
+          "200": {
+            "description": "Returns the wallet debug info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DebugInfo"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/history": {
       "get": {
         "tags": [
@@ -4026,6 +4058,29 @@
         "properties": {
           "fingerprint": {
             "type": "string"
+          }
+        }
+      },
+      "DebugInfo": {
+        "type": "object",
+        "description": "Wallet information that helps to debug issues.",
+        "required": [
+          "network",
+          "mailbox_id",
+          "vtxo_xpub"
+        ],
+        "properties": {
+          "mailbox_id": {
+            "type": "string",
+            "description": "The ID of the wallet's server mailbox"
+          },
+          "network": {
+            "type": "string",
+            "description": "The bitcoin network the wallet operates on"
+          },
+          "vtxo_xpub": {
+            "type": "string",
+            "description": "The xpub from which all VTXO keypairs are derived"
           }
         }
       },

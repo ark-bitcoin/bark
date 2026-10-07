@@ -82,6 +82,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**bip321_uri**](docs/WalletApi.md#bip321_uri) | **POST** /api/v1/wallet/bip321 | Build a BIP 321 payment URI
 *WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | Check server connection
 *WalletApi* | [**create_wallet**](docs/WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | Create a wallet
+*WalletApi* | [**debug_info**](docs/WalletApi.md#debug_info) | **GET** /api/v1/wallet/debug-info | Get wallet debug info
 *WalletApi* | [**get_vtxo**](docs/WalletApi.md#get_vtxo) | **GET** /api/v1/wallet/vtxos/{id} | Get VTXO detail
 *WalletApi* | [**get_vtxo_encoded**](docs/WalletApi.md#get_vtxo_encoded) | **GET** /api/v1/wallet/vtxos/{id}/encoded | Get encoded VTXO
 *WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history (deprecated)
@@ -134,6 +135,7 @@ Class | Method | HTTP request | Description
  - [ConnectedResponse](docs/ConnectedResponse.md)
  - [CreateWalletRequest](docs/CreateWalletRequest.md)
  - [CreateWalletResponse](docs/CreateWalletResponse.md)
+ - [DebugInfo](docs/DebugInfo.md)
  - [DelegatedRefreshRequest](docs/DelegatedRefreshRequest.md)
  - [EmergencyExitFeeEstimateQuery](docs/EmergencyExitFeeEstimateQuery.md)
  - [EmergencyExitFeeEstimateResponse](docs/EmergencyExitFeeEstimateResponse.md)

@@ -35,6 +35,7 @@ pub fn router() -> Router<Arc<ServerState>> {
 		.route("/create", post(create_wallet))
 		.route("/mnemonic", get(mnemonic))
 		.route("/ark-info", get(ark_info))
+		.route("/debug-info", get(debug_info))
 		.route("/next-round", get(next_round))
 		.route("/addresses/next", post(address))
 		.route("/addresses/index/{index}", get(peek_address))
@@ -68,6 +69,7 @@ pub fn router() -> Router<Arc<ServerState>> {
 		create_wallet,
 		mnemonic,
 		ark_info,
+		debug_info,
 		next_round,
 		address,
 		peek_address,
@@ -104,6 +106,7 @@ pub fn router() -> Router<Arc<ServerState>> {
 		bark_json::web::CreateWalletResponse,
 		bark_json::web::MnemonicResponse,
 		bark_json::cli::ArkInfo,
+		bark_json::cli::DebugInfo,
 		bark_json::cli::NextRoundStart,
 		bark_json::web::VtxosQuery,
 		bark_json::cli::Balance,
@@ -328,6 +331,30 @@ pub async fn ark_info(
 		Some(ark_info) => Ok(axum::Json(ark_info.into())),
 		None => not_found!(["ark server"], "Wallet not connected to an Ark server"),
 	}
+}
+
+#[utoipa::path(
+	get,
+	path = "/debug-info",
+	summary = "Get wallet debug info",
+	responses(
+		(status = 200, description = "Returns the wallet debug info", body = bark_json::cli::DebugInfo),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns wallet information that helps to debug issues: the bitcoin \
+		network, the ID of the wallet's server mailbox and the xpub from which all VTXO \
+		keypairs are derived.",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn debug_info(
+	State(state): State<Arc<ServerState>>,
+) -> HandlerResult<Json<bark_json::cli::DebugInfo>> {
+	let wallet = state.require_wallet()?;
+	let info = wallet.debug_info().await
+		.context("Failed to get wallet debug info")?;
+
+	Ok(axum::Json(info.into()))
 }
 
 #[utoipa::path(
