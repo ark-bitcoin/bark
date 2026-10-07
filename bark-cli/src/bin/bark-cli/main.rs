@@ -232,6 +232,10 @@ enum Command {
 	#[command()]
 	ArkInfo,
 
+	/// Print wallet information that helps to debug issues
+	#[command()]
+	DebugInfo,
+
 	/// Get an address to receive VTXOs
 	#[command()]
 	Address {
@@ -428,6 +432,9 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 			let info = wallet_api::ark_info(config).await.rest()
 				.context("could not get the Ark server info")?;
 			output_json(&info);
+		},
+		Command::DebugInfo => {
+			output_json(&wallet_api::debug_info(config).await.rest()?);
 		},
 		Command::Address { index, subcommand } => {
 			match subcommand {
