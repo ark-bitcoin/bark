@@ -680,6 +680,15 @@ impl Server {
 			if utxo.txid != funding_tx.compute_txid() {
 				return badarg!("board outpoint does not match funding tx (txid)");
 			}
+			// The exit tx we cosign commits to `amount` as the funding output's
+			// value, so a funding output paying anything else yields a board
+			// that can neither be registered nor unilaterally exited.
+			let funding_value = funding_tx.output[utxo.vout as usize].value;
+			if funding_value != amount {
+				return badarg!("board amount {} does not match funding tx output value {}",
+					amount, funding_value,
+				);
+			}
 
 			// validate funding tx is real
 			// check that any of the inputs is a vtxo
