@@ -746,6 +746,8 @@ impl Server {
 	/// - The VTXO is actually a board (not another VTXO type)
 	#[tracing::instrument(skip(self, vtxo))]
 	pub async fn register_board(&self, vtxo: Vtxo<Full>) -> anyhow::Result<()> {
+		check_max_amount("board", vtxo.amount(), self.config.max_board_amount)?;
+
 		let funding_txid = vtxo.chain_anchor().txid;
 		let funding_vout = vtxo.chain_anchor().vout;
 		let tx_info = bcd::custom_get_raw_transaction_info(&self.bitcoind, funding_txid, None).await
