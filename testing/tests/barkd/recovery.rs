@@ -746,6 +746,56 @@ async fn recovered_wallet_skips_unownable_vtxo() {
 		"unownable foreign VTXO must not be recovered");
 }
 
+/// Recovery records a vtxo as spendable only when the server says it is.
+///
+/// The server fails every status request, so recovery has no answer for any
+/// vtxo after its three retries. It must keep them all locked rather than
+/// offer a vtxo that may well be spent as an input.
+#[tokio::test]
+async fn recovered_wallet_locks_vtxos_without_a_status() {
+	let ctx = TestContext::new("barkd/recovered_wallet_locks_vtxos_without_a_status").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).expose_mnemonic().create().await;
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	let dest = recipient.ark_address().await;
+	for _ in 0..2 {
+		sender.send(&dest, sat(1_000)).await;
+	}
+	let before = sender.vtxos(None).await;
+
+	#[derive(Clone)]
+	struct NoStatus;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for NoStatus {
+		async fn get_vtxos_status_by_ids(
+			&self, _upstream: &mut ArkClient, _req: protos::GetVtxosStatusByIdsRequest,
+		) -> Result<protos::GetVtxosStatusByIdsResponse, tonic::Status> {
+			Err(tonic::Status::unavailable("status down"))
+		}
+	}
+
+	let proxy = srv.start_proxy_with_mailbox(NoStatus, ()).await;
+	let recovered = ctx.barkd("sender_recovered", &srv)
+		.mnemonic(sender.mnemonic().await)
+		.cfg({
+			let addr = proxy.address.clone();
+			move |c| c.server_address = addr
+		})
+		.create().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert!(!after.iter().any(|v| v.state == VtxoStateInfo::Spendable),
+		"no vtxo may be spendable without the server saying so, got {:?}", after);
+	for vtxo in &before {
+		let found = after.iter().find(|v| v.vtxo.id == vtxo.vtxo.id)
+			.unwrap_or_else(|| panic!("recovered wallet should hold VTXO {:?}", vtxo.vtxo.id));
+		assert!(matches!(found.state, VtxoStateInfo::Locked { .. }),
+			"a vtxo without a status should be locked, got {:?}", found.state);
+	}
+}
+
 /// Recovery skips a VTXO that fails validation.
 ///
 /// A buggy or malicious server could return a VTXO whose owner key we can derive

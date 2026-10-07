@@ -468,6 +468,9 @@ impl Wallet {
 		match adoption {
 			Ok(ServerStatusAdoption::Spendable) => {
 				self.store_vtxos([vtxo],&VtxoState::Spendable).await?;
+				// A locked row from an earlier attempt without an answer is
+				// released.
+				self.unlock_vtxos([vtxo], None).await?;
 				report.push_recovered(vtxo);
 				debug!("Recovered spendable vtxo {id} ({})", vtxo.amount());
 			},
@@ -491,12 +494,13 @@ impl Wallet {
 				report.push_skipped(vtxo);
 			},
 			// No usable answer — a non-decision, so it's retried rather than taken
-			// for a clean skip. The spendable row overstates the balance until the
-			// retry, but no row at all would let a mailbox replay store the vtxo
-			// spendable without ever asking the server.
+			// for a clean skip. The vtxo is kept locked: it may well be spent, so
+			// it must not be offered as an input, and no row at all would let a
+			// mailbox replay store it spendable without ever asking the server.
 			Err(e) => {
-				warn!("Could not get status for recovery vtxo {id}: {:#}", e);
-				self.store_vtxos([vtxo],&VtxoState::Spendable).await?;
+				warn!("Could not get status for recovery vtxo {id}, keeping it locked \
+					until its status is known: {:#}", e);
+				self.store_vtxos([vtxo],&VtxoState::Locked { holder: None }).await?;
 				report.push_failed(id, Some(vtxo.amount()));
 			},
 		}
