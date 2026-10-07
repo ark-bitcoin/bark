@@ -10,6 +10,7 @@
 
 mod arkoor;
 mod balance;
+mod board;
 mod exit;
 mod import;
 mod lightning;
