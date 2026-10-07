@@ -398,6 +398,10 @@ generate-bark-rest-client: dump-bark-rest-openapi-schema
 		--artifact-version "$BARK_REST_VERSION" \
 		--additional-properties packageVersion="$BARK_REST_VERSION" \
 		--additional-properties reqwestDefaultFeatures="rustls"
+	# reqwest's rustls feature brings the aws-lc backend while bark uses ring;
+	# users of this feature install a ring provider themselves. Added before
+	# cargo add, which resolves the workspace and bark-cli needs the feature.
+	echo 'rustls-no-provider = ["reqwest/rustls-no-provider"]' >> {{BARK_REST_CLIENT_DIR}}/Cargo.toml
 	cargo add --package bark-rest-client --path bark-json
 	cargo add --package bark-rest-client --path bark-rest --no-default-features
 	rm {{BARK_REST_CLIENT_DIR}}/src/models/*.rs
