@@ -71,6 +71,7 @@ impl Server {
 		let mut found = Vec::new();
 		let mut nb_bytes = 0;
 		let mut start = start_index;
+		let mut stopped_early = false;
 		let mut size_limited = false;
 		while start < end_index {
 			let end = start.saturating_add(RECOVERY_XPUB_CHUNK_SIZE).min(end_index);
@@ -83,6 +84,15 @@ impl Server {
 			let rows = self.db.read(async |tx| {
 				tx.get_vtxos_by_policy(&policies).await
 			}).await?;
+
+			// Stop early at an entire empty chunk (stop-gap). Keys are issued in
+			// sequence, so this also ends the scan of an xpub without any VTXOs
+			// after a single chunk.
+			if rows.is_empty() {
+				stopped_early = true;
+				start = end;
+				break;
+			}
 
 			let mut chunk = rows.into_iter().map(|state| {
 				let vtxo = state.vtxo.try_into_user_vtxo().ok()
@@ -120,7 +130,7 @@ impl Server {
 
 		Ok(XpubRecovery {
 			have_more: size_limited
-				|| (!found.is_empty() && end_index < NB_NORMAL_CHILDREN),
+				|| (!found.is_empty() && !stopped_early && end_index < NB_NORMAL_CHILDREN),
 			nb_keys_scanned: start - start_index,
 			vtxos: found,
 		})
