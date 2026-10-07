@@ -237,6 +237,10 @@ impl OnchainWalletTrait for OnchainWallet {
 		b.finish().context("error building tx")
 	}
 
+	async fn sign_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt> {
+		OnchainWallet::sign_psbt(self, psbt).await
+	}
+
 	async fn finish_psbt(&mut self, mut psbt: Psbt) -> anyhow::Result<Psbt> {
 		#[allow(deprecated)]
 		let opts = bdk_wallet::SignOptions {

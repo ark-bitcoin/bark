@@ -139,6 +139,14 @@ pub trait OnchainWalletTrait: std::any::Any + Send + Sync {
 
 	/// Consume a [Psbt] and return a fully signed [Psbt] with all witnesses filled in
 	///
+	/// The transaction is not stored in the wallet; use [Self::finish_psbt] for that.
+	///
+	/// Wallets should apply all necessary signatures and finalize inputs according
+	/// to their internal key management and policies.
+	async fn sign_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt>;
+
+	/// Sign a [Psbt] and store the transaction in the wallet as an unconfirmed spend
+	///
 	/// Useful when the signed [Psbt] is needed after signing, e.g. to compute fees
 	/// via [Psbt::fee] before extracting the final [Transaction].
 	///

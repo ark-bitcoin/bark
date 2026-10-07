@@ -139,7 +139,8 @@ impl Wallet {
 				);
 			}
 
-			wallet.finish_psbt(board_psbt).await?
+			// Sign only: a board that fails here must leave the wallet untouched.
+			wallet.sign_psbt(board_psbt).await?
 		};
 
 		self.board_psbt(signed_psbt, user_keypair, expiry_height).await

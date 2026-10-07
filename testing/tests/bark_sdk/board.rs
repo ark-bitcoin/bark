@@ -15,7 +15,6 @@ const MIN_BOARD_AMOUNT: Amount = Amount::from_sat(20_000);
 ///
 /// The board is made to fail by boarding half the server's minimum amount.
 #[tokio::test]
-#[ignore = "fails until board signing stops storing the funding tx in the wallet"]
 async fn failed_board_leaves_the_onchain_wallet_untouched() {
 	let ctx = TestContext::new("bark_sdk/failed_board_leaves_the_onchain_wallet_untouched").await;
 	let srv = ctx.captaind("server")

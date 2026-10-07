@@ -145,10 +145,13 @@ impl WalletAction for Board {
 		match self.progress.clone() {
 			Progress::Broadcasting { signed_vtxo } => {
 				match run_broadcast(wallet, &self, signed_vtxo).await? {
-					BroadcastOutcome::Seen => Ok(Advance::Next(Board {
-						progress: Progress::Confirming { last_park_error: None },
-						..self
-					})),
+					BroadcastOutcome::Seen => {
+						record_funding_tx(wallet, &self).await;
+						Ok(Advance::Next(Board {
+							progress: Progress::Confirming { last_park_error: None },
+							..self
+						}))
+					},
 					BroadcastOutcome::Conflicted => fail_dead_board(wallet, &self).await,
 					// Not on the network yet, so there is nothing to confirm.
 					BroadcastOutcome::Waiting =>
@@ -189,6 +192,25 @@ impl WalletAction for Board {
 			wake_after: None,
 			error: None,
 		})
+	}
+}
+
+/// Store the funding tx in the onchain wallet now that it is on the network,
+/// like `OnchainWallet::drain` does for its own spends: a sync can lag the
+/// mempool, and until one sees the spend the wallet would hand the funding
+/// inputs to the next transaction.
+async fn record_funding_tx(wallet: &Wallet, board: &Board) {
+	let Some(onchain) = wallet.inner.onchain.as_ref() else { return };
+	match board.to_broadcast() {
+		Ok(Some(tx)) => {
+			if let Err(e) = onchain.write().await.register_tx(&tx).await {
+				warn!("Failed to record board {} funding tx in the onchain wallet: {:#}",
+					board.id, e,
+				);
+			}
+		},
+		Ok(None) => {},
+		Err(e) => warn!("Board {} has no funding tx to record: {:#}", board.id, e),
 	}
 }
 
