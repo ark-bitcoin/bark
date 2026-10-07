@@ -131,6 +131,7 @@ impl LightningManager {
 		let hold_config = ClnHoldConfig {
 			invoice_check_interval: config.invoice_check_interval,
 			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
+			htlc_expiry_delta: config.htlc_expiry_delta,
 			track_all_base_delay: config.track_all_base_delay,
 			max_track_all_delay: config.max_track_all_delay,
 		};

@@ -45,6 +45,7 @@ use cln_rpc::plugins::hold::hold_client::HoldClient;
 use crate::database;
 use crate::database::ln::{LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus};
 use crate::ln::guard::{PaymentGuard, PaymentGuards};
+use crate::ln::htlc_recvs_may_be_live;
 use crate::ln::node_manager::post_lightning_receive_notification;
 use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
@@ -56,6 +57,8 @@ use super::super::payment_handler::PaymentAttemptHandler;
 pub struct ClnHoldConfig {
 	pub invoice_check_interval: Duration,
 	pub receive_htlc_forward_timeout: Duration,
+	/// See [crate::config::Config::htlc_expiry_delta].
+	pub htlc_expiry_delta: BlockDelta,
 	/// Base delay for TrackAll reconnection backoff (e.g., 1 second)
 	pub track_all_base_delay: Duration,
 	/// Maximum delay for TrackAll reconnection backoff (e.g., 60 seconds)
@@ -249,6 +252,7 @@ impl ClnHoldProcess {
 			});
 		telemetry::set_open_invoices(self.node_id, &status_counts);
 
+		let tip = self.sync_manager.chain_tip().height;
 		for htlc_subscription in htlc_subscriptions {
 			let payment_hash = htlc_subscription.invoice.payment_hash();
 
@@ -274,6 +278,17 @@ impl ClnHoldProcess {
 					).await?;
 					continue;
 				}
+			}
+
+			// A receive whose HTLC-recv vtxos are handed out stays committed
+			// until they expire: the payee can claim them on-chain with the
+			// preimage. Canceling it earlier fails the inbound HTLC back (or,
+			// intra-Ark, fails the payment attempt so the sender can revoke),
+			// paying the same payment twice.
+			if htlc_subscription.status == LightningHtlcSubscriptionStatus::HtlcsReady
+				&& htlc_recvs_may_be_live(&htlc_subscription, tip, self.config.htlc_expiry_delta)
+			{
+				continue;
 			}
 
 			// Cancel invoice & subscription if invoice expired
