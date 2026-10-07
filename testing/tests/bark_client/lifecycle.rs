@@ -5,6 +5,9 @@
 
 use std::time::Instant;
 
+use bark_json::cli::DebugInfo;
+use bark_rest_client::apis::wallet_api;
+
 use ark_testing::{BarkClient, TestContext};
 use ark_testing::util::{poll_interval, wait_timeout};
 
@@ -20,6 +23,12 @@ async fn drives_running_barkd() {
 
 	let balance = bark.run(["balance"]).await;
 	assert!(balance.contains("spendable_sat"), "unexpected balance output: {}", balance);
+
+	let debug_info = serde_json::from_str::<DebugInfo>(&bark.run(["debug-info"]).await)
+		.expect("debug-info should print the DebugInfo JSON");
+	let expected = wallet_api::debug_info(&barkd.client_config()).await
+		.expect("failed to get barkd debug info");
+	assert_eq!(debug_info, expected);
 
 	let pid = bark.barkd_pid().expect("the datadir lock should carry the barkd pid");
 	let status = bark.run(["status"]).await;

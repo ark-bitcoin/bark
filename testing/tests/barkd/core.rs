@@ -1,4 +1,6 @@
 
+use bitcoin::NetworkKind;
+
 use ark_testing::{Barkd, TestContext};
 use ark_testing::ports::pick_port;
 use bark_rest_client::apis::configuration::Configuration;
@@ -64,6 +66,22 @@ async fn wallet_ark_info_barkd() {
 	assert_eq!(info.nb_round_nonces, expected.nb_round_nonces);
 	assert_eq!(info.vtxo_exit_delta, expected.vtxo_exit_delta);
 	assert_eq!(info.vtxo_lifetime, expected.vtxo_lifetime);
+}
+
+/// Verify that `GET /wallet/debug-info` reports the wallet's network and
+/// a VTXO xpub for that network.
+#[tokio::test]
+async fn wallet_debug_info_barkd() {
+	let ctx = TestContext::new("barkd/wallet_debug_info_barkd").await;
+
+	let srv = ctx.captaind("server").create().await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
+
+	let info = wallet_api::debug_info(&barkd.client_config()).await
+		.expect("failed to get barkd debug info");
+
+	assert_eq!(info.network, barkd.ark_info().await.network);
+	assert_eq!(info.vtxo_xpub.network, NetworkKind::from(info.network));
 }
 
 /// Verify that `GET /wallet/next-round` returns a future timestamp.
