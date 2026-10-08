@@ -111,6 +111,11 @@ pub enum BoardFromVtxoError {
 	IncorrectGenesisItemCount {
 		genesis_count: usize,
 	},
+	#[error("funding output mismatch: expected {expected:?}, got {got:?}")]
+	FundingOutputMismatch {
+		expected: TxOut,
+		got: Option<TxOut>,
+	},
 }
 
 /// Partial signature the server responds to a board request.
@@ -415,6 +420,20 @@ impl BoardBuilder<state::ServerCanBuildVtxos> {
 			fee,
 			vtxo.chain_anchor(),
 		);
+
+		// The exit txid doesn't commit to the funding script, so check it
+		// is the user+server musig output and not one the user owns alone.
+		let expected_funding_txout = TxOut {
+			value: vtxo.amount() + fee,
+			script_pubkey: exit_data.funding_taproot.script_pubkey(),
+		};
+		let funding_txout = funding_tx.output.get(vtxo.chain_anchor().vout as usize);
+		if funding_txout != Some(&expected_funding_txout) {
+			return Err(BoardFromVtxoError::FundingOutputMismatch {
+				expected: expected_funding_txout,
+				got: funding_txout.cloned(),
+			});
+		}
 
 		// We compute the vtxo_id again from all reconstructed data
 		// It must match exactly
@@ -751,6 +770,49 @@ mod test {
 			Err(BoardFromVtxoError::VtxoIdMismatch { expected, got })
 			if expected == original_point && got == vtxo.point
 		));
+	}
+
+	#[test]
+	fn test_new_from_vtxo_funding_output_without_server_key() {
+		let (honest, _, user_key, server_key) = create_board_vtxo();
+		let attacker_key = Keypair::from_str("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+
+		let fee = honest.genesis.items[0].fee_amount;
+		let amount = honest.amount() + fee;
+		let agg_pk = musig::combine_keys([user_key.public_key(), attacker_key.public_key()])
+			.x_only_public_key().0;
+		let funding_taproot = cosign_taproot(agg_pk, server_key.public_key(), honest.expiry_height);
+		let funding_txout = TxOut { value: amount, script_pubkey: funding_taproot.script_pubkey() };
+		let funding_tx = Transaction {
+			version: transaction::Version::TWO,
+			lock_time: absolute::LockTime::ZERO,
+			input: vec![],
+			output: vec![funding_txout.clone()],
+		};
+		let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+
+		let exit = compute_exit_data(
+			user_key.public_key(), server_key.public_key(), honest.expiry_height,
+			honest.exit_delta, amount, fee, utxo,
+		);
+		let sighash = SighashCache::new(&exit.tx).taproot_key_spend_signature_hash(
+			0, &sighash::Prevouts::All(&[funding_txout]), sighash::TapSighashType::Default,
+		).unwrap();
+		let sig = musig::cosign_both(
+			&user_key, &attacker_key, sighash.to_byte_array(),
+			Some(funding_taproot.tap_tweak().to_byte_array()),
+		);
+
+		let mut vtxo = honest.clone();
+		vtxo.anchor_point = utxo;
+		vtxo.point = OutPoint::new(exit.txid, BOARD_FUNDING_TX_VTXO_VOUT);
+		vtxo.genesis.items[0].transition = GenesisTransition::new_cosigned(
+			vec![user_key.public_key(), attacker_key.public_key()], Some(sig),
+		);
+
+		vtxo.validate(&funding_tx).expect("signed by keys the attacker controls");
+		let result = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, server_key.public_key());
+		assert!(matches!(result, Err(BoardFromVtxoError::FundingOutputMismatch { .. })));
 	}
 
 	#[test]

@@ -758,6 +758,68 @@ async fn refuse_generic_spends_of_htlc_send_vtxo_with_no_payment_in_flight() {
 		"unexpected server response: {status:?}");
 }
 
+/// A banned HTLC vtxo must not be revocable, or a ban could be bypassed by
+/// revoking it into fresh pubkey vtxos.
+#[tokio::test]
+async fn refuse_revocation_of_banned_htlc_send_vtxo() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/refuse_revocation_of_banned_htlc_send_vtxo").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	/// Accepts the payment request and then does nothing with it.
+	#[derive(Clone)]
+	struct SwallowInitiate;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for SwallowInitiate {
+		async fn initiate_lightning_payment(
+			&self,
+			_upstream: &mut ArkClient,
+			_req: protos::InitiateLightningPaymentRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			Ok(protos::Empty {})
+		}
+
+		async fn check_lightning_payment(
+			&self,
+			_upstream: &mut ArkClient,
+			_req: protos::CheckLightningPaymentRequest,
+		) -> Result<protos::LightningPaymentStatus, tonic::Status> {
+			Ok(protos::LightningPaymentStatus {
+				payment_status: Some(
+					protos::lightning_payment_status::PaymentStatus::Pending(protos::Empty {}),
+				),
+			})
+		}
+	}
+
+	let proxy = srv.start_proxy_no_mailbox(SwallowInitiate).await;
+
+	let bark = ctx.bark("bark", &proxy.address).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice = lightning.external.invoice(
+		Some(btc(1)), "test_payment", "A test payment",
+	).await;
+	lightning.sync().await;
+	bark.try_pay_lightning(&invoice, None, false).await.unwrap();
+
+	let payment_hash: ark::lightning::PaymentHash =
+		Bolt11Invoice::from_str(&invoice).unwrap().into();
+	let client = bark.client().await;
+	for id in htlc_send_vtxo_ids(&client, payment_hash).await {
+		srv.ban_vtxo(id, 100).await;
+	}
+
+	let status = request_htlc_revocation(&srv, &client, payment_hash).await;
+	assert_eq!(status.code(), tonic::Code::InvalidArgument);
+	assert!(status.message().contains("is banned until block"),
+		"unexpected server response: {status:?}");
+}
+
 /// HTLC VTXOs need to be revoked and cannot be used as offboard input. The client must
 /// provide a Pubkey VTXO.
 #[tokio::test]
