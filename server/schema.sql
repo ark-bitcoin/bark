@@ -17,6 +17,18 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: cln_hold_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.cln_hold_status AS ENUM (
+    'unpaid',
+    'accepted',
+    'paid',
+    'cancelled'
+);
+
+
+--
 -- Name: cln_xpay_status; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -643,6 +655,50 @@ CREATE TABLE public.checkpoint_state (
     max_time bigint NOT NULL,
     CONSTRAINT checkpoint_state_type_id_check CHECK ((type_id = 1))
 );
+
+
+--
+-- Name: cln_hold; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cln_hold (
+    id bigint NOT NULL,
+    lightning_node_id bigint NOT NULL,
+    invoice text NOT NULL,
+    payment_hash text NOT NULL,
+    requested_amount_msat bigint NOT NULL,
+    min_final_cltv_delta integer NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    status public.cln_hold_status DEFAULT 'unpaid'::public.cln_hold_status NOT NULL,
+    accepted_amount_msat bigint,
+    lowest_incoming_htlc_expiry integer,
+    paid_amount_msat bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    accepted_at timestamp with time zone,
+    paid_at timestamp with time zone,
+    cancelled_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cln_hold_accepted_htlcs_ck CHECK (((status <> 'accepted'::public.cln_hold_status) OR ((accepted_amount_msat IS NOT NULL) AND (lowest_incoming_htlc_expiry IS NOT NULL))))
+);
+
+
+--
+-- Name: cln_hold_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.cln_hold_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: cln_hold_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.cln_hold_id_seq OWNED BY public.cln_hold.id;
 
 
 --
@@ -2089,6 +2145,13 @@ ALTER TABLE ONLY public.arkoor_mailbox ALTER COLUMN id SET DEFAULT nextval('publ
 
 
 --
+-- Name: cln_hold id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cln_hold ALTER COLUMN id SET DEFAULT nextval('public.cln_hold_id_seq'::regclass);
+
+
+--
 -- Name: cln_xpay id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -2243,6 +2306,14 @@ ALTER TABLE ONLY public.captaind_block
 
 ALTER TABLE ONLY public.checkpoint_state
     ADD CONSTRAINT checkpoint_state_pkey PRIMARY KEY (type_id);
+
+
+--
+-- Name: cln_hold cln_hold_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cln_hold
+    ADD CONSTRAINT cln_hold_pkey PRIMARY KEY (id);
 
 
 --
@@ -2497,6 +2568,20 @@ CREATE INDEX arkoor_mailbox_pubkey_ix ON public.arkoor_mailbox USING btree (pubk
 --
 
 CREATE UNIQUE INDEX arkoor_mailbox_vtxo_id_uix ON public.arkoor_mailbox USING btree (vtxo_id);
+
+
+--
+-- Name: cln_hold_open_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX cln_hold_open_ix ON public.cln_hold USING btree (lightning_node_id, id) WHERE (status = ANY (ARRAY['unpaid'::public.cln_hold_status, 'accepted'::public.cln_hold_status]));
+
+
+--
+-- Name: cln_hold_payment_hash_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX cln_hold_payment_hash_ix ON public.cln_hold USING btree (payment_hash);
 
 
 --
@@ -2925,6 +3010,14 @@ CREATE TRIGGER vtxo_update BEFORE UPDATE ON public.vtxo FOR EACH ROW EXECUTE FUN
 
 ALTER TABLE ONLY public.arkoor_mailbox
     ADD CONSTRAINT arkoor_mailbox_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(id);
+
+
+--
+-- Name: cln_hold cln_hold_lightning_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cln_hold
+    ADD CONSTRAINT cln_hold_lightning_node_id_fkey FOREIGN KEY (lightning_node_id) REFERENCES public.lightning_node(id);
 
 
 --

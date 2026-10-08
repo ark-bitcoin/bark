@@ -276,6 +276,9 @@ enum DataCommand {
 	/// Backfill the htlc_vtxos table from existing HTLC vtxos
 	#[command()]
 	BackfillHtlcVtxos,
+	/// Backfill the cln_hold table from existing lightning htlc subscriptions
+	#[command()]
+	BackfillClnHold,
 }
 
 #[derive(clap::Subcommand)]
@@ -435,6 +438,10 @@ async fn inner_main() -> anyhow::Result<()> {
 				DataCommand::BackfillHtlcVtxos => {
 					let count = server::database::data_migrations::backfill_htlc_vtxos::run(&db).await?;
 					println!("Backfilled {} htlc vtxos", count);
+				}
+				DataCommand::BackfillClnHold => {
+					let count = server::database::data_migrations::backfill_cln_hold::run(&db).await?;
+					println!("Backfilled {} hold invoices", count);
 				}
 			}
 		}
