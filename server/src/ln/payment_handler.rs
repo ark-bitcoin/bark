@@ -7,6 +7,7 @@ use ark::lightning::{PaymentHash, Preimage};
 
 use crate::database;
 use crate::database::ln::{LightningPaymentAttempt, LightningPaymentStatus};
+use crate::database::xpay::{self, ClnXpayOutcome};
 use crate::ln::LightningFailureKind;
 use crate::ln::settler::HtlcSettler;
 use crate::telemetry;
@@ -37,9 +38,15 @@ impl<'a> PaymentAttemptHandler<'a> {
 		&self, attempt: &LightningPaymentAttempt, error: Option<&str>,
 	) -> anyhow::Result<Option<DateTime<Local>>> {
 		let new_status = LightningPaymentStatus::Failed;
-		let updated_at = self.db.write(async |t|
-			t.update_lightning_payment_attempt_status(attempt, new_status, error).await
-		).await?;
+		let updated_at = self.db.write(async |t| {
+			let updated_at = t.update_lightning_payment_attempt_status(
+				attempt, new_status, error,
+			).await?;
+			if updated_at.is_some() {
+				end_xpay(t, attempt, ClnXpayOutcome::Fail { error_code: None }).await?;
+			}
+			Ok(updated_at)
+		}).await?;
 
 		if updated_at.is_some() {
 			trace!("Lightning payment attempt ({}): status updated to {} for payment hash {}.",
@@ -111,6 +118,20 @@ impl<'a> PaymentAttemptHandler<'a> {
 			let updated = t.verify_and_update_payment_attempt(
 				attempt, status, payment_error, final_amount_msat
 			).await?;
+
+			// The xpay call ends with the attempt, in the same transaction.
+			if updated && status.is_final() {
+				let outcome = match status {
+					LightningPaymentStatus::Succeeded => ClnXpayOutcome::Success {
+						// What went on the wire beyond the payment amount. Signed:
+						// a subsidized payment has a negative routing fee.
+						routing_fee_msat: final_amount_msat
+							.map(|sent| sent as i64 - attempt.amount_msat as i64),
+					},
+					_ => ClnXpayOutcome::Fail { error_code: None },
+				};
+				end_xpay(t, attempt, outcome).await?;
+			}
 
 			// Only mark linked HTLC-send vtxos as ln-spent once the attempt
 			// update has actually committed in this transaction; a lost
@@ -214,4 +235,33 @@ impl<'a> PaymentAttemptHandler<'a> {
 			},
 		}
 	}
+}
+
+/// End the cln_xpay row of this attempt, if the attempt made an xpay call.
+///
+/// An intra-Ark payment made none. An outgoing payment made exactly one, and
+/// it is pending for as long as the attempt is open; the hash is enough to find
+/// it. Runs in the caller's transaction, right after the attempt reached its
+/// final status, so the two tables agree on when the payment ended.
+async fn end_xpay(
+	tx: &database::Tx<'_>,
+	attempt: &LightningPaymentAttempt,
+	outcome: ClnXpayOutcome,
+) -> anyhow::Result<()> {
+	if attempt.is_self_payment() {
+		return Ok(());
+	}
+
+	let ended = xpay::end_pending_xpay_by_payment_hash(&**tx, attempt.payment_hash, outcome)
+		.await?;
+	if ended.is_none() {
+		// A pre-V75 attempt never had one; anything else has two writers
+		// disagreeing on which attempt is open, which the attempt's own
+		// optimistic lock should have prevented.
+		warn!("Lightning payment attempt ({}): no pending cln_xpay row to end for \
+			payment hash {}", attempt.id, attempt.payment_hash,
+		);
+	}
+
+	Ok(())
 }
