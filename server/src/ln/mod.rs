@@ -107,23 +107,6 @@ pub(crate) fn htlc_recvs_expired(
 	})
 }
 
-/// Whether the payee may still claim the HTLC-recv vtxos granted for `sub`.
-///
-/// [validate_htlc_recv_expiry] caps every granted HTLC-recv expiry at
-/// `htlc_expiry_delta` blocks below the lowest incoming HTLC expiry, so past
-/// that height all of them expired. Without a known incoming expiry we
-/// assume they are live.
-pub(crate) fn htlc_recvs_may_be_live(
-	sub: &LightningHtlcSubscription,
-	tip: BlockHeight,
-	htlc_expiry_delta: BlockDelta,
-) -> bool {
-	match sub.lowest_incoming_htlc_expiry {
-		Some(expiry) => tip <= expiry.saturating_sub(htlc_expiry_delta),
-		None => true,
-	}
-}
-
 /// Validate a sender's side of an intra-Ark payment against the receive
 /// subscription that it will settle.
 ///

@@ -20,6 +20,8 @@ use tokio::process::Command;
 use server_log::{parse_record, FinishedPoolIssuance, ParsedRecord, LogMsg, SyncedToHeight};
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
+use server::database::Db;
+use server::database::htlc_vtxo::{self, HtlcVtxo};
 
 use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcProxy};
 use crate::daemon::watchmand::Watchmand;
@@ -440,6 +442,15 @@ impl Captaind {
 		let ret = rx.recv().await.expect("log wait channel closed");
 		info!("Got {} log matching predicate!", L::LOGID);
 		ret
+	}
+
+	/// All HTLC vtxos the server knows for `payment_hash`, read from its
+	/// database.
+	pub async fn htlc_vtxos(&self, payment_hash: PaymentHash) -> Vec<HtlcVtxo> {
+		let postgres = self.config().postgres.clone();
+		let db = Db::connect(&postgres).await.expect("connect to captaind's postgres");
+		db.read(async |t| htlc_vtxo::get_htlc_vtxo_states_by_payment_hash(&t, payment_hash).await)
+			.await.expect("read htlc vtxos")
 	}
 
 	/// Wait until the vtxopool is ready

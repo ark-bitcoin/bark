@@ -99,7 +99,8 @@ impl_slog!(LightningReceiveCanceled, DEBUG, "canceled lightning receive");
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceiveKeptCommitted {
 	pub payment_hash: PaymentHash,
-	pub lowest_incoming_htlc_expiry: Option<BlockHeight>,
+	/// The highest expiry among the granted HTLC-recv vtxos.
+	pub htlc_recv_expiry: Option<BlockHeight>,
 	pub tip: BlockHeight,
 }
 impl_slog!(LightningReceiveKeptCommitted, TRACE, "kept an expired lightning receive committed: its HTLC-recv vtxos may be live");

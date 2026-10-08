@@ -38,14 +38,16 @@ use tracing::{debug, error, info, warn};
 
 use ark::lightning::PaymentHash;
 use ark::vtxo::policy::{check_block_delta, check_block_height};
-use bitcoin_ext::{AmountExt, BlockDelta};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 
 use crate::database;
+use crate::database::block::BlockTable;
+use crate::database::htlc_vtxo;
 use crate::database::ln::{LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus};
 use crate::ln::guard::{PaymentGuard, PaymentGuards};
-use crate::ln::htlc_recvs_may_be_live;
+use crate::ln::htlc_recvs_expired;
 use crate::ln::node_manager::post_lightning_receive_notification;
 use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
@@ -57,8 +59,6 @@ use super::super::payment_handler::PaymentAttemptHandler;
 pub struct ClnHoldConfig {
 	pub invoice_check_interval: Duration,
 	pub receive_htlc_forward_timeout: Duration,
-	/// See [crate::config::Config::htlc_expiry_delta].
-	pub htlc_expiry_delta: BlockDelta,
 	/// Base delay for TrackAll reconnection backoff (e.g., 1 second)
 	pub track_all_base_delay: Duration,
 	/// Maximum delay for TrackAll reconnection backoff (e.g., 60 seconds)
@@ -222,15 +222,16 @@ impl ClnHoldProcess {
 
 	/// For each subscription, verifies if incoming HTLCs have been accepted.
 	/// - If so, it updates the status to accepted.
-	/// - After a delay, it cancels the subscription on the plugin and updates
-	/// the status to canceled.
+	/// - Once it can no longer be paid (see [Self::cancel_reason]), it
+	/// cancels the subscription on the plugin and updates the status to
+	/// canceled.
 	async fn process_htlc_subscriptions(&mut self) -> anyhow::Result<()> {
 		self.check_htlc_subscription_timeouts().await?;
 		self.poll_htlc_state_updates().await?;
 		Ok(())
 	}
 
-	/// Checks all open subscriptions for timeouts and expired invoices.
+	/// Cancels every open subscription that can no longer be paid.
 	/// Called on timer regardless of whether TrackAll is enabled.
 	async fn check_htlc_subscription_timeouts(&mut self) -> anyhow::Result<()> {
 		let mut hold_client = match &self.hold_rpc {
@@ -254,65 +255,92 @@ impl ClnHoldProcess {
 
 		let tip = self.sync_manager.chain_tip().height;
 		for htlc_subscription in htlc_subscriptions {
-			let payment_hash = htlc_subscription.invoice.payment_hash();
+			let Some(reason) = self.cancel_reason(&htlc_subscription, tip).await? else {
+				continue;
+			};
+			let Some(_guard) = self.try_lock_subscription(&htlc_subscription).await? else {
+				continue;
+			};
+			self.cancel_invoice_and_htlc_subscription(
+				&mut hold_client,
+				htlc_subscription.invoice.payment_hash(),
+				&htlc_subscription,
+				reason,
+			).await?;
+		}
 
-			// Check for HTLC timeout: subscription held too long in Accepted state.
-			// We use our `accepted_at` timestamp rather than the hold plugin's HTLC
-			// `created_at` for accuracy.
-			if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted {
+		Ok(())
+	}
+
+	/// Why an open subscription should be canceled now, if it should.
+	///
+	/// That is when the payee did not finish its HTLC-recv vtxo setup in time,
+	/// every granted HTLC-recv vtxo expired, or the invoice expired before
+	/// anything was granted. Granted HTLC-recv vtxos keep the receive committed
+	/// whatever its invoice says: the payee can claim them on-chain, so
+	/// canceling earlier pays the same payment twice.
+	async fn cancel_reason(
+		&self,
+		htlc_subscription: &LightningHtlcSubscription,
+		tip: BlockHeight,
+	) -> anyhow::Result<Option<&'static str>> {
+		match htlc_subscription.status {
+			// Held too long in Accepted state. We use our `accepted_at`
+			// timestamp rather than the hold plugin's HTLC `created_at` for
+			// accuracy.
+			LightningHtlcSubscriptionStatus::Accepted => {
 				// TODO(dunxen): Simply `.expect` and remove this `unwrap_or` at some stage.
 				// The `.unwrap_or` is here for backwards compatibility for existing servers that may
 				// have exsisting subscriptions in an `Accepted` state but without an `accepted_at` field
 				// after restart.
 				let accepted_at = htlc_subscription.accepted_at.unwrap_or(htlc_subscription.updated_at);
 				if accepted_at < Local::now() - self.config.receive_htlc_forward_timeout {
-					let Some(_guard) = self.try_lock_subscription(&htlc_subscription).await? else {
-						continue;
-					};
-
-					self.cancel_invoice_and_htlc_subscription(
-						&mut hold_client,
-						payment_hash,
-						&htlc_subscription,
-						"htlc vtxo setup timed out",
-					).await?;
-					continue;
+					return Ok(Some("htlc vtxo setup timed out"));
 				}
-			}
+			},
+			LightningHtlcSubscriptionStatus::HtlcsReady => {
+				let (htlc_vtxos, watchman_tip) = self.db.read(async |t| {
+					let htlc_vtxos = htlc_vtxo::get_htlc_vtxo_states_by_payment_hash(
+						&t, htlc_subscription.payment_hash,
+					).await?;
+					let watchman_tip = t.get_highest_block(BlockTable::Watchmand).await?.map(|b| b.height);
+					Ok((htlc_vtxos, watchman_tip))
+				}).await?;
+				if htlc_recvs_expired(&htlc_vtxos, tip, watchman_tip) {
+					return Ok(Some("htlc-recv vtxos expired"));
+				}
 
-			// A receive whose HTLC-recv vtxos are handed out stays committed
-			// until they expire: the payee can claim them on-chain with the
-			// preimage. Canceling it earlier fails the inbound HTLC back (or,
-			// intra-Ark, fails the payment attempt so the sender can revoke),
-			// paying the same payment twice.
-			if htlc_subscription.status == LightningHtlcSubscriptionStatus::HtlcsReady
-				&& htlc_recvs_may_be_live(&htlc_subscription, tip, self.config.htlc_expiry_delta)
-			{
+				let htlc_recv_expiry = htlc_vtxos.iter()
+					.filter(|h| h.direction() == htlc_vtxo::HtlcDirection::Outgoing)
+					.map(|h| h.htlc_expiry())
+					.max();
+				// Only possible if the backfill-htlc-vtxos migration was skipped.
+				if htlc_recv_expiry.is_none() {
+					debug_assert!(false,
+						"HtlcsReady receive {} has no HTLC-recv vtxos", htlc_subscription.id,
+					);
+					error!("Lightning htlc subscription ({}) is {} without any HTLC-recv vtxo; \
+						keeping it committed. Run the backfill-htlc-vtxos data migration.",
+						htlc_subscription.id, htlc_subscription.status,
+					);
+				}
+
 				if htlc_subscription.invoice.is_expired() {
 					slog!(LightningReceiveKeptCommitted,
 						payment_hash: htlc_subscription.payment_hash,
-						lowest_incoming_htlc_expiry: htlc_subscription.lowest_incoming_htlc_expiry,
+						htlc_recv_expiry,
 						tip,
 					);
 				}
-				continue;
-			}
-
-			// Cancel invoice & subscription if invoice expired
-			if htlc_subscription.invoice.is_expired() {
-				let Some(_guard) = self.try_lock_subscription(&htlc_subscription).await? else {
-					continue;
-				};
-				self.cancel_invoice_and_htlc_subscription(
-					&mut hold_client,
-					payment_hash,
-					&htlc_subscription,
-					"invoice expired",
-				).await?;
-			}
+				return Ok(None);
+			},
+			_ => {},
 		}
 
-		Ok(())
+		if htlc_subscription.invoice.is_expired() {
+			return Ok(Some("invoice expired"));
+		}
+		Ok(None)
 	}
 
 	/// Handles an invoice that has been accepted (HTLCs received).
