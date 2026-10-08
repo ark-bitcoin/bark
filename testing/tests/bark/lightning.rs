@@ -964,13 +964,9 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 /// withholds - so the payer was refunded while the payee could still release
 /// the claim and get paid, granting `pay_amount` from server funds.
 ///
-/// The fix refuses the revocation while the receive side is committed
-/// (`HtlcsReady`/`Settled`), so the payer is not refunded and the total
-/// spendable across both wallets never exceeds what they funded.
-///
-/// The parked claim is released past the HTLC-send expiry, so it is refused
-/// too: by then the payer can refund the HTLC-send vtxos on-chain, and the
-/// server would pay the payee against collateral it can no longer collect.
+/// The fix refuses the revocation while the receive side is committed. The
+/// HTLC-recv vtxos expire before the HTLC-send vtxos, so once the payer may
+/// revoke, the revocation cancels the receive and the parked claim is refused.
 #[tokio::test]
 async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 	require_bark_version!(> "0.5.0");
@@ -979,7 +975,8 @@ async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.captaind("server").lightningd(&lightning.external).cfg(|cfg| {
+	// The watchman tells the server the HTLC-recv vtxos expired unexited.
+	let srv = ctx.captaind("server").lightningd(&lightning.external).watchmand().cfg(|cfg| {
 		cfg.invoice_check_interval = Duration::from_secs(1);
 	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
@@ -1039,32 +1036,32 @@ async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 	});
 	arrived.notified().wait_millis(60_000).await;
 
-	// 3. Mine past the HTLC-send expiry and have the payer attempt the revoke.
-	// The server sees the payment as still pending (preimage withheld) and the
-	// tip is past expiry, so without the fix the revoke would be accepted.
-	ctx.generate_blocks(srv.config().htlc_send_expiry_delta.to_u32() + 6).await;
-	let _ = bark_payer.try_run(["maintain"]).await;
+	// 3. Mine past both expiries and have the payer revoke, which cancels the
+	// receive. The payer's change is also a pubkey vtxo of `pay_amount`, so
+	// look for a new one. `vtxos()` syncs and can revoke, so record them first.
+	let pre_revoke = bark_payer.vtxos().await.iter().map(|v| v.id).collect::<Vec<_>>();
+	let tip = ctx.generate_blocks(srv.config().htlc_send_expiry_delta.to_u32() + 6).await;
+	srv.watchmand().wait_for_sync_height(tip).await;
+	bark_payer.maintain().await;
+	assert!(bark_payer.vtxos().await.iter().any(|v| {
+		!pre_revoke.contains(&v.id)
+			&& v.policy_type == VtxoPolicyKind::Pubkey
+			&& v.amount == pay_amount
+	}), "payer should get a revocation arkoor of the payment amount");
 
-	// 4. Release the parked claim; it arrives past the HTLC-send expiry.
+	// 4. Release the parked claim; the receive is canceled, so it is refused.
 	release.notify_one();
-	let claim_err = payee_task.wait_millis(120_000).await
+	payee_task.wait_millis(120_000).await
 		.expect("payee claim task panicked")
-		.expect_err("claim past the HTLC-send expiry should be refused");
-	assert!(format!("{claim_err:?}").contains("too close to the current chaintip"),
-		"unexpected claim error: {claim_err:#}");
+		.expect_err("claim should be refused after the revoke");
 
 	let payer_balance = bark_payer.spendable_balance().await;
 	let payee_balance = bark_payee.spendable_balance().await;
 
-	// The revoke was refused, so the payer was not refunded cooperatively:
-	// the HTLC-send vtxos stay locked, so the payer holds at most what it
-	// boarded minus the payment. The claim was refused too, so the payee
-	// holds nothing.
-	assert!(payer_balance <= board_amount - pay_amount,
-		"payer was refunded: {payer_balance} > {board_amount} - {pay_amount}");
-	assert_eq!(payee_balance, Amount::ZERO);
+	// The payer was refunded, so the payee must not have been paid as well.
 	// Conservation: only the payer boarded, so together they can never hold
 	// more than `board_amount` without the server having been drained.
+	assert_eq!(payee_balance, Amount::ZERO, "payee was paid after the revoke");
 	assert!(payer_balance + payee_balance <= board_amount,
 		"conservation violated: payer {payer_balance} + payee {payee_balance} exceeds \
 		{board_amount}; the server was drained by the revoke-then-claim ordering");

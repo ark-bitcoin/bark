@@ -544,15 +544,15 @@ impl<'t> Tx<'t> {
 	/// Cancel the latest receive subscription for `payment_hash` as part of
 	/// revoking the matching HTLC-send vtxos of an intra-Ark payment.
 	///
-	/// Only subscriptions still in a revocable state (`Created`/`Accepted`)
-	/// are canceled. The status the subscription had *before* this call is
-	/// returned (or `None` when no subscription exists, i.e. a plain outgoing
-	/// payment), together with whether HTLC-recv vtxos were ever granted for
-	/// it. When that status is `HtlcsReady` or `Settled`, or it is `Canceled`
-	/// with HTLC-recv vtxos granted, the caller MUST refuse the revocation.
+	/// Only `Created`, `Accepted`, and `HtlcsReady` once `htlc_recvs_expired`,
+	/// are canceled. Returns the status *before* this call and whether
+	/// HTLC-recv vtxos were ever granted, or `None` for a plain outgoing
+	/// payment. The caller MUST refuse the revocation while these show the
+	/// receive is still committed.
 	pub async fn cancel_revocable_htlc_subscription(
 		&self,
 		payment_hash: PaymentHash,
+		htlc_recvs_expired: bool,
 	) -> anyhow::Result<Option<(LightningHtlcSubscriptionStatus, bool)>> {
 		// The row is locked `FOR UPDATE` so this serializes against
 		// `prepare_lightning_claim`'s grant: the receive side cannot transition
@@ -574,9 +574,14 @@ impl<'t> Tx<'t> {
 		let status = row.get::<_, LightningHtlcSubscriptionStatus>("status");
 		let htlc_recvs_granted = row.get::<_, bool>("htlc_recvs_granted");
 
-		if matches!(status,
-			LightningHtlcSubscriptionStatus::Created | LightningHtlcSubscriptionStatus::Accepted,
-		) {
+		let revocable = match status {
+			LightningHtlcSubscriptionStatus::Created
+				| LightningHtlcSubscriptionStatus::Accepted => true,
+			LightningHtlcSubscriptionStatus::HtlcsReady => htlc_recvs_expired,
+			LightningHtlcSubscriptionStatus::Settled
+				| LightningHtlcSubscriptionStatus::Canceled => false,
+		};
+		if revocable {
 			let update = self.prepare("
 				UPDATE lightning_htlc_subscription
 				SET status = 'canceled'::lightning_htlc_subscription_status, updated_at = NOW()
