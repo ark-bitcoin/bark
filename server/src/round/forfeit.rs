@@ -65,6 +65,18 @@ impl Server {
 			}
 		}
 
+		// an input that exited onchain can't be forfeited anymore, see
+		// register_vtxo_forfeit. a forfeited participation is exempt so the
+		// retry described above keeps working after the forfeit confirmed
+		if part.forfeited_at.is_none() {
+			let states = self.db.read(async |t| t.get_user_vtxos_by_id(vtxos).await).await?;
+			for state in &states {
+				if state.is_exited() {
+					return badarg!("vtxo {} has exited onchain", state.vtxo_id);
+				}
+			}
+		}
+
 		let mut ret = Vec::with_capacity(vtxos.len());
 		for vtxo in vtxos {
 			// if we still hold nonces for this vtxo (e.g. the request was
@@ -133,6 +145,15 @@ impl Server {
 		}
 		if !input_set.is_empty() {
 			return badarg!("missing input vtxos: {:?}", input_set);
+		}
+
+		// an input that exited onchain can be taken by its owner through the
+		// exit clause once the exit delta passed, so a forfeit of it may never
+		// confirm. refuse it rather than release the unlock preimage
+		for vtxo in &vtxos {
+			if vtxo.is_exited() {
+				return badarg!("vtxo {} has exited onchain", vtxo.vtxo_id);
+			}
 		}
 
 		// then do the expensive verification and create final sigs
