@@ -1,0 +1,8 @@
+- Add the `GetVtxosByIds` rpc
+  This new method allows to request up to 1000 VTXOs in a single batch
+  request. The response holds the known VTXOs in request order and lists
+  the unknown ids in `missing_vtxo_ids`, so one bad id does not cost the
+  client the whole batch. A wallet that recovers many VTXOs from the
+  recovery mailbox makes far fewer requests and stays under the
+  server's rate limit.
+  [#2593](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2593)

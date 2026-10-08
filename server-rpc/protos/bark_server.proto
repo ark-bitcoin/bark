@@ -15,6 +15,7 @@ service ArkService {
 
 	rpc GetVtxo(GetVtxoRequest) returns (GetVtxoResponse) {}
 	rpc GetVtxoStatus(GetVtxoStatusRequest) returns (GetVtxoStatusResponse) {}
+	rpc GetVtxosByIds(GetVtxosByIdsRequest) returns (GetVtxosByIdsResponse) {}
 
 	// * BOARDING *
 
@@ -176,6 +177,19 @@ message GetVtxoRequest {
 
 message GetVtxoResponse {
 	bytes vtxo = 1;
+}
+
+message GetVtxosByIdsRequest {
+	// The server rejects more than 1000 ids per request.
+	repeated bytes vtxo_ids = 1;
+}
+
+message GetVtxosByIdsResponse {
+	// Serialized VTXOs of the requested ids the server knows, in the order
+	// of the requested ids. An unknown id is skipped here and listed below.
+	repeated bytes vtxos = 1;
+	// Requested ids the server does not know, each once.
+	repeated bytes missing_vtxo_ids = 2;
 }
 
 // Client-relevant spend state for a user-owned VTXO.

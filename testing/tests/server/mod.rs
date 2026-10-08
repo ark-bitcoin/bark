@@ -150,6 +150,71 @@ async fn get_vtxo_status() {
 }
 
 #[tokio::test]
+async fn get_vtxos_by_ids() {
+	let ctx = TestContext::new("server/get_vtxos_by_ids").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	bark.board(sat(100_000)).await;
+	bark.board(sat(200_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	let mut vtxo_ids = bark.vtxo_ids().await;
+	assert_eq!(vtxo_ids.len(), 2);
+	// Request in reverse order to check the response keeps the request order.
+	vtxo_ids.reverse();
+
+	let mut rpc = srv.get_public_rpc().await;
+
+	let resp = rpc.get_vtxos_by_ids(protos::GetVtxosByIdsRequest {
+		vtxo_ids: vtxo_ids.iter().map(|id| id.to_bytes().to_vec()).collect(),
+	}).await.unwrap().into_inner();
+	let ids = resp.vtxos.iter()
+		.map(|b| <Vtxo<Full>>::deserialize(b).expect("valid vtxo").id())
+		.collect::<Vec<_>>();
+	assert_eq!(ids, vtxo_ids);
+
+	// An empty request succeeds with an empty response.
+	let resp = rpc.get_vtxos_by_ids(protos::GetVtxosByIdsRequest {
+		vtxo_ids: vec![],
+	}).await.unwrap().into_inner();
+	assert!(resp.vtxos.is_empty());
+	assert!(resp.missing_vtxo_ids.is_empty());
+
+	// A duplicate id returns the same vtxo twice.
+	let resp = rpc.get_vtxos_by_ids(protos::GetVtxosByIdsRequest {
+		vtxo_ids: vec![vtxo_ids[0].to_bytes().to_vec(); 2],
+	}).await.unwrap().into_inner();
+	let ids = resp.vtxos.iter()
+		.map(|b| <Vtxo<Full>>::deserialize(b).expect("valid vtxo").id())
+		.collect::<Vec<_>>();
+	assert_eq!(ids, vec![vtxo_ids[0]; 2]);
+
+	// An unknown id is skipped and reported; the known ones are still served.
+	let unknown = VtxoId::from_slice(&[0u8; 36]).unwrap();
+	let resp = rpc.get_vtxos_by_ids(protos::GetVtxosByIdsRequest {
+		vtxo_ids: vec![
+			unknown.to_bytes().to_vec(),
+			vtxo_ids[0].to_bytes().to_vec(),
+			unknown.to_bytes().to_vec(),
+			vtxo_ids[1].to_bytes().to_vec(),
+		],
+	}).await.unwrap().into_inner();
+	let ids = resp.vtxos.iter()
+		.map(|b| <Vtxo<Full>>::deserialize(b).expect("valid vtxo").id())
+		.collect::<Vec<_>>();
+	assert_eq!(ids, vtxo_ids);
+	assert_eq!(resp.missing_vtxo_ids, vec![unknown.to_bytes().to_vec()]);
+
+	// Over the cap is rejected before any lookup.
+	let err = rpc.get_vtxos_by_ids(protos::GetVtxosByIdsRequest {
+		vtxo_ids: vec![vec![0u8; 36]; server_rpc::MAX_NB_VTXO_IDS + 1],
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument);
+}
+
+#[tokio::test]
 async fn integration() {
 	let ctx = TestContext::new("server/integration").await;
 	let srv = ctx.captaind("server").create().await;

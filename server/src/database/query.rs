@@ -95,14 +95,13 @@ pub async fn get_vtxo_by_id(
 	Ok(VtxoState::try_from(row)?)
 }
 
-/// Get vtxos by id and ensure the order of the returned vtxos matches
-/// the order of the provided ids
+/// Get the vtxos that exist among the given ids, keyed by id.
 ///
-/// This function returns [ServerVtxo]s
-pub async fn get_vtxos_by_id(
+/// Unknown ids are left out. Duplicate ids yield one entry.
+pub async fn get_existing_vtxos_by_id(
 	tx: &PgTransaction<'_>,
 	ids: &[VtxoId],
-) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>>
+) -> anyhow::Result<HashMap<VtxoId, VtxoState<Full, ServerVtxoPolicy>>>
 {
 	let statement = tx.prepare_typed("
 		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
@@ -115,14 +114,25 @@ pub async fn get_vtxos_by_id(
 	let rows = tx.query(&statement, &[&id_str]).await
 		.context("Query get_vtxos_by_id failed")?;
 
-	// Parse all rows
-	let mut vtxos = rows.into_iter()
+	rows.into_iter()
 		.map(|row| {
 			let vtxo = VtxoState::try_from(row)?;
 			Ok((vtxo.vtxo.id(), vtxo))
 		})
 		.collect::<anyhow::Result<HashMap<_, _>>>()
-		.context("Failed to parse VtxoState from database")?;
+		.context("Failed to parse VtxoState from database")
+}
+
+/// Get vtxos by id and ensure the order of the returned vtxos matches
+/// the order of the provided ids
+///
+/// This function returns [ServerVtxo]s
+pub async fn get_vtxos_by_id(
+	tx: &PgTransaction<'_>,
+	ids: &[VtxoId],
+) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>>
+{
+	let mut vtxos = get_existing_vtxos_by_id(tx, ids).await?;
 
 	// Bail if one of the id's could not be found
 	if vtxos.len() != ids.len() {

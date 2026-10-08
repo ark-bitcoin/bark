@@ -187,6 +187,40 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
+	async fn get_vtxos_by_ids(
+		&self,
+		req: tonic::Request<protos::GetVtxosByIdsRequest>,
+	) -> Result<tonic::Response<protos::GetVtxosByIdsResponse>, tonic::Status> {
+		let req = req.into_inner();
+
+		if req.vtxo_ids.len() > rpc::MAX_NB_VTXO_IDS {
+			macros::badarg!("too many vtxo ids, max is {}", rpc::MAX_NB_VTXO_IDS);
+		}
+
+		let ids = req.vtxo_ids.iter().map(|v| VtxoId::from_bytes(v))
+			.collect::<Result<Vec<_>, _>>()?;
+
+		// Unknown ids are reported, not an error, so one bad id does not
+		// cost the client the whole batch.
+		let found = self.db.read(async |t| t.get_existing_server_vtxos_by_id(&ids).await).await
+			.to_status()?;
+
+		let mut missing = Vec::new();
+		for id in &ids {
+			if !found.contains_key(id) && !missing.contains(id) {
+				missing.push(*id);
+			}
+		}
+
+		Ok(tonic::Response::new(protos::GetVtxosByIdsResponse {
+			vtxos: ids.iter()
+				.filter_map(|id| found.get(id).map(|v| v.vtxo.serialize()))
+				.collect(),
+			missing_vtxo_ids: missing.iter().map(|id| id.to_bytes().to_vec()).collect(),
+		}))
+	}
+
 	// boarding
 
 	#[tracing::instrument(skip(self, req), fields(
