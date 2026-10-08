@@ -45,6 +45,7 @@ use cln_rpc::plugins::hold::hold_client::HoldClient;
 use crate::database;
 use crate::database::block::BlockTable;
 use crate::database::htlc_vtxo;
+use crate::database::hold::{self as hold_db, HoldTransition};
 use crate::database::ln::{LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus};
 use crate::ln::guard::{PaymentGuard, PaymentGuards};
 use crate::ln::htlc_recvs_expired;
@@ -427,6 +428,12 @@ impl ClnHoldProcess {
 			.map(|h| h.saturating_sub(BlockDelta::new(1)))
 			.context("required_min_htlc_expiry overflows BlockHeight")?;
 
+		// What the node is holding: the sum that covers the receive.
+		let accepted_amount_msat: u64 = accepted_invoice.htlcs.iter()
+			.filter(|h| h.state == InvoiceState::Accepted as i32)
+			.map(|h| h.msat)
+			.sum();
+
 		let (status, expiry) = if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
 			debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
 			(LightningHtlcSubscriptionStatus::Accepted, Some(lowest_incoming_htlc_expiry))
@@ -440,10 +447,35 @@ impl ClnHoldProcess {
 		// The `Created` check at the top of this function ran before the hold
 		// RPCs above, so guard the transition on it here too: a subscription
 		// canceled or settled in the meantime must not be moved.
-		let applied = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
-			htlc_subscription.id, status, expiry,
-			Some(LightningHtlcSubscriptionStatus::Created),
-		).await).await?;
+		let payment_hash = PaymentHash::from(*htlc_subscription.invoice.payment_hash());
+		let node_id = self.node_id;
+		let applied = self.db.write(async |t| {
+			let applied = t.store_lightning_htlc_subscription_status(
+				htlc_subscription.id, status, expiry,
+				Some(LightningHtlcSubscriptionStatus::Created),
+			).await?;
+			// The hold invoice row copies what the plugin reports, in the same
+			// transaction: the node is holding these HTLCs. That is so even
+			// when the subscription is canceled for an expiry that does not
+			// fit: nothing cancels the invoice on the node then, and the HTLCs
+			// stay held until the payer times them out, which the plugin
+			// reports as unpaid.
+			if applied {
+				let hold_transition = HoldTransition::Accepted {
+					amount_msat: accepted_amount_msat,
+					lowest_incoming_htlc_expiry,
+				};
+				let mirrored = hold_db::transition_open_hold(
+					&**t, node_id, payment_hash, hold_transition,
+				).await?;
+				if mirrored.is_none() {
+					debug!("No open cln_hold row for subscription ({}) to move to {}",
+						htlc_subscription.id, status,
+					);
+				}
+			}
+			Ok(applied)
+		}).await?;
 		if !applied {
 			debug!("Lightning htlc subscription ({}) left Created while being accepted; \
 				skipping the {} transition.", htlc_subscription.id, status,
@@ -451,7 +483,6 @@ impl ClnHoldProcess {
 			return Ok(false);
 		}
 
-		let payment_hash = PaymentHash::from(*htlc_subscription.invoice.payment_hash());
 		// Wake check_lightning_receive so the client sees the new status.
 		let _ = self.payment_update_tx.send(payment_hash);
 
@@ -530,20 +561,39 @@ impl ClnHoldProcess {
 		Duration::from_secs((base * 2u64.pow(attempt.min(6))).min(max))
 	}
 
-	/// Handle a TrackAll stream event - process invoice acceptance.
+	/// Handle a TrackAll stream event - process invoice acceptance, and mirror
+	/// cancellations onto the hold invoice's record.
 	async fn handle_track_all_event(&mut self, response: hold::TrackAllResponse) -> anyhow::Result<()> {
 		let payment_hash = sha256::Hash::from_slice(&response.payment_hash)?;
 		let state = hold::InvoiceState::try_from(response.state).ok();
 
-		if state == Some(hold::InvoiceState::Accepted) {
-			if let Some(sub) = self.db
-				.read(async |t| t.get_open_htlc_subscription_for_node_by_payment_hash(
-					self.node_id,
-					&PaymentHash::from(payment_hash),
-				).await).await?
-			{
-				self.handle_invoice_accepted(&sub).await?;
-			}
+		match state {
+			Some(hold::InvoiceState::Accepted) => {
+				if let Some(sub) = self.db
+					.read(async |t| t.get_open_htlc_subscription_for_node_by_payment_hash(
+						self.node_id,
+						&PaymentHash::from(payment_hash),
+					).await).await?
+				{
+					self.handle_invoice_accepted(&sub).await?;
+				}
+			},
+			// Our own cancels record themselves, but the plugin also cancels on
+			// its own when held HTLCs near their expiry, and the intra-Ark
+			// cancel's write can be lost after its RPC. Whichever write comes
+			// first moves the row. The subscription is left to the timeout
+			// checks.
+			Some(hold::InvoiceState::Cancelled) => {
+				let node_id = self.node_id;
+				let payment_hash = PaymentHash::from(payment_hash);
+				let cancelled = self.db.write(async |t| hold_db::transition_open_hold(
+					&**t, node_id, payment_hash, HoldTransition::Cancelled,
+				).await).await?;
+				if cancelled.is_some() {
+					debug!("Hold invoice for {} was cancelled by the plugin", payment_hash);
+				}
+			},
+			_ => {},
 		}
 		Ok(())
 	}
@@ -567,12 +617,28 @@ impl ClnHoldProcess {
 		// The snapshot predates the hold RPCs the callers make, so guard on the
 		// status we saw. A subscription settled in the meantime keeps its
 		// settlement, and its payment attempt is left alone.
-		let canceled = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
-			htlc_subscription.id,
-			LightningHtlcSubscriptionStatus::Canceled,
-			None,
-			Some(htlc_subscription.status),
-		).await).await?;
+		let node_id = self.node_id;
+		let hash = PaymentHash::from(*payment_hash);
+		let canceled = self.db.write(async |t| {
+			let canceled = t.store_lightning_htlc_subscription_status(
+				htlc_subscription.id,
+				LightningHtlcSubscriptionStatus::Canceled,
+				None,
+				Some(htlc_subscription.status),
+			).await?;
+			// The plugin no longer serves the invoice; its row says so too.
+			if canceled {
+				let mirrored = hold_db::transition_open_hold(
+					&**t, node_id, hash, HoldTransition::Cancelled,
+				).await?;
+				if mirrored.is_none() {
+					debug!("No open cln_hold row to cancel for subscription ({})",
+						htlc_subscription.id,
+					);
+				}
+			}
+			Ok(canceled)
+		}).await?;
 		if !canceled {
 			debug!("Lightning htlc subscription ({}) left {} before it could be \
 				canceled; not failing its payment attempt.",

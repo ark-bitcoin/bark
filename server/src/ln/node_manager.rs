@@ -40,7 +40,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
-use chrono::{Local, TimeDelta};
+use chrono::{DateTime, Local, TimeDelta};
 use cln_rpc::plugins::hold as hold_plugin;
 use lightning_invoice::Bolt11Invoice;
 use futures::Stream;
@@ -65,6 +65,7 @@ use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
 use crate::config::Config;
 use crate::database;
+use crate::database::hold::{self as hold_db, HoldTransition, NewClnHold};
 use crate::database::xpay::{self, NewClnXpay};
 use crate::database::ln::{
 	LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
@@ -495,6 +496,28 @@ impl LightningManager {
 			payment_hash: payment_hash.to_vec(),
 		}).await?;
 
+		// The plugin no longer serves the invoice; the sender's htlc-send
+		// vtxos are what covers this receive from here on.
+		//
+		// This cannot share a transaction with the promotion, as the cancel
+		// RPC sits between them. The payment has gone ahead by now, so a
+		// failure to record the cancel must not fail it.
+		let node_id = subscription.lightning_node_id;
+		let mirrored = self.db.write(async |t| hold_db::transition_open_hold(
+			&**t, node_id, payment_hash, HoldTransition::Cancelled,
+		).await).await;
+		match mirrored {
+			Ok(Some(_)) => {},
+			Ok(None) => {
+				debug!("No open cln_hold row to cancel for intra-Ark payment {}", payment_hash);
+			},
+			Err(e) => {
+				error!("Failed to record the cancelled hold invoice of intra-Ark payment {} \
+					(subscription {}): {:#}", payment_hash, subscription.id, e,
+				);
+			},
+		}
+
 		Ok(())
 	}
 
@@ -595,12 +618,31 @@ impl LightningManager {
 		// Raw agent, not the bucketed label -- see start_payment.
 		let user_agent = telemetry::current_user_agent();
 
-		let stored = self.db.write(async |t|
+		// The plugin's record of the invoice, next to our subscription. The
+		// invoice carries its own expiry; the one we asked for is the fallback.
+		let expires_at = invoice.expires_at()
+			.and_then(|d| i64::try_from(d.as_secs()).ok())
+			.and_then(|secs| DateTime::from_timestamp(secs, 0))
+			.map(|dt| dt.with_timezone(&Local))
+			.unwrap_or_else(|| Local::now() + expiry);
+		let new_hold = NewClnHold {
+			lightning_node_id: node.id,
+			invoice: invoice.to_string(),
+			payment_hash,
+			requested_amount_msat: amount.to_msat(),
+			min_final_cltv_delta: cltv_delta,
+			expires_at,
+		};
+
+		let stored = self.db.write(async |t| {
 			t.store_generated_lightning_receive(
 				node.id, &invoice, amount.to_msat(), receiver_mailbox_id.as_ref(),
 				user_agent.as_deref(),
-			).await
-		).await;
+			).await?;
+			hold_db::create_hold(&**t, &new_hold).await
+				.context("failed to store the hold invoice")?;
+			Ok(())
+		}).await;
 		if let Err(e) = stored {
 			// Without a subscription nothing would release HTLCs held on it.
 			if let Err(cancel_err) = hold_client.cancel(hold_plugin::CancelRequest {
@@ -674,12 +716,29 @@ impl LightningManager {
 		// Update the subscription status to settled and notify waiters.
 		// This covers both intra-ark (no CLN hook fires) and regular
 		// hold-invoice paths.
-		let newly_settled = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
-			subscription_id,
-			LightningHtlcSubscriptionStatus::Settled,
-			None,
-			None,
-		).await).await?;
+		let node_id = htlc_subscription.lightning_node_id;
+		let invoice_amount_msat = htlc_subscription.amount().to_msat();
+		let newly_settled = self.db.write(async |t| {
+			let newly_settled = t.store_lightning_htlc_subscription_status(
+				subscription_id,
+				LightningHtlcSubscriptionStatus::Settled,
+				None,
+				None,
+			).await?;
+			// The hold invoice was paid along with it. An intra-Ark payment
+			// has no open hold invoice: it was canceled when the receive was
+			// accepted, so there is nothing to move.
+			if newly_settled && !is_self_payment {
+				let mirrored = hold_db::transition_open_hold(
+					&**t, node_id, payment_hash,
+					HoldTransition::Settled { invoice_amount_msat },
+				).await?;
+				if mirrored.is_none() {
+					debug!("No open cln_hold row to settle for payment hash {}", payment_hash);
+				}
+			}
+			Ok(newly_settled)
+		}).await?;
 		let _ = self.payment_update_tx.send(payment_hash);
 
 		// Only meter on the caller that actually flipped the row; retries
