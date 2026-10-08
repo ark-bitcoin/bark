@@ -1,6 +1,7 @@
 mod ban;
 mod blocklist;
 mod block_index;
+mod forfeit;
 mod lightning;
 mod mailbox;
 mod nursery;
