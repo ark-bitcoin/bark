@@ -1,0 +1,8 @@
+- Make wallet recovery faster for wallets with many spent VTXOs
+  Recovery now asks the Ark server for the status of each VTXO before it
+  validates the VTXO. A VTXO that the server reports as spent is stored as
+  spent, with no validation and no on-chain lookup. Only a VTXO that the server
+  reports as spendable is validated and checked for an emergency exit. Recovery
+  also finds the keys of a mailbox page in one scan, so the order of the VTXOs
+  in the page has no effect on which keys it finds.
+  [#2618](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2618)

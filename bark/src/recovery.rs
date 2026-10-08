@@ -8,8 +8,11 @@
 //! best-effort and a VTXO can be missing there.
 //!
 //! Note that recovery is a trusted process. The server can withhold VTXOs
-//! or may falsely represent spendable VTXOs as spent. Prefer to maintain
-//! back-ups and use recovery from the mnemonic as a last resort.
+//! or may falsely represent spendable VTXOs as spent. Its word on the spend
+//! state is final: a VTXO it reports spent is stored spent without being
+//! validated, and only a VTXO it reports spendable is validated and checked
+//! against the chain. Prefer to maintain back-ups and use recovery from the
+//! mnemonic as a last resort.
 
 use std::collections::{HashMap, HashSet};
 
@@ -380,11 +383,16 @@ impl Wallet {
 	}
 
 	/// Recover a set of VTXOs: fetch the bodies the mailbox did not carry, check
-	/// we own each one, ask the server for its status, and store it in the
+	/// we own them, ask the server for their status, and store them in the
 	/// matching state.
 	///
 	/// A candidate's body is given when the mailbox message carried one;
 	/// otherwise it is fetched from the server.
+	///
+	/// The server's word on the spend state is final, so it is asked before any
+	/// chain lookup: a VTXO it reports spent is stored spent as is, and only a
+	/// VTXO it reports spendable is validated and checked for an exit. Rows are
+	/// written once per state, not once per VTXO.
 	async fn recover_candidates(
 		&self,
 		report: &mut RecoveryReport,
@@ -404,105 +412,115 @@ impl Wallet {
 			.collect::<Vec<_>>();
 		let (mut fetched, missing) = self.fetch_vtxos(&to_fetch).await?;
 
-		let mut to_query = Vec::new();
+		let mut vtxos = Vec::with_capacity(candidates.len());
 		for (id, vtxo) in candidates {
 			// The fetch logged why the body is missing.
-			let Some(vtxo) = vtxo.or_else(|| fetched.remove(&id)) else {
-				if missing.contains(&id) {
-					report.push_not_found(id);
-				} else {
-					report.push_failed(id, None);
-				}
-				continue;
-			};
-
-			// [`Wallet::find_vtxo_keypairs`] persists the keys it reveals, so each
-			// match extends the window the next candidate is scanned against.
-			let keypairs = self.find_vtxo_keypairs([vtxo.user_pubkey()], gap_limit).await?;
-			let Some(keypair) = keypairs.get(&vtxo.user_pubkey()) else {
-				report.push_foreign(&vtxo);
-				continue;
-			};
-
-			// A validation error (anchor not yet visible, or invalid) is a
-			// non-decision, so it's a failure, not a clean skip.
-			if let Err(e) = self.validate_vtxo(&vtxo).await {
-				warn!("Could not validate recovery vtxo {id}: {:#}", e);
-				report.push_failed(id, Some(vtxo.amount()));
-				continue;
+			match vtxo.or_else(|| fetched.remove(&id)) {
+				Some(vtxo) => vtxos.push(vtxo),
+				None if missing.contains(&id) => report.push_not_found(id),
+				None => report.push_failed(id, None),
 			}
+		}
 
-			if self.check_vtxo_onchain_status(report, &vtxo).await? {
-				continue;
+		// One key scan for the whole batch. [`Wallet::find_vtxo_keypairs`] widens
+		// its window on every match, so later keys of the batch are found however
+		// the candidates are ordered.
+		let pubkeys = vtxos.iter().map(|v| v.user_pubkey()).collect::<Vec<_>>();
+		let keypairs = self.find_vtxo_keypairs(pubkeys, gap_limit).await?;
+		let mut owned = Vec::with_capacity(vtxos.len());
+		for vtxo in vtxos {
+			match keypairs.get(&vtxo.user_pubkey()) {
+				Some(keypair) => owned.push((vtxo, *keypair)),
+				None => report.push_foreign(&vtxo),
 			}
-
-			to_query.push((vtxo, *keypair));
 		}
 
 		// The server is the authority on whether a vtxo was spent elsewhere,
 		// and recovery has nothing else to go on.
-		let queries = to_query.iter().map(|(vtxo, keypair)| (vtxo.id(), keypair)).collect::<Vec<_>>();
+		let queries = owned.iter().map(|(vtxo, keypair)| (vtxo.id(), keypair)).collect::<Vec<_>>();
 		let states = self.fetch_vtxo_spend_states(&queries).await?;
-		for (vtxo, _) in &to_query {
+
+		let mut spendable = Vec::new();
+		let mut spent = Vec::new();
+		let mut locked = Vec::new();
+		for (vtxo, _) in owned {
+			let id = vtxo.id();
 			// The fetch logged why an answer is missing.
-			let adoption = match states.get(&vtxo.id()) {
+			let adoption = match states.get(&id) {
 				Some(state) => ServerStatusAdoption::from_spend_state(*state),
 				None => Err(anyhow::anyhow!("no answer from the server")),
 			};
-			self.adopt_recovery_status(report, vtxo, adoption).await?;
+			match adoption {
+				Ok(ServerStatusAdoption::Spendable) => spendable.push(vtxo),
+				Ok(ServerStatusAdoption::Spent) => spent.push(vtxo),
+				// Finishing the flow the VTXO is stuck in is what decides where it
+				// belongs, so nothing is stored. Arkoor mailbox messages only carry
+				// final Pubkey-policy VTXOs, so the replay cannot bring an in-flight
+				// one back.
+				Ok(ServerStatusAdoption::InFlight(state)) => {
+					debug!("Recovery vtxo {id} not spendable ({state:?}), skipping");
+					self.inner.db.remove_vtxo(id).await
+						.context("Failed to drop in-flight recovery vtxo")?;
+					report.push_skipped(&vtxo);
+				},
+				Err(e) => {
+					warn!("Could not get status for recovery vtxo {id}: {:#}", e);
+					locked.push(vtxo);
+				},
+			}
 		}
 
-		Ok(())
-	}
+		// The spent row is what stops a later mailbox replay from storing the
+		// vtxo as spendable again. A row from an earlier, failed attempt is
+		// forced along.
+		if !spent.is_empty() {
+			self.store_vtxos(spent.iter(), &VtxoState::Spent).await?;
+			self.mark_vtxos_as_spent(spent.iter().map(|v| v.id())).await?;
+			for vtxo in &spent {
+				debug!("Recovery vtxo {} already spent, skipping", vtxo.id());
+				report.push_skipped(vtxo);
+			}
+		}
 
-	/// Store a recovery VTXO in the state the server's answer decides.
-	async fn adopt_recovery_status(
-		&self,
-		report: &mut RecoveryReport,
-		vtxo: &Vtxo<Full>,
-		adoption: anyhow::Result<ServerStatusAdoption>,
-	) -> anyhow::Result<()> {
-		let id = vtxo.id();
-
-		// NB we don't use store_spendable_vtxos to avoid posting the vtxo again
-		match adoption {
-			Ok(ServerStatusAdoption::Spendable) => {
-				self.store_vtxos([vtxo],&VtxoState::Spendable).await?;
-				// A locked row from an earlier attempt without an answer is
-				// released.
-				self.unlock_vtxos([vtxo], None).await?;
+		// Only a vtxo the server lets us spend is worth the chain lookups.
+		let mut recovered = Vec::with_capacity(spendable.len());
+		for vtxo in spendable {
+			// A validation error (anchor not yet visible, or invalid) is a
+			// non-decision, so it's a failure, not a clean skip.
+			if let Err(e) = self.validate_vtxo(&vtxo).await {
+				warn!("Could not validate recovery vtxo {}: {:#}", vtxo.id(), e);
+				report.push_failed(vtxo.id(), Some(vtxo.amount()));
+				continue;
+			}
+			if self.check_vtxo_onchain_status(report, &vtxo).await? {
+				continue;
+			}
+			recovered.push(vtxo);
+		}
+		// NB we don't use store_spendable_vtxos to avoid posting the vtxos again
+		if !recovered.is_empty() {
+			self.store_vtxos(recovered.iter(), &VtxoState::Spendable).await?;
+			// A locked row from an earlier attempt without an answer is released.
+			self.unlock_vtxos(recovered.iter(), None).await?;
+			for vtxo in &recovered {
+				debug!("Recovered spendable vtxo {} ({})", vtxo.id(), vtxo.amount());
 				report.push_recovered(vtxo);
-				debug!("Recovered spendable vtxo {id} ({})", vtxo.amount());
-			},
-			// The spent row is what stops a later mailbox replay from storing
-			// the vtxo as spendable again.
-			Ok(ServerStatusAdoption::Spent) => {
-				debug!("Recovery vtxo {id} already spent, skipping");
-				// A spendable row from an earlier, failed attempt is forced along.
-				self.store_vtxos([vtxo],&VtxoState::Spent).await?;
-				self.mark_vtxos_as_spent(&[id]).await?;
-				report.push_skipped(vtxo);
-			},
-			// Finishing the flow the VTXO is stuck in is what decides where it
-			// belongs, so nothing is stored. Arkoor mailbox messages only carry
-			// final Pubkey-policy VTXOs, so the replay cannot bring an in-flight
-			// one back.
-			Ok(ServerStatusAdoption::InFlight(state)) => {
-				debug!("Recovery vtxo {id} not spendable ({state:?}), skipping");
-				self.inner.db.remove_vtxo(id).await
-					.context("Failed to drop in-flight recovery vtxo")?;
-				report.push_skipped(vtxo);
-			},
-			// No usable answer — a non-decision, so it's retried rather than taken
-			// for a clean skip. The vtxo is kept locked: it may well be spent, so
-			// it must not be offered as an input, and no row at all would let a
-			// mailbox replay store it spendable without ever asking the server.
-			Err(e) => {
-				warn!("Could not get status for recovery vtxo {id}, keeping it locked \
-					until its status is known: {:#}", e);
-				self.store_vtxos([vtxo],&VtxoState::Locked { holder: None }).await?;
-				report.push_failed(id, Some(vtxo.amount()));
-			},
+			}
+		}
+
+		// No usable answer is a non-decision, so it's retried rather than taken
+		// for a clean skip. The vtxo is kept locked: it may well be spent, so it
+		// must not be offered as an input, and no row at all would let a mailbox
+		// replay store it spendable without ever asking the server. The body is
+		// not validated here; the retry that gets its status does that before
+		// the vtxo can become spendable.
+		if !locked.is_empty() {
+			warn!("Could not get the status of {} recovery vtxos, keeping them locked until \
+				it is known", locked.len());
+			self.store_vtxos(locked.iter(), &VtxoState::Locked { holder: None }).await?;
+			for vtxo in &locked {
+				report.push_failed(vtxo.id(), Some(vtxo.amount()));
+			}
 		}
 
 		Ok(())
@@ -528,9 +546,10 @@ impl Wallet {
 	/// the arkoor messages in the regular mailbox.
 	///
 	/// Both mailboxes are read from checkpoint 0, and every VTXO they reference
-	/// is resolved against the chain and the server one mailbox page at a time
-	/// and stored accordingly. Returns a [`RecoveryReport`] (see it for why
-	/// recovered/skipped/failed matters).
+	/// is resolved against the server, and against the chain when the server
+	/// reports it spendable, one mailbox page at a time and stored accordingly.
+	/// Returns a [`RecoveryReport`] (see it for why recovered/skipped/failed
+	/// matters).
 	pub(crate) async fn recover_from_mailbox(&self) -> anyhow::Result<RecoveryReport> {
 		let mut report = RecoveryReport::default();
 		let gap_limit = self.inner.config.vtxo_key_gap_limit;

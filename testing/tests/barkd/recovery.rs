@@ -796,6 +796,60 @@ async fn recovered_wallet_locks_vtxos_without_a_status() {
 	}
 }
 
+/// Recovery stores a VTXO the server reports spent without validating it.
+///
+/// The server's word on the spend state is final: a spent VTXO is stored
+/// spent as it comes, and only a VTXO the server calls spendable is
+/// validated. A proxy corrupts every body it serves, so the spent board is
+/// stored spent regardless, while the corrupt change fails validation and is
+/// not stored.
+#[tokio::test]
+async fn recovered_wallet_stores_spent_vtxos_on_the_servers_word() {
+	let ctx = TestContext::new("barkd/recovered_wallet_stores_spent_vtxos_on_the_servers_word").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let sender = ctx.barkd("sender", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
+	let boards = sender.vtxos(None).await;
+	assert_eq!(boards.len(), 1, "sender should hold its board VTXO, got {:?}", boards);
+	let board_id = boards[0].vtxo.id;
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	sender.send(&recipient.ark_address().await, sat(10_000)).await;
+
+	// Every body served has an invalid final signature.
+	#[derive(Clone)]
+	struct ForgeVtxo;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for ForgeVtxo {
+		async fn get_vtxos_by_ids(
+			&self, upstream: &mut ArkClient, req: protos::GetVtxosByIdsRequest,
+		) -> Result<protos::GetVtxosByIdsResponse, tonic::Status> {
+			let mut resp = upstream.get_vtxos_by_ids(req).await?.into_inner();
+			for raw in resp.vtxos.iter_mut() {
+				let mut vtxo = Vtxo::<Full>::deserialize(raw).unwrap();
+				vtxo.invalidate_final_sig();
+				*raw = vtxo.serialize();
+			}
+			Ok(resp)
+		}
+	}
+
+	let proxy = srv.start_proxy_with_mailbox(ForgeVtxo, ()).await;
+	let recovered = ctx.barkd("sender_recovered", &srv)
+		.mnemonic(sender.mnemonic().await)
+		.cfg({
+			let addr = proxy.address.clone();
+			move |c| c.server_address = addr
+		})
+		.create().await;
+
+	let (spendable, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
+	assert!(spendable.is_empty(),
+		"a corrupt body the server calls spendable must fail validation, got {:?}", spendable);
+	assert!(spent.iter().any(|v| v.vtxo.id == board_id),
+		"the spent board is stored on the server's word, got {:?}", spent);
+}
+
 /// Recovery skips a VTXO that fails validation.
 ///
 /// A buggy or malicious server could return a VTXO whose owner key we can derive
