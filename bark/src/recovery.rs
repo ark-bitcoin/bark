@@ -26,7 +26,6 @@ use server_rpc::protos;
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 use crate::Wallet;
-use crate::mailbox::MAX_MAILBOX_REQUEST_BURST;
 use crate::vtxo::{ServerStatusAdoption, VtxoState};
 
 #[derive(Debug, Default, Clone)]
@@ -179,13 +178,19 @@ impl Wallet {
 	) -> anyhow::Result<()> {
 		let (mut srv, _) = self.require_server().await?;
 
-		// The paging burst should be done well within this window.
+		// Paging the whole mailbox should be done well within this window. The
+		// server rejects an expired authorization, which also ends the scan of
+		// a server that never stops serving pages.
 		let expiry = chrono::Local::now() + std::time::Duration::from_secs(10 * 60);
 		let auth = MailboxAuthorization::new(keypair, expiry);
 		let mailbox_id = auth.mailbox();
 
+		// Recovery stores no paging checkpoint, so a page left unread is never
+		// read. The scan ends when the server has no more messages.
 		let mut checkpoint = 0u64;
-		for iteration in 1..=MAX_MAILBOX_REQUEST_BURST {
+		let mut iteration = 0usize;
+		loop {
+			iteration += 1;
 			let req = protos::mailbox_server::MailboxRequest {
 				mailbox_id: mailbox_id.serialize(),
 				authorization: Some(auth.serialize()),
