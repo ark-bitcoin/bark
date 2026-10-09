@@ -2640,7 +2640,6 @@ async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 /// after that point pays the receiver from the vtxopool against collateral
 /// that is already gone.
 #[tokio::test]
-#[ignore] // the server still cosigns this claim
 async fn self_payment_claim_rejected_after_sender_onchain_refund() {
 	require_bark_version!(> "0.5.0");
 
@@ -2806,5 +2805,6 @@ async fn self_payment_claim_rejected_after_sender_onchain_refund() {
 		cosign_request: Some(protos::ArkoorPackageCosignRequest::from(builder.cosign_request())),
 	}).await;
 
-	assert!(result.is_err(), "claim must be refused after the sender refunded on-chain");
+	let err = result.expect_err("claim must be refused after the sender refunded on-chain");
+	assert!(err.message().contains("too close to the current chaintip"), "unexpected error: {err:?}");
 }

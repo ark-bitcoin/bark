@@ -128,7 +128,7 @@ pub(crate) fn validate_intra_ark_payment(
 
 /// The margin (in blocks) the server requires between the current chain tip
 /// and the lowest incoming HTLC expiry when cosigning a lightning receive
-/// claim.
+/// claim backed by an external Lightning payment.
 ///
 /// Cosigning the claim releases the granted HTLC-recv VTXOs; the server only
 /// recovers that value by settling its hold invoice, which must happen while
@@ -145,22 +145,30 @@ const RECEIVE_CLAIM_EXPIRY_MARGIN: BlockDelta = BlockDelta::new(3);
 /// Validates that a lightning receive claim can still be collected on.
 ///
 /// Cosigning the claim releases the granted HTLC-recv VTXOs (outgoing value).
-/// The server recovers it by settling the hold invoice (incoming value),
-/// which requires the inbound Lightning HTLC to still be live when the settle
-/// lands. We therefore refuse claims once the tip gets within
-/// [RECEIVE_CLAIM_EXPIRY_MARGIN] of the lowest incoming HTLC expiry.
+/// The server recovers it by collecting the incoming value, and refuses
+/// claims once the tip gets within `margin` of the lowest incoming HTLC
+/// expiry, when that might no longer succeed.
+///
+/// For an external receive the incoming value is the inbound Lightning HTLC,
+/// collected by settling the hold invoice. That is a fast RPC, so
+/// [RECEIVE_CLAIM_EXPIRY_MARGIN] is enough.
+///
+/// For an intra-Ark self-payment the incoming value is the sender's HTLC-send
+/// VTXOs. If the sender exited them, the server has to confirm its preimage
+/// spend before their `htlc_expiry` unlocks the sender's refund, which is an
+/// on-chain race. That case uses `Config::htlc_expiry_delta`, the same margin
+/// the server gets when a receiver claims its HTLC-recv VTXOs on-chain.
 fn validate_receive_claim(
 	lowest_incoming_htlc_expiry: BlockHeight,
 	chain_tip: BlockHeight,
+	margin: BlockDelta,
 ) -> anyhow::Result<()> {
-	let margin = RECEIVE_CLAIM_EXPIRY_MARGIN;
-
 	let tip_plus_margin = chain_tip.checked_add(margin)
-		.context("chain_tip + RECEIVE_CLAIM_EXPIRY_MARGIN overflows BlockHeight")?;
+		.context("chain_tip + margin overflows BlockHeight")?;
 	if tip_plus_margin > lowest_incoming_htlc_expiry {
 		return badarg!(
 			"Lowest incoming HTLC expiry {} is too close to the current chaintip {} \
-			to safely settle the hold invoice",
+			to safely collect the incoming payment",
 			lowest_incoming_htlc_expiry, chain_tip,
 		);
 	}
@@ -929,21 +937,26 @@ impl Server {
 
 		match sub.status {
 			// Cosigning releases the granted HTLC-recv VTXOs; that is only safe
-			// while the incoming side can still be collected. For intra-ark
-			// self-payments the incoming side is the sender's HTLC vtxos, which
-			// are marked ln-spent as the claim settles (and can always be
-			// claimed on-chain with the recorded preimage), so no margin check
-			// is needed. For external receives the server can only recover the
-			// grant by settling the hold invoice while the inbound HTLC lives.
+			// while the incoming side can still be collected. For external
+			// receives the server recovers the grant by settling the hold
+			// invoice while the inbound HTLC lives. For intra-Ark self-payments
+			// the incoming side is the sender's HTLC-send VTXOs, and the expiry
+			// is the lowest of their `htlc_expiry`. Past it the sender can
+			// refund them on-chain through the timeout clause, and a preimage
+			// recorded after that refund collects nothing.
 			LightningHtlcSubscriptionStatus::HtlcsReady => {
-				if !is_self_payment {
-					let lowest_incoming_htlc_expiry = sub.lowest_incoming_htlc_expiry
-						.context("no incoming HTLCs found for this payment")?;
-					validate_receive_claim(
-						lowest_incoming_htlc_expiry,
-						self.sync_manager.chain_tip().height,
-					)?;
-				}
+				let lowest_incoming_htlc_expiry = sub.lowest_incoming_htlc_expiry
+					.context("no incoming HTLCs found for this payment")?;
+				let margin = if is_self_payment {
+					self.config.htlc_expiry_delta
+				} else {
+					RECEIVE_CLAIM_EXPIRY_MARGIN
+				};
+				validate_receive_claim(
+					lowest_incoming_htlc_expiry,
+					self.sync_manager.chain_tip().height,
+					margin,
+				)?;
 			},
 			// Idempotent retry of an already-settled claim; the value was
 			// released with the first claim, nothing new is at stake.
@@ -1127,15 +1140,16 @@ mod tests {
 
 	#[test]
 	fn receive_claim_margin() {
+		let margin = BlockDelta::new(3);
 		// tip + margin == lowest is still ok
-		assert!(validate_receive_claim(BlockHeight::new(103), BlockHeight::new(100)).is_ok());
-		// one block later and the settle might not make it
-		let res = validate_receive_claim(BlockHeight::new(102), BlockHeight::new(100));
+		assert!(validate_receive_claim(BlockHeight::new(103), BlockHeight::new(100), margin).is_ok());
+		// one block later and the incoming side might not be collected
+		let res = validate_receive_claim(BlockHeight::new(102), BlockHeight::new(100), margin);
 		assert!(res.is_err());
 		assert!(format!("{:#}", res.unwrap_err()).contains("too close to the current chaintip"));
 		// and certainly once it expired
-		assert!(validate_receive_claim(BlockHeight::new(100), BlockHeight::new(100)).is_err());
-		assert!(validate_receive_claim(BlockHeight::new(99), BlockHeight::new(100)).is_err());
+		assert!(validate_receive_claim(BlockHeight::new(100), BlockHeight::new(100), margin).is_err());
+		assert!(validate_receive_claim(BlockHeight::new(99), BlockHeight::new(100), margin).is_err());
 	}
 
 	#[test]
