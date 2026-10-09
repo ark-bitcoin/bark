@@ -18,7 +18,7 @@ use ark::vtxo::Full;
 use ark::vtxo::policy::VtxoPolicyKind;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
-use bark_json::primitives::WalletVtxoInfo;
+use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
 use server_rpc::protos;
 use server::database::Db;
 use server::vtxopool::VtxoTarget;
@@ -1622,6 +1622,77 @@ async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
 	pay_receive.await.unwrap().expect_err("inbound payment for the receive must be refunded");
 
 	assert_vtxopool_consistency(&srv).await;
+}
+
+/// An intra-Ark payment of a receive is refused while an outgoing payment to
+/// another invoice with the same payment hash is still open.
+///
+/// This is what keeps the intra-Ark variant of
+/// [settled_hash_cannot_be_granted_htlc_recv_vtxos] out of reach. There the
+/// inbound side is the payer's HTLC-send vtxos, so refusing the grant only
+/// leaves the payee unpaid if the payer can revoke, and a recorded settlement
+/// blocks the revoke. Settling the hash while an intra-Ark receive is
+/// Accepted needs a second open attempt for that hash.
+#[tokio::test]
+async fn intra_ark_payment_refused_while_same_hash_send_is_open() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/intra_ark_payment_refused_while_same_hash_send_is_open").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let ark_ln = lightning.internal;
+	let eve_ln = lightning.external;
+
+	let srv = ctx.captaind("server").lightningd(&ark_ln).funded(btc(10)).create().await;
+	let eve = ctx.bark("eve", &srv).funded(btc(3)).create().await;
+	let payer = ctx.bark("payer", &srv).funded(btc(3)).create().await;
+	eve.board_and_confirm_and_register(&ctx, btc(2)).await;
+	payer.board_and_confirm_and_register(&ctx, btc(2)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let preimage = ark::lightning::Preimage::random();
+	let payment_hash = preimage.compute_payment_hash();
+
+	ark_ln.wait_for_block_sync().await;
+	eve_ln.wait_for_block_sync().await;
+
+	// Eve's hold invoice for H, paid through the server and held, so the
+	// outgoing attempt for H stays open.
+	let mut eve_hold = eve_ln.hold_client().await;
+	let seed_invoice = eve_hold.invoice(hold::InvoiceRequest {
+		payment_hash: payment_hash.to_byte_array().to_vec(),
+		amount_msat: sat(10_000).to_msat(),
+		description: Some(hold::invoice_request::Description::Memo("seed".to_string())),
+		min_final_cltv_expiry: Some(18),
+		expiry: Some(3600),
+		routing_hints: vec![],
+	}).await.unwrap().into_inner().bolt11;
+	eve.try_pay_lightning(&seed_invoice, None, false).await.unwrap();
+	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
+
+	// A receive for H is allowed: H is not settled.
+	let mut rpc = srv.get_public_rpc().await;
+	let receive_invoice = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
+		payment_hash: payment_hash.as_ref().to_vec(),
+		amount_sat: btc(0.5).to_sat(),
+		min_cltv_delta: 6,
+		mailbox_id: None,
+		description: None,
+	}).await.expect("receive should be allowed while H is unsettled").into_inner().bolt11;
+
+	let err = payer.try_pay_lightning(&receive_invoice, None, false).await
+		.expect_err("intra-Ark payment must be refused while a send to H is open");
+	assert!(err.to_string().contains("payment already in progress"), "unexpected error: {err:#}");
+
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	assert_eq!(
+		lightning_subscription_status(&db, payment_hash).await.as_deref(),
+		Some("created"),
+	);
+	let vtxos = payer.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })),
+		"payer should not have locked vtxos left: {vtxos:?}",
+	);
 }
 
 #[tokio::test]
