@@ -755,26 +755,35 @@ async fn do_round_forfeit_updates(
 	if forfeits.is_empty() { return Ok(()) }
 	let ids: Vec<String> = forfeits.iter().map(|f| f.vtxo_id.to_string()).collect();
 	let txids: Vec<String> = forfeits.iter().map(|f| f.txid.to_string()).collect();
+	// The `confirmed_height IS NULL` guard refuses a fresh forfeit of an exited
+	// vtxo, see [do_oor_spend_updates]. Replaying the same forfeit stays
+	// idempotent when the exit confirmed afterwards.
 	let rows = tx.execute("
 		UPDATE vtxo SET oor_spent_txid = u.txid, updated_at = NOW()
 		FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
 		WHERE vtxo.vtxo_id = u.vtxo_id
 		AND vtxo.spend_state = 'spent'
 		AND vtxo.spent_in_round IS NOT NULL
-		AND (vtxo.oor_spent_txid IS NULL OR vtxo.oor_spent_txid = u.txid)
+		AND ((vtxo.confirmed_height IS NULL AND vtxo.oor_spent_txid IS NULL)
+			OR vtxo.oor_spent_txid = u.txid)
 	", &[&ids, &txids]).await.context("failed to mark VTXOs as round-forfeited")?;
 	if rows != forfeits.len() as u64 {
 		let bad = tx.query_one("
-			SELECT u.vtxo_id, v.spend_state::text, v.spent_in_round, v.oor_spent_txid
+			SELECT u.vtxo_id, v.spend_state::text, v.spent_in_round, v.oor_spent_txid,
+				v.confirmed_height
 			FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
 			WHERE v.vtxo_id IS NULL
 				OR v.spend_state != 'spent'
 				OR v.spent_in_round IS NULL
-				OR (v.oor_spent_txid IS NOT NULL AND v.oor_spent_txid != u.txid)
+				OR NOT ((v.confirmed_height IS NULL AND v.oor_spent_txid IS NULL)
+					OR v.oor_spent_txid = u.txid)
 			LIMIT 1
 		", &[&ids, &txids]).await.context("failed to find bad vtxo")?;
 		let vtxo_id: &str = bad.get("vtxo_id");
+		if bad.get::<_, Option<i32>>("confirmed_height").is_some() {
+			return badarg!("vtxo {} has exited onchain", vtxo_id);
+		}
 		bail!("vtxo not round-spent or already forfeited differently: {}", vtxo_id);
 	}
 	Ok(())

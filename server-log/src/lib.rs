@@ -5,14 +5,30 @@ mod macros;
 mod msgs;
 mod serde_utils;
 
+pub use crate::msgs::*;
+
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
+
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use tracing_core::{Event, Field, Subscriber};
+use tracing_core::span::{Attributes, Id, Record};
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::time::FormatTime;
-pub use crate::msgs::*;
+use tracing_subscriber::layer::{Context, Layer};
+use tracing_subscriber::registry::LookupSpan;
+
+
+/// Span field holding the raw `x-user-agent` of the client whose RPC is being
+/// served. See [InheritedFields].
+pub const USER_AGENT_FIELD: &str = "user_agent";
+
+/// Span field holding the protocol version of the RPC being served.
+/// See [InheritedFields].
+pub const PVER_FIELD: &str = "pver";
 
 
 /// Trait implemented by all our trace log messages.
@@ -44,9 +60,12 @@ pub struct ParsedRecord<'a> {
 	/// The fields of the structured log struct
 	#[serde(borrow)]
 	pub slog_data: Option<&'a serde_json::value::RawValue>,
+	/// raw `x-user-agent` for RPC requests
+	pub user_agent: Option<Cow<'a, str>>,
+	/// pver for RPC requests
+	pub pver: Option<u64>,
+	/// The fields of the innermost span the line was emitted in
 	pub span: Option<HashMap<String, serde_json::Value>>,
-	// pub spans:
-	// pub open_telemetry:
 	#[serde(flatten)]
 	pub extra: HashMap<String, serde_json::Value>,
 }
@@ -70,6 +89,99 @@ impl ParsedRecord<'_> {
 
 		let data = self.slog_data.unwrap_or_else(|| serde_json::value::RawValue::NULL);
 		Ok(serde_json::from_str(data.get()).map_err(RecordParseError::Json)?)
+	}
+}
+
+/// Span fields that every event emitted inside the span inherits.
+///
+/// Events only carry their own fields, and the enclosing spans are emitted
+/// as a list, which makes a field set on the outermost RPC span awkward to
+/// query. [InheritedFieldsLayer] stores these fields in the span's
+/// extensions when the span declares them and [slog_json_layer] hoists them
+/// onto every event emitted inside the span as top-level fields. The gRPC
+/// middleware sets both on the span wrapping each RPC, so every log line
+/// emitted while serving a request carries them.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct InheritedFields {
+	pub user_agent: Option<String>,
+	pub pver: Option<u64>,
+}
+
+impl InheritedFields {
+	fn is_empty(&self) -> bool {
+		self.user_agent.is_none() && self.pver.is_none()
+	}
+
+	/// Overwrite our fields with the ones set in `other`.
+	fn update_from(&mut self, other: InheritedFields) {
+		if other.user_agent.is_some() {
+			self.user_agent = other.user_agent;
+		}
+		if other.pver.is_some() {
+			self.pver = other.pver;
+		}
+	}
+}
+
+impl tracing_core::field::Visit for InheritedFields {
+	fn record_u64(&mut self, field: &Field, value: u64) {
+		if field.name() == PVER_FIELD {
+			self.pver = Some(value);
+		}
+	}
+
+	fn record_i64(&mut self, field: &Field, value: i64) {
+		if field.name() == PVER_FIELD {
+			self.pver = u64::try_from(value).ok();
+		}
+	}
+
+	fn record_str(&mut self, field: &Field, value: &str) {
+		if field.name() == USER_AGENT_FIELD {
+			self.user_agent = Some(value.to_owned());
+		}
+	}
+
+	fn record_debug(&mut self, _field: &Field, _value: &dyn fmt::Debug) {
+		// don't do anything for other fields
+	}
+}
+
+/// Stores the [InheritedFields] a span declares in the span's extensions, so
+/// that [slog_json_layer] can hoist them onto the events emitted inside it.
+///
+/// Must be registered alongside [slog_json_layer].
+pub struct InheritedFieldsLayer;
+
+impl<S> Layer<S> for InheritedFieldsLayer
+where
+	S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+	fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+		let mut fields = InheritedFields::default();
+		attrs.record(&mut fields);
+		if fields.is_empty() {
+			return;
+		}
+		if let Some(span) = ctx.span(id) {
+			span.extensions_mut().insert(fields);
+		}
+	}
+
+	fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
+		let mut fields = InheritedFields::default();
+		values.record(&mut fields);
+		if fields.is_empty() {
+			return;
+		}
+		let Some(span) = ctx.span(id) else {
+			return;
+		};
+		let mut extensions = span.extensions_mut();
+		match extensions.get_mut::<InheritedFields>() {
+			Some(existing) => existing.update_from(fields),
+			None => extensions.insert(fields),
+		}
 	}
 }
 
@@ -103,6 +215,33 @@ impl SlogFlattenVisitor {
 
 	fn insert(&mut self, name: &str, value: serde_json::Value) {
 		self.fields.insert(name.to_owned(), value);
+	}
+
+	/// Add the [InheritedFields] of the spans enclosing `event`, nearest span
+	/// first, without overriding fields the event recorded itself.
+	fn inherit_from_spans<S>(&mut self, event: &Event<'_>, ctx: &Context<'_, S>)
+	where
+		S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+	{
+		let Some(scope) = ctx.event_scope(event) else {
+			return;
+		};
+		for span in scope {
+			let extensions = span.extensions();
+			let Some(inherited) = extensions.get::<InheritedFields>() else {
+				continue;
+			};
+			if let Some(user_agent) = &inherited.user_agent {
+				self.fields.entry(USER_AGENT_FIELD.to_owned())
+					.or_insert_with(|| user_agent.clone().into());
+			}
+			if let Some(pver) = inherited.pver {
+				self.fields.entry(PVER_FIELD.to_owned()).or_insert(pver.into());
+			}
+			if self.fields.contains_key(USER_AGENT_FIELD) && self.fields.contains_key(PVER_FIELD) {
+				break;
+			}
+		}
 	}
 }
 
@@ -150,7 +289,9 @@ impl tracing_core::field::Visit for SlogFlattenVisitor {
 /// This mirrors `tracing_subscriber::fmt().json()` (via the `json_subscriber`
 /// crate) but flattens the event fields to the top level ourselves so we can
 /// turn our structured logs' `slog_data_json` string field into a real,
-/// queryable `slog_data` JSON object (see `SlogFlattenVisitor`).
+/// queryable `slog_data` JSON object (see `SlogFlattenVisitor`), and so we can
+/// hoist the [InheritedFields] of the enclosing spans onto every event.
+/// Register [InheritedFieldsLayer] alongside this layer for the latter.
 pub fn slog_json_layer<S, W>(make_writer: W) -> json_subscriber::fmt::Layer<S, W>
 where
 	S: tracing_core::Subscriber + for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,
@@ -177,9 +318,10 @@ where
 	// twice (once nested under "fields", once flattened at the top level).
 	let inner = layer.inner_layer_mut();
 	inner.remove_field("fields");
-	inner.add_multiple_dynamic_fields(|event, _ctx| {
+	inner.add_multiple_dynamic_fields(|event, ctx| {
 		let mut visitor = SlogFlattenVisitor::default();
 		event.record(&mut visitor);
+		visitor.inherit_from_spans(event, ctx);
 		visitor.fields
 	});
 
@@ -347,14 +489,22 @@ mod test {
 		fn make_writer(&'a self) -> Self::Writer { self.clone() }
 	}
 
-	/// Capture the JSON emitted for a single event produced by `f`.
-	fn capture(f: impl FnOnce()) -> serde_json::Value {
+	/// Capture the JSON emitted for every event produced by `f`.
+	fn capture_all(f: impl FnOnce()) -> Vec<serde_json::Value> {
 		let buffer = BufferWriter::default();
-		let subscriber = tracing_subscriber::registry().with(slog_json_layer(buffer.clone()));
+		let subscriber = tracing_subscriber::registry()
+			.with(slog_json_layer(buffer.clone()))
+			.with(InheritedFieldsLayer);
 		tracing::subscriber::with_default(subscriber, f);
 		let out = buffer.contents();
-		let line = out.lines().next().expect("expected a log line");
-		serde_json::from_str(line).expect("log line must be valid JSON")
+		out.lines()
+			.map(|line| serde_json::from_str(line).expect("log line must be valid JSON"))
+			.collect()
+	}
+
+	/// Capture the JSON emitted for a single event produced by `f`.
+	fn capture(f: impl FnOnce()) -> serde_json::Value {
+		capture_all(f).into_iter().next().expect("expected a log line")
 	}
 
 	#[test]
@@ -379,6 +529,79 @@ mod test {
 		assert!(json.get("fields").is_none(), "fields must not be nested: {json}");
 		assert_eq!(json["slog_id"], serde_json::json!("RegisteredBoard"));
 		assert_eq!(json["message"], serde_json::json!("registered board vtxo"));
+	}
+
+	#[test]
+	fn inherited_fields_are_hoisted_onto_events() {
+		let lines = capture_all(|| {
+			tracing::info!("outside");
+			let rpc = tracing::info_span!("grpc", user_agent = "bark/0.2.3", pver = 5u64);
+			let _rpc = rpc.enter();
+			tracing::info!("in rpc span");
+			let inner = tracing::info_span!("handler", amount = 42);
+			let _inner = inner.enter();
+			tracing::info!(slog_id = "RegisteredBoard", "nested in handler span");
+		});
+		assert_eq!(lines.len(), 3, "{lines:?}");
+
+		// Outside any span: nothing to inherit.
+		assert!(lines[0].get("user_agent").is_none(), "{}", lines[0]);
+		assert!(lines[0].get("pver").is_none(), "{}", lines[0]);
+
+		// Directly inside the span that declares the fields.
+		assert_eq!(lines[1]["user_agent"], serde_json::json!("bark/0.2.3"));
+		assert_eq!(lines[1]["pver"], serde_json::json!(5));
+
+		// Nested in a span that doesn't declare them: still inherited, and
+		// the fields are top-level so they're queryable alongside `slog_id`.
+		assert_eq!(lines[2]["user_agent"], serde_json::json!("bark/0.2.3"));
+		assert_eq!(lines[2]["pver"], serde_json::json!(5));
+		assert_eq!(lines[2]["slog_id"], serde_json::json!("RegisteredBoard"));
+
+		let line = serde_json::to_string(&lines[2]).unwrap();
+		let parsed = parse_record(&line).unwrap();
+		assert_eq!(parsed.user_agent.as_deref(), Some("bark/0.2.3"));
+		assert_eq!(parsed.pver, Some(5));
+	}
+
+	#[test]
+	fn nearest_span_and_event_fields_win() {
+		let lines = capture_all(|| {
+			let rpc = tracing::info_span!("grpc", user_agent = "bark/0.2.3", pver = 5u64);
+			let _rpc = rpc.enter();
+			// A handler that takes `pver` as an instrumented argument.
+			let inner = tracing::info_span!("claim_lightning_receive", pver = 6u64);
+			let _inner = inner.enter();
+			tracing::info!("inherits nearest pver");
+			tracing::info!(pver = 7u64, "event field wins");
+		});
+		assert_eq!(lines.len(), 2, "{lines:?}");
+
+		assert_eq!(lines[0]["user_agent"], serde_json::json!("bark/0.2.3"));
+		assert_eq!(lines[0]["pver"], serde_json::json!(6));
+
+		assert_eq!(lines[1]["user_agent"], serde_json::json!("bark/0.2.3"));
+		assert_eq!(lines[1]["pver"], serde_json::json!(7));
+	}
+
+	#[test]
+	fn inherited_fields_can_be_recorded_later() {
+		let lines = capture_all(|| {
+			let rpc = tracing::info_span!(
+				"grpc", user_agent = tracing::field::Empty, pver = tracing::field::Empty,
+			);
+			let _rpc = rpc.enter();
+			tracing::info!("before record");
+			rpc.record("user_agent", "bark-wasm/1.0");
+			rpc.record("pver", 4u64);
+			tracing::info!("after record");
+		});
+		assert_eq!(lines.len(), 2, "{lines:?}");
+
+		assert!(lines[0].get("user_agent").is_none(), "{}", lines[0]);
+		assert!(lines[0].get("pver").is_none(), "{}", lines[0]);
+		assert_eq!(lines[1]["user_agent"], serde_json::json!("bark-wasm/1.0"));
+		assert_eq!(lines[1]["pver"], serde_json::json!(4));
 	}
 
 	#[test]

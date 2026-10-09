@@ -1,6 +1,7 @@
 mod ban;
 mod blocklist;
 mod block_index;
+mod forfeit;
 mod lightning;
 mod mailbox;
 mod nursery;
@@ -1450,10 +1451,10 @@ async fn reject_overlong_board_cosign() {
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
 }
 
-/// A tx spending `inputs` with `nb_outputs` outputs.
+/// A tx spending `inputs` with `nb_outputs` outputs of 100 000 sats each.
 ///
 /// The board cosign validation only inspects the funding tx' txid, its inputs
-/// and its number of outputs, so nothing here has to be signed or spendable.
+/// and the board output's value, so nothing here has to be signed or spendable.
 fn dummy_funding_tx(inputs: &[OutPoint], nb_outputs: usize) -> Transaction {
 	Transaction {
 		version: transaction::Version::TWO,
@@ -1471,13 +1472,15 @@ fn dummy_funding_tx(inputs: &[OutPoint], nb_outputs: usize) -> Transaction {
 	}
 }
 
-/// Request a board cosign for `utxo`, claiming `funding_tx` as its funding tx.
+/// Request a board cosign for `utxo`, claiming it holds `amount` and
+/// `funding_tx` is its funding tx.
 ///
-/// All the other fields are valid, so only the funding tx validation can reject
-/// this request.
+/// All the other fields are valid, so only the amount and funding tx
+/// validations can reject this request.
 async fn request_board_cosign_with_funding_tx(
 	ctx: &TestContext,
 	srv: &Captaind,
+	amount: Amount,
 	utxo: OutPoint,
 	funding_tx: &Transaction,
 ) -> Result<protos::BoardCosignResponse, tonic::Status> {
@@ -1488,7 +1491,7 @@ async fn request_board_cosign_with_funding_tx(
 
 	let mut rpc = srv.get_public_rpc().await;
 	let res = rpc.request_board_cosign(protos::BoardCosignRequest {
-		amount: sat(100_000).to_sat(),
+		amount: amount.to_sat(),
 		utxo: utxo.serialize(),
 		expiry_height: tip + ark_info.vtxo_lifetime.to_u32(),
 		user_pubkey: user_key.public_key().serialize().to_vec(),
@@ -1518,7 +1521,7 @@ async fn reject_board_cosign_utxo_not_in_funding_tx() {
 
 	// The funding tx has only one output, so vout 1 doesn't exist.
 	let err = request_board_cosign_with_funding_tx(
-		&ctx, &srv, OutPoint::new(funding_txid, 1), &funding_tx,
+		&ctx, &srv, funding_tx.output[0].value, OutPoint::new(funding_txid, 1), &funding_tx,
 	).await.expect_err("server must refuse a board utxo the funding tx doesn't have");
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
 	assert!(
@@ -1528,11 +1531,43 @@ async fn reject_board_cosign_utxo_not_in_funding_tx() {
 
 	// An outpoint of a completely different tx.
 	let err = request_board_cosign_with_funding_tx(
-		&ctx, &srv, OutPoint::new(input_txid, 0), &funding_tx,
+		&ctx, &srv, funding_tx.output[0].value, OutPoint::new(input_txid, 0), &funding_tx,
 	).await.expect_err("server must refuse a board utxo from another tx");
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
 	assert!(
 		err.message().contains("board outpoint does not match funding tx (txid)"),
+		"err: {err}",
+	);
+}
+
+/// The claimed board amount must equal the funding tx output's value.
+///
+/// The cosigned exit tx commits to the claimed amount, so a mismatch yields a
+/// board the server refuses to register and the user cannot unilaterally exit:
+/// the funds confirm into the shared funding output with no valid spend path
+/// out. Seen in the wild with a client that claimed the amount it was asked to
+/// board while its funding tx paid that amount minus the onchain fee.
+#[tokio::test]
+async fn reject_board_cosign_amount_mismatch() {
+	let ctx = TestContext::new("server/reject_board_cosign_amount_mismatch").await;
+	let srv = ctx.captaind("server").create().await;
+
+	// A single-output funding tx spending a real utxo, so that only the amount
+	// check can fail.
+	let addr = ctx.bitcoind().get_new_address();
+	let input_txid = ctx.bitcoind().fund_addr(&addr, btc(1)).await;
+	ctx.generate_blocks(1).await;
+	srv.bitcoind().await_transaction(input_txid).await;
+	let funding_tx = dummy_funding_tx(&[OutPoint::new(input_txid, 0)], 1);
+	let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+
+	// Claim an onchain fee more than the funding output actually pays.
+	let faked_claim_amount = funding_tx.output[0].value + sat(223);
+	let err = request_board_cosign_with_funding_tx(&ctx, &srv, faked_claim_amount, utxo, &funding_tx).await
+		.expect_err("server must refuse a board amount the funding tx doesn't pay");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
+	assert!(
+		err.message().contains("does not match funding tx output value"),
 		"err: {err}",
 	);
 }
@@ -1550,7 +1585,7 @@ async fn reject_board_cosign_unknown_funding_input() {
 	let funding_tx = dummy_funding_tx(&[OutPoint::new(unknown_txid, 0)], 1);
 	let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
 
-	let err = request_board_cosign_with_funding_tx(&ctx, &srv, utxo, &funding_tx).await
+	let err = request_board_cosign_with_funding_tx(&ctx, &srv, funding_tx.output[0].value, utxo, &funding_tx).await
 		.expect_err("server must refuse a funding tx spending unknown inputs");
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
 	assert!(
@@ -1579,7 +1614,7 @@ async fn accept_board_cosign_with_unconfirmed_funding_input() {
 	let funding_tx = dummy_funding_tx(&[OutPoint::new(input_txid, 0)], 1);
 	let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
 
-	let res = request_board_cosign_with_funding_tx(&ctx, &srv, utxo, &funding_tx).await
+	let res = request_board_cosign_with_funding_tx(&ctx, &srv, funding_tx.output[0].value, utxo, &funding_tx).await
 		.expect("server must cosign a board funded by an unconfirmed tx");
 	// A parsable response means the server did cosign.
 	let _: ark::board::BoardCosignResponse = res.try_into()
@@ -1603,7 +1638,7 @@ async fn reject_board_cosign_funding_tx_spending_vtxo() {
 	let funding_tx = dummy_funding_tx(&[vtxo.id.to_point()], 1);
 	let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
 
-	let err = request_board_cosign_with_funding_tx(&ctx, &srv, utxo, &funding_tx).await
+	let err = request_board_cosign_with_funding_tx(&ctx, &srv, funding_tx.output[0].value, utxo, &funding_tx).await
 		.expect_err("server must refuse a funding tx spending a VTXO");
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
 	assert!(

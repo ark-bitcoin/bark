@@ -64,7 +64,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::{info, trace, warn};
 
-use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::vtxo::Full;
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
@@ -680,6 +680,15 @@ impl Server {
 			if utxo.txid != funding_tx.compute_txid() {
 				return badarg!("board outpoint does not match funding tx (txid)");
 			}
+			// The exit tx we cosign commits to `amount` as the funding output's
+			// value, so a funding output paying anything else yields a board
+			// that can neither be registered nor unilaterally exited.
+			let funding_value = funding_tx.output[utxo.vout as usize].value;
+			if funding_value != amount {
+				return badarg!("board amount {} does not match funding tx output value {}",
+					amount, funding_value,
+				);
+			}
 
 			// validate funding tx is real
 			// check that any of the inputs is a vtxo
@@ -840,6 +849,43 @@ impl Server {
 		Ok(())
 	}
 
+	/// Refuses a vtxo whose chain spends an exited user vtxo through a
+	/// transaction the server does not hold signed yet.
+	///
+	/// Until the chain is registered the server holds the arkoor
+	/// transactions unsigned, so when their input exits onchain the watchman
+	/// can only wait and the owner takes the input through its exit clause
+	/// once the exit delta passed.
+	async fn check_registration_inputs_not_exited(
+		&self,
+		vtxo: &Vtxo<Full>,
+	) -> anyhow::Result<()> {
+		let mut spends = Vec::new();
+		for item in vtxo.transactions() {
+			let txid = item.tx.compute_txid();
+			for input in &item.tx.input {
+				spends.push((VtxoId::from(input.previous_output), txid));
+			}
+		}
+		let ids = spends.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+		let states = self.db.read(async |t| t.get_existing_server_vtxos_by_id(&ids).await).await?;
+
+		for (id, txid) in spends {
+			let exited = states.get(&id).is_some_and(|s| {
+				matches!(s.vtxo.policy(), ServerVtxoPolicy::User(_)) && s.is_exited()
+			});
+			if !exited {
+				continue;
+			}
+			let signed = self.db.read(async |t| t.get_virtual_transaction_by_txid(txid).await).await?
+				.is_some_and(|vtx| vtx.signed_tx.is_some());
+			if !signed {
+				return badarg!("vtxo {} spends vtxo {} that has exited onchain", vtxo.id(), id);
+			}
+		}
+		Ok(())
+	}
+
 	/// Registers the given VTXOs: validates and stores their signed
 	/// transaction chains and flips them from `unregistered` to `spendable`.
 	///
@@ -907,6 +953,8 @@ impl Server {
 			vtxo.validate(&anchor_tx)
 				.context(vtxo_id)
 				.badarg("vtxo validation failed")?;
+
+			self.check_registration_inputs_not_exited(vtxo).await?;
 
 			// Collect all signed transactions from the VTXO, deduplicating
 			// by txid since different vtxos can share parent transactions.

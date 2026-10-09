@@ -8,14 +8,16 @@ use std::time::{Duration, Instant};
 use http::HeaderMap;
 use http_body::Body as HttpBody;
 use opentelemetry::KeyValue;
-#[allow(deprecated)]
-use server_rpc::client::ACCESS_TOKEN_HEADER;
-use server_rpc::client::USER_AGENT_HEADER;
-use server_rpc::lookup_grpc_method;
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
 use tracing::{debug, info_span, trace, Instrument};
-use crate::telemetry::{self};
+
+#[allow(deprecated)]
+use server_rpc::client::ACCESS_TOKEN_HEADER;
+use server_rpc::client::USER_AGENT_HEADER;
+use server_rpc::{lookup_grpc_method, PROTOCOL_VERSION_HEADER};
+
+use crate::telemetry;
 use super::MAX_PROTOCOL_VERSION;
 
 const RPC_SYSTEM_HTTP: &str = "http";
@@ -299,50 +301,54 @@ where
 		let is_grpc = req.headers().get("content-type")
 			.map_or(false, |ct| ct == "application/grpc");
 
-		let raw_ua = req.headers().get(USER_AGENT_HEADER).and_then(|v| v.to_str().ok());
-		// Validate only: narrowing belongs to telemetry. Doing it here is what
-		// leaked the bucketed value into the `user_agent` columns.
-		let user_agent: Option<Arc<str>> = match raw_ua {
-			None => None,
-			Some(raw) if telemetry::parse_user_agent_name(raw).is_some() =>
-				Some(Arc::from(telemetry::cap_user_agent_version(raw))),
-			Some(_) => {
-				// Header is present but doesn't match `<name>/<version>`.
-				// Reject the request with a trailers-only invalid_argument
-				// response so misbehaving clients get a clear signal rather
-				// than silently rolling up into a junk bucket.
-				debug!("rejecting RPC: malformed x-user-agent: {:?}", raw_ua);
-				let response: http::Response<ResBody> = tonic::Status::invalid_argument(
-					"x-user-agent must match `<name>/<version>`",
-				).into_http();
-				return Box::pin(async move {
-					Ok(response.map(TrailerCapturingBody::noop))
-				});
+		// parse and validate user agent
+		let user_agent = req.headers().get(USER_AGENT_HEADER)
+			.and_then(|v| v.to_str().ok())
+			.map(Arc::<str>::from);
+		let user_agent_name = if let Some(ref raw) = user_agent {
+			match telemetry::parse_user_agent(&raw) {
+				Ok((name, _version)) => Some(name),
+				Err(e) => {
+					// log and error on invalid user agent
+					debug!("rejecting RPC: malformed x-user-agent: {}", raw);
+					let response = tonic::Status::invalid_argument(
+						format!("invalid x-user-agent: {}", e)
+					).into_http::<ResBody>();
+					return Box::pin(async move {
+						Ok(response.map(TrailerCapturingBody::noop))
+					});
+				},
 			}
+		} else {
+			None
 		};
 
 		// Span/metric attributes take the narrowed label; the task-local keeps raw.
-		let user_agent_name = telemetry::bucket_user_agent(raw_ua);
+		let bucketed_user_agent_name = user_agent_name
+			.map(telemetry::bucket_user_agent_name)
+			.unwrap_or("unknown");
+
+		// The protocol version the client speaks.
+		let pver = req.headers().get(PROTOCOL_VERSION_HEADER)
+			.and_then(|hv| hv.to_str().ok())
+			.and_then(|s| u64::from_str(s).ok());
 
 		let rpc_method_details = if is_grpc {
-			// Log protocol version used by user.
+			// Cap pver range to prevent cardinality explosion from malicious
+			// clients sending arbitrary values.
 			// We allow +50 above MAX to detect clients using newer versions,
-			// while still capping the range to prevent cardinality explosion
-			// from malicious clients sending arbitrary values.
-			let pver = req.headers().get("pver")
-				.and_then(|hv| hv.to_str().ok())
-				.and_then(|s| u64::from_str(s).ok())
-				.filter(|&v| v <= MAX_PROTOCOL_VERSION + 50);
-
-			if let Some(pver) = pver {
-				telemetry::count_protocol_version(pver);
+			if let Some(v) = pver && v <= MAX_PROTOCOL_VERSION + 50 {
+				telemetry::count_protocol_version(v);
 			}
 
 			let (service, method) = lookup_grpc_method(req.uri().path());
-			RpcMethodDetails { system: RPC_SYSTEM_GRPC, service, method, user_agent_name }
+			RpcMethodDetails { system: RPC_SYSTEM_GRPC, service, method,
+				user_agent_name: bucketed_user_agent_name,
+			}
 		} else {
 			RpcMethodDetails {
-				system: RPC_SYSTEM_HTTP, service: "unknown", method: "unknown", user_agent_name,
+				system: RPC_SYSTEM_HTTP, service: "unknown", method: "unknown",
+				user_agent_name: bucketed_user_agent_name,
 			}
 		};
 
@@ -367,6 +373,11 @@ where
 			{ telemetry::USER_AGENT_NAME } = rpc_method_details.user_agent_name,
 			{ telemetry::RPC_ACCESS_TOKEN } = req.headers().get(ACCESS_TOKEN_HEADER)
 				.and_then(|v| v.to_str().ok()),
+
+			// Fields hoisted onto every log line emitted while serving this
+			// request as top-level fields (see server_log::InheritedFields).
+			{ server_log::USER_AGENT_FIELD } = user_agent.as_deref(),
+			{ server_log::PVER_FIELD } = pver,
 		);
 		let future = self.inner.call(req);
 
