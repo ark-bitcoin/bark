@@ -812,13 +812,16 @@ impl Server {
 				user_pubkey, payment_hash, htlc_recv_expiry, self.config.htlc_expiry_delta,
 			),
 		};
-		let vtxos = self.vtxopool.send_arkoor(self, dest).await
-			.context("vtxopool error")?;
-
-		self.db.write(async |t| t.update_lightning_htlc_subscription_with_htlcs(
-			sub.id,
-			vtxos.iter().map(|v| v.id()),
-		).await).await.context("failed to store htlcs for ln receive")?;
+		// Storing the htlcs re-checks the settlement under a lock, as the hash
+		// can still settle after the check above. Doing it in the transaction
+		// that stores the HTLC-recv vtxos means a refusal leaves no vtxo behind
+		// and puts the pool inputs back.
+		let vtxos = self.vtxopool.send_arkoor(self, dest, async |t, vtxos| {
+			t.update_lightning_htlc_subscription_with_htlcs(
+				sub.id,
+				vtxos.iter().map(|v| v.id()),
+			).await.context("failed to store htlcs for ln receive")
+		}).await.context("vtxopool error")?;
 		// Wake check_lightning_receive so the client sees HtlcsReady.
 		self.lightning_manager.notify_payment_update(payment_hash);
 
