@@ -1512,7 +1512,8 @@ async fn settled_hash_cannot_fund_new_receive() {
 }
 
 /// A receive whose hash settled while it was only Accepted must not be granted
-/// HTLC-recv vtxos, and the refused grant collects the inbound HTLC instead.
+/// HTLC-recv vtxos. The inbound HTLC is not collected: the forward timeout
+/// cancels the receive and the payer is refunded.
 ///
 /// The race variant that the entry-point check cannot catch:
 ///
