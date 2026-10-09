@@ -775,6 +775,20 @@ impl Server {
 			},
 		}
 
+		// The hash can settle while the receive is only Accepted, for example
+		// through an outgoing payment to the same hash started before the
+		// receive was opened. The hold settler skips it then, so nothing else
+		// would collect the inbound HTLC. Granting now would let the caller
+		// exit the HTLC-recv vtxos with the preimage and keep the refund too.
+		//
+		// We don't settle the hold invoice here: the receiver gets nothing, so
+		// collecting the inbound payment would take the payer's money. The
+		// subscription stays Accepted until the forward timeout cancels it and
+		// the payer is refunded.
+		if self.htlc_settler.is_settled(payment_hash).await?.is_some() {
+			return badarg!("invoice has already been paid");
+		}
+
 		self.verify_ln_receive_anti_dos(anti_dos, payment_hash).await?;
 
 		// Deduct the fees from the HTLC VTXOs.

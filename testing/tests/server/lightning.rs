@@ -1511,11 +1511,10 @@ async fn settled_hash_cannot_fund_new_receive() {
 	assert_vtxopool_consistency(&srv).await;
 }
 
-/// The race variant that the entry-point check cannot catch: the settlement is
-/// recorded while a receive for the same hash is already open but not yet
-/// htlcs-ready, so the hold settler skips it and advances its cursor past the
-/// hash. The cooperative claim must still settle the receive hold invoice
-/// (collecting the inbound HTLC) before releasing the grant.
+/// A receive whose hash settled while it was only Accepted must not be granted
+/// HTLC-recv vtxos, and the refused grant collects the inbound HTLC instead.
+///
+/// The race variant that the entry-point check cannot catch:
 ///
 /// 1. Eve makes a small outgoing payment to a hold invoice on her node with hash
 ///    H, held so no settlement is recorded yet.
@@ -1524,130 +1523,9 @@ async fn settled_hash_cannot_fund_new_receive() {
 /// 3. Eve settles the seed invoice. The preimage lands in htlc_settlement; the
 ///    hold settler sees H while the receive is only Accepted, so it skips and
 ///    advances past the hash without settling.
-/// 4. Eve drives the receive to htlcs-ready and claims with the preimage.
+/// 4. Eve asks for the grant. Any granted HTLC-recv vtxo could be exited
+///    unilaterally through its preimage clause while the inbound HTLC refunds.
 #[tokio::test]
-async fn settled_hash_replay_claim_still_settles_hold() {
-	require_bark_version!(> "0.5.0");
-
-	let ctx = TestContext::new("server/settled_hash_replay_claim_still_settles_hold").await;
-
-	let lightning = ctx.new_lightning_setup("lightningd").await;
-	let ark_ln = lightning.internal;
-	let eve_ln = Arc::new(lightning.external);
-
-	let srv = ctx.captaind("server").lightningd(&ark_ln).funded(btc(10)).create().await;
-	let bark = ctx.bark("bark-1", &srv).funded(btc(3)).create().await;
-	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
-	srv.wait_for_vtxopool(&ctx).await;
-
-	let preimage = ark::lightning::Preimage::random();
-	let payment_hash = preimage.compute_payment_hash();
-
-	ark_ln.wait_for_block_sync().await;
-	eve_ln.wait_for_block_sync().await;
-
-	// 1. Seed hold invoice on Eve's node, paid but held (no settlement yet).
-	let mut eve_hold = eve_ln.hold_client().await;
-	let seed_invoice = eve_hold.invoice(hold::InvoiceRequest {
-		payment_hash: payment_hash.to_byte_array().to_vec(),
-		amount_msat: sat(10_000).to_msat(),
-		description: Some(hold::invoice_request::Description::Memo("seed".to_string())),
-		min_final_cltv_expiry: Some(18),
-		expiry: Some(3600),
-		routing_hints: vec![],
-	}).await.unwrap().into_inner().bolt11;
-	bark.try_pay_lightning(&seed_invoice, None, false).await.unwrap();
-	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
-
-	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
-
-	// 2. Open a receive for the same hash and pay it, so the subscription is
-	//    Accepted. The receive is allowed because H is not settled yet.
-	let mut rpc = srv.get_public_rpc().await;
-	let invoice_2 = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
-		payment_hash: payment_hash.as_ref().to_vec(),
-		amount_sat: btc(1).to_sat(),
-		min_cltv_delta: 6,
-		mailbox_id: None,
-		description: None,
-	}).await.expect("receive should be allowed while H is unsettled").into_inner().bolt11;
-
-	let pay_invoice_2 = {
-		let eve_ln = eve_ln.clone();
-		let invoice_2 = invoice_2.clone();
-		tokio::spawn(async move { eve_ln.try_pay_bolt11(invoice_2).await })
-	};
-	wait_for_subscription_status(&db, payment_hash, "accepted").await;
-
-	// 3. Settle the seed. The preimage is now recorded and the hold settler sees
-	//    H while the receive is only Accepted, so it advances past the hash.
-	eve_hold.settle(hold::SettleRequest {
-		payment_preimage: preimage.as_ref().to_vec(),
-	}).await.unwrap();
-	wait_for_attempt_status(&db, payment_hash, "succeeded").await;
-	wait_for_preimage_recorded(&db, payment_hash).await;
-
-	// Give the hold settler time to observe the settlement and skip it: the
-	// receive must not be settled while it is not yet htlcs-ready.
-	tokio::time::sleep(Duration::from_secs(2)).await;
-	assert_eq!(
-		lightning_subscription_status(&db, payment_hash).await.as_deref(),
-		Some("accepted"),
-		"the settler must not settle the receive before it is htlcs-ready",
-	);
-
-	// 4. Drive the receive to htlcs-ready and claim it.
-	let sub = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
-		.await.unwrap().expect("subscription should exist");
-	let lowest = sub.lowest_incoming_htlc_expiry
-		.expect("Accepted subscription must record lowest incoming HTLC expiry");
-
-	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
-	let granted = rpc.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
-		payment_hash: payment_hash.as_ref().to_vec(),
-		user_pubkey: keypair.public_key().serialize().to_vec(),
-		htlc_recv_expiry: lowest.saturating_sub(srv.config().htlc_expiry_delta).into(),
-		lightning_receive_anti_dos: None,
-	}).await.expect("prepare should succeed while the inbound HTLC is live")
-		.into_inner().htlc_vtxos.into_iter()
-		.map(|b| Vtxo::deserialize(&b).expect("server returned invalid vtxo"))
-		.collect::<Vec<Vtxo<Full>>>();
-
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
-		granted.iter().cloned(),
-		ark::VtxoPolicy::new_pubkey(
-			Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key(),
-		),
-	).unwrap().generate_user_nonces(&[keypair]).unwrap();
-
-	rpc.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
-		payment_hash: payment_hash.as_ref().to_vec(),
-		payment_preimage: preimage.as_ref().to_vec(),
-		cosign_request: Some(protos::ArkoorPackageCosignRequest::from(builder.cosign_request())),
-	}).await.expect("claim must succeed and settle the hold invoice");
-
-	// The claim settled the receive hold invoice: the subscription is settled and
-	// Eve's payment of invoice-2 is collected, not left to refund.
-	assert_eq!(
-		lightning_subscription_status(&db, payment_hash).await.as_deref(),
-		Some("settled"),
-		"claim must settle the hold invoice before releasing the grant",
-	);
-	pay_invoice_2.await.unwrap().expect("inbound payment for the receive must be collected");
-
-	assert_vtxopool_consistency(&srv).await;
-}
-
-/// A receive whose hash settled while it was only Accepted must not be granted
-/// HTLC-recv vtxos.
-///
-/// The setup matches `settled_hash_replay_claim_still_settles_hold`, but Eve
-/// never claims cooperatively. The preimage is hers, so any granted HTLC-recv
-/// vtxo can be exited unilaterally through its preimage clause while the
-/// inbound HTLC for the receive refunds. The hold settler already advanced past
-/// the hash, so nothing settles the hold invoice and the server loses the grant.
-#[tokio::test]
-#[ignore] // fails until the grant checks for a settlement
 async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
 	require_bark_version!(> "0.5.0");
 
@@ -1657,7 +1535,11 @@ async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
 	let ark_ln = lightning.internal;
 	let eve_ln = Arc::new(lightning.external);
 
-	let srv = ctx.captaind("server").lightningd(&ark_ln).funded(btc(10)).create().await;
+	// Long enough that the Accepted receive survives until the grant request,
+	// short enough to wait for the cancel that refunds the payer.
+	let srv = ctx.captaind("server").lightningd(&ark_ln).funded(btc(10)).cfg(|cfg| {
+		cfg.receive_htlc_forward_timeout = Duration::from_secs(20);
+	}).create().await;
 	let bark = ctx.bark("bark-1", &srv).funded(btc(3)).create().await;
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 	srv.wait_for_vtxopool(&ctx).await;
@@ -1721,14 +1603,24 @@ async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
 		lightning_receive_anti_dos: None,
 	}).await.expect_err("a settled hash must not be granted HTLC-recv vtxos");
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "unexpected error: {err:?}");
+	assert!(err.message().contains("already been paid"), "unexpected error: {err:?}");
 
-	assert_ne!(
-		lightning_subscription_status(&db, payment_hash).await.as_deref(),
-		Some("htlcs-ready"),
-	);
 	assert_eq!(count_htlc_recv_vtxos(&db).await, 0);
 
-	pay_receive.abort();
+	// The receiver got nothing, so the server must not collect the inbound
+	// payment. The forward timeout cancels the receive and the payer is refunded.
+	for _ in 0..150 {
+		if lightning_subscription_status(&db, payment_hash).await.as_deref() == Some("canceled") {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+	assert_eq!(
+		lightning_subscription_status(&db, payment_hash).await.as_deref(),
+		Some("canceled"),
+	);
+	pay_receive.await.unwrap().expect_err("inbound payment for the receive must be refunded");
+
 	assert_vtxopool_consistency(&srv).await;
 }
 

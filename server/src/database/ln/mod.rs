@@ -592,25 +592,41 @@ impl<'t> Tx<'t> {
 	///
 	/// Sets the status to "htlcs-ready".
 	/// Adds the HTLCs to the database.
-	/// Errors if the subscription was not currently in state "accepted".
+	/// Errors if the subscription was not currently in state "accepted", or if
+	/// its payment hash already has a settlement.
 	#[tracing::instrument(skip(self, htlcs))]
 	pub async fn update_lightning_htlc_subscription_with_htlcs(
 		&self,
 		htlc_subscription_id: i64,
 		htlcs: impl IntoIterator<Item = VtxoId>,
 	) -> anyhow::Result<()> {
+		// A known preimage makes the granted HTLC-recv vtxos spendable without
+		// the cooperative claim that settles the hold invoice. Serialize with
+		// `store_htlc_settlement` so that either the settlement is visible here,
+		// or it commits after us and the hold settler sees `htlcs-ready`.
+		self.execute(
+			&format!("SELECT pg_advisory_xact_lock({})",
+				super::AdvisoryLock::HtlcSettlementWrite as i64,
+			), &[],
+		).await?;
+
 		let stmt = self.prepare("
 			UPDATE lightning_htlc_subscription
 				SET status = 'htlcs-ready'::lightning_htlc_subscription_status,
 					updated_at = NOW()
 				WHERE id = $1
 					AND status = 'accepted'::lightning_htlc_subscription_status
+					AND NOT EXISTS (
+						SELECT 1 FROM htlc_settlement
+						WHERE htlc_settlement.payment_hash = lightning_htlc_subscription.payment_hash
+					)
 				RETURNING id;
 		").await?;
 		let count = self.execute(&stmt, &[&htlc_subscription_id]).await
 			.context("UPDATE lightning_htlc_subscription")?;
 		if count == 0 {
-			bail!("error updating lightning receive with htlcs, probably not in status accepted");
+			bail!("error updating lightning receive with htlcs, \
+				either not in status accepted or the payment hash is already settled");
 		}
 
 		let stmt = self.prepare("
