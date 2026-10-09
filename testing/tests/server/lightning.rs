@@ -1638,6 +1638,100 @@ async fn settled_hash_replay_claim_still_settles_hold() {
 	assert_vtxopool_consistency(&srv).await;
 }
 
+/// A receive whose hash settled while it was only Accepted must not be granted
+/// HTLC-recv vtxos.
+///
+/// The setup matches `settled_hash_replay_claim_still_settles_hold`, but Eve
+/// never claims cooperatively. The preimage is hers, so any granted HTLC-recv
+/// vtxo can be exited unilaterally through its preimage clause while the
+/// inbound HTLC for the receive refunds. The hold settler already advanced past
+/// the hash, so nothing settles the hold invoice and the server loses the grant.
+#[tokio::test]
+#[ignore] // fails until the grant checks for a settlement
+async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/settled_hash_cannot_be_granted_htlc_recv_vtxos").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let ark_ln = lightning.internal;
+	let eve_ln = Arc::new(lightning.external);
+
+	let srv = ctx.captaind("server").lightningd(&ark_ln).funded(btc(10)).create().await;
+	let bark = ctx.bark("bark-1", &srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let preimage = ark::lightning::Preimage::random();
+	let payment_hash = preimage.compute_payment_hash();
+
+	ark_ln.wait_for_block_sync().await;
+	eve_ln.wait_for_block_sync().await;
+
+	// Eve's seed hold invoice for H, paid by the server but held, so no
+	// settlement is recorded yet.
+	let mut eve_hold = eve_ln.hold_client().await;
+	let seed_invoice = eve_hold.invoice(hold::InvoiceRequest {
+		payment_hash: payment_hash.to_byte_array().to_vec(),
+		amount_msat: sat(10_000).to_msat(),
+		description: Some(hold::invoice_request::Description::Memo("seed".to_string())),
+		min_final_cltv_expiry: Some(18),
+		expiry: Some(3600),
+		routing_hints: vec![],
+	}).await.unwrap().into_inner().bolt11;
+	bark.try_pay_lightning(&seed_invoice, None, false).await.unwrap();
+	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
+
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+
+	// A receive for H is still allowed because H is not settled yet. Eve pays
+	// it so the subscription is Accepted.
+	let mut rpc = srv.get_public_rpc().await;
+	let receive_invoice = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
+		payment_hash: payment_hash.as_ref().to_vec(),
+		amount_sat: btc(1).to_sat(),
+		min_cltv_delta: 6,
+		mailbox_id: None,
+		description: None,
+	}).await.expect("receive should be allowed while H is unsettled").into_inner().bolt11;
+
+	let pay_receive = {
+		let eve_ln = eve_ln.clone();
+		tokio::spawn(async move { eve_ln.try_pay_bolt11(receive_invoice).await })
+	};
+	wait_for_subscription_status(&db, payment_hash, "accepted").await;
+
+	// Releasing the seed records the preimage while the receive is Accepted.
+	eve_hold.settle(hold::SettleRequest {
+		payment_preimage: preimage.as_ref().to_vec(),
+	}).await.unwrap();
+	wait_for_attempt_status(&db, payment_hash, "succeeded").await;
+	wait_for_preimage_recorded(&db, payment_hash).await;
+
+	let sub = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
+		.await.unwrap().expect("subscription should exist");
+	let lowest = sub.lowest_incoming_htlc_expiry
+		.expect("Accepted subscription must record lowest incoming HTLC expiry");
+
+	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let err = rpc.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
+		payment_hash: payment_hash.as_ref().to_vec(),
+		user_pubkey: keypair.public_key().serialize().to_vec(),
+		htlc_recv_expiry: lowest.saturating_sub(srv.config().htlc_expiry_delta).into(),
+		lightning_receive_anti_dos: None,
+	}).await.expect_err("a settled hash must not be granted HTLC-recv vtxos");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "unexpected error: {err:?}");
+
+	assert_ne!(
+		lightning_subscription_status(&db, payment_hash).await.as_deref(),
+		Some("htlcs-ready"),
+	);
+	assert_eq!(count_htlc_recv_vtxos(&db).await, 0);
+
+	pay_receive.abort();
+	assert_vtxopool_consistency(&srv).await;
+}
+
 #[tokio::test]
 async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	require_bark_version!(> "0.5.0");
