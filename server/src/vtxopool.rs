@@ -283,13 +283,19 @@ impl VtxoPool {
 	///
 	/// The caller is responsible for requesting arkoor preparation
 	/// with correct destination: [`VtxoPolicy::ServerHtlcRecv`]
-	#[tracing::instrument(skip(self, srv))]
-	async fn prepare_arkoor(
+	///
+	/// See [Self::send_arkoor] for `commit`.
+	#[tracing::instrument(skip(self, srv, commit))]
+	async fn prepare_arkoor<F>(
 		&self,
 		srv: &Server,
 		dest: ArkoorDestination,
 		inputs: &[(VtxoId, BlockHeight, Amount)],
-	) -> anyhow::Result<Vec<Vtxo<Full>>> {
+		commit: F,
+	) -> anyhow::Result<Vec<Vtxo<Full>>>
+	where
+		F: AsyncFnOnce(&database::Tx<'_>, &[Vtxo<Full>]) -> anyhow::Result<()>,
+	{
 		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
 		let mut input_vtxos = srv.db.read(async |t| t.get_pool_vtxos_by_ids(&input_ids).await).await?;
 
@@ -384,7 +390,7 @@ impl VtxoPool {
 			htlc_vtxo::create_htlc_vtxos(&t, &htlc_recvs, HtlcDirection::Outgoing).await?;
 			t.mark_vtxopool_vtxos_spent(inputs.iter().map(|v| v.0)).await
 				.context("failed to mark vtxopool vtxos as spent")?;
-			Ok(())
+			commit(&t, &sent).await
 		}).await?;
 
 		for input in inputs {
@@ -424,19 +430,29 @@ impl VtxoPool {
 		Ok(sent)
 	}
 
-	#[tracing::instrument(skip(self, srv))]
-	pub async fn send_arkoor(
+	/// Arkoor pool vtxos to `dest`.
+	///
+	/// `commit` runs in the transaction that stores the new vtxos, with the
+	/// vtxos sent to `dest`. If it fails nothing is stored and the inputs go
+	/// back into the pool, so callers can tie their own bookkeeping to the
+	/// vtxos existing.
+	#[tracing::instrument(skip(self, srv, commit))]
+	pub async fn send_arkoor<F>(
 		&self,
 		srv: &Server,
 		dest: ArkoorDestination,
-	) -> anyhow::Result<Vec<Vtxo<Full>>> {
+		commit: F,
+	) -> anyhow::Result<Vec<Vtxo<Full>>>
+	where
+		F: AsyncFnOnce(&database::Tx<'_>, &[Vtxo<Full>]) -> anyhow::Result<()>,
+	{
 		let inputs = self.data.lock().take_inputs(dest.total_amount);
 		if inputs.is_empty() {
 			bail!("vtxo pool is empty");
 		}
 
 		// we try, but if we fail, we place back the inputs
-		match self.prepare_arkoor(srv, dest, &inputs).await {
+		match self.prepare_arkoor(srv, dest, &inputs, commit).await {
 			Ok(v) => {
 				update_all_bucket_metrics(&self.data);
 				Ok(v)

@@ -775,6 +775,20 @@ impl Server {
 			},
 		}
 
+		// The hash can settle while the receive is only Accepted, for example
+		// through an outgoing payment to the same hash started before the
+		// receive was opened. The hold settler skips it then, so nothing else
+		// would collect the inbound HTLC. Granting now would let the caller
+		// exit the HTLC-recv vtxos with the preimage and keep the refund too.
+		//
+		// We don't settle the hold invoice here: the receiver gets nothing, so
+		// collecting the inbound payment would take the payer's money. The
+		// subscription stays Accepted until the forward timeout cancels it and
+		// the payer is refunded.
+		if self.htlc_settler.is_settled(payment_hash).await?.is_some() {
+			return badarg!("invoice has already been paid");
+		}
+
 		self.verify_ln_receive_anti_dos(anti_dos, payment_hash).await?;
 
 		// Deduct the fees from the HTLC VTXOs.
@@ -798,13 +812,16 @@ impl Server {
 				user_pubkey, payment_hash, htlc_recv_expiry, self.config.htlc_expiry_delta,
 			),
 		};
-		let vtxos = self.vtxopool.send_arkoor(self, dest).await
-			.context("vtxopool error")?;
-
-		self.db.write(async |t| t.update_lightning_htlc_subscription_with_htlcs(
-			sub.id,
-			vtxos.iter().map(|v| v.id()),
-		).await).await.context("failed to store htlcs for ln receive")?;
+		// Storing the htlcs re-checks the settlement under a lock, as the hash
+		// can still settle after the check above. Doing it in the transaction
+		// that stores the HTLC-recv vtxos means a refusal leaves no vtxo behind
+		// and puts the pool inputs back.
+		let vtxos = self.vtxopool.send_arkoor(self, dest, async |t, vtxos| {
+			t.update_lightning_htlc_subscription_with_htlcs(
+				sub.id,
+				vtxos.iter().map(|v| v.id()),
+			).await.context("failed to store htlcs for ln receive")
+		}).await.context("vtxopool error")?;
 		// Wake check_lightning_receive so the client sees HtlcsReady.
 		self.lightning_manager.notify_payment_update(payment_hash);
 

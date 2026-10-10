@@ -773,10 +773,11 @@ async fn try_settle_hold_invoice(
 	};
 
 	if !matches!(sub.status, LightningHtlcSubscriptionStatus::HtlcsReady) {
-		// Safe to skip: a preimage in the WAL implies HTLCs were already
-		// locked (HtlcsReady was reached before the preimage was learned),
-		// so the only other states here are Settled or the cooperative
-		// path already handled it.
+		// Safe to skip: no HTLC-recv vtxos were granted, so the server has
+		// nothing to recover. A subscription that is only Accepted can never
+		// reach HtlcsReady now, because the grant refuses a settled hash. It
+		// stays Accepted until the forward timeout cancels it and the inbound
+		// HTLC fails back to the payer.
 		return true;
 	}
 
