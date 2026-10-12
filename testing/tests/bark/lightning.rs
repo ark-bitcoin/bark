@@ -967,6 +967,10 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 /// The fix refuses the revocation while the receive side is committed
 /// (`HtlcsReady`/`Settled`), so the payer is not refunded and the total
 /// spendable across both wallets never exceeds what they funded.
+///
+/// The parked claim is released past the HTLC-send expiry, so it is refused
+/// too: by then the payer can refund the HTLC-send vtxos on-chain, and the
+/// server would pay the payee against collateral it can no longer collect.
 #[tokio::test]
 async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 	require_bark_version!(> "0.5.0");
@@ -1041,19 +1045,24 @@ async fn intra_ark_revoke_then_claim_does_not_drain_server() {
 	ctx.generate_blocks(srv.config().htlc_send_expiry_delta.to_u32() + 6).await;
 	let _ = bark_payer.try_run(["maintain"]).await;
 
-	// 4. Release the parked claim; the payee still gets paid.
+	// 4. Release the parked claim; it arrives past the HTLC-send expiry.
 	release.notify_one();
-	payee_task.wait_millis(120_000).await
+	let claim_err = payee_task.wait_millis(120_000).await
 		.expect("payee claim task panicked")
-		.expect("claim should still succeed after the revoke attempt");
+		.expect_err("claim past the HTLC-send expiry should be refused");
+	assert!(format!("{claim_err:?}").contains("too close to the current chaintip"),
+		"unexpected claim error: {claim_err:#}");
 
 	let payer_balance = bark_payer.spendable_balance().await;
 	let payee_balance = bark_payee.spendable_balance().await;
 
-	// The payee genuinely received the payment...
-	assert!(payee_balance > Amount::ZERO,
-		"payee should have received the lightning payment, balance: {payee_balance}");
-	// ...and the revoke was refused, so the payer was NOT also refunded.
+	// The revoke was refused, so the payer was not refunded cooperatively:
+	// the HTLC-send vtxos stay locked, so the payer holds at most what it
+	// boarded minus the payment. The claim was refused too, so the payee
+	// holds nothing.
+	assert!(payer_balance <= board_amount - pay_amount,
+		"payer was refunded: {payer_balance} > {board_amount} - {pay_amount}");
+	assert_eq!(payee_balance, Amount::ZERO);
 	// Conservation: only the payer boarded, so together they can never hold
 	// more than `board_amount` without the server having been drained.
 	assert!(payer_balance + payee_balance <= board_amount,

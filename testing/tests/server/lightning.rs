@@ -12,9 +12,11 @@ use log::{info, trace};
 
 use ark::{ProtocolEncoding, Vtxo, SECP};
 use bitcoin_ext::{BlockDelta, BlockHeight};
+use bitcoin_ext::rpc::RpcApi;
 use ark::arkoor::ArkoorDestination;
 use ark::attestations::ArkoorCosignAttestation;
 use ark::vtxo::Full;
+use ark::vtxo::TapScriptClause;
 use ark::vtxo::policy::VtxoPolicyKind;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
@@ -2625,4 +2627,184 @@ async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 	);
 
 	assert_vtxopool_consistency(&srv).await;
+}
+
+/// An intra-Ark receive must not be claimable once the sender has refunded
+/// its HTLC-send collateral on-chain.
+///
+/// The sender pays an invoice of the same server, the receiver prepares its
+/// claim and withholds the preimage. The sender exits its HTLC-send VTXOs and
+/// spends them through the timeout clause once `htlc_expiry` and
+/// `2 * exit_delta` have passed. The server never learned the preimage, so it
+/// could not race the refund with its preimage clause. A cooperative claim
+/// after that point pays the receiver from the vtxopool against collateral
+/// that is already gone.
+#[tokio::test]
+async fn self_payment_claim_rejected_after_sender_onchain_refund() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new(
+		"server/self_payment_claim_rejected_after_sender_onchain_refund",
+	).await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	// A long invoice expiry keeps the hold cleanup loop from canceling the
+	// subscription before the refund confirms.
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).watchmand()
+		.funded(btc(10)).cfg(|cfg| {
+			cfg.invoice_expiry = Duration::from_secs(3600);
+			cfg.receive_htlc_forward_timeout = Duration::from_secs(3600);
+		}).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let sender = ctx.bark("sender", &srv).funded(sat(1_000_000)).create().await;
+	let input_ids = sender.board_and_confirm_and_register(&ctx, sat(100_000)).await;
+	let wallet = sender.client().await;
+
+	let preimage = ark::lightning::Preimage::random();
+	let payment_hash = preimage.compute_payment_hash();
+	let mut rpc = srv.get_public_rpc().await;
+	let invoice = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
+		payment_hash: payment_hash.to_vec(),
+		amount_sat: 100_000,
+		min_cltv_delta: 18,
+		mailbox_id: None,
+		description: None,
+	}).await.unwrap().into_inner().bolt11;
+
+	let sender_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let htlcs = cosign_htlc_send_to_pubkey(
+		&ctx, &srv, &wallet, &input_ids, sender_key.public_key(), payment_hash,
+	).await;
+	wallet.register_vtxo_transactions_with_server(&htlcs).await.unwrap();
+
+	rpc.initiate_lightning_payment(protos::InitiateLightningPaymentRequest {
+		invoice,
+		payment_amount_sat: 100_000,
+		htlc_vtxo_ids: htlcs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+		mailbox_id: None,
+		retry_for_secs: None,
+	}).await.unwrap();
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	wait_for_subscription_status(&db, payment_hash, "accepted").await;
+
+	let send_expiry = htlcs.iter()
+		.map(|v| v.policy().as_server_htlc_send().unwrap().htlc_expiry)
+		.min().unwrap();
+	let receiver_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let mut grants = rpc.prepare_lightning_receive_claim(
+		protos::PrepareLightningReceiveClaimRequest {
+			payment_hash: payment_hash.to_vec(),
+			user_pubkey: receiver_key.public_key().serialize().to_vec(),
+			htlc_recv_expiry: send_expiry.saturating_sub(srv.config().htlc_expiry_delta).into(),
+			lightning_receive_anti_dos: None,
+		},
+	).await.unwrap().into_inner().htlc_vtxos.into_iter()
+		.map(|bytes| Vtxo::<Full>::deserialize(&bytes).unwrap())
+		.collect::<Vec<_>>();
+	assert!(!grants.is_empty());
+	grants.sort_by_key(|v| v.id());
+
+	// The sender exits its HTLC-send VTXOs. The receiver keeps its grants
+	// off-chain and holds on to the preimage.
+	let mut broadcast = HashSet::new();
+	for htlc in &htlcs {
+		for item in htlc.transactions() {
+			if broadcast.insert(item.tx.compute_txid()) {
+				ctx.broadcast_cpfp(&item.tx).await;
+				ctx.generate_blocks(1).await;
+			}
+		}
+	}
+	let exit_confirmed = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+
+	// Wait for the timeout clause to unlock, then refund every HTLC to the
+	// sender through it.
+	let clauses = htlcs.iter().map(|v| v.policy().as_server_htlc_send().unwrap()
+		.user_claim_after_expiry_clause(v.exit_delta())
+	).collect::<Vec<_>>();
+	let unlock_height = clauses.iter()
+		.map(|c| std::cmp::max(c.timelock_height, exit_confirmed + c.block_delta))
+		.max().unwrap();
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+	ctx.generate_blocks(unlock_height.checked_blocks_since(tip).unwrap_or(0) + 1).await;
+
+	let prevouts = htlcs.iter().map(|v| v.txout()).collect::<Vec<_>>();
+	let refund_amount = htlcs.iter().map(|v| v.amount()).sum::<Amount>() - sat(2_000);
+	let refund_addr = ctx.bitcoind().sync_client().get_new_address(None, None).unwrap()
+		.assume_checked();
+	let mut refund = bitcoin::Transaction {
+		version: bitcoin::transaction::Version::TWO,
+		lock_time: clauses.iter().map(|c| c.locktime()).max_by_key(|l| l.to_consensus_u32()).unwrap(),
+		input: htlcs.iter().zip(&clauses).map(|(v, c)| bitcoin::TxIn {
+			previous_output: v.point(),
+			script_sig: bitcoin::ScriptBuf::new(),
+			sequence: c.sequence(),
+			witness: bitcoin::Witness::new(),
+		}).collect(),
+		output: vec![bitcoin::TxOut {
+			value: refund_amount,
+			script_pubkey: refund_addr.script_pubkey(),
+		}],
+	};
+	let mut witnesses = Vec::with_capacity(htlcs.len());
+	{
+		let mut shc = bitcoin::sighash::SighashCache::new(&refund);
+		for (idx, (htlc, clause)) in htlcs.iter().zip(&clauses).enumerate() {
+			let leaf_hash = bitcoin::TapLeafHash::from_script(
+				&clause.tapscript(), bitcoin::taproot::LeafVersion::TapScript,
+			);
+			let sighash = shc.taproot_script_spend_signature_hash(
+				idx,
+				&bitcoin::sighash::Prevouts::All(&prevouts),
+				leaf_hash,
+				bitcoin::sighash::TapSighashType::Default,
+			).unwrap();
+			let sig = SECP.sign_schnorr(&sighash.into(), &sender_key);
+			witnesses.push(clause.witness(&sig, &clause.control_block(htlc)));
+		}
+	}
+	for (input, witness) in refund.input.iter_mut().zip(witnesses) {
+		input.witness = witness;
+	}
+	ctx.bitcoind().sync_client().send_raw_transaction(&refund).unwrap();
+	let tip = ctx.generate_blocks(1).await;
+	srv.watchmand().wait_for_sync_height(tip).await;
+
+	// The server's watchman sees the refund and records it as revoked.
+	let mut revoked = false;
+	for _ in 0..100 {
+		let states = db.read(async |t|
+			server::database::htlc_vtxo::get_htlc_vtxo_states_by_payment_hash(t, payment_hash).await
+		).await.unwrap();
+		revoked = htlcs.iter().all(|htlc| states.iter()
+			.find(|s| s.vtxo.vtxo_id == htlc.id())
+			.and_then(|s| s.htlc.chain_resolution)
+			== Some(server::database::htlc_vtxo::HtlcResolution::Revoked)
+		);
+		if revoked {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+	assert!(revoked, "watchman never recorded the sender's refund");
+
+	assert!(!is_preimage_recorded(&db, payment_hash).await);
+	assert_eq!(lightning_subscription_status(&db, payment_hash).await.as_deref(), Some("htlcs-ready"));
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+	assert!(grants.iter().all(|v| v.expiry_height() > tip),
+		"the receive grants must still be live");
+
+	let keys = vec![receiver_key.clone(); grants.len()];
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		grants,
+		ark::VtxoPolicy::new_pubkey(receiver_key.public_key()),
+	).unwrap().generate_user_nonces(&keys).unwrap();
+	let result = rpc.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
+		payment_hash: payment_hash.to_vec(),
+		payment_preimage: preimage.to_vec(),
+		cosign_request: Some(protos::ArkoorPackageCosignRequest::from(builder.cosign_request())),
+	}).await;
+
+	let err = result.expect_err("claim must be refused after the sender refunded on-chain");
+	assert!(err.message().contains("too close to the current chaintip"), "unexpected error: {err:?}");
 }
