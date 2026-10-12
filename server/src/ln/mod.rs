@@ -527,6 +527,9 @@ impl Server {
 			if let Some((status, htlc_recvs_granted)) =
 				t.cancel_revocable_htlc_subscription(payment_hash).await?
 			{
+				// Stays committed even once the grants expired: the sender then
+				// refunds on-chain, where our preimage clause stays an alternative
+				// only until the sender spends the timeout branch.
 				let committed = match status {
 					LightningHtlcSubscriptionStatus::HtlcsReady
 						| LightningHtlcSubscriptionStatus::Settled => true,
