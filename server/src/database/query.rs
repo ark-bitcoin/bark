@@ -309,8 +309,7 @@ pub async fn complete_round_participation(
 	let unlock_hash = UnlockHash::from_str(&part_row.get::<_, &str>("unlock_hash"))
 		.context("invalid unlock_hash")?;
 	ensure!(UnlockHash::hash(&unlock_preimage) == unlock_hash,
-		"unlock_hash ({}) does not match unlock_preimage ({})",
-		unlock_hash, unlock_preimage.as_hex(),
+		"unlock_preimage does not match unlock_hash {}", unlock_hash,
 	);
 
 	let forfeited_at = part_row.get::<_, Option<chrono::DateTime<chrono::Local>>>("forfeited_at");
