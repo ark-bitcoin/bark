@@ -51,6 +51,7 @@ use crate::rpcserver::{
 	RPC_RICH_ERRORS,
 };
 use crate::round::RoundInput;
+use crate::secret::Secret;
 use crate::rpcserver::macros;
 use crate::telemetry;
 
@@ -654,7 +655,7 @@ impl rpc::server::ArkService for Server {
 		let inp = RoundInput::RegisterPayment {
 			inputs,
 			vtxo_requests,
-			unlock_preimage,
+			unlock_preimage: Secret::new(unlock_preimage),
 			user_agent_name: crate::telemetry::current_user_agent_name(),
 		};
 

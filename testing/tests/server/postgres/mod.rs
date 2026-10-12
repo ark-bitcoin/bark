@@ -2110,7 +2110,7 @@ async fn lightning_send_finished_mailbox_notification() {
 	match &messages[0].payload {
 		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage } => {
 			assert_eq!(*ph, success_hash);
-			assert_eq!(preimage.as_ref(), Some(&test_preimage), "success should include preimage");
+			assert_eq!(preimage.as_ref().map(|p| p.leak_ref()), Some(&test_preimage), "success should include preimage");
 		},
 		other => panic!("expected LightningSendFinished payload, got {:?}", other),
 	}

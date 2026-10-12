@@ -58,6 +58,7 @@ use ark::encode::ProtocolEncoding;
 use crate::error::ContextExt;
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
+use crate::secret::Secret;
 use crate::telemetry;
 
 /// Can be used as function argument when there are no query_raw arguments
@@ -135,7 +136,7 @@ pub enum MailboxPayload {
 	LightningSendFinished {
 		payment_hash: PaymentHash,
 		/// The preimage, present only on success.
-		preimage: Option<Preimage>,
+		preimage: Option<Secret<Preimage>>,
 	},
 }
 
@@ -609,7 +610,7 @@ impl<'t> Tx<'t> {
 					let payment_hash = PaymentHash::from_str(&hash_str)
 						.context("invalid payment hash in mailbox notification")?;
 					let preimage = row.get::<_, Option<String>>("preimage");
-					let preimage = preimage.map(|s| Preimage::from_str(&s))
+					let preimage = preimage.map(|s| Preimage::from_str(&s).map(Secret::new))
 						.transpose()
 						.context("invalid preimage in mailbox notification")?;
 					res.push(MailboxEntry {

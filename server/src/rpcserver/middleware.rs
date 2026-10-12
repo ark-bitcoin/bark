@@ -371,6 +371,7 @@ where
 			{ telemetry::RPC_SERVICE } = rpc_method_details.service,
 			{ telemetry::RPC_METHOD } = rpc_method_details.method,
 			{ telemetry::USER_AGENT_NAME } = rpc_method_details.user_agent_name,
+			{ telemetry::ATTRIBUTE_PROTOCOL_VERSION } = pver,
 			{ telemetry::RPC_ACCESS_TOKEN } = req.headers().get(ACCESS_TOKEN_HEADER)
 				.and_then(|v| v.to_str().ok()),
 

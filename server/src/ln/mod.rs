@@ -907,7 +907,7 @@ impl Server {
 		badarg!("this feature has been disabled by the server")
 	}
 
-	#[tracing::instrument(skip(self, cosign_request))]
+	#[tracing::instrument(skip(self, payment_preimage, cosign_request))]
 	pub async fn claim_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
