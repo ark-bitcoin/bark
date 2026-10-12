@@ -28,8 +28,8 @@ use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiv
 
 use crate::{Config, Wallet};
 use crate::actions::{
-	abort, or_retry, Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected,
-	WalletAction, WalletActionId, BASE_RETRY_BACKOFF,
+	abort, or_retry, Advance, AdvanceError, IntoAdvanceResult, IntoAnyhow,
+	RetryUnlessRejected, WalletAction, WalletActionId, BASE_RETRY_BACKOFF,
 };
 use crate::arkoor::{DeliveryOutcome, post_arkoor_to_mailboxes};
 use crate::movement::update::MovementUpdate;
@@ -147,16 +147,19 @@ impl WalletAction for LightningReceive {
 					Err(e) => {
 						// Preimage is out but a post-reveal step failed. Park
 						// past the point of no return (PreimageRevealed never
-						// abandons) and retry the idempotent claim later.
+						// abandons) and retry the idempotent claim later,
+						// unless the claim retry budget is zero.
+						let e = e.into_anyhow();
 						warn!("lightning receive {} failed after revealing preimage, \
 							retrying claim: {:#}", self.payment_hash, e);
+						let budget = wallet.config().lightning_receive_claim_retries;
 						return Ok(Advance::Park {
 							state: LightningReceive {
 								progress: Progress::PreimageRevealed(htlcs.clone()),
 								..self
 							},
-							wake_after: Some(BASE_RETRY_BACKOFF),
-							error: None,
+							wake_after: (budget > 0).then_some(BASE_RETRY_BACKOFF),
+							error: Some(e),
 						});
 					},
 				}
