@@ -216,6 +216,90 @@ async fn get_vtxos_by_ids() {
 }
 
 #[tokio::test]
+async fn get_vtxos_status_by_ids() {
+	let ctx = TestContext::new("server/get_vtxos_status_by_ids").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	bark.board(sat(100_000)).await;
+	bark.board(sat(200_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	// Grab the vtxos with the keypairs that control them, to sign the
+	// attestations the way a real client would.
+	let client = bark.client().await;
+	let mut vtxos = client.vtxos().await.unwrap().into_iter()
+		.map(|v| v.vtxo).collect::<Vec<_>>();
+	assert_eq!(vtxos.len(), 2);
+	// Request in reverse order to check the response keeps the request order.
+	vtxos.reverse();
+	let mut queries = Vec::new();
+	for vtxo in &vtxos {
+		let keypair = client.pubkey_keypair(&vtxo.user_pubkey()).await
+			.unwrap().expect("known vtxo keypair").1;
+		queries.push(protos::VtxoStatusQuery {
+			vtxo_id: vtxo.id().to_bytes().to_vec(),
+			attestation: VtxoStatusAttestation::new(vtxo.id(), &keypair).serialize(),
+		});
+	}
+
+	let mut rpc = srv.get_public_rpc().await;
+
+	// Valid vtxos + valid attestations: freshly boarded vtxos are spendable.
+	let resp = rpc.get_vtxos_status_by_ids(protos::GetVtxosStatusByIdsRequest {
+		vtxos: queries.clone(),
+	}).await.unwrap().into_inner();
+	let ids = resp.vtxos.iter().map(|v| v.vtxo_id.clone()).collect::<Vec<_>>();
+	let expected = vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect::<Vec<_>>();
+	assert_eq!(ids, expected);
+	assert!(resp.vtxos.iter()
+		.all(|v| v.spend_state == protos::VtxoSpendState::Spendable as i32));
+
+	// An empty request succeeds with an empty response.
+	let resp = rpc.get_vtxos_status_by_ids(protos::GetVtxosStatusByIdsRequest {
+		vtxos: vec![],
+	}).await.unwrap().into_inner();
+	assert!(resp.vtxos.is_empty());
+	assert!(resp.missing_vtxo_ids.is_empty());
+
+	// A duplicate id returns the same status twice.
+	let resp = rpc.get_vtxos_status_by_ids(protos::GetVtxosStatusByIdsRequest {
+		vtxos: vec![queries[0].clone(); 2],
+	}).await.unwrap().into_inner();
+	assert_eq!(resp.vtxos.len(), 2);
+	assert!(resp.vtxos.iter().all(|v| v.vtxo_id == queries[0].vtxo_id));
+	assert!(resp.vtxos.iter()
+		.all(|v| v.spend_state == protos::VtxoSpendState::Spendable as i32));
+
+	// One attestation signed by a key that doesn't own its vtxo fails the
+	// whole request.
+	let wrong_keypair = Keypair::new(&SECP, &mut thread_rng());
+	let mut bad = queries.clone();
+	bad[1].attestation = VtxoStatusAttestation::new(vtxos[1].id(), &wrong_keypair).serialize();
+	let err = rpc.get_vtxos_status_by_ids(protos::GetVtxosStatusByIdsRequest {
+		vtxos: bad,
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+	// An unknown id is skipped and reported; the known ones are still served.
+	let mut unknown = queries[0].clone();
+	unknown.vtxo_id = vec![0u8; 36];
+	let resp = rpc.get_vtxos_status_by_ids(protos::GetVtxosStatusByIdsRequest {
+		vtxos: vec![unknown.clone(), queries[0].clone(), unknown.clone(), queries[1].clone()],
+	}).await.unwrap().into_inner();
+	let ids = resp.vtxos.iter().map(|v| v.vtxo_id.clone()).collect::<Vec<_>>();
+	assert_eq!(ids, expected);
+	assert_eq!(resp.missing_vtxo_ids, vec![unknown.vtxo_id]);
+
+	// Over the cap is rejected before any lookup.
+	let err = rpc.get_vtxos_status_by_ids(protos::GetVtxosStatusByIdsRequest {
+		vtxos: vec![queries[0].clone(); server_rpc::MAX_NB_VTXO_IDS + 1],
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument);
+}
+
+#[tokio::test]
 async fn integration() {
 	let ctx = TestContext::new("server/integration").await;
 	let srv = ctx.captaind("server").create().await;

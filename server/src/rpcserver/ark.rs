@@ -1,4 +1,5 @@
 
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -218,6 +219,63 @@ impl rpc::server::ArkService for Server {
 			vtxos: ids.iter()
 				.filter_map(|id| found.get(id).map(|v| v.vtxo.serialize()))
 				.collect(),
+			missing_vtxo_ids: missing.iter().map(|id| id.to_bytes().to_vec()).collect(),
+		}))
+	}
+
+	#[tracing::instrument(skip(self, req))]
+	async fn get_vtxos_status_by_ids(
+		&self,
+		req: tonic::Request<protos::GetVtxosStatusByIdsRequest>,
+	) -> Result<tonic::Response<protos::GetVtxosStatusByIdsResponse>, tonic::Status> {
+		let req = req.into_inner();
+
+		if req.vtxos.len() > rpc::MAX_NB_VTXO_IDS {
+			macros::badarg!("too many vtxo ids, max is {}", rpc::MAX_NB_VTXO_IDS);
+		}
+
+		let queries = req.vtxos.iter()
+			.map(|q| Ok((
+				VtxoId::from_bytes(&q.vtxo_id)?,
+				VtxoStatusAttestation::from_bytes(&q.attestation)?,
+			)))
+			.collect::<Result<Vec<_>, tonic::Status>>()?;
+
+		let ids = queries.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+		let states = self.db.read(async |t| t.get_existing_server_vtxos_by_id(&ids).await).await
+			.to_status()?;
+
+		// An id without a client-visible user vtxo is reported as missing,
+		// not as an error, so one bad id does not cost the client the batch.
+		// Only ids the server knows get their attestation checked.
+		let mut by_id = HashMap::with_capacity(states.len());
+		for (id, state) in states {
+			let Ok(user_vtxo) = state.vtxo.try_into_user_vtxo() else { continue };
+			let Some(spend_state) = client_spend_state(state.spend_state) else { continue };
+			by_id.insert(id, (user_vtxo, spend_state));
+		}
+
+		let mut vtxos = Vec::with_capacity(queries.len());
+		let mut missing = Vec::new();
+		for (id, attestation) in queries {
+			let Some((user_vtxo, spend_state)) = by_id.get(&id) else {
+				if !missing.contains(&id) {
+					missing.push(id);
+				}
+				continue;
+			};
+
+			attestation.verify(user_vtxo)
+				.badarg("invalid VTXO status attestation")?;
+
+			vtxos.push(protos::VtxoStatus {
+				vtxo_id: id.to_bytes().to_vec(),
+				spend_state: *spend_state as i32,
+			});
+		}
+
+		Ok(tonic::Response::new(protos::GetVtxosStatusByIdsResponse {
+			vtxos,
 			missing_vtxo_ids: missing.iter().map(|id| id.to_bytes().to_vec()).collect(),
 		}))
 	}
