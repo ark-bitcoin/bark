@@ -2588,6 +2588,13 @@ CREATE INDEX vtxo_frontier_active_ix ON public.vtxo USING btree (expiry) WHERE (
 
 
 --
+-- Name: vtxo_frontier_since_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_frontier_since_ix ON public.vtxo USING btree (frontier_at) WHERE ((frontier_at IS NOT NULL) AND (onchain_spent_height IS NULL));
+
+
+--
 -- Name: vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix; Type: INDEX; Schema: public; Owner: -
 --
 
