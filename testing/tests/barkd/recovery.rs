@@ -759,19 +759,22 @@ async fn recovered_wallet_skips_invalid_vtxo() {
 	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
 	let mnemonic = barkd.mnemonic().await;
 
-	// Proxy get_vtxo to return our own board VTXO with an invalidated signature.
+	// Proxy get_vtxos_by_ids to return our own board VTXO with an invalidated
+	// signature.
 	#[derive(Clone)]
 	struct ForgeVtxo;
 
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for ForgeVtxo {
-		async fn get_vtxo(
-			&self, upstream: &mut ArkClient, req: protos::GetVtxoRequest,
-		) -> Result<protos::GetVtxoResponse, tonic::Status> {
-			let mut resp = upstream.get_vtxo(req).await?.into_inner();
-			let mut vtxo = Vtxo::<Full>::deserialize(&resp.vtxo).unwrap();
-			vtxo.invalidate_final_sig();
-			resp.vtxo = vtxo.serialize();
+		async fn get_vtxos_by_ids(
+			&self, upstream: &mut ArkClient, req: protos::GetVtxosByIdsRequest,
+		) -> Result<protos::GetVtxosByIdsResponse, tonic::Status> {
+			let mut resp = upstream.get_vtxos_by_ids(req).await?.into_inner();
+			for raw in resp.vtxos.iter_mut() {
+				let mut vtxo = Vtxo::<Full>::deserialize(raw).unwrap();
+				vtxo.invalidate_final_sig();
+				*raw = vtxo.serialize();
+			}
 			Ok(resp)
 		}
 	}

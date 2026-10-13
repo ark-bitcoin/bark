@@ -21,8 +21,7 @@ use log::{debug, info, warn};
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::mailbox::MailboxAuthorization;
 use ark::vtxo::Full;
-use server_rpc::TryFromBytes;
-use server_rpc::protos;
+use server_rpc::{protos, TryFromBytes, MAX_NB_VTXO_IDS};
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 use crate::Wallet;
@@ -84,6 +83,9 @@ pub struct RecoveryReport {
 	foreign: RecoveryReportEntry,
 	/// VTXOs that have been fully exited on-chain.
 	exited: RecoveryReportEntry,
+	/// VTXO ids the server reported as unknown. Recovery trusts the server, so
+	/// these are not retried.
+	not_found: RecoveryReportEntry,
 }
 
 impl RecoveryReport {
@@ -138,6 +140,15 @@ impl RecoveryReport {
 	pub fn push_exited<G>(&mut self, vtxo: &Vtxo<G>) {
 		self.failed.remove(vtxo.id());
 		self.exited.insert(vtxo.id(), Some(vtxo.amount()));
+	}
+
+	pub fn not_found(&self) -> &RecoveryReportEntry {
+		&self.not_found
+	}
+
+	pub fn push_not_found(&mut self, id: VtxoId) {
+		self.failed.remove(id);
+		self.not_found.insert(id, None);
 	}
 }
 
@@ -203,6 +214,7 @@ impl Wallet {
 				resp.messages.len());
 
 			let prev_checkpoint = checkpoint;
+			let mut candidates = Vec::new();
 			for msg in &resp.messages {
 				checkpoint = checkpoint.max(msg.checkpoint);
 
@@ -215,7 +227,7 @@ impl Wallet {
 								continue;
 							};
 							if seen.insert(id) {
-								self.recover_candidate(report, id, None, gap_limit).await?;
+								candidates.push((id, None));
 							}
 						}
 					},
@@ -226,8 +238,7 @@ impl Wallet {
 								continue;
 							};
 							if seen.insert(vtxo.id()) {
-								let id = vtxo.id();
-								self.recover_candidate(report, id, Some(vtxo), gap_limit).await?;
+								candidates.push((vtxo.id(), Some(vtxo)));
 							}
 						}
 					},
@@ -239,6 +250,9 @@ impl Wallet {
 					},
 				}
 			}
+
+			// One batch per page bounds the memory to what the server sends at once.
+			self.recover_candidates(report, candidates, gap_limit).await?;
 
 			if !resp.have_more {
 				break;
@@ -271,6 +285,70 @@ impl Wallet {
 			.with_context(|| format!("server returned an undecodable vtxo for {id}"))
 	}
 
+	/// Fetch the full [`Vtxo<Full>`] of every id in `ids` from the server, in
+	/// batches of [`MAX_NB_VTXO_IDS`].
+	///
+	/// The recovery mailbox only stores ids, so we ask the server for the full
+	/// VTXO data. The result is untrusted until validated by the caller.
+	///
+	/// Returns the fetched VTXOs and the ids the server does not know. An id
+	/// whose batch request failed is in neither. Only a server that cannot be
+	/// reached is an error.
+	pub(crate) async fn fetch_vtxos(
+		&self,
+		ids: &[VtxoId],
+	) -> anyhow::Result<(HashMap<VtxoId, Vtxo<Full>>, HashSet<VtxoId>)> {
+		let mut ret = HashMap::with_capacity(ids.len());
+		let mut missing = HashSet::new();
+		if ids.is_empty() {
+			return Ok((ret, missing));
+		}
+
+		let (mut srv, _) = self.require_server().await?;
+		let wanted = ids.iter().copied().collect::<HashSet<_>>();
+		for chunk in ids.chunks(MAX_NB_VTXO_IDS) {
+			let req = protos::GetVtxosByIdsRequest {
+				vtxo_ids: chunk.iter().map(|id| id.to_bytes().to_vec()).collect(),
+			};
+			let resp = match srv.client.get_vtxos_by_ids(req).await {
+				Ok(resp) => resp.into_inner(),
+				Err(e) => {
+					warn!("Could not fetch {} recovery vtxos from server: {:#}", chunk.len(), e);
+					continue;
+				},
+			};
+
+			for raw in &resp.missing_vtxo_ids {
+				match VtxoId::from_bytes(raw) {
+					Ok(id) => {
+						warn!("Could not fetch recovery vtxo {id}: unknown to the server");
+						missing.insert(id);
+					},
+					Err(_) => warn!("Server reported an undecodable missing vtxo id: {raw:?}"),
+				}
+			}
+
+			// Unknown ids are left out of the response, so the position of a
+			// body says nothing about which id it answers.
+			for raw in &resp.vtxos {
+				let vtxo = match Vtxo::<Full>::deserialize(raw) {
+					Ok(vtxo) => vtxo,
+					Err(e) => {
+						warn!("Server returned an undecodable recovery vtxo: {:#}", e);
+						continue;
+					},
+				};
+				if !wanted.contains(&vtxo.id()) {
+					warn!("Server returned recovery vtxo {} that was not requested", vtxo.id());
+					continue;
+				}
+				ret.insert(vtxo.id(), vtxo);
+			}
+		}
+
+		Ok((ret, missing))
+	}
+
 	/// Check if a VTXO is confirmed on-chain.
 	///
 	/// If it is, we store it as exited and return `true`.
@@ -301,60 +379,96 @@ impl Wallet {
 		}
 	}
 
-	/// Recover a single VTXO: check we own it, ask the server for its status, and
-	/// store it in the matching state.
+	/// Recover a set of VTXOs: fetch the bodies the mailbox did not carry, check
+	/// we own each one, ask the server for its status, and store it in the
+	/// matching state.
 	///
-	/// `vtxo` is the body when the mailbox message carried one; otherwise it is
-	/// fetched from the server.
-	async fn recover_candidate(
+	/// A candidate's body is given when the mailbox message carried one;
+	/// otherwise it is fetched from the server.
+	async fn recover_candidates(
 		&self,
 		report: &mut RecoveryReport,
-		id: VtxoId,
-		vtxo: Option<Vtxo<Full>>,
+		candidates: Vec<(VtxoId, Option<Vtxo<Full>>)>,
 		gap_limit: u32,
 	) -> anyhow::Result<()> {
-		let vtxo = match vtxo {
-			Some(vtxo) => vtxo,
-			None => match self.fetch_vtxo(id).await {
-				Ok(vtxo) => vtxo,
-				Err(e) => {
-					warn!("Could not fetch recovery vtxo {id}: {:#}", e);
+		// A repeated id finds its fetched body already taken and would be
+		// reported failed.
+		let mut seen = HashSet::new();
+		let candidates = candidates.into_iter()
+			.filter(|(id, _)| seen.insert(*id))
+			.collect::<Vec<_>>();
+
+		let to_fetch = candidates.iter()
+			.filter(|(_, vtxo)| vtxo.is_none())
+			.map(|(id, _)| *id)
+			.collect::<Vec<_>>();
+		let (mut fetched, missing) = self.fetch_vtxos(&to_fetch).await?;
+
+		let mut to_query = Vec::new();
+		for (id, vtxo) in candidates {
+			// The fetch logged why the body is missing.
+			let Some(vtxo) = vtxo.or_else(|| fetched.remove(&id)) else {
+				if missing.contains(&id) {
+					report.push_not_found(id);
+				} else {
 					report.push_failed(id, None);
-					return Ok(());
-				},
-			},
-		};
+				}
+				continue;
+			};
 
-		// [`Wallet::find_vtxo_keypairs`] persists the keys it reveals, so each
-		// match extends the window the next candidate is scanned against.
-		let keypairs = self.find_vtxo_keypairs([vtxo.user_pubkey()], gap_limit).await?;
-		let Some(keypair) = keypairs.get(&vtxo.user_pubkey()) else {
-			report.push_foreign(&vtxo);
-			return Ok(());
-		};
+			// [`Wallet::find_vtxo_keypairs`] persists the keys it reveals, so each
+			// match extends the window the next candidate is scanned against.
+			let keypairs = self.find_vtxo_keypairs([vtxo.user_pubkey()], gap_limit).await?;
+			let Some(keypair) = keypairs.get(&vtxo.user_pubkey()) else {
+				report.push_foreign(&vtxo);
+				continue;
+			};
 
-		// A validation error (anchor not yet visible, or invalid) is a
-		// non-decision, so it's a failure, not a clean skip.
-		if let Err(e) = self.validate_vtxo(&vtxo).await {
-			warn!("Could not validate recovery vtxo {id}: {:#}", e);
-			report.push_failed(id, Some(vtxo.amount()));
-			return Ok(());
+			// A validation error (anchor not yet visible, or invalid) is a
+			// non-decision, so it's a failure, not a clean skip.
+			if let Err(e) = self.validate_vtxo(&vtxo).await {
+				warn!("Could not validate recovery vtxo {id}: {:#}", e);
+				report.push_failed(id, Some(vtxo.amount()));
+				continue;
+			}
+
+			if self.check_vtxo_onchain_status(report, &vtxo).await? {
+				continue;
+			}
+
+			to_query.push((vtxo, *keypair));
 		}
 
-		if self.check_vtxo_onchain_status(report, &vtxo).await? {
-			return Ok(());
-		}
-
-		// The server is the authority on whether it was spent elsewhere,
+		// The server is the authority on whether a vtxo was spent elsewhere,
 		// and recovery has nothing else to go on.
-		let adoption = self.fetch_vtxo_spend_state(id, keypair).await
-			.and_then(ServerStatusAdoption::from_spend_state);
+		let queries = to_query.iter().map(|(vtxo, keypair)| (vtxo.id(), keypair)).collect::<Vec<_>>();
+		let states = self.fetch_vtxo_spend_states(&queries).await?;
+		for (vtxo, _) in &to_query {
+			// The fetch logged why an answer is missing.
+			let adoption = match states.get(&vtxo.id()) {
+				Some(state) => ServerStatusAdoption::from_spend_state(*state),
+				None => Err(anyhow::anyhow!("no answer from the server")),
+			};
+			self.adopt_recovery_status(report, vtxo, adoption).await?;
+		}
+
+		Ok(())
+	}
+
+	/// Store a recovery VTXO in the state the server's answer decides.
+	async fn adopt_recovery_status(
+		&self,
+		report: &mut RecoveryReport,
+		vtxo: &Vtxo<Full>,
+		adoption: anyhow::Result<ServerStatusAdoption>,
+	) -> anyhow::Result<()> {
+		let id = vtxo.id();
 
 		// NB we don't use store_spendable_vtxos to avoid posting the vtxo again
 		match adoption {
 			Ok(ServerStatusAdoption::Spendable) => {
-				self.store_vtxos([&vtxo], &VtxoState::Spendable).await?;
-				report.push_recovered(&vtxo);
+				self.store_vtxos([vtxo],&VtxoState::Spendable).await?;
+				report.push_recovered(vtxo);
 				debug!("Recovered spendable vtxo {id} ({})", vtxo.amount());
 			},
 			// The spent row is what stops a later mailbox replay from storing
@@ -362,9 +476,9 @@ impl Wallet {
 			Ok(ServerStatusAdoption::Spent) => {
 				debug!("Recovery vtxo {id} already spent, skipping");
 				// A spendable row from an earlier, failed attempt is forced along.
-				self.store_vtxos([&vtxo], &VtxoState::Spent).await?;
+				self.store_vtxos([vtxo],&VtxoState::Spent).await?;
 				self.mark_vtxos_as_spent(&[id]).await?;
-				report.push_skipped(&vtxo);
+				report.push_skipped(vtxo);
 			},
 			// Finishing the flow the VTXO is stuck in is what decides where it
 			// belongs, so nothing is stored. Arkoor mailbox messages only carry
@@ -374,7 +488,7 @@ impl Wallet {
 				debug!("Recovery vtxo {id} not spendable ({state:?}), skipping");
 				self.inner.db.remove_vtxo(id).await
 					.context("Failed to drop in-flight recovery vtxo")?;
-				report.push_skipped(&vtxo);
+				report.push_skipped(vtxo);
 			},
 			// No usable answer — a non-decision, so it's retried rather than taken
 			// for a clean skip. The spendable row overstates the balance until the
@@ -382,7 +496,7 @@ impl Wallet {
 			// spendable without ever asking the server.
 			Err(e) => {
 				warn!("Could not get status for recovery vtxo {id}: {:#}", e);
-				self.store_vtxos([&vtxo], &VtxoState::Spendable).await?;
+				self.store_vtxos([vtxo],&VtxoState::Spendable).await?;
 				report.push_failed(id, Some(vtxo.amount()));
 			},
 		}
@@ -401,9 +515,8 @@ impl Wallet {
 	) -> anyhow::Result<RecoveryReport> {
 		let mut report = RecoveryReport::default();
 		let gap_limit = gap_limit.unwrap_or(self.inner.config.vtxo_key_gap_limit);
-		for id in ids {
-			self.recover_candidate(&mut report, id, None, gap_limit).await?;
-		}
+		let candidates = ids.into_iter().map(|id| (id, None)).collect();
+		self.recover_candidates(&mut report, candidates, gap_limit).await?;
 		Ok(report)
 	}
 
@@ -411,8 +524,8 @@ impl Wallet {
 	/// the arkoor messages in the regular mailbox.
 	///
 	/// Both mailboxes are read from checkpoint 0, and every VTXO they reference
-	/// is resolved against the chain and the server as it is seen and stored
-	/// accordingly. Returns a [`RecoveryReport`] (see it for why
+	/// is resolved against the chain and the server one mailbox page at a time
+	/// and stored accordingly. Returns a [`RecoveryReport`] (see it for why
 	/// recovered/skipped/failed matters).
 	pub(crate) async fn recover_from_mailbox(&self) -> anyhow::Result<RecoveryReport> {
 		let mut report = RecoveryReport::default();
@@ -452,10 +565,8 @@ impl Wallet {
 				break;
 			}
 
-			let ids = report.failed.ids().collect::<Vec<_>>();
-			for id in ids {
-				self.recover_candidate(&mut report, id, None, gap_limit).await?;
-			}
+			let candidates = report.failed.ids().map(|id| (id, None)).collect::<Vec<_>>();
+			self.recover_candidates(&mut report, candidates, gap_limit).await?;
 		}
 
 		if !report.failed.is_empty() {
@@ -493,9 +604,10 @@ mod test {
 			foreign: RecoveryReportEntry(HashMap::new()),
 			failed: RecoveryReportEntry(HashMap::new()),
 			exited: RecoveryReportEntry(HashMap::new()),
+			not_found: RecoveryReportEntry(HashMap::from([(dummy_id(3), None)])),
 		};
 		assert!(clean.is_complete(),
-			"recovered and skipped VTXOs are clean decisions, not failures");
+			"recovered, skipped and not found VTXOs are clean decisions, not failures");
 
 		assert!(RecoveryReport::default().is_complete(),
 			"an empty report is trivially complete");

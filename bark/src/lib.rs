@@ -449,7 +449,7 @@ use ark::rounds::{RoundAttempt, RoundEvent};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef, VTXO_DUST};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
-use server_rpc::{protos, ServerConnection};
+use server_rpc::{protos, ServerConnection, MAX_NB_VTXO_IDS};
 use server_rpc::protos::VtxoSpendState;
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
@@ -1610,6 +1610,67 @@ impl Wallet {
 			"server returned unknown spend state {} for vtxo {vtxo_id}; this wallet may \
 			need updating", resp.spend_state,
 		))
+	}
+
+	/// Ask the server for the spend state of every VTXO in `queries`, in
+	/// batches of [`MAX_NB_VTXO_IDS`].
+	///
+	/// Each keypair must be its VTXO's private key so we can prove ownership.
+	///
+	/// A VTXO the server does not know, whose batch request failed, or whose
+	/// answer is unusable, is absent from the result. Only a server that cannot
+	/// be reached is an error.
+	pub(crate) async fn fetch_vtxo_spend_states(
+		&self,
+		queries: &[(VtxoId, &Keypair)],
+	) -> anyhow::Result<HashMap<VtxoId, VtxoSpendState>> {
+		let mut ret = HashMap::with_capacity(queries.len());
+		if queries.is_empty() {
+			return Ok(ret);
+		}
+
+		let (mut srv, _) = self.require_server().await?;
+		for chunk in queries.chunks(MAX_NB_VTXO_IDS) {
+			let req = protos::GetVtxosStatusByIdsRequest {
+				vtxos: chunk.iter().map(|(id, keypair)| protos::VtxoStatusQuery {
+					vtxo_id: id.to_bytes().to_vec(),
+					attestation: VtxoStatusAttestation::new(*id, keypair).serialize(),
+				}).collect(),
+			};
+			let resp = match srv.client.get_vtxos_status_by_ids(req).await {
+				Ok(resp) => resp.into_inner(),
+				Err(e) => {
+					warn!("Could not fetch the status of {} vtxos from server: {:#}", chunk.len(), e);
+					continue;
+				},
+			};
+
+			// The caller decides what an unanswered id means and logs it.
+			for raw in &resp.missing_vtxo_ids {
+				match VtxoId::from_slice(raw) {
+					Ok(id) => debug!("Server does not know vtxo {id}, no status returned"),
+					Err(_) => debug!("Server reported an undecodable missing vtxo id: {raw:?}"),
+				}
+			}
+
+			for status in &resp.vtxos {
+				let Ok(id) = VtxoId::from_slice(&status.vtxo_id) else {
+					warn!("Server returned a status for an undecodable vtxo id: {:?}", status.vtxo_id);
+					continue;
+				};
+				match VtxoSpendState::try_from(status.spend_state) {
+					Ok(state) => {
+						ret.insert(id, state);
+					},
+					Err(_) => warn!(
+						"server returned unknown spend state {} for vtxo {id}; this wallet may \
+						need updating", status.spend_state,
+					),
+				}
+			}
+		}
+
+		Ok(ret)
 	}
 
 	/// Retrieves the full state of a [Vtxo] for a given [VtxoId] if it exists in the database.
