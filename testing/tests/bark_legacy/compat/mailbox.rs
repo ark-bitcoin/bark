@@ -27,6 +27,10 @@ async fn reject_arkoor_with_bad_signature() {
 			use protos::mailbox_server::{mailbox_message, ArkoorMessage};
 
 			let response = upstream.read_mailbox(req).await?.into_inner();
+			// An empty page has nothing to tamper with.
+			if response.messages.is_empty() {
+				return Ok(response);
+			}
 			let message = response.messages[0].message.as_ref().unwrap();
 			let mut vtxo = match message {
 				Message::Arkoor(message) => {

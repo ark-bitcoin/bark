@@ -1,10 +1,10 @@
 //! Recovery wallet action.
 //!
 //! Rebuilds the wallet's VTXO set from the seed: see [crate::recovery] for what
-//! recovery reads and what it trusts the server with. Each step reads one
-//! mailbox page or recovers one batch of VTXOs, and the executor checkpoints
-//! after every step, so a recovery stopped by an error or a crash resumes from
-//! the page or batch it was on.
+//! recovery reads and what it trusts the server with. Each step reads one page
+//! of the xpub lookup or of a mailbox, or recovers one batch of VTXOs, and the
+//! executor checkpoints after every step, so a recovery stopped by an error or a
+//! crash resumes from the page or batch it was on.
 //!
 //! A step stores every VTXO it finds locked by this action until the server has
 //! given its status, so the bodies live in the vtxo table rather than in the
@@ -13,18 +13,26 @@
 //! The action is done once no VTXO is left failed. Until then it keeps its
 //! checkpoint and is re-driven by every sync, however many attempts it takes.
 
-use bitcoin::secp256k1::Keypair;
-use log::{info, warn};
+use std::collections::HashSet;
 
-use ark::VtxoId;
-use server_rpc::MAX_NB_VTXO_IDS;
+use anyhow::Context;
+use bitcoin::secp256k1::Keypair;
+use log::{debug, error, info, warn};
+
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::mailbox::MailboxAuthorization;
+use ark::recovery::XpubRecoveryAuthorization;
+use ark::vtxo::Full;
+use server_rpc::{protos, TryFromBytes, MAX_NB_VTXO_IDS};
+use server_rpc::protos::VtxoSpendState;
+use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 use crate::Wallet;
 use crate::actions::{
 	Advance, AdvanceError, IntoAdvanceResult, WalletAction, WalletActionCheckpoint, WalletActionId,
 };
 use crate::recovery::RecoveryReport;
-use crate::vtxo::VtxoLockHolder;
+use crate::vtxo::{ServerStatusAdoption, VtxoLockHolder, VtxoState};
 
 /// The id of the recovery action. A wallet recovers from one seed, so there is
 /// at most one recovery at a time.
@@ -35,6 +43,12 @@ pub(crate) const RECOVERY_ACTION_ID: &str = "recovery";
 /// A failed status batch is often transient, so the batch is asked again right
 /// away a few times before the action waits for the next sync.
 const RESOLVE_PASSES: u32 = 4;
+
+/// The number of non-hardened child indices of an xpub.
+const NB_NORMAL_CHILDREN: u32 = 1 << 31;
+
+/// The number of keys stored per database call when revealing keys.
+const KEY_REVEAL_BATCH_SIZE: u32 = 10_000;
 
 /// The lock holder of every VTXO recovery staged but did not decide on yet.
 pub(crate) fn recovery_lock_holder() -> VtxoLockHolder {
@@ -66,6 +80,16 @@ pub struct Recovery {
 /// The phases of a recovery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Progress {
+	/// Ask the server for the VTXOs of our xpub's children from `start_index`,
+	/// and stage and settle every one of them. The lookup comes first: it needs
+	/// no backup and no gap limit, and it reveals every key up to its highest
+	/// VTXO, so the mailbox scans find their keys in the database.
+	/// `cursor_vtxo_id` continues the key at `start_index` where the server
+	/// split its VTXOs over several responses.
+	Xpub {
+		start_index: u32,
+		cursor_vtxo_id: Option<Vec<u8>>,
+	},
 	/// Read the page of `mailbox` that follows `checkpoint`, and stage every VTXO
 	/// it references.
 	Scanning {
@@ -82,13 +106,13 @@ pub enum Progress {
 }
 
 impl Recovery {
-	/// A recovery that starts at the beginning of the regular mailbox.
+	/// A recovery that starts at the beginning of the xpub lookup.
 	pub fn new(gap_limit: u32) -> Self {
 		Recovery {
 			id: RECOVERY_ACTION_ID.to_string(),
 			gap_limit,
 			report: RecoveryReport::default(),
-			progress: Progress::Scanning { mailbox: RecoveryMailbox::Regular, checkpoint: 0 },
+			progress: Progress::Xpub { start_index: 0, cursor_vtxo_id: None },
 		}
 	}
 
@@ -96,7 +120,8 @@ impl Recovery {
 		self.id.clone()
 	}
 
-	/// Log what the scan of both mailboxes could not account for.
+	/// Log what the xpub lookup and the scan of both mailboxes could not account
+	/// for.
 	fn log_scan_end(&self) {
 		// Unmatched ids in our own seed-derived mailbox are suspicious: most
 		// likely an owned VTXO whose key sits beyond the gap limit (funds may be
@@ -105,7 +130,7 @@ impl Recovery {
 		let foreign = self.report.foreign();
 		if !foreign.is_empty() {
 			warn!(
-				"Recovery mailbox held {} vtxo(s) not derivable from this seed within the \
+				"Recovery found {} vtxo(s) not derivable from this seed within the \
 				gap limit ({}); if any are ours they were not recovered: {:?}",
 				foreign.len(), self.gap_limit, foreign,
 			);
@@ -133,6 +158,16 @@ impl WalletAction for Recovery {
 	async fn advance(mut self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		let holder = Some(recovery_lock_holder());
 		match self.progress {
+			Progress::Xpub { start_index, cursor_vtxo_id } => {
+				let next = run_xpub(
+					wallet, &mut self.report, start_index, cursor_vtxo_id, &holder,
+				).await.retry()?;
+				self.progress = match next {
+					Some((start_index, cursor_vtxo_id)) => Progress::Xpub { start_index, cursor_vtxo_id },
+					None => Progress::Scanning { mailbox: RecoveryMailbox::Regular, checkpoint: 0 },
+				};
+				Ok(Advance::Next(self))
+			},
 			Progress::Scanning { mailbox, checkpoint } => {
 				let keypair = match mailbox {
 					RecoveryMailbox::Regular => wallet.mailbox_keypair(),
@@ -162,6 +197,11 @@ impl WalletAction for Recovery {
 				if let Some(last) = last {
 					self.progress = Progress::Resolving { after: Some(last), pass };
 					return Ok(Advance::Next(self));
+				}
+
+				// Claim the outputs of the round participations recovery rebuilt.
+				if let Err(e) = wallet.sync_pending_rounds().await {
+					warn!("Error syncing recovered round participations: {:#}", e);
 				}
 
 				let report = &self.report;
@@ -199,6 +239,219 @@ impl WalletAction for Recovery {
 	}
 }
 
+/// Ask the server for the VTXOs owned by the next range of children of our
+/// VTXO xpub, from `start_index`, and stage and settle each of them.
+///
+/// Unlike the mailbox scans this needs no backup posted by the old wallet
+/// and no gap limit: the server scans a fixed range of key indices per
+/// call, and we ask for the next range for as long as the server reports
+/// that more VTXOs may follow. Each VTXO comes with its body and spend
+/// state, so it needs no further request. Every index up to the highest
+/// one whose key matches its VTXO is stored as revealed, so the key lookups
+/// of later scans resolve from the database.
+///
+/// A VTXO the wallet holds in any state but locked by `holder` was decided
+/// before, and is only reported.
+///
+/// Returns the start index and cursor of the next call, or `None` when the
+/// lookup is done or the server doesn't offer the rpc.
+async fn run_xpub(
+	wallet: &Wallet,
+	report: &mut RecoveryReport,
+	start_index: u32,
+	cursor_vtxo_id: Option<Vec<u8>>,
+	holder: &Option<VtxoLockHolder>,
+) -> anyhow::Result<Option<(u32, Option<Vec<u8>>)>> {
+	let (mut srv, ark_info) = wallet.require_server().await?;
+
+	let expiry = chrono::Local::now() + std::time::Duration::from_secs(60);
+	let auth = XpubRecoveryAuthorization::new(
+		&wallet.inner.seed.vtxo, ark_info.server_pubkey, expiry,
+	);
+	let req = protos::RecoverVtxosByXpubRequest {
+		xpub: wallet.vtxo_xpub().encode().to_vec(),
+		start_index,
+		authorization: auth.serialize(),
+		cursor_vtxo_id: cursor_vtxo_id.clone(),
+	};
+	let resp = match srv.client.recover_vtxos_by_xpub(req).await {
+		Ok(resp) => resp.into_inner(),
+		Err(status) if status.code() == tonic::Code::Unimplemented => {
+			info!("Server doesn't support VTXO recovery by xpub: {}", status.message());
+			return Ok(None);
+		},
+		Err(e) => return Err(e).context("error recovering vtxos by xpub"),
+	};
+	debug!("Server scanned {} xpub children from index {start_index} and returned {} vtxos",
+		resp.nb_keys_scanned, resp.vtxos.len(),
+	);
+
+	let staged_state = VtxoState::Locked { holder: holder.clone() };
+	let mut max_index = None;
+	let mut vtxos = Vec::with_capacity(resp.vtxos.len());
+	for entry in resp.vtxos {
+		let vtxo = match Vtxo::<Full>::deserialize(&entry.vtxo) {
+			Ok(vtxo) => vtxo,
+			Err(e) => {
+				error!("Ignoring undecodable vtxo from the xpub lookup: {:#}", e);
+				continue;
+			},
+		};
+		if report.contains(vtxo.id()) {
+			continue;
+		}
+
+		// The index is only trusted once it derives the key of the VTXO.
+		let index = entry.derivation_index;
+		if index >= NB_NORMAL_CHILDREN
+			|| wallet.inner.seed.derive_vtxo_keypair(index).public_key() != vtxo.user_pubkey()
+		{
+			warn!("Recovery vtxo {} is not owned by key {index} of our xpub", vtxo.id());
+			report.push_foreign(&vtxo);
+			continue;
+		}
+		max_index = max_index.max(Some(index));
+
+		// A step re-run after a crash finds the VTXOs it stored already.
+		if let Some(stored) = wallet.inner.db.get_wallet_vtxo(vtxo.id()).await? {
+			if stored.state != staged_state {
+				report.push_decided(&stored);
+				continue;
+			}
+		}
+
+		let adoption = VtxoSpendState::try_from(entry.spend_state)
+			.map_err(|_| anyhow::anyhow!(
+				"server returned unknown spend state {}; this wallet may need updating",
+				entry.spend_state,
+			))
+			.and_then(ServerStatusAdoption::from_spend_state);
+		vtxos.push((vtxo, adoption));
+	}
+
+	// Keys are issued in sequence, so every index up to the highest one
+	// in use is stored and new addresses continue past it.
+	if let Some(max_index) = max_index {
+		reveal_vtxo_keys_up_to(wallet, max_index).await
+			.context("failed to store recovered vtxo keys")?;
+	}
+	wallet.store_recovered_vtxos(report, vtxos, holder).await?;
+
+	// A server that moved neither past a key nor within one would have
+	// us ask for the same VTXOs forever.
+	let end_index = start_index.saturating_add(resp.nb_keys_scanned);
+	let no_progress = end_index == start_index
+		&& (resp.cursor_vtxo_id.is_none() || resp.cursor_vtxo_id == cursor_vtxo_id);
+	if !resp.have_more || no_progress {
+		return Ok(None);
+	}
+	Ok(Some((end_index, resp.cursor_vtxo_id)))
+}
+
+/// Store every VTXO key up to and including `index` as revealed.
+async fn reveal_vtxo_keys_up_to(wallet: &Wallet, index: u32) -> anyhow::Result<()> {
+	let mut next = wallet.inner.db.get_last_vtxo_key_index().await?.map(|i| i + 1).unwrap_or(0);
+	while next <= index {
+		let end = next.saturating_add(KEY_REVEAL_BATCH_SIZE).min(index + 1);
+		let keys = (next..end)
+			.map(|i| (i, wallet.inner.seed.derive_vtxo_keypair(i).public_key()))
+			.collect::<Vec<_>>();
+		wallet.inner.db.store_vtxo_keys(&keys).await?;
+		next = end;
+	}
+	Ok(())
+}
+
+/// One page of a mailbox read for recovery.
+struct RecoveryPage {
+	/// Every VTXO the page references, with its body when the message carried
+	/// one. Each id appears once.
+	candidates: Vec<(VtxoId, Option<Vtxo<Full>>)>,
+	/// The checkpoint to read the next page from.
+	checkpoint: u64,
+	/// Whether the mailbox has messages past this page.
+	have_more: bool,
+}
+
+/// Read the page of a mailbox that follows `checkpoint` and collect every
+/// VTXO its messages reference.
+///
+/// The paging cursor is never stored as the mailbox checkpoint: the server
+/// allocates checkpoints globally across all mailboxes, so storing it would
+/// make the next regular sync skip unrelated events. The regular sync still
+/// processes every message from its own stored checkpoint afterwards.
+async fn read_recovery_page(
+	wallet: &Wallet,
+	keypair: &Keypair,
+	checkpoint: u64,
+) -> anyhow::Result<RecoveryPage> {
+	let (mut srv, _) = wallet.require_server().await?;
+
+	// One page is read well within this window.
+	let expiry = chrono::Local::now() + std::time::Duration::from_secs(10 * 60);
+	let auth = MailboxAuthorization::new(keypair, expiry);
+	let req = protos::mailbox_server::MailboxRequest {
+		mailbox_id: auth.mailbox().serialize(),
+		authorization: Some(auth.serialize()),
+		checkpoint,
+	};
+	let resp = srv.mailbox_client.read_mailbox(req).await
+		.context("error reading the mailbox for recovery")?.into_inner();
+
+	debug!("Mailbox returned {} messages for recovery after checkpoint {checkpoint}",
+		resp.messages.len());
+
+	let mut next_checkpoint = checkpoint;
+	let mut seen = HashSet::new();
+	let mut candidates = Vec::new();
+	for msg in &resp.messages {
+		next_checkpoint = next_checkpoint.max(msg.checkpoint);
+
+		// A message references its vtxos either by id or by full body.
+		match &msg.message {
+			Some(Message::RecoveryVtxoIds(m)) => {
+				for raw in &m.vtxo_ids {
+					let Ok(id) = VtxoId::from_bytes(raw.clone()) else {
+						warn!("Ignoring undecodable recovery vtxo id: {raw:?}");
+						continue;
+					};
+					if seen.insert(id) {
+						candidates.push((id, None));
+					}
+				}
+			},
+			Some(Message::Arkoor(m)) => {
+				for raw in &m.vtxos {
+					let Ok(vtxo) = Vtxo::<Full>::from_bytes(raw.clone()) else {
+						warn!("Ignoring undecodable arkoor vtxo: {raw:?}");
+						continue;
+					};
+					if seen.insert(vtxo.id()) {
+						candidates.push((vtxo.id(), Some(vtxo)));
+					}
+				}
+			},
+			Some(Message::RoundParticipationCompleted(_)) |
+			Some(Message::IncomingLightningPayment(_)) |
+			Some(Message::LightningSendFinished(_)) => {},
+			None => {
+				warn!("Mailbox returned a message with no content: {msg:?}");
+			},
+		}
+	}
+
+	// The server wants us to keep paging, but the checkpoint didn't advance,
+	// so the next request would be identical and we'd loop forever. Stop
+	// rather than spin on the same page.
+	let mut have_more = resp.have_more;
+	if have_more && next_checkpoint == checkpoint {
+		warn!("Mailbox recovery made no progress at checkpoint {checkpoint}; stopping");
+		have_more = false;
+	}
+
+	Ok(RecoveryPage { candidates, checkpoint: next_checkpoint, have_more })
+}
+
 /// Stage every VTXO of the mailbox page that follows `checkpoint`.
 ///
 /// Ids the report already holds were handled by an earlier page or mailbox
@@ -212,7 +465,7 @@ async fn run_scan(
 	gap_limit: u32,
 	holder: &Option<VtxoLockHolder>,
 ) -> anyhow::Result<Option<u64>> {
-	let page = wallet.read_recovery_page(keypair, checkpoint).await?;
+	let page = read_recovery_page(wallet, keypair, checkpoint).await?;
 	let candidates = page.candidates.into_iter()
 		.filter(|(id, _)| !report.contains(*id))
 		.collect();

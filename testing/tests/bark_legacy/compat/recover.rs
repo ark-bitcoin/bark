@@ -14,7 +14,9 @@ use ark_testing::{btc, require_bark_version, sat, Bark, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::exit::complete_exit;
 use ark_testing::daemon::captaind::{self, ArkClient, MailboxClient};
-use ark_testing::util::{get_bark_chain_source_from_env, TestContextChainSource};
+use ark_testing::util::{
+	action_drive_factor, get_bark_chain_source_from_env, TestContextChainSource,
+};
 
 #[ignore] // we removed this functionality, might be added again later
 #[tokio::test]
@@ -508,7 +510,8 @@ async fn recovered_wallet_finds_vtxos_via_xpub_without_mailbox() {
 	).await;
 	let mnemonic = bark2.mnemonic().await.expect("bark2 has a mnemonic");
 	let recovered = ctx.bark("bark2_recovered", &proxy.address).mnemonic(mnemonic).create().await;
-	assert_eq!(xpub_calls.load(Ordering::Relaxed), 1,
+	// Each lookup is an action step, so the reentrancy double-drive repeats it.
+	assert_eq!(xpub_calls.load(Ordering::Relaxed), action_drive_factor(),
 		"wallet creation should look up the xpub exactly once",
 	);
 
@@ -588,7 +591,7 @@ async fn recovered_wallet_continues_xpub_lookup_past_server_range() {
 	let recovered = ctx.bark("bark2_recovered", &proxy.address).mnemonic(mnemonic).create().await;
 
 	// The third call scans a range without vtxos and ends the lookup.
-	assert_eq!(xpub_calls.load(Ordering::Relaxed), 3,
+	assert_eq!(xpub_calls.load(Ordering::Relaxed), 3 * action_drive_factor(),
 		"wallet creation should look up each range once, plus one empty range",
 	);
 
@@ -666,7 +669,7 @@ async fn recovered_wallet_follows_xpub_lookup_cursor() {
 	let recovered = ctx.bark("bark2_recovered", &proxy.address).mnemonic(mnemonic).create().await;
 
 	// One call for each vtxo, the last of which also ends the lookup.
-	assert_eq!(xpub_calls.load(Ordering::Relaxed), original_ids.len());
+	assert_eq!(xpub_calls.load(Ordering::Relaxed), original_ids.len() * action_drive_factor());
 
 	let mut recovered_ids = recovered.vtxos().await.iter().map(|v| v.id).collect::<Vec<_>>();
 	recovered_ids.sort();

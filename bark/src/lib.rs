@@ -1396,7 +1396,12 @@ impl Wallet {
 			.context("error loading exit system after opening wallet")?;
 
 		let recovery = if !created_now {
-			RecoveryStatus::NotRun
+			// A recovery an earlier open started is resumed by the sync.
+			match ret.pending_recovery().await {
+				Ok(Some(recovery)) => RecoveryStatus::InProgress(recovery.report),
+				Ok(None) => RecoveryStatus::NotRun,
+				Err(e) => RecoveryStatus::Failed(e),
+			}
 		} else if args.skip_recovery {
 			info!("Seed-based wallet recovery explicitly skipped");
 			RecoveryStatus::NotRun
@@ -1404,16 +1409,17 @@ impl Wallet {
 			// Recover any VTXOs the server knows for our keys or that were
 			// backed up to the seed-derived recovery mailbox. Best-effort so it
 			// can't abort wallet creation, but a failure means funds may be
-			// missing — surface it loudly. Partial failures are logged inside
-			// the recovery call.
-			match ret.recover_from_seed().await {
-				Ok(report) => RecoveryStatus::Completed(report),
-				Err(e) => {
-					error!("VTXO recovery from seed failed; funds may be \
-						missing from this wallet until recovery succeeds: {:#}", e);
-					RecoveryStatus::Failed(e)
-				},
+			// missing — surface it loudly.
+			let status = ret.start_recovery().await;
+			match &status {
+				RecoveryStatus::Failed(e) => error!("VTXO recovery from seed could not be \
+					started; funds may be missing from this wallet: {:#}", e),
+				RecoveryStatus::InProgress(report) => warn!("VTXO recovery from seed is not \
+					done: {} vtxos are still missing and kept locked; it resumes on the next \
+					sync", report.failed().len()),
+				RecoveryStatus::NotRun | RecoveryStatus::Completed(_) => {},
 			}
+			status
 		};
 
 		if args.run_daemon {
@@ -2098,6 +2104,11 @@ impl Wallet {
 			async {
 				if let Err(e) = self.sync_pending_offboards().await {
 					warn!("Error syncing pending offboards: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.sync_pending_recovery().await {
+					warn!("Error resuming recovery from seed: {:#}", e);
 				}
 			},
 			async {

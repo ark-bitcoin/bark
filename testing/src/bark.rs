@@ -337,6 +337,7 @@ impl Bark {
 				receive::Progress::Delivering(_) => "Delivering",
 			}),
 			Cp::Recovery(r) => format!("recovery.{}", match r.progress {
+				recovery::Progress::Xpub { .. } => "Xpub",
 				recovery::Progress::Scanning { .. } => "Scanning",
 				recovery::Progress::Resolving { .. } => "Resolving",
 			}),
