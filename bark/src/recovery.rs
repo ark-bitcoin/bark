@@ -23,7 +23,7 @@
 //! against the chain. Prefer to maintain back-ups and use recovery from the
 //! mnemonic as a last resort.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::Context;
 use bitcoin::Amount;
@@ -47,8 +47,9 @@ const NB_NORMAL_CHILDREN: u32 = 1 << 31;
 /// The number of keys stored per database call when revealing keys.
 const KEY_REVEAL_BATCH_SIZE: u32 = 10_000;
 
-#[derive(Debug, Default, Clone)]
-pub struct RecoveryReportEntry(HashMap<VtxoId, Option<Amount>>);
+/// VTXO ids, each with its amount when the body is known, ordered by id.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryReportEntry(BTreeMap<VtxoId, Option<Amount>>);
 
 impl RecoveryReportEntry {
 	pub fn is_empty(&self) -> bool {
@@ -90,7 +91,7 @@ impl RecoveryReportEntry {
 /// A non-empty `failed` or `foreign` set means funds may be missing, so it must
 /// not be taken for a complete recovery. Ids are kept (not counted) so a caller
 /// can log or retry the exact VTXOs.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecoveryReport {
 	/// Spendable VTXOs that were successfully re-imported.
 	recovered: RecoveryReportEntry,
@@ -821,12 +822,12 @@ mod test {
 	#[test]
 	fn recovery_report_completeness() {
 		let clean = RecoveryReport {
-			recovered: RecoveryReportEntry(HashMap::from([(dummy_id(0), Some(Amount::from_sat(1000)))])),
-			skipped: RecoveryReportEntry(HashMap::from([(dummy_id(1), Some(Amount::from_sat(1000)))])),
-			foreign: RecoveryReportEntry(HashMap::new()),
-			failed: RecoveryReportEntry(HashMap::new()),
-			exited: RecoveryReportEntry(HashMap::new()),
-			not_found: RecoveryReportEntry(HashMap::from([(dummy_id(3), None)])),
+			recovered: RecoveryReportEntry(BTreeMap::from([(dummy_id(0), Some(Amount::from_sat(1000)))])),
+			skipped: RecoveryReportEntry(BTreeMap::from([(dummy_id(1), Some(Amount::from_sat(1000)))])),
+			foreign: RecoveryReportEntry(BTreeMap::new()),
+			failed: RecoveryReportEntry(BTreeMap::new()),
+			exited: RecoveryReportEntry(BTreeMap::new()),
+			not_found: RecoveryReportEntry(BTreeMap::from([(dummy_id(3), None)])),
 		};
 		assert!(clean.is_complete(),
 			"recovered, skipped and not found VTXOs are clean decisions, not failures");
@@ -834,11 +835,11 @@ mod test {
 		assert!(RecoveryReport::default().is_complete(),
 			"an empty report is trivially complete");
 		assert!(!RecoveryReport {
-			failed: RecoveryReportEntry(HashMap::from([(dummy_id(0), Some(Amount::from_sat(1000)))])),
+			failed: RecoveryReportEntry(BTreeMap::from([(dummy_id(0), Some(Amount::from_sat(1000)))])),
 			..Default::default()
 		}.is_complete(), "a failed VTXO means recovery is incomplete");
 		assert!(!RecoveryReport {
-			foreign: RecoveryReportEntry(HashMap::from([(dummy_id(2), Some(Amount::from_sat(1000)))])),
+			foreign: RecoveryReportEntry(BTreeMap::from([(dummy_id(2), Some(Amount::from_sat(1000)))])),
 			..Default::default()
 		}.is_complete(), "a foreign id is likely an owned VTXO beyond the gap limit, so recovery is incomplete");
 	}
