@@ -203,7 +203,7 @@ pub struct ServerState {
 	/// wipe then removes.
 	wallet_lifecycle: tokio::sync::Mutex<()>,
 
-	/// A map of websocket tickets to their expiration time
+	/// A map of websocket tickets to their creation time
 	///
 	/// Note: this map is only stored in memory and not persisted
 	/// to the database, any server restart will clear the map.

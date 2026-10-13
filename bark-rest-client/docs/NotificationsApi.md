@@ -44,7 +44,7 @@ Name | Type | Description  | Required | Notes
 > String websocket_ticket()
 Create a websocket ticket
 
-Creates a single-use ticket that authenticates a websocket connection at `ws://<host>/api/v1/notifications/ws?ticket=<ticket>`. The ticket must be used within 10 minutes of creation; the resulting websocket connection is long-lived.
+Creates a single-use ticket that authenticates a websocket connection at `ws://<host>/api/v1/notifications/ws?ticket=<ticket>`. The ticket must be used within 10 minutes of creation; the resulting websocket connection is long-lived. The handshake answers 401 for an unknown, already used or expired ticket, and 422 when no wallet is loaded. The ticket is consumed in all of these cases.
 
 ### Parameters
 
