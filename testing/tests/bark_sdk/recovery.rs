@@ -454,3 +454,25 @@ async fn recovery_tolerates_an_unknown_vtxo_id() {
 	assert!(recovered.all_vtxos().await.expect("list all vtxos").iter().all(|v| v.id() != unknown),
 		"the unknown id must not be stored");
 }
+
+/// Recovering by id retries a VTXO that is locked without a holder, as a
+/// recovery of an earlier version left one whose status it did not get.
+#[tokio::test]
+async fn recover_vtxos_retries_a_vtxo_locked_without_a_holder() {
+	let ctx = TestContext::new("bark_sdk/recover_vtxos_retries_a_vtxo_locked_without_a_holder").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let wallet = ctx.bark_sdk("wallet", &srv).boarded(sat(100_000)).create().await;
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.len(), 1);
+	let id = vtxos[0].id();
+
+	wallet.lock_vtxos([id], None).await.expect("lock vtxo");
+	assert!(wallet.spendable_vtxos().await.expect("list vtxos").is_empty());
+
+	let report = wallet.recover_vtxos([id], None).await.expect("recover by id");
+	assert_eq!(report.recovered().len(), 1, "the locked vtxo must be recovered: {:?}", report);
+	let spendable = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(spendable.len(), 1, "the locked vtxo must be spendable again");
+	assert_eq!(spendable[0].id(), id);
+}

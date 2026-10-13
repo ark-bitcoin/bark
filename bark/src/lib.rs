@@ -859,6 +859,11 @@ struct WalletInner {
 	/// In-memory MuSig2 secret cosign nonces for in-flight round attempts.
 	/// See [`RoundSecretNonces`].
 	pub(crate) round_secret_nonces: RoundSecretNonces,
+
+	/// The report of the last recovery that finished in this process. The
+	/// recovery action drops its checkpoint when it is done, so this is where the
+	/// final report is read from.
+	finished_recovery: parking_lot::Mutex<Option<RecoveryReport>>,
 }
 
 /// The central entry point for using this library as an Ark wallet.
@@ -1384,6 +1389,7 @@ impl Wallet {
 			daemon: parking_lot::Mutex::new(None),
 			last_force_exit_scan_tip: tokio::sync::Mutex::new(None),
 			round_secret_nonces: RoundSecretNonces::new(),
+			finished_recovery: parking_lot::Mutex::new(None),
 		})};
 
 		ret.inner.exit.load().await
@@ -1453,6 +1459,7 @@ impl Wallet {
 			server: tokio::sync::OnceCell::new(),
 			onchain: None,
 			daemon: parking_lot::Mutex::new(None),
+			finished_recovery: parking_lot::Mutex::new(None),
 			last_force_exit_scan_tip: tokio::sync::Mutex::new(None),
 			round_secret_nonces: RoundSecretNonces::new(),
 		})};
