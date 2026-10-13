@@ -39,7 +39,7 @@ use server_rpc::protos::VtxoSpendState;
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 use crate::Wallet;
-use crate::vtxo::{ServerStatusAdoption, VtxoState};
+use crate::vtxo::{ServerStatusAdoption, VtxoLockHolder, VtxoState, VtxoValidationError, WalletVtxo};
 
 /// The number of non-hardened child indices of an xpub.
 const NB_NORMAL_CHILDREN: u32 = 1 << 31;
@@ -96,7 +96,7 @@ pub struct RecoveryReport {
 	/// Spendable VTXOs that were successfully re-imported.
 	recovered: RecoveryReportEntry,
 	/// VTXOs deliberately left out: reported spent or still in-flight by the
-	/// server.
+	/// server, or invalid.
 	skipped: RecoveryReportEntry,
 	/// VTXOs recovery could not decide on: the fetch, validation, or status
 	/// request failed.
@@ -183,6 +183,18 @@ impl RecoveryReport {
 	pub fn push_not_found(&mut self, id: VtxoId) {
 		self.failed.remove(id);
 		self.not_found.insert(id, None);
+	}
+
+	/// Report a VTXO the wallet already holds by the state it is in.
+	pub fn push_decided(&mut self, stored: &WalletVtxo) {
+		let id = stored.vtxo.id();
+		let amount = Some(stored.vtxo.amount());
+		self.failed.remove(id);
+		match stored.state {
+			VtxoState::Spendable => self.recovered.insert(id, amount),
+			VtxoState::Exited => self.exited.insert(id, amount),
+			VtxoState::Locked { .. } | VtxoState::Spent => self.skipped.insert(id, amount),
+		}
 	}
 }
 
@@ -286,7 +298,7 @@ impl Wallet {
 			}
 
 			// One batch per page bounds the memory to what the server sends at once.
-			self.recover_candidates(report, candidates, gap_limit).await?;
+			self.recover_candidates(report, candidates, gap_limit, &None).await?;
 
 			if !resp.have_more {
 				break;
@@ -413,18 +425,28 @@ impl Wallet {
 		}
 	}
 
-	/// Recover a set of VTXOs: fetch the bodies the mailbox did not carry, check
-	/// we own them, ask the server for their status, and store them in the
-	/// matching state, see [Self::store_recovered_vtxos].
+	/// Stage a set of recovery candidates: fetch the bodies the mailbox did not
+	/// carry, check we own them, and store the owned ones locked by `holder` until
+	/// [`Wallet::settle_recovery_vtxos`] decides on them.
 	///
 	/// A candidate's body is given when the mailbox message carried one;
-	/// otherwise it is fetched from the server.
-	async fn recover_candidates(
+	/// otherwise it is fetched from the server. A body the mailbox carried is
+	/// validated before it is stored: an invalid one is dropped and reported
+	/// skipped.
+	///
+	/// A candidate already stored locked by `holder` was staged by an earlier
+	/// attempt, so its stored body is used. A candidate the wallet holds in any
+	/// other state was decided before, and is only reported.
+	///
+	/// Returns every staged VTXO with its keypair. Each one is reported failed
+	/// until it is settled.
+	pub(crate) async fn stage_recovery_candidates(
 		&self,
 		report: &mut RecoveryReport,
 		candidates: Vec<(VtxoId, Option<Vtxo<Full>>)>,
 		gap_limit: u32,
-	) -> anyhow::Result<()> {
+		holder: &Option<VtxoLockHolder>,
+	) -> anyhow::Result<Vec<(Vtxo<Full>, Keypair)>> {
 		// A repeated id finds its fetched body already taken and would be
 		// reported failed.
 		let mut seen = HashSet::new();
@@ -432,17 +454,44 @@ impl Wallet {
 			.filter(|(id, _)| seen.insert(*id))
 			.collect::<Vec<_>>();
 
-		let to_fetch = candidates.iter()
+		let staged_state = VtxoState::Locked { holder: holder.clone() };
+		let mut staged_ids = Vec::new();
+		let mut unknown = Vec::new();
+		for (id, vtxo) in candidates {
+			match self.inner.db.get_wallet_vtxo(id).await? {
+				Some(stored) if stored.state == staged_state => staged_ids.push(id),
+				Some(stored) => report.push_decided(&stored),
+				None => unknown.push((id, vtxo)),
+			}
+		}
+
+		// A body the mailbox carried is only as good as its relay, so it is
+		// checked before it is stored. A body the server gives is checked once
+		// the server reports it spendable.
+		let mut checked = Vec::with_capacity(unknown.len());
+		for (id, vtxo) in unknown {
+			if let Some(vtxo) = &vtxo {
+				if let Err(VtxoValidationError::Invalid(e)) = self.validate_vtxo(vtxo).await {
+					warn!("Recovery vtxo {id} from the mailbox is invalid, skipping: {e}");
+					report.push_skipped(vtxo);
+					continue;
+				}
+			}
+			checked.push((id, vtxo));
+		}
+		let unknown = checked;
+
+		let to_fetch = unknown.iter()
 			.filter(|(_, vtxo)| vtxo.is_none())
 			.map(|(id, _)| *id)
 			.collect::<Vec<_>>();
 		let (mut fetched, missing) = self.fetch_vtxos(&to_fetch).await?;
 
-		let mut vtxos = Vec::with_capacity(candidates.len());
-		for (id, vtxo) in candidates {
+		let mut new = Vec::with_capacity(unknown.len());
+		for (id, vtxo) in unknown {
 			// The fetch logged why the body is missing.
 			match vtxo.or_else(|| fetched.remove(&id)) {
-				Some(vtxo) => vtxos.push(vtxo),
+				Some(vtxo) => new.push(vtxo),
 				None if missing.contains(&id) => report.push_not_found(id),
 				None => report.push_failed(id, None),
 			}
@@ -450,23 +499,57 @@ impl Wallet {
 
 		// One key scan for the whole batch. [`Wallet::find_vtxo_keypairs`] widens
 		// its window on every match, so later keys of the batch are found however
-		// the candidates are ordered.
-		let pubkeys = vtxos.iter().map(|v| v.user_pubkey()).collect::<Vec<_>>();
+		// the candidates are ordered. The keys of staged VTXOs are on record.
+		let staged = self.get_full_vtxos(&staged_ids).await?;
+		let pubkeys = staged.iter().chain(&new).map(|v| v.user_pubkey()).collect::<Vec<_>>();
 		let keypairs = self.find_vtxo_keypairs(pubkeys, gap_limit).await?;
-		let mut owned = Vec::with_capacity(vtxos.len());
-		for vtxo in vtxos {
+
+		let mut owned = Vec::with_capacity(new.len());
+		for vtxo in new {
 			match keypairs.get(&vtxo.user_pubkey()) {
-				Some(keypair) => owned.push((vtxo, *keypair)),
+				Some(_) => owned.push(vtxo),
 				None => report.push_foreign(&vtxo),
 			}
 		}
 
+		// The locked row keeps the VTXO out of the spendable set until the server
+		// has spoken, and lets a later attempt pick it up without asking the
+		// mailbox again.
+		if !owned.is_empty() {
+			self.store_vtxos(owned.iter(), &staged_state).await?;
+		}
+
+		let mut ret = Vec::with_capacity(staged.len() + owned.len());
+		for vtxo in staged.into_iter().chain(owned) {
+			let Some(keypair) = keypairs.get(&vtxo.user_pubkey()) else {
+				warn!("Staged recovery vtxo {} has no key on record", vtxo.id());
+				report.push_failed(vtxo.id(), Some(vtxo.amount()));
+				continue;
+			};
+			report.push_failed(vtxo.id(), Some(vtxo.amount()));
+			ret.push((vtxo, *keypair));
+		}
+		Ok(ret)
+	}
+
+	/// Ask the server for the status of staged recovery VTXOs and move each one
+	/// out of its lock accordingly, see [`Wallet::store_recovered_vtxos`].
+	///
+	/// A VTXO without an answer, or whose validation fails on the chain, stays
+	/// locked and reported failed: it may well be spent, so it must not be offered
+	/// as an input. An invalid VTXO is dropped and reported skipped.
+	pub(crate) async fn settle_recovery_vtxos(
+		&self,
+		report: &mut RecoveryReport,
+		staged: Vec<(Vtxo<Full>, Keypair)>,
+		holder: &Option<VtxoLockHolder>,
+	) -> anyhow::Result<()> {
 		// The server is the authority on whether a vtxo was spent elsewhere,
 		// and recovery has nothing else to go on.
-		let queries = owned.iter().map(|(vtxo, keypair)| (vtxo.id(), keypair)).collect::<Vec<_>>();
+		let queries = staged.iter().map(|(vtxo, keypair)| (vtxo.id(), keypair)).collect::<Vec<_>>();
 		let states = self.fetch_vtxo_spend_states(&queries).await?;
 
-		let vtxos = owned.into_iter().map(|(vtxo, _)| {
+		let vtxos = staged.into_iter().map(|(vtxo, _)| {
 			// The fetch logged why an answer is missing.
 			let adoption = match states.get(&vtxo.id()) {
 				Some(state) => ServerStatusAdoption::from_spend_state(*state),
@@ -474,7 +557,7 @@ impl Wallet {
 			};
 			(vtxo, adoption)
 		}).collect();
-		self.store_recovered_vtxos(report, vtxos).await
+		self.store_recovered_vtxos(report, vtxos, holder).await
 	}
 
 	/// Store owned VTXOs in the state the server reported for them.
@@ -482,11 +565,14 @@ impl Wallet {
 	/// The server's word on the spend state is final, so it is taken before any
 	/// chain lookup: a VTXO it reports spent is stored spent as is, and only a
 	/// VTXO it reports spendable is validated and checked for an exit. Rows are
-	/// written once per state, not once per VTXO.
+	/// written once per state, not once per VTXO, and move a VTXO staged locked by
+	/// `holder` to that state. An error leaves every VTXO not yet stored in
+	/// its state as it was.
 	async fn store_recovered_vtxos(
 		&self,
 		report: &mut RecoveryReport,
 		vtxos: Vec<(Vtxo<Full>, anyhow::Result<ServerStatusAdoption>)>,
+		holder: &Option<VtxoLockHolder>,
 	) -> anyhow::Result<()> {
 		let mut spendable = Vec::new();
 		let mut spent = Vec::new();
@@ -500,7 +586,7 @@ impl Wallet {
 				Ok(ServerStatusAdoption::InFlight(VtxoSpendState::Unclaimed))
 					if vtxo.unlock_hash().is_some() => unclaimed.push(vtxo),
 				// Finishing the flow the VTXO is stuck in is what decides where it
-				// belongs, so nothing is stored. Arkoor mailbox messages only carry
+				// belongs, so nothing is kept. Arkoor mailbox messages only carry
 				// final Pubkey-policy VTXOs, so the replay cannot bring an in-flight
 				// one back.
 				Ok(ServerStatusAdoption::InFlight(state)) => {
@@ -517,8 +603,8 @@ impl Wallet {
 		}
 
 		// The spent row is what stops a later mailbox replay from storing the
-		// vtxo as spendable again. A row from an earlier, failed attempt is
-		// forced along.
+		// vtxo as spendable again. A staged row, or one from an earlier, failed
+		// attempt, is forced along.
 		if !spent.is_empty() {
 			self.store_vtxos(spent.iter(), &VtxoState::Spent).await?;
 			self.mark_vtxos_as_spent(spent.iter().map(|v| v.id())).await?;
@@ -530,13 +616,16 @@ impl Wallet {
 
 		// An unclaimed output of a delegated round participation lacks its
 		// unlock preimage, so it can't validate yet. The participation is
-		// rebuilt instead, and the round sync claims the output.
+		// rebuilt instead, and the round sync claims the output. Its staged row
+		// is dropped so that releasing the lock can't make it spendable.
 		for vtxo in unclaimed {
 			let id = vtxo.id();
 			let unlock_hash = vtxo.unlock_hash().expect("checked above");
 			match self.recover_delegated_participation(unlock_hash).await {
 				Ok(()) => {
 					debug!("Recovery vtxo {id} is an unclaimed round output, left to the round sync");
+					self.inner.db.remove_vtxo(id).await
+						.context("Failed to drop unclaimed recovery vtxo")?;
 					report.push_skipped(&vtxo);
 				},
 				Err(e) => {
@@ -549,12 +638,24 @@ impl Wallet {
 		// Only a vtxo the server lets us spend is worth the chain lookups.
 		let mut recovered = Vec::with_capacity(spendable.len());
 		for vtxo in spendable {
-			// A validation error (anchor not yet visible, or invalid) is a
-			// non-decision, so it's a failure, not a clean skip.
-			if let Err(e) = self.validate_vtxo(&vtxo).await {
-				warn!("Could not validate recovery vtxo {}: {:#}", vtxo.id(), e);
-				report.push_failed(vtxo.id(), Some(vtxo.amount()));
-				continue;
+			match self.validate_vtxo(&vtxo).await {
+				Ok(()) => {},
+				// An invalid body stays invalid, so it is a decision: the staged row
+				// is dropped so that releasing the lock can't make it spendable.
+				Err(VtxoValidationError::Invalid(e)) => {
+					warn!("Recovery VTXO {} is invalid, skipping: {}", vtxo.id(), e);
+					self.inner.db.remove_vtxo(vtxo.id()).await
+						.context("Failed to drop invalid recovery VTXO")?;
+					report.push_skipped(&vtxo);
+					continue;
+				},
+				// A chain error or an anchor not yet visible is a non-decision, so
+				// it is a failure, not a clean skip.
+				Err(e) => {
+					warn!("Could not validate recovery VTXO {}: {:#}", vtxo.id(), e);
+					report.push_failed(vtxo.id(), Some(vtxo.amount()));
+					continue;
+				},
 			}
 			if self.check_vtxo_onchain_status(report, &vtxo).await? {
 				continue;
@@ -564,8 +665,8 @@ impl Wallet {
 		// NB we don't use store_spendable_vtxos to avoid posting the vtxos again
 		if !recovered.is_empty() {
 			self.store_vtxos(recovered.iter(), &VtxoState::Spendable).await?;
-			// A locked row from an earlier attempt without an answer is released.
-			self.unlock_vtxos(recovered.iter(), None).await?;
+			// A row staged locked keeps its state on store.
+			self.unlock_vtxos(recovered.iter(), holder.clone()).await?;
 			for vtxo in &recovered {
 				debug!("Recovered spendable vtxo {} ({})", vtxo.id(), vtxo.amount());
 				report.push_recovered(vtxo);
@@ -581,13 +682,28 @@ impl Wallet {
 		if !locked.is_empty() {
 			warn!("Could not get the status of {} recovery vtxos, keeping them locked until \
 				it is known", locked.len());
-			self.store_vtxos(locked.iter(), &VtxoState::Locked { holder: None }).await?;
+			self.store_vtxos(locked.iter(), &VtxoState::Locked { holder: holder.clone() }).await?;
 			for vtxo in &locked {
 				report.push_failed(vtxo.id(), Some(vtxo.amount()));
 			}
 		}
 
 		Ok(())
+	}
+
+	/// Recover a set of VTXOs: stage them, then settle them.
+	///
+	/// See [`Wallet::stage_recovery_candidates`] and
+	/// [`Wallet::settle_recovery_vtxos`].
+	async fn recover_candidates(
+		&self,
+		report: &mut RecoveryReport,
+		candidates: Vec<(VtxoId, Option<Vtxo<Full>>)>,
+		gap_limit: u32,
+		holder: &Option<VtxoLockHolder>,
+	) -> anyhow::Result<()> {
+		let staged = self.stage_recovery_candidates(report, candidates, gap_limit, holder).await?;
+		self.settle_recovery_vtxos(report, staged, holder).await
 	}
 
 	/// Recover the given VTXOs into this wallet's spendable set.
@@ -602,7 +718,7 @@ impl Wallet {
 		let mut report = RecoveryReport::default();
 		let gap_limit = gap_limit.unwrap_or(self.inner.config.vtxo_key_gap_limit);
 		let candidates = ids.into_iter().map(|id| (id, None)).collect();
-		self.recover_candidates(&mut report, candidates, gap_limit).await?;
+		self.recover_candidates(&mut report, candidates, gap_limit, &None).await?;
 		Ok(report)
 	}
 
@@ -689,7 +805,7 @@ impl Wallet {
 				self.reveal_vtxo_keys_up_to(max_index).await
 					.context("failed to store recovered vtxo keys")?;
 			}
-			self.store_recovered_vtxos(report, vtxos).await?;
+			self.store_recovered_vtxos(report, vtxos, &None).await?;
 
 			// A server that moved neither past a key nor within one would have
 			// us ask for the same VTXOs forever.
@@ -778,7 +894,7 @@ impl Wallet {
 			}
 
 			let candidates = report.failed.ids().map(|id| (id, None)).collect::<Vec<_>>();
-			self.recover_candidates(&mut report, candidates, gap_limit).await?;
+			self.recover_candidates(&mut report, candidates, gap_limit, &None).await?;
 		}
 
 		// Claim the outputs of the round participations recovery rebuilt.

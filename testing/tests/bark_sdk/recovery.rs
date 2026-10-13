@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::fs;
 
-use ark::VtxoId;
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::vtxo::Full;
 use bark::vtxo::VtxoState;
 use server_rpc::protos;
 
@@ -125,6 +126,88 @@ async fn recovered_wallet_keeps_spent_vtxo_spent() {
 	assert_eq!(states.get(&vtxo_a), Some(&VtxoState::Spent),
 		"the spent vtxo must stay spent after recovery, got {states:?}",
 	);
+}
+
+/// Serves the first `allowed` mailbox reads with the signature of every arkoor
+/// body broken, and fails every read after them.
+#[derive(Clone)]
+struct BreakArkoorSignatures {
+	allowed: Arc<AtomicUsize>,
+	broken: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::MailboxRpcProxy for BreakArkoorSignatures {
+	async fn read_mailbox(
+		&self, upstream: &mut MailboxClient, req: protos::mailbox_server::MailboxRequest,
+	) -> Result<protos::mailbox_server::MailboxMessages, tonic::Status> {
+		use protos::mailbox_server::mailbox_message::Message;
+
+		let allowed = self.allowed
+			.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+		if allowed.is_err() {
+			return Err(tonic::Status::unavailable("mailbox down"));
+		}
+
+		let mut resp = upstream.read_mailbox(req).await?.into_inner();
+		for msg in &mut resp.messages {
+			let Some(Message::Arkoor(arkoor)) = &mut msg.message else { continue };
+			for raw in &mut arkoor.vtxos {
+				let mut vtxo = Vtxo::<Full>::deserialize(raw).expect("decode arkoor vtxo");
+				vtxo.invalidate_final_sig();
+				*raw = vtxo.serialize();
+				self.broken.fetch_add(1, Ordering::Relaxed);
+			}
+		}
+		Ok(resp)
+	}
+}
+
+/// An arkoor body the mailbox serves is only as good as its relay, so recovery
+/// must not store one that fails validation, not even locked.
+///
+/// The target's ids never reach the recovery mailbox and the xpub lookup is
+/// off, so the regular mailbox is the only place the recovery hears of the
+/// vtxo, and it hears of it with a broken signature. The read of the recovery
+/// mailbox then fails, so the recovery stops before the server is asked about
+/// anything it staged.
+#[tokio::test]
+async fn recovery_drops_an_invalid_arkoor_body_from_the_mailbox() {
+	let ctx = TestContext::new("bark_sdk/recovery_drops_an_invalid_arkoor_body_from_the_mailbox").await;
+	let srv = ctx.captaind("server")
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
+
+	let target_proxy = srv.start_proxy_with_mailbox((), SwallowRecoveryPosts).await;
+	let source = ctx.bark_sdk("source", &srv).boarded(sat(400_000)).create().await;
+	let target = ctx.bark_sdk("target", &target_proxy).create().await;
+
+	let target_address = target.new_address().await.expect("new address");
+	source.send_arkoor_payment(&target_address, sat(100_000)).await.expect("arkoor send");
+	target.sync().await;
+	assert_eq!(target.spendable_vtxos().await.expect("list target vtxos").len(), 1,
+		"target should hold exactly the received vtxo");
+
+	let mnemonic = fs::read_to_string(ctx.datadir.join("target/mnemonic")).await
+		.expect("target mnemonic file");
+	let mnemonic = bip39::Mnemonic::from_str(mnemonic.trim()).expect("parse mnemonic");
+	drop(target);
+
+	// Only the first read, the regular mailbox, goes through.
+	let broken = Arc::new(AtomicUsize::new(0));
+	let mailbox = BreakArkoorSignatures {
+		allowed: Arc::new(AtomicUsize::new(1)),
+		broken: broken.clone(),
+	};
+	let proxy = srv.start_proxy_with_mailbox((), mailbox).await;
+	let recovered = ctx.bark_sdk("recovered", &proxy)
+		.mnemonic(mnemonic)
+		.create().await;
+
+	assert!(broken.load(Ordering::Relaxed) > 0, "the recovery must have read the arkoor body");
+	let stored = recovered.all_vtxos().await.expect("list recovered vtxos")
+		.iter().map(|v| v.id()).collect::<Vec<_>>();
+	assert!(stored.is_empty(), "an invalid arkoor body must not be stored, got {stored:?}");
 }
 
 /// A wallet recovered from its seed must show every input of a multi-input
