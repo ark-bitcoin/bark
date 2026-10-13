@@ -154,7 +154,7 @@
           "exits"
         ],
         "summary": "Cancel an exit",
-        "description": "Aborts an in-progress emergency exit while it is still safe to do so—before its final transaction has been broadcast. Exit transactions are ordered topologically and only the final one moves the VTXO on-chain, so an exit can still be canceled even after its shared ancestor transactions are in the mempool or a block. Canceling leaves the VTXO spendable, so a fresh exit can be started for it later. Before canceling, the endpoint verifies directly against the chain that the final transaction hasn't been broadcast; nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a no-op, so retries are safe. Note the daemon auto-progresses exits at the cadence defined by `SLOW_INTERVAL`, so cancel promptly once an exit reaches a state you no longer wish to pursue.",
+        "description": "Aborts an in-progress emergency exit while it is still safe to do so—before its final transaction has been broadcast. Exit transactions are ordered topologically and only the final one moves the VTXO on-chain, so an exit can still be canceled even after its shared ancestor transactions are in the mempool or a block. Canceling leaves the VTXO spendable, so a fresh exit can be started for it later. Before canceling, the endpoint verifies directly against the chain that the final transaction hasn't been broadcast; nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a no-op, so retries are safe. Note the daemon auto-progresses exits at the interval set by the `daemon_sync_interval_secs` config setting, so cancel promptly once an exit reaches a state you no longer wish to pursue.",
         "operationId": "exit_cancel",
         "parameters": [
           {
@@ -445,7 +445,7 @@
           "exits"
         ],
         "summary": "Start exit for all VTXOs",
-        "description": "Registers all wallet VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.",
+        "description": "Registers all wallet VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the interval set by the `daemon_sync_interval_secs` config setting, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.",
         "operationId": "exit_start_all",
         "responses": {
           "200": {
@@ -477,7 +477,7 @@
           "exits"
         ],
         "summary": "Start exit for specific VTXOs",
-        "description": "Registers the specified VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.",
+        "description": "Registers the specified VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the interval set by the `daemon_sync_interval_secs` config setting, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.",
         "operationId": "exit_start_vtxos",
         "requestBody": {
           "content": {
@@ -1351,7 +1351,7 @@
           "lightning"
         ],
         "summary": "Send a Lightning payment",
-        "description": "Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, BOLT12 offer, or Lightning address. The `amount_sat` field is required for Lightning addresses but optional for invoices and offers. Comments are only supported for Lightning addresses.",
+        "description": "Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. The `amount_sat` field is required for Lightning addresses and LNURL but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses and LNURL.",
         "operationId": "pay",
         "requestBody": {
           "content": {
@@ -1375,7 +1375,7 @@
             }
           },
           "400": {
-            "description": "The provided destination is not a valid BOLT11 invoice, BOLT12 offer, or Lightning address",
+            "description": "The provided destination is not a valid BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL",
             "content": {
               "application/json": {
                 "schema": {
@@ -3096,7 +3096,7 @@
           "wallet"
         ],
         "summary": "Send a payment",
-        "description": "Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, or Lightning address. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses and Lightning addresses but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses. To send to an on-chain bitcoin address, use `send-onchain` instead.",
+        "description": "Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses, Lightning addresses, and LNURL but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses and LNURL. To send to an on-chain bitcoin address, use `send-onchain` instead.",
         "operationId": "send",
         "requestBody": {
           "content": {
@@ -3120,7 +3120,7 @@
             }
           },
           "400": {
-            "description": "The provided destination is not a valid Ark address, BOLT11 invoice, BOLT12 offer, or Lightning address",
+            "description": "The provided destination is not a valid Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL",
             "content": {
               "application/json": {
                 "schema": {

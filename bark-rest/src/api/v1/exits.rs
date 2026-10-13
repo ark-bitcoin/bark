@@ -238,8 +238,8 @@ pub async fn get_live_exit_status(
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Registers the specified VTXOs for emergency exit. The daemon \
-		automatically progresses registered exits in the background at the cadence \
-		defined by `SLOW_INTERVAL`, creating and broadcasting the required \
+		automatically progresses registered exits in the background at the interval set \
+		by the `daemon_sync_interval_secs` config setting, creating and broadcasting the required \
 		transactions in sequence. Once all exit transactions are confirmed and the \
 		timelock has elapsed, call `claim` to sweep the resulting outputs to an \
 		on-chain address.",
@@ -294,8 +294,8 @@ pub async fn exit_start_vtxos(
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Registers all wallet VTXOs for emergency exit. The daemon \
-		automatically progresses registered exits in the background at the cadence \
-		defined by `SLOW_INTERVAL`, creating and broadcasting the required \
+		automatically progresses registered exits in the background at the interval set \
+		by the `daemon_sync_interval_secs` config setting, creating and broadcasting the required \
 		transactions in sequence. Once all exit transactions are confirmed and the \
 		timelock has elapsed, call `claim` to sweep the resulting outputs to an \
 		on-chain address.",
@@ -507,9 +507,9 @@ pub async fn exit_claim_all(
 		spendable, so a fresh exit can be started for it later. Before canceling, the endpoint \
 		verifies directly against the chain that the final transaction hasn't been broadcast; \
 		nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a \
-		no-op, so retries are safe. Note the daemon auto-progresses exits at the cadence defined \
-		by `SLOW_INTERVAL`, so cancel promptly once an exit reaches a state you no longer wish \
-		to pursue.",
+		no-op, so retries are safe. Note the daemon auto-progresses exits at the interval set \
+		by the `daemon_sync_interval_secs` config setting, so cancel promptly once an exit \
+		reaches a state you no longer wish to pursue.",
 	tag = "exits"
 )]
 #[debug_handler]

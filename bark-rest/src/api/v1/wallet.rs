@@ -695,16 +695,16 @@ pub async fn pending_rounds(
 	responses(
 		(status = 200, description = "Payment sent successfully", body = bark_json::web::SendResponse),
 		(status = 400, description = "The provided destination is not a valid Ark address, \
-			BOLT11 invoice, BOLT12 offer, or Lightning address", body = error::BadRequestError),
+			BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Sends an Ark or Lightning payment to the specified destination. Accepts \
-		an Ark address, BOLT11 invoice, BOLT12 offer, or Lightning address. Ark address \
+		an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. Ark address \
 		payments are settled instantly via an out-of-round (arkoor) transaction. The \
-		`amount_sat` field is required for Ark addresses and Lightning addresses but \
+		`amount_sat` field is required for Ark addresses, Lightning addresses, and LNURL but \
 		optional for invoices and offers that already encode an amount. Comments are \
-		only supported for Lightning addresses. To send to an on-chain bitcoin address, \
-		use `send-onchain` instead.",
+		only supported for Lightning addresses and LNURL. To send to an on-chain bitcoin \
+		address, use `send-onchain` instead.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -762,7 +762,7 @@ pub async fn send(
 		return Err(anyhow!("offboards are temporarily disabled").into());
 	} else {
 		badarg!("Argument is not a valid destination. Supported are: \
-			ark addresses, bolt11 invoices, bolt12 offers and lightning addresses");
+			Ark addresses, BOLT-11 invoices, BOLT-12 offers, Lightning addresses and LNURL");
 	};
 
 	Ok(axum::Json(bark_json::web::SendResponse {

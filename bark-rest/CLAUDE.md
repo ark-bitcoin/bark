@@ -8,10 +8,10 @@ For terminology, formatting, and general writing conventions, see
 
 ## Architecture notes
 
-- The daemon (`bark/src/daemon.rs`) runs alongside the REST server in barkd.
+- The daemon (`bark/src/daemon/mod.rs`) runs alongside the REST server in barkd.
   They share the same `Arc<Wallet>` and therefore the same exit state.
-- The daemon auto-progresses exits at the cadence defined by `SLOW_INTERVAL`
-  in `bark/src/daemon.rs`.
+- The daemon auto-progresses exits at the interval set by the
+  `daemon_sync_interval_secs` wallet config setting (`bark/src/config.rs`).
 - The daemon does **not** auto-claim—`claim` must be called via the API.
 - `ExitProgressResponse.done` becomes `true` when all exits reach the
   `Claimable` state (i.e. `has_pending_exits()` returns `false`).
@@ -36,8 +36,9 @@ phrases (e.g. "Get exit status", "Board a specific amount").
   know to use it. Do not repeat information that is already well-covered in
   another endpoint's description unless self-containment requires it.
 - **Daemon awareness**: Where the daemon automates behaviour (e.g. exit
-  progression), say so and reference the interval constant (e.g.
-  `SLOW_INTERVAL`) rather than hardcoding a duration that may go stale.
+  progression), say so and reference the config setting that sets the
+  interval (e.g. `daemon_sync_interval_secs`) rather than hardcoding a
+  duration that may go stale.
 
 ## Regenerating the OpenAPI spec
 
