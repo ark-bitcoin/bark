@@ -789,6 +789,46 @@ async fn bark_check_lightning_receive_no_wait(
 }
 lightning_test!(bark_check_lightning_receive_no_wait);
 
+/// Blocks mined after the sender paid must not break the claim.
+async fn bark_claims_lightning_receive_after_blocks_mined(
+	ctx: &TestContext,
+	_lightning: &LightningPaymentSetup,
+	srv: &Captaind,
+	pay: impl AsyncFn(String),
+) {
+	require_bark_version!(> "0.7.1");
+
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = ctx.bark("bark", srv).funded(btc(3)).create().await;
+	let board_amount = btc(2);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	let pay_amount = btc(1);
+	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+
+	tokio::join!(
+		pay(invoice_info.invoice.clone()),
+		async {
+			srv.get_public_rpc().await
+				.check_lightning_receive(protos::CheckLightningReceiveRequest {
+					hash: receive.payment_hash.to_vec(),
+					wait: true,
+				}).wait_millis(10_000).await.unwrap();
+
+			// LIGHTNING_PREPARE_CLAIM_DELTA
+			ctx.generate_blocks(2).await;
+
+			bark.lightning_receive(&invoice_info.invoice).wait_millis(30_000).await;
+		},
+	);
+
+	assert_eq!(bark.spendable_balance().await, board_amount + pay_amount);
+	assert!(bark.list_lightning_receives().await.is_empty());
+}
+lightning_test!(bark_claims_lightning_receive_after_blocks_mined);
+
 async fn bark_can_pay_ark_invoice(
 	ctx: &TestContext,
 	_lightning: &LightningPaymentSetup,
