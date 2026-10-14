@@ -272,7 +272,11 @@ async fn lightning_send_invoice_revoke() {
 	bark.pay_lightning_wait(&invoice, None).await;
 	let vtxos_post_pay = bark.vtxo_ids().await;
 
-	let send_movement = bark.history().await.last().cloned().unwrap();
+	// The revocation updates the send movement instead of creating a new one.
+	let history = bark.history().await;
+	assert_eq!(history.len(), 2, "expected only the board and send movements");
+
+	let send_movement = history.last().cloned().unwrap();
 	assert_eq!(send_movement.status, MovementStatus::Failed);
 	assert_eq!(send_movement.subsystem.name, "bark.lightning_send");
 	assert_eq!(send_movement.subsystem.kind, "send");
