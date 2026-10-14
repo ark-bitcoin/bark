@@ -566,7 +566,8 @@ impl Process {
 			self.srv.config.vtxo_exit_delta,
 		).context("builder error")?;
 
-		let fee_rate = self.srv.fee_estimator.slow();
+		// The slow rate often misses the nursery target and delays the refill.
+		let fee_rate = self.srv.fee_estimator.regular();
 
 		let funding_txout = builder.funding_txout();
 
