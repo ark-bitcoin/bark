@@ -21,7 +21,7 @@ use bitcoind_async_client::error::ClientError;
 use bitcoind_async_client::traits::{Broadcaster, Reader};
 use bitcoin_ext::rpc::{
 	self, Auth, GetRawTransactionResult, RPC_INVALID_ADDRESS_OR_KEY,
-	RPC_VERIFY_ALREADY_IN_UTXO_SET, SubmitPackageResult,
+	RPC_VERIFY_ALREADY_IN_UTXO_SET, SubmitPackageResult, TxSpendingPrevoutResult,
 };
 use bitcoin_ext::{BlockHeight, BlockRef, DEEPLY_CONFIRMED, TxStatus};
 use serde::Deserialize;
@@ -150,20 +150,15 @@ pub async fn custom_get_raw_transaction_info(
 	}
 }
 
-/// Walk the mempool to find a tx spending the given outpoint.
+/// Find the mempool tx spending the given outpoint.
 pub async fn get_mempool_spending_tx(
 	client: &Client, outpoint: OutPoint,
 ) -> Result<Option<Txid>, ClientError> {
-	let mempool_txids = client.get_raw_mempool().await?.0;
-	for txid in mempool_txids {
-		let tx = client.get_raw_transaction_verbosity_zero(&txid).await?.0;
-		for input in &tx.input {
-			if input.previous_output == outpoint {
-				return Ok(Some(txid));
-			}
-		}
-	}
-	Ok(None)
+	let prevout = serde_json::json!({ "txid": outpoint.txid, "vout": outpoint.vout });
+	let res: Vec<TxSpendingPrevoutResult> = client.call_raw(
+		"gettxspendingprevout", &[Value::Array(vec![prevout])],
+	).await?;
+	Ok(res.first().and_then(|s| s.mempool_spending_txid()))
 }
 
 /// The `getmempoolentry` fields the server reads. The bitcoincore_rpc
