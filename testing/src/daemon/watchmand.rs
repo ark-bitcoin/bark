@@ -18,7 +18,7 @@ use server_rpc::protos;
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
-use crate::daemon::captaind::{SlogHandler, SweepAdminClient};
+use crate::daemon::captaind::{BlocklistAdminClient, SlogHandler, SweepAdminClient};
 use crate::constants::env::WATCHMAND_EXEC;
 use crate::ports::pick_port;
 use crate::util::{poll_interval, resolve_path};
@@ -104,6 +104,10 @@ impl Watchmand {
 
 	pub async fn get_sweep_rpc(&self) -> SweepAdminClient {
 		SweepAdminClient::connect(self.inner.admin_url()).await.expect("can't connect sweep rpc")
+	}
+
+	pub async fn get_blocklist_rpc(&self) -> BlocklistAdminClient {
+		BlocklistAdminClient::connect(self.inner.admin_url()).await.expect("can't connect watchmand blocklist rpc")
 	}
 
 	pub async fn trigger_sweep(&self) {
@@ -286,6 +290,7 @@ impl WatchmandHelper {
 	}
 
 	async fn try_is_ready(&self) -> anyhow::Result<()> {
+		SweepAdminClient::connect(self.admin_url()).await.context("connecting admin rpc")?;
 		Ok(())
 	}
 

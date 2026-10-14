@@ -308,3 +308,38 @@ async fn blocklist_server_wallet_ignores_blocked_funds() {
 	// Only the blocked funds disappear after restart; the clean 20_000 sats persist.
 	assert_eq!(srv.wallet_status().await.rounds.total_balance, sat(20_000));
 }
+
+/// The admin reload replaces the list from the file, removals included.
+#[tokio::test]
+async fn blocklist_admin_reload() {
+	let ctx = TestContext::new("server/blocklist_admin_reload").await;
+
+	let addr_a = ctx.bitcoind().get_new_address();
+	let addr_b = ctx.bitcoind().get_new_address();
+	let blocklist_path = ctx.datadir.join("blocklist.txt");
+	tokio::fs::write(&blocklist_path, format!("{}\n", addr_a)).await.unwrap();
+
+	let cfg_path = blocklist_path.clone();
+	let wm_cfg_path = blocklist_path.clone();
+	let srv = ctx.captaind("server").cfg(move |cfg| {
+		cfg.bitcoin_address_blocklist = Some(cfg_path);
+	}).watchmand_cfg(move |cfg| {
+		cfg.bitcoin_address_blocklist = Some(wm_cfg_path);
+	}).create().await;
+	let mut rpc = srv.get_blocklist_rpc().await;
+	let mut wm_rpc = srv.watchmand().get_blocklist_rpc().await;
+
+	tokio::fs::write(&blocklist_path, format!("{}\n{}\n", addr_a, addr_b)).await.unwrap();
+	let res = rpc.reload_blocklist(protos::Empty {}).await.unwrap().into_inner();
+	assert_eq!((res.total, res.added, res.removed), (2, 1, 0));
+	let res = wm_rpc.reload_blocklist(protos::Empty {}).await.unwrap().into_inner();
+	assert_eq!((res.total, res.added, res.removed), (2, 1, 0));
+
+	tokio::fs::write(&blocklist_path, format!("{}\n", addr_b)).await.unwrap();
+	let res = rpc.reload_blocklist(protos::Empty {}).await.unwrap().into_inner();
+	assert_eq!((res.total, res.added, res.removed), (1, 0, 1));
+
+	tokio::fs::write(&blocklist_path, "").await.unwrap();
+	let err = rpc.reload_blocklist(protos::Empty {}).await.unwrap_err();
+	assert!(err.message().contains("no valid addresses"), "err: {err}");
+}

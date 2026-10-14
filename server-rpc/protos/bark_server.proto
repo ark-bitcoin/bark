@@ -639,6 +639,12 @@ service SweepAdminService {
 	rpc TriggerSweep(core.Empty) returns (core.Empty) {}
 }
 
+service BlocklistAdminService {
+	// Re-read the bitcoin address blocklist file now and replace the list,
+	// so removals apply too. The periodic refresh only ever adds.
+	rpc ReloadBlocklist(core.Empty) returns (ReloadBlocklistResponse) {}
+}
+
 service BanAdminService {
 	rpc BanVtxo(BanVtxoRequest) returns (core.Empty) {}
 	rpc UnbanVtxo(UnbanVtxoRequest) returns (core.Empty) {}
@@ -684,6 +690,12 @@ message ListNurseryTxsResponse {
 
 message AbandonRequest {
 	string txid = 1;
+}
+
+message ReloadBlocklistResponse {
+	uint64 total = 1;
+	uint64 added = 2;
+	uint64 removed = 3;
 }
 
 message BanVtxoRequest {

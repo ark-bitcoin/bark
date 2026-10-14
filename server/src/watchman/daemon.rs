@@ -46,6 +46,7 @@ pub struct Daemon {
 	#[allow(unused)]
 	frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
 	watchman_handle: WatchmanHandle,
+	bitcoin_address_blocklist: Option<BitcoinAddressBlocklist>,
 }
 
 impl Daemon {
@@ -236,11 +237,16 @@ impl Daemon {
 
 		Ok(Self {
 			rtmgr, sync_manager, watchman_wallet, frontier, watchman_handle,
+			bitcoin_address_blocklist,
 		})
 	}
 
 	pub fn watchman_handle(&self) -> &WatchmanHandle {
 		&self.watchman_handle
+	}
+
+	pub fn bitcoin_address_blocklist(&self) -> Option<&BitcoinAddressBlocklist> {
+		self.bitcoin_address_blocklist.as_ref()
 	}
 
 	/// Waits for server to terminate.

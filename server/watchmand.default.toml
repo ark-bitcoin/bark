@@ -22,6 +22,11 @@ min_trusted_confs = 1
 # The name of your deployment used by OpenTelemetry
 otel_deployment_name = "my_regtest"
 
+# Optional listen address for the private admin gRPC API.
+# Unauthenticated by design and as privileged as shell access to this host.
+# Keep it on loopback.
+#admin_address = "127.0.0.1:4536"
+
 ###############
 # BLOCKLIST   #
 ###############

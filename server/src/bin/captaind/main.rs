@@ -130,6 +130,11 @@ enum RpcCommand {
 	/// Manage the txs the nursery is following up on
 	#[command(subcommand)]
 	Nursery(NurseryCommand),
+
+	/// Re-read the bitcoin address blocklist file now, removals included.
+	/// Also works against watchmand: pass its admin address as --addr.
+	#[command()]
+	ReloadBlocklist,
 }
 
 #[derive(clap::Subcommand)]
@@ -726,6 +731,15 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 					}
 				}
 			}
+		}
+		RpcCommand::ReloadBlocklist => {
+			let mut rpc = rpc::admin::BlocklistAdminServiceClient::connect(endpoint)
+				.await.context("failed to connect to rpc")?;
+
+			let res = rpc.reload_blocklist(protos::Empty {}).await?.into_inner();
+			println!("Blocklist reloaded: {} addresses, {} added, {} removed",
+				res.total, res.added, res.removed,
+			);
 		}
 		RpcCommand::Nursery(cmd) => {
 			let mut rpc = rpc::admin::NurseryAdminServiceClient::connect(endpoint)
