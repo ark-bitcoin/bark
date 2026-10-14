@@ -194,6 +194,8 @@
 					targets = [
 						"x86_64-unknown-linux-gnu"
 						"x86_64-unknown-linux-musl"
+						# No zig mapping (below): built natively on darwin hosts.
+						"aarch64-apple-darwin"
 					];
 				};
 			in

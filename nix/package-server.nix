@@ -92,7 +92,7 @@ let
 
 	# Builds the whole bark-server crate so both the captaind and watchmand
 	# binaries end up in bin/.
-	mkTarget = target:
+	mkZigTarget = target:
 		craneLib.buildPackage (commonSettings
 			// {
 				nativeBuildInputs = commonSettings.nativeBuildInputs ++ (with pkgs; [
@@ -121,5 +121,29 @@ let
 				'';
 			}
 		);
+
+	# Targets without a zig mapping are built natively with the stdenv
+	# toolchain — the darwin case, where the nixpkgs stdenv cc links
+	# against the Apple SDK and zig cc can't.
+	mkNativeTarget = target:
+		craneLib.buildPackage (commonSettings
+			// {
+				CARGO_BUILD_TARGET = target;
+				preBuild = ''
+					# Same builder-independent path remap as the zig builds.
+					export ${rustFlagsVar target}="''${${rustFlagsVar target}:-} --remap-path-prefix=$PWD=/build"
+				'';
+				buildPhaseCargoCommand = ''
+					cargoBuildLog=$(mktemp cargoBuildLogXXXX.json)
+					cargo build --release --locked -p bark-server --target ${target} \
+						--message-format json-render-diagnostics >"$cargoBuildLog"
+				'';
+				}
+		);
+
+	mkTarget = target:
+		if builtins.hasAttr target zigTargetMap
+		then mkZigTarget target
+		else mkNativeTarget target;
 
 in lib.genAttrs targets mkTarget
