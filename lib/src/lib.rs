@@ -19,6 +19,7 @@ pub mod lightning;
 pub mod mailbox;
 pub mod musig;
 pub mod offboard;
+pub mod recovery;
 pub mod rounds;
 pub mod message;
 pub mod tree;

@@ -48,6 +48,10 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.get_vtxos_status_by_ids(req).await?.into_inner())
 	}
 
+	async fn recover_vtxos_by_xpub(&self, upstream: &mut ArkClient, req: protos::RecoverVtxosByXpubRequest) -> Result<protos::RecoverVtxosByXpubResponse, tonic::Status> {
+		Ok(upstream.recover_vtxos_by_xpub(req).await?.into_inner())
+	}
+
 	async fn request_board_cosign(&self, upstream: &mut ArkClient, req: protos::BoardCosignRequest) -> Result<protos::BoardCosignResponse, tonic::Status> {
 		Ok(upstream.request_board_cosign(req).await?.into_inner())
 	}
@@ -311,6 +315,13 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	) -> Result<tonic::Response<protos::GetVtxoResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::get_vtxo(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
+	}
+
+	async fn recover_vtxos_by_xpub(
+		&self, req: tonic::Request<protos::RecoverVtxosByXpubRequest>,
+	) -> Result<tonic::Response<protos::RecoverVtxosByXpubResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
+		Ok(tonic::Response::new(ArkRpcProxy::recover_vtxos_by_xpub(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn get_vtxo_status(

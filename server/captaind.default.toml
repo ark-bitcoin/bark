@@ -81,6 +81,11 @@ otel_deployment_name = "my_regtest"
 # The maximum number of items we return to mailbox queries
 max_read_mailbox_items = 100
 
+# Number of child keys derived from a client xpub when it recovers its VTXOs
+# without the mailbox. Each key costs one EC multiplication per call.
+# Zero disables the rpc.
+recovery_xpub_nb_keys = 100000
+
 
 ##########
 # ROUNDS #

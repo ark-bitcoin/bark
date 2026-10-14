@@ -17,6 +17,12 @@ service ArkService {
 	rpc GetVtxoStatus(GetVtxoStatusRequest) returns (GetVtxoStatusResponse) {}
 	rpc GetVtxosByIds(GetVtxosByIdsRequest) returns (GetVtxosByIdsResponse) {}
 	rpc GetVtxosStatusByIds(GetVtxosStatusByIdsRequest) returns (GetVtxosStatusByIdsResponse) {}
+	// Seed recovery without the mailbox: lists the VTXOs, in any spend state,
+	// owned by the non-hardened children xpub/i of the given xpub, for i in
+	// [start_index, start_index + server-configured count), each with its
+	// body and spend state. The request is signed by the private key of the
+	// xpub.
+	rpc RecoverVtxosByXpub(RecoverVtxosByXpubRequest) returns (RecoverVtxosByXpubResponse) {}
 
 	// * BOARDING *
 
@@ -245,6 +251,39 @@ message GetVtxosStatusByIdsResponse {
 	repeated VtxoStatus vtxos = 1;
 	// Requested ids the server does not know, each once.
 	repeated bytes missing_vtxo_ids = 2;
+}
+
+message RecoverVtxosByXpubRequest {
+	// BIP-32 serialized extended public key (78 bytes). Children are
+	// derived as non-hardened xpub/i for i in
+	// [start_index, start_index + server-configured count).
+	bytes xpub = 1;
+	// First child index to scan, below 2^31. A wallet with more keys than
+	// one call scans continues where the previous call stopped.
+	uint32 start_index = 2;
+	// Serialized XpubRecoveryAuthorization, signed by the private key of the
+	// xpub for this server.
+	bytes authorization = 3;
+}
+
+message RecoveredVtxo {
+	// The serialized VTXO.
+	bytes vtxo = 1;
+	// Child index of the xpub that owns the VTXO: its user pubkey is
+	// xpub/derivation_index.
+	uint32 derivation_index = 2;
+	VtxoSpendState spend_state = 3;
+}
+
+message RecoverVtxosByXpubResponse {
+	repeated RecoveredVtxo vtxos = 1;
+	// Number of child indices the server scanned, starting at start_index.
+	// A follow-up call continues at start_index + nb_keys_scanned. The server
+	// stops early once the response holds enough VTXOs, but never between
+	// two VTXOs of the same key.
+	uint32 nb_keys_scanned = 2;
+	// Set when more VTXOs may follow at higher indices
+	bool have_more = 3;
 }
 
 

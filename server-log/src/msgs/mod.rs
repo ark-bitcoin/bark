@@ -17,6 +17,8 @@ mod offboards;
 pub use self::offboards::*;
 mod nursery;
 pub use self::nursery::*;
+mod recovery;
+pub use self::recovery::*;
 mod rounds;
 pub use self::rounds::*;
 mod system;

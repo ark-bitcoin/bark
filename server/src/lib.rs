@@ -33,6 +33,7 @@ mod intman;
 pub mod ln;
 pub mod nursery;
 mod offboards;
+pub mod recovery;
 mod round;
 pub mod telemetry;
 pub mod utils;

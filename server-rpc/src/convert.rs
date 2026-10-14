@@ -101,6 +101,12 @@ impl_try_from_byte_slice!(schnorr::Signature, "Schnorr signature");
 impl_try_from_byte_slice!(VtxoId, "VTXO ID");
 impl_try_from_byte_slice!(RoundId, "VTXO ID");
 
+impl TryFromBytes for bitcoin::bip32::Xpub {
+	fn from_bytes<T: AsRef<[u8]>>(b: T) -> Result<Self, ConvertError> {
+		Ok(bitcoin::bip32::Xpub::decode(b.as_ref()).map_err(|_| "invalid xpub")?)
+	}
+}
+
 macro_rules! impl_try_from_bytes_protocol {
 	($ty:path, $exp:expr) => {
 		impl TryFromBytes for $ty {

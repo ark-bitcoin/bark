@@ -8,16 +8,21 @@ use bitcoin::hex::FromHex;
 /// transaction if that is required.
 
 use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
 use std::str::FromStr;
 
 use anyhow::Context;
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, Txid};
+use postgres_types::{IsNull, ToSql};
+use postgres_types::private::BytesMut;
 use tokio_postgres::{Row, Transaction as PgTransaction};
 use tokio_postgres::types::Type;
+use tokio_util::bytes::BufMut;
 
-use ark::{ProtocolEncoding, ServerVtxoPolicy, VtxoId, VtxoRequest};
+use ark::{ProtocolEncoding, ServerVtxoPolicy, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::mailbox::MailboxIdentifier;
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
@@ -28,6 +33,31 @@ use crate::database::model::{VirtualTransaction, VtxoState};
 use crate::database::rounds::{StoredRoundInput, StoredRoundOutput, StoredRoundParticipation};
 use crate::error::ContextExt;
 use crate::secret::Secret;
+
+
+/// Binds a [ProtocolEncoding] value as a `bytea` query parameter.
+///
+/// The value is encoded straight into the parameter buffer, so a slice of
+/// these binds as a `bytea[]` without serializing each element up front.
+#[derive(Debug)]
+pub struct ProtocolEncodedSql<'a, T>(pub &'a T);
+
+impl<'a, T: ProtocolEncoding + fmt::Debug> ToSql for ProtocolEncodedSql<'a, T> {
+	fn to_sql(
+		&self,
+		_ty: &Type,
+		out: &mut BytesMut,
+	) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
+		self.0.encode(&mut out.writer())?;
+		Ok(IsNull::No)
+	}
+
+	fn accepts(ty: &Type) -> bool {
+		*ty == Type::BYTEA
+	}
+
+	postgres_types::to_sql_checked!();
+}
 
 
 pub async fn get_virtual_transaction_by_txid(
@@ -141,6 +171,28 @@ pub async fn get_vtxos_by_id(
 	}
 
 	Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
+}
+
+/// Query the VTXOs owned by any of the given policies, whatever their spend state.
+pub async fn get_vtxos_by_policy(
+	tx: &PgTransaction<'_>,
+	policies: &[VtxoPolicy],
+) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>> {
+	let statement = tx.prepare_typed("
+		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
+			banned_until_height, confirmed_height, spend_state::TEXT AS spend_state, created_at, updated_at
+		FROM vtxo
+		WHERE policy = ANY($1);
+	", &[Type::BYTEA_ARRAY]).await?;
+
+	let params = policies.iter().map(ProtocolEncodedSql).collect::<Vec<_>>();
+	let rows = tx.query(&statement, &[&params]).await
+		.context("Query get_vtxos_by_policy failed")?;
+
+	rows.into_iter()
+		.map(VtxoState::try_from)
+		.collect::<anyhow::Result<Vec<_>>>()
+		.context("Failed to parse VtxoState from database")
 }
 
 /// Get a bare VTXO by id, constructed from the metadata columns
