@@ -17,6 +17,7 @@ use crate::rpcserver::{
 	middleware, StatusContext, ToStatusResult,
 	DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS, RPC_RICH_ERRORS,
 };
+use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::system::RuntimeManager;
 use crate::Server;
 
@@ -93,6 +94,42 @@ impl rpc::server::SweepAdminService for crate::watchman::Daemon {
 
 		self.watchman_handle().trigger_sweep();
 		Ok(tonic::Response::new(protos::Empty {}))
+	}
+}
+
+async fn reload_blocklist(
+	list: Option<&BitcoinAddressBlocklist>,
+) -> Result<tonic::Response<protos::ReloadBlocklistResponse>, tonic::Status> {
+	let list = list.ok_or_else(|| tonic::Status::failed_precondition(
+		"no bitcoin address blocklist configured",
+	))?;
+	let r = list.reload().await.to_status()?;
+	Ok(tonic::Response::new(protos::ReloadBlocklistResponse {
+		total: r.total as u64,
+		added: r.added as u64,
+		removed: r.removed as u64,
+	}))
+}
+
+#[async_trait]
+impl rpc::server::BlocklistAdminService for Server {
+	#[tracing::instrument(skip(self, _req))]
+	async fn reload_blocklist(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::ReloadBlocklistResponse>, tonic::Status> {
+		reload_blocklist(self.bitcoin_address_blocklist.as_ref()).await
+	}
+}
+
+#[async_trait]
+impl rpc::server::BlocklistAdminService for crate::watchman::Daemon {
+	#[tracing::instrument(skip(self, _req))]
+	async fn reload_blocklist(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::ReloadBlocklistResponse>, tonic::Status> {
+		reload_blocklist(self.bitcoin_address_blocklist()).await
 	}
 }
 
@@ -197,7 +234,8 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.add_service(rpc::server::RoundAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::LightningAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::BanAdminServiceServer::from_arc(srv.clone()))
-		.add_service(rpc::server::NurseryAdminServiceServer::from_arc(srv.clone()));
+		.add_service(rpc::server::NurseryAdminServiceServer::from_arc(srv.clone()))
+		.add_service(rpc::server::BlocklistAdminServiceServer::from_arc(srv.clone()));
 
 	tonic::transport::Server::builder()
 		.http2_max_pending_accept_reset_streams(Some(DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS))
@@ -211,7 +249,7 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	Ok(())
 }
 
-/// Run the watchmand admin gRPC server, exposing only `SweepAdminService`.
+/// Run the watchmand admin gRPC server: `SweepAdminService` and `BlocklistAdminService`.
 pub async fn run_watchmand_admin_rpc_server(
 	addr: SocketAddr,
 	daemon: Arc<crate::watchman::Daemon>,
@@ -220,7 +258,8 @@ pub async fn run_watchmand_admin_rpc_server(
 	info!("Starting watchmand admin gRPC service on address {}", addr);
 
 	let routes = tonic::service::Routes::default()
-		.add_service(rpc::server::SweepAdminServiceServer::from_arc(daemon));
+		.add_service(rpc::server::SweepAdminServiceServer::from_arc(daemon.clone()))
+		.add_service(rpc::server::BlocklistAdminServiceServer::from_arc(daemon));
 
 	tonic::transport::Server::builder()
 		.http2_max_pending_accept_reset_streams(Some(DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS))

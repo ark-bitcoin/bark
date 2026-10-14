@@ -93,6 +93,14 @@ impl AddressBlocklistCheckResult {
 	}
 }
 
+/// Result of [BitcoinAddressBlocklist::reload]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlocklistReload {
+	pub total: usize,
+	pub added: usize,
+	pub removed: usize,
+}
+
 /// A bitcoin address blocklist with auto-refresh
 ///
 /// Auto-refresh assumes only new addresses will be added, never any removed.
@@ -140,6 +148,31 @@ impl BitcoinAddressBlocklist {
 		write_guard.extend(new_list);
 		drop(write_guard);
 		Ok(())
+	}
+
+	/// Re-read the file and replace the list, so removals apply too
+	///
+	/// Refuses to replace a non-empty list with an empty one.
+	pub async fn reload(&self) -> anyhow::Result<BlocklistReload> {
+		let new_list = parse_bitcoin_address_blocklist::<HashSet<_>>(self.network, &self.path).await
+			.context("error reading list")?;
+
+		let mut list = self.list.write().await;
+		if new_list.is_empty() && !list.is_empty() {
+			bail!("{} has no valid addresses, keeping the current {}", self.path.display(), list.len());
+		}
+		let ret = BlocklistReload {
+			total: new_list.len(),
+			added: new_list.difference(&list).count(),
+			removed: list.difference(&new_list).count(),
+		};
+		*list = new_list;
+		drop(list);
+
+		info!("Reloaded bitcoin address blocklist: {} addresses, {} added, {} removed",
+			ret.total, ret.added, ret.removed,
+		);
+		Ok(ret)
 	}
 
 	pub fn start_auto_update_thread(
@@ -268,4 +301,42 @@ where
 	}
 
 	Ok(ret)
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	const A: &str = "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq";
+	const B: &str = "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2";
+	const C: &str = "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy";
+
+	fn spk(addr: &str) -> ScriptBuf {
+		Address::from_str(addr).unwrap().assume_checked().script_pubkey()
+	}
+
+	#[tokio::test]
+	async fn reload_replaces_list() {
+		let path = std::env::temp_dir().join(format!("blocklist-reload-{}.txt", std::process::id()));
+		std::fs::write(&path, format!("{A}\n{B}\n")).unwrap();
+		let bitcoind = BitcoindClient::new(
+			"http://127.0.0.1:1".into(),
+			bitcoind_async_client::Auth::UserPass("u".into(), "p".into()),
+			None, None, None,
+		).unwrap();
+		let list = BitcoinAddressBlocklist::new(Network::Bitcoin, bitcoind, &path).await.unwrap();
+
+		std::fs::write(&path, format!("{B}\n{C}\n")).unwrap();
+		let r = list.reload().await.unwrap();
+		assert_eq!(r, BlocklistReload { total: 2, added: 1, removed: 1 });
+		assert!(!list.check_spk(&spk(A)).await);
+		assert!(list.check_spk(&spk(B)).await);
+		assert!(list.check_spk(&spk(C)).await);
+
+		std::fs::write(&path, "not an address\n").unwrap();
+		assert!(list.reload().await.is_err());
+		assert!(list.check_spk(&spk(C)).await);
+
+		std::fs::remove_file(&path).unwrap();
+	}
 }

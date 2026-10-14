@@ -61,6 +61,7 @@ pub type WalletAdminClient = rpc::admin::WalletAdminServiceClient<tonic::transpo
 pub type RoundAdminClient = rpc::admin::RoundAdminServiceClient<tonic::transport::Channel>;
 pub type SweepAdminClient = rpc::admin::SweepAdminServiceClient<tonic::transport::Channel>;
 pub type BanAdminClient = rpc::admin::BanAdminServiceClient<tonic::transport::Channel>;
+pub type BlocklistAdminClient = rpc::admin::BlocklistAdminServiceClient<tonic::transport::Channel>;
 pub type NurseryAdminClient = rpc::admin::NurseryAdminServiceClient<tonic::transport::Channel>;
 pub type HealthClient = tonic_health::pb::health_client::HealthClient<tonic::transport::Channel>;
 
@@ -286,6 +287,10 @@ impl Captaind {
 
 	pub async fn get_ban_rpc(&self) -> BanAdminClient {
 		BanAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server ban rpc")
+	}
+
+	pub async fn get_blocklist_rpc(&self) -> BlocklistAdminClient {
+		BlocklistAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server blocklist rpc")
 	}
 
 	pub async fn get_nursery_rpc(&self) -> NurseryAdminClient {
