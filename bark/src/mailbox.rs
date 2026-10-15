@@ -459,7 +459,7 @@ impl Wallet {
 				true
 			}
 			Some(Message::LightningSendFinished(msg)) => {
-				if let Err(e) = self.handle_lightning_send_finished(msg, mailbox_msg.checkpoint).await {
+				if let Err(e) = self.handle_lightning_send_finished(msg).await {
 					error!("Error handling lightning send finished notification: {:#}", e);
 				}
 				true
@@ -623,7 +623,6 @@ impl Wallet {
 	async fn handle_lightning_send_finished(
 		&self,
 		notif: protos::mailbox_server::LightningSendFinishedMessage,
-		checkpoint: u64,
 	) -> anyhow::Result<()> {
 		let payment_hash = PaymentHash::try_from(notif.payment_hash)
 			.context("invalid payment hash in lightning send finished notification")?;
@@ -679,7 +678,6 @@ impl Wallet {
 			},
 		}
 
-		self.store_mailbox_checkpoint(checkpoint).await?;
 		Ok(())
 	}
 
