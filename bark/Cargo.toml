@@ -73,6 +73,7 @@ tokio-util.workspace = true
 
 # INTERNAL
 rand.workspace = true
+url.workspace = true
 
 lazy_static.workspace = true
 async-trait.workspace = true

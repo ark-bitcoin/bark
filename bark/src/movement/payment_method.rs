@@ -41,8 +41,9 @@ pub enum PaymentMethod {
 	Offer(Offer),
 	/// An email-like format used to retrieve a [Bolt11Invoice].
 	LightningAddress(LightningAddress),
-	/// A bech32-encoded LNURL-pay link (`lnurl1…`) resolved to a [Bolt11Invoice]
-	/// via an LNURL-Pay request.
+	/// An LNURL-pay link resolved to a [Bolt11Invoice] via an LNURL-pay
+	/// request. A bech32 link (`lnurl1…`) and a LUD-17 `lnurlp://` URI both
+	/// parse to this variant, and it displays as bech32.
 	Lnurl(LnUrl),
 	/// An alternative payment method that isn't native to bark.
 	Custom(String),
