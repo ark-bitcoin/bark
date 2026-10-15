@@ -183,7 +183,7 @@ pub async fn emergency_exit_fee(configuration: &configuration::Configuration, vt
     }
 }
 
-/// Aborts an in-progress emergency exit while it is still safe to do so—before its final transaction has been broadcast. Exit transactions are ordered topologically and only the final one moves the VTXO on-chain, so an exit can still be canceled even after its shared ancestor transactions are in the mempool or a block. Canceling leaves the VTXO spendable, so a fresh exit can be started for it later. Before canceling, the endpoint verifies directly against the chain that the final transaction hasn't been broadcast; nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a no-op, so retries are safe. Note the daemon auto-progresses exits at the cadence defined by `SLOW_INTERVAL`, so cancel promptly once an exit reaches a state you no longer wish to pursue.
+/// Aborts an in-progress emergency exit while it is still safe to do so—before its final transaction has been broadcast. Exit transactions are ordered topologically and only the final one moves the VTXO on-chain, so an exit can still be canceled even after its shared ancestor transactions are in the mempool or a block. Canceling leaves the VTXO spendable, so a fresh exit can be started for it later. Before canceling, the endpoint verifies directly against the chain that the final transaction hasn't been broadcast; nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a no-op, so retries are safe. Note the daemon auto-progresses exits at the interval set by the `daemon_sync_interval_secs` config setting, so cancel promptly once an exit reaches a state you no longer wish to pursue.
 pub async fn exit_cancel(configuration: &configuration::Configuration, vtxo_id: &str) -> Result<models::ExitCancelResponse, Error<ExitCancelError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_path_vtxo_id = vtxo_id;
@@ -346,7 +346,7 @@ pub async fn exit_progress(configuration: &configuration::Configuration, exit_pr
     }
 }
 
-/// Registers all wallet VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
+/// Registers all wallet VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the interval set by the `daemon_sync_interval_secs` config setting, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
 pub async fn exit_start_all(configuration: &configuration::Configuration, ) -> Result<models::ExitStartResponse, Error<ExitStartAllError>> {
 
     let uri_str = format!("{}/api/v1/exits/start/all", configuration.base_path);
@@ -384,7 +384,7 @@ pub async fn exit_start_all(configuration: &configuration::Configuration, ) -> R
     }
 }
 
-/// Registers the specified VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
+/// Registers the specified VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the interval set by the `daemon_sync_interval_secs` config setting, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
 pub async fn exit_start_vtxos(configuration: &configuration::Configuration, exit_start_request: models::ExitStartRequest) -> Result<models::ExitStartResponse, Error<ExitStartVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_exit_start_request = exit_start_request;

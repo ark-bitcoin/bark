@@ -638,7 +638,7 @@ Name | Type | Description  | Required | Notes
 > models::SendResponse send(send_request)
 Send a payment
 
-Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, or Lightning address. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses and Lightning addresses but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses. To send to an on-chain bitcoin address, use `send-onchain` instead.
+Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses, Lightning addresses, and LNURL but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses and LNURL. To send to an on-chain bitcoin address, use `send-onchain` instead.
 
 ### Parameters
 

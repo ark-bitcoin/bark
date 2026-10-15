@@ -58,7 +58,7 @@ Name | Type | Description  | Required | Notes
 > models::ExitCancelResponse exit_cancel(vtxo_id)
 Cancel an exit
 
-Aborts an in-progress emergency exit while it is still safe to do so—before its final transaction has been broadcast. Exit transactions are ordered topologically and only the final one moves the VTXO on-chain, so an exit can still be canceled even after its shared ancestor transactions are in the mempool or a block. Canceling leaves the VTXO spendable, so a fresh exit can be started for it later. Before canceling, the endpoint verifies directly against the chain that the final transaction hasn't been broadcast; nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a no-op, so retries are safe. Note the daemon auto-progresses exits at the cadence defined by `SLOW_INTERVAL`, so cancel promptly once an exit reaches a state you no longer wish to pursue.
+Aborts an in-progress emergency exit while it is still safe to do so—before its final transaction has been broadcast. Exit transactions are ordered topologically and only the final one moves the VTXO on-chain, so an exit can still be canceled even after its shared ancestor transactions are in the mempool or a block. Canceling leaves the VTXO spendable, so a fresh exit can be started for it later. Before canceling, the endpoint verifies directly against the chain that the final transaction hasn't been broadcast; nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a no-op, so retries are safe. Note the daemon auto-progresses exits at the interval set by the `daemon_sync_interval_secs` config setting, so cancel promptly once an exit reaches a state you no longer wish to pursue.
 
 ### Parameters
 
@@ -178,7 +178,7 @@ Name | Type | Description  | Required | Notes
 > models::ExitStartResponse exit_start_all()
 Start exit for all VTXOs
 
-Registers all wallet VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
+Registers all wallet VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the interval set by the `daemon_sync_interval_secs` config setting, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
 
 ### Parameters
 
@@ -205,7 +205,7 @@ This endpoint does not need any parameter.
 > models::ExitStartResponse exit_start_vtxos(exit_start_request)
 Start exit for specific VTXOs
 
-Registers the specified VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
+Registers the specified VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the interval set by the `daemon_sync_interval_secs` config setting, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
 
 ### Parameters
 

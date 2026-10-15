@@ -308,7 +308,7 @@ pub async fn list_receive_statuses(configuration: &configuration::Configuration,
     }
 }
 
-/// Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, BOLT12 offer, or Lightning address. The `amount_sat` field is required for Lightning addresses but optional for invoices and offers. Comments are only supported for Lightning addresses.
+/// Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. The `amount_sat` field is required for Lightning addresses and LNURL but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses and LNURL.
 pub async fn pay(configuration: &configuration::Configuration, lightning_pay_request: models::LightningPayRequest) -> Result<models::LightningPayResponse, Error<PayError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_lightning_pay_request = lightning_pay_request;

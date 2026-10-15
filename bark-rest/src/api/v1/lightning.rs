@@ -275,13 +275,13 @@ pub async fn cancel_receive(
 		(status = 200, description = "Returns success message, optionally with \
 			preimage if payment was immediately settled", body = bark_json::web::LightningPayResponse),
 		(status = 400, description = "The provided destination is not a valid \
-			BOLT11 invoice, BOLT12 offer, or Lightning address", body = error::BadRequestError),
+			BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, \
-		BOLT12 offer, or Lightning address. The `amount_sat` field is required for Lightning \
-		addresses but optional for invoices and offers. Comments are only supported for \
-		Lightning addresses.",
+		BOLT12 offer, Lightning address, or LNURL. The `amount_sat` field is required for \
+		Lightning addresses and LNURL but optional for invoices and offers that already \
+		encode an amount. Comments are only supported for Lightning addresses and LNURL.",
 	tag = "lightning"
 )]
 #[debug_handler]

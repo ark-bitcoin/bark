@@ -196,7 +196,7 @@ This endpoint does not need any parameter.
 > models::LightningPayResponse pay(lightning_pay_request)
 Send a Lightning payment
 
-Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, BOLT12 offer, or Lightning address. The `amount_sat` field is required for Lightning addresses but optional for invoices and offers. Comments are only supported for Lightning addresses.
+Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. The `amount_sat` field is required for Lightning addresses and LNURL but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses and LNURL.
 
 ### Parameters
 
