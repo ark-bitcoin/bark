@@ -41,12 +41,14 @@ fn default_datadir() -> String {
 	}).join(".bark").display().to_string()
 }
 
+#[cfg(any(feature = "barkd-web-ui", test))]
 fn ui_default_chain_source() -> String {
 	let mut config = ConfigOpts::default();
 	config.fill_network_defaults(bark::BarkNetwork::Mainnet);
 	config.esplora.expect("no esplora in mainnet default")
 }
 
+#[cfg(any(feature = "barkd-web-ui", test))]
 fn ui_default_ark_server() -> String {
 	let mut config = ConfigOpts::default();
 	config.fill_network_defaults(bark::BarkNetwork::Mainnet);
