@@ -11,6 +11,7 @@ use futures::future::join_all;
 use log::{info, trace};
 
 use ark::{ProtocolEncoding, Vtxo, SECP};
+use ark::lightning::PaymentHash;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use bitcoin_ext::rpc::RpcApi;
 use ark::arkoor::ArkoorDestination;
@@ -21,11 +22,13 @@ use ark::vtxo::policy::VtxoPolicyKind;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
+use server_log::{LightningReceiveCanceled, LightningReceiveKeptCommitted};
 use server_rpc::protos;
 use server::database::Db;
+use server::database::htlc_vtxo::HtlcDirection;
 use server::vtxopool::VtxoTarget;
 
-use ark_testing::{Captaind, TestContext, btc, lightning_test, require_bark_version, sat};
+use ark_testing::{Bark, Captaind, TestContext, btc, lightning_test, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::context::LightningPaymentSetup;
 use ark_testing::daemon::captaind::{self, ArkClient};
@@ -113,6 +116,16 @@ async fn request_htlc_revocation(
 	client: &Wallet,
 	payment_hash: ark::lightning::PaymentHash,
 ) -> tonic::Status {
+	try_request_htlc_revocation(srv, client, payment_hash).await
+		.expect_err("server should refuse revocation for a settled payment")
+}
+
+/// Like [request_htlc_revocation], but returns whether the server cosigned.
+async fn try_request_htlc_revocation(
+	srv: &Captaind,
+	client: &Wallet,
+	payment_hash: ark::lightning::PaymentHash,
+) -> Result<(), tonic::Status> {
 	let htlc_vtxo_ids = htlc_send_vtxo_ids(client, payment_hash).await;
 
 	let mut htlc_vtxos = Vec::with_capacity(htlc_vtxo_ids.len());
@@ -135,9 +148,7 @@ async fn request_htlc_revocation(
 		protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
 
 	let mut srv_rpc = srv.get_public_rpc().await;
-	srv_rpc
-		.request_lightning_pay_htlc_revocation(cosign_request).await
-		.expect_err("server should refuse revocation for a settled payment")
+	srv_rpc.request_lightning_pay_htlc_revocation(cosign_request).await.map(|_| ())
 }
 
 
@@ -343,9 +354,10 @@ async fn reject_revocation_when_settled_but_status_regressed() {
 	);
 }
 
-/// The invoice-expiry sweep cancels an `HtlcsReady` intra-ark receive and
-/// fails the payer's attempt, which makes the HTLC-send vtxos revocable while
-/// the payee still holds the granted HTLC-recv vtxos.
+/// The invoice-expiry sweep used to cancel an `HtlcsReady` intra-ark receive
+/// and fail the payer's attempt, which made the HTLC-send vtxos revocable
+/// while the payee still held the granted HTLC-recv vtxos. The sweep must
+/// leave such a receive alone until the HTLC-recv vtxos expired.
 #[tokio::test]
 async fn intra_ark_invoice_expiry_after_grant_does_not_allow_revoke() {
 	let ctx = TestContext::new("server/intra_ark_invoice_expiry_after_grant_does_not_allow_revoke").await;
@@ -402,7 +414,8 @@ async fn intra_ark_invoice_expiry_after_grant_does_not_allow_revoke() {
 	let pay_amount = btc(1);
 	let invoice_info = bark_payee.bolt11_invoice(pay_amount).await;
 	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
-	let payment_hash = invoice.payment_hash().to_byte_array().to_vec();
+	let typed_payment_hash = PaymentHash::from(&invoice);
+	let payment_hash = typed_payment_hash.to_vec();
 
 	bark_payer.pay_lightning(invoice_info.invoice.clone(), None).await;
 
@@ -422,8 +435,13 @@ async fn intra_ark_invoice_expiry_after_grant_does_not_allow_revoke() {
 	}).await.unwrap().into_inner().status;
 	assert_eq!(status, protos::LightningReceiveStatus::HtlcsReady as i32);
 
-	// Let the invoice expire and give the sweep a few rounds.
-	tokio::time::sleep(invoice.duration_until_expiry() + Duration::from_secs(5)).await;
+	// Let the invoice expire and wait until the sweep has seen the expired
+	// invoice and kept the receive committed.
+	let kept = srv.wait_for_log_and::<LightningReceiveKeptCommitted, _>(move |log| {
+		log.payment_hash == typed_payment_hash
+	}).wait_millis(60_000).await;
+	assert!(kept.htlc_recv_expiry.is_some_and(|e| e >= kept.tip),
+		"the sweep kept a receive whose HTLC-recvs are not live: {kept:?}");
 
 	let _ = bark_payer.try_run(["maintain"]).await;
 	let payer_balance = bark_payer.spendable_balance().await;
@@ -455,6 +473,290 @@ async fn intra_ark_invoice_expiry_after_grant_does_not_allow_revoke() {
 	assert!(payer_balance + payee_balance <= board_amount,
 		"conservation violated: payer {payer_balance} + payee {payee_balance} exceeds \
 		{board_amount}");
+}
+
+/// A granted intra-ark receive whose payee withholds the preimage is
+/// canceled as soon as its HTLC-recv vtxos expire, even though its invoice is
+/// still valid, and canceling it fails the payer's attempt.
+#[tokio::test]
+async fn intra_ark_granted_receive_canceled_after_htlc_recv_expiry() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/intra_ark_granted_receive_canceled_after_htlc_recv_expiry").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// The watchman tells the server the HTLC-recv vtxos expired unexited.
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).watchmand().cfg(|cfg| {
+		cfg.invoice_check_interval = Duration::from_secs(1);
+	}).create().await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	/// Refuses `claim_lightning_receive`, so the payee holds its HTLC-recv
+	/// vtxos but the preimage never reaches the server.
+	#[derive(Clone)]
+	struct WithholdPreimage;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for WithholdPreimage {
+		async fn claim_lightning_receive(
+			&self,
+			_upstream: &mut ArkClient,
+			_req: protos::ClaimLightningReceiveRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			Err(tonic::Status::unavailable("preimage withheld"))
+		}
+	}
+
+	let proxy = srv.start_proxy_no_mailbox(WithholdPreimage).await;
+
+	let bark_payer = ctx.bark("bark-payer", &proxy.address).funded(btc(3)).create().await;
+	let bark_payee = ctx.bark("bark-payee", &proxy.address).create().await;
+	bark_payer.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark_payee.bolt11_invoice(btc(1)).await;
+	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	let payment_hash = PaymentHash::from(&invoice);
+
+	bark_payer.pay_lightning(invoice_info.invoice.clone(), None).await;
+
+	// The payee takes its HTLC-recv vtxos (-> HtlcsReady) and withholds the
+	// preimage.
+	let _ = bark_payee.try_lightning_receive_no_wait(&invoice_info.invoice).await;
+
+	let htlc_recv_expiry = srv.htlc_vtxos(payment_hash).await.iter()
+		.filter(|h| h.direction() == HtlcDirection::Outgoing)
+		.map(|h| h.htlc_expiry())
+		.max()
+		.expect("the payee was granted HTLC-recv vtxos");
+	assert!(!invoice.is_expired());
+
+	let mut canceled = srv.subscribe_log::<LightningReceiveCanceled>();
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+	let tip = ctx.generate_blocks(htlc_recv_expiry.to_u32() + 1 - tip.to_u32()).await;
+	srv.wait_for_sync_height(tip).await;
+	srv.watchmand().wait_for_sync_height(tip).await;
+
+	let log = async {
+		loop {
+			let log = canceled.recv().await.expect("log subscription closed");
+			if log.payment_hash == payment_hash {
+				return log;
+			}
+		}
+	}.wait_millis(30_000).await;
+	assert_eq!(log.reason, "htlc-recv vtxos expired");
+	assert!(!invoice.is_expired());
+
+	let status = srv.get_public_rpc().await.check_lightning_payment(protos::CheckLightningPaymentRequest {
+		hash: payment_hash.to_vec(),
+		wait: true,
+	}).wait_millis(30_000).await.expect("check_lightning_payment failed").into_inner();
+	assert!(
+		matches!(status.payment_status, Some(protos::lightning_payment_status::PaymentStatus::Failed(_))),
+		"canceling should fail the payer's attempt, got {:?}", status.payment_status,
+	);
+}
+
+/// Parks the first `claim_lightning_receive` until the test releases it, so
+/// the preimage never reaches the server while the payee holds its grant.
+#[derive(Clone)]
+struct HoldClaim {
+	held: Arc<std::sync::atomic::AtomicBool>,
+	arrived: Arc<tokio::sync::Notify>,
+	release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for HoldClaim {
+	async fn claim_lightning_receive(
+		&self,
+		upstream: &mut ArkClient,
+		req: protos::ClaimLightningReceiveRequest,
+	) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		if !self.held.swap(true, std::sync::atomic::Ordering::SeqCst) {
+			self.arrived.notify_one();
+			self.release.notified().await;
+		}
+		Ok(upstream.claim_lightning_receive(req).await?.into_inner())
+	}
+}
+
+/// An intra-ark payment whose payee holds granted HTLC-recv vtxos and parks
+/// its claim, with the payer's attempt forced to `failed`: the state the
+/// invoice-expiry sweep used to leave behind, so only the receive side
+/// decides whether a revoke goes through.
+struct ParkedReceive {
+	srv: Arc<Captaind>,
+	payer: Wallet,
+	payee: Arc<Bark>,
+	payment_hash: PaymentHash,
+	htlc_recv_expiry: BlockHeight,
+	release: Arc<tokio::sync::Notify>,
+	payee_task: tokio::task::JoinHandle<anyhow::Result<()>>,
+}
+
+impl ParkedReceive {
+	async fn setup(ctx: &TestContext) -> ParkedReceive {
+		let lightning = ctx.new_lightning_setup("lightningd").await;
+
+		// The watchman tells the server the HTLC-recv vtxos expired unexited.
+		let srv = ctx.captaind("server").lightningd(&lightning.internal).watchmand().cfg(|cfg| {
+			cfg.invoice_check_interval = Duration::from_secs(1);
+		}).create().await;
+		ctx.fund_captaind(&srv, btc(10)).await;
+		srv.wait_for_vtxopool(ctx).await;
+
+		let arrived = Arc::new(tokio::sync::Notify::new());
+		let release = Arc::new(tokio::sync::Notify::new());
+		let proxy = srv.start_proxy_no_mailbox(HoldClaim {
+			held: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+			arrived: arrived.clone(),
+			release: release.clone(),
+		}).await;
+
+		let bark_payer = ctx.bark("bark-payer", &proxy.address).funded(btc(3)).create().await;
+		let payee = Arc::new(ctx.bark("bark-payee", &proxy.address).create().await);
+		bark_payer.board_and_confirm_and_register(ctx, btc(2)).await;
+
+		let invoice_info = payee.bolt11_invoice(btc(1)).await;
+		let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+		let payment_hash = PaymentHash::from(&invoice);
+
+		bark_payer.pay_lightning(invoice_info.invoice.clone(), None).await;
+
+		// The payee prepares (-> HtlcsReady, HTLC-recv vtxos granted) and the
+		// proxy parks its claim.
+		let cloned_payee = payee.clone();
+		let cloned_invoice = invoice_info.invoice.clone();
+		let payee_task = tokio::spawn(async move {
+			cloned_payee.try_lightning_receive(&cloned_invoice).wait_millis(120_000).await
+		});
+		arrived.notified().wait_millis(60_000).await;
+
+		let htlc_recv_expiry = srv.htlc_vtxos(payment_hash).await.iter()
+			.filter(|h| h.direction() == HtlcDirection::Outgoing)
+			.map(|h| h.htlc_expiry())
+			.max()
+			.expect("the payee was granted HTLC-recv vtxos");
+
+		let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+		db.write(async |t| {
+			t.query(
+				"UPDATE lightning_payment_attempt SET status = 'failed', updated_at = NOW() WHERE payment_hash = $1",
+				&[&payment_hash.to_string()],
+			).await?;
+			Ok(())
+		}).await.unwrap();
+
+		let payer = bark_payer.client().await;
+		ParkedReceive { srv, payer, payee, payment_hash, htlc_recv_expiry, release, payee_task }
+	}
+
+	async fn revoke(&self) -> Result<(), tonic::Status> {
+		try_request_htlc_revocation(&self.srv, &self.payer, self.payment_hash).await
+	}
+
+	/// Try a revoke at every height until one is cosigned, which must happen
+	/// the block after the HTLC-recv vtxos expired.
+	async fn revoke_every_block_until_cosigned(&self, ctx: &TestContext) {
+		let mut tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+		loop {
+			self.srv.wait_for_sync_height(tip).await;
+			self.srv.watchmand().wait_for_sync_height(tip).await;
+			match self.revoke().await {
+				Ok(()) => {
+					assert_eq!(tip, self.htlc_recv_expiry + BlockDelta::new(1),
+						"the first revoke should be cosigned right after the HTLC-recv vtxos expired");
+					return;
+				},
+				Err(status) => {
+					assert!(tip <= self.htlc_recv_expiry,
+						"revoke refused after the HTLC-recv vtxos expired: {status:?}");
+					assert!(status.message().contains("already committed"),
+						"unexpected refusal: {status:?}");
+				},
+			}
+			ctx.generate_blocks_unsynced(1).await;
+			tip = tip + BlockDelta::new(1);
+		}
+	}
+
+	/// Release the parked claim, which must be refused, leaving the payee
+	/// unpaid.
+	async fn assert_claim_refused(self) {
+		self.release.notify_one();
+		self.payee_task.wait_millis(120_000).await
+			.expect("payee claim task panicked")
+			.expect_err("claim should be refused after the revoke");
+		assert_eq!(self.payee.spendable_balance().await, Amount::ZERO);
+	}
+}
+
+/// The payer of an intra-ark payment tries to revoke at every block height
+/// while the payee holds granted HTLC-recv vtxos and withholds the preimage.
+/// Every revoke must be refused while the payee can still claim them, and the
+/// first one the server cosigns must come right after they expired. The
+/// parked claim is then refused.
+#[tokio::test]
+async fn intra_ark_revoke_refused_until_htlc_recvs_expire() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/intra_ark_revoke_refused_until_htlc_recvs_expire").await;
+	let parked = ParkedReceive::setup(&ctx).await;
+	parked.revoke_every_block_until_cosigned(&ctx).await;
+	parked.assert_claim_refused().await;
+}
+
+/// Like [intra_ark_revoke_refused_until_htlc_recvs_expire], but with the
+/// receive already canceled. Canceling only refuses the cooperative claim:
+/// the payee can still claim live HTLC-recv vtxos on-chain, so the canceled
+/// receive must stay committed until they expired.
+#[tokio::test]
+async fn intra_ark_revoke_refused_on_canceled_receive_until_htlc_recvs_expire() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/intra_ark_revoke_refused_on_canceled_receive_until_htlc_recvs_expire").await;
+	let parked = ParkedReceive::setup(&ctx).await;
+
+	let db = Db::connect(&parked.srv.config().postgres.clone()).await.unwrap();
+	db.write(async |t| {
+		t.query(
+			"UPDATE lightning_htlc_subscription SET status = 'canceled', updated_at = NOW() WHERE payment_hash = $1",
+			&[&parked.payment_hash.to_string()],
+		).await?;
+		Ok(())
+	}).await.unwrap();
+
+	parked.revoke_every_block_until_cosigned(&ctx).await;
+	parked.assert_claim_refused().await;
+}
+
+/// Exits, resolutions and on-chain preimages are only recorded by the
+/// watchman. While it is behind, the server cannot tell whether the payee
+/// exited an HTLC-recv vtxo, so the revoke must be refused past their expiry
+/// until the watchman caught up.
+#[tokio::test]
+async fn intra_ark_revoke_refused_while_watchman_is_behind() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/intra_ark_revoke_refused_while_watchman_is_behind").await;
+	let parked = ParkedReceive::setup(&ctx).await;
+
+	parked.srv.watchmand().stop().await.unwrap();
+
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+	let tip = ctx.generate_blocks(parked.htlc_recv_expiry.to_u32() + 1 - tip.to_u32()).await;
+	parked.srv.wait_for_sync_height(tip).await;
+
+	let status = parked.revoke().await.expect_err("revoke cosigned while the watchman is behind");
+	assert!(status.message().contains("already committed"), "unexpected refusal: {status:?}");
+
+	parked.srv.watchmand().start().await.unwrap();
+	parked.srv.watchmand().wait_for_sync_height(tip).await;
+	parked.revoke().await.expect("revoke should be cosigned once the watchman caught up");
+	parked.assert_claim_refused().await;
 }
 
 /// Requests the server to sign a HTLC while using a HTCL VTXO as an input
@@ -2647,10 +2949,11 @@ async fn self_payment_claim_rejected_after_sender_onchain_refund() {
 		"server/self_payment_claim_rejected_after_sender_onchain_refund",
 	).await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
-	// A long invoice expiry keeps the hold cleanup loop from canceling the
-	// subscription before the refund confirms.
+	// Keep the hold cleanup loop from canceling the subscription once the
+	// HTLC-recv vtxos expire, so the claim reaches the expiry margin check.
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).watchmand()
 		.funded(btc(10)).cfg(|cfg| {
+			cfg.invoice_check_interval = Duration::from_secs(3600);
 			cfg.invoice_expiry = Duration::from_secs(3600);
 			cfg.receive_htlc_forward_timeout = Duration::from_secs(3600);
 		}).create().await;

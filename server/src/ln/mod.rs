@@ -33,7 +33,8 @@ use server_rpc::TryFromBytes;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
-use crate::database::htlc_vtxo::{self, HtlcResolution};
+use crate::database::block::BlockTable;
+use crate::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution, HtlcVtxo};
 use crate::database::tree::VtxoTreeUpdate;
 use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
@@ -74,21 +75,36 @@ fn validate_htlc_recv_expiry(
 	Ok(())
 }
 
-/// Whether the payee may still claim the HTLC-recv vtxos granted for `sub`.
+/// Whether the HTLC-recv vtxos granted for a receive no longer commit the
+/// server to it.
 ///
-/// [validate_htlc_recv_expiry] caps every granted HTLC-recv expiry at
-/// `htlc_expiry_delta` blocks below the lowest incoming HTLC expiry, so past
-/// that height all of them expired. Without a known incoming expiry we
-/// assume they are live.
-pub(crate) fn htlc_recvs_may_be_live(
-	sub: &LightningHtlcSubscription,
+/// `htlc_vtxos` are all HTLC vtxos for the payment hash; the HTLC-recv ones
+/// are the outgoing ones. Every one must have expired, and one the payee
+/// exited must have resolved our way. Past expiry our timeout clause opens
+/// `htlc_expiry_delta` blocks before their preimage clause, so the watchman
+/// sweeps a later exit first.
+///
+/// Exits and resolutions are only known up to `watchman_tip`, so expiry is
+/// judged at the lower of that and `tip`. Without a watchman, or without any
+/// HTLC-recv vtxo, nothing counts as expired.
+pub(crate) fn htlc_recvs_expired(
+	htlc_vtxos: &[HtlcVtxo],
 	tip: BlockHeight,
-	htlc_expiry_delta: BlockDelta,
+	watchman_tip: Option<BlockHeight>,
 ) -> bool {
-	match sub.lowest_incoming_htlc_expiry {
-		Some(expiry) => tip <= expiry.saturating_sub(htlc_expiry_delta),
-		None => true,
-	}
+	let Some(watchman_tip) = watchman_tip else {
+		return false;
+	};
+	let height = std::cmp::min(tip, watchman_tip);
+
+	let htlc_recvs = htlc_vtxos.iter()
+		.filter(|h| h.direction() == HtlcDirection::Outgoing)
+		.collect::<Vec<_>>();
+	!htlc_recvs.is_empty() && htlc_recvs.iter().all(|h| {
+		height > h.htlc_expiry() && (
+			!h.vtxo.is_exited() || h.htlc.chain_resolution == Some(HtlcResolution::Revoked)
+		)
+	})
 }
 
 /// Validate a sender's side of an intra-Ark payment against the receive
@@ -519,21 +535,24 @@ impl Server {
 			// window where the payee has been granted HTLC-recv vtxos but is
 			// withholding the claim (and thus the preimage). Atomically cancel
 			// the receive here so a later claim is refused, and bail if the
-			// receive is already committed (HtlcsReady/Settled) - otherwise the
-			// server would refund the sender AND pay the payee for one payment.
-			//
-			// A receive canceled after its HTLC-recv vtxos were granted is just
-			// as committed: the payee can still claim them on-chain.
+			// receive is still committed - otherwise the server would refund
+			// the sender AND pay the payee for one payment.
+			// A canceled receive only refuses the cooperative claim, so granted
+			// HTLC-recv vtxos commit it until [htlc_recvs_expired].
+			let htlc_vtxos = htlc_vtxo::get_htlc_vtxo_states_by_payment_hash(&t, payment_hash).await?;
+			let watchman_tip = t.get_highest_block(BlockTable::Watchmand).await?.map(|b| b.height);
+			let htlc_recvs_expired = htlc_recvs_expired(&htlc_vtxos, tip, watchman_tip);
 			if let Some((status, htlc_recvs_granted)) =
-				t.cancel_revocable_htlc_subscription(payment_hash).await?
+				t.cancel_revocable_htlc_subscription(payment_hash, htlc_recvs_expired).await?
 			{
 				// Stays committed even once the grants expired: the sender then
 				// refunds on-chain, where our preimage clause stays an alternative
 				// only until the sender spends the timeout branch.
 				let committed = match status {
-					LightningHtlcSubscriptionStatus::HtlcsReady
-						| LightningHtlcSubscriptionStatus::Settled => true,
-					LightningHtlcSubscriptionStatus::Canceled => htlc_recvs_granted,
+					LightningHtlcSubscriptionStatus::Settled => true,
+					LightningHtlcSubscriptionStatus::HtlcsReady => !htlc_recvs_expired,
+					LightningHtlcSubscriptionStatus::Canceled =>
+						htlc_recvs_granted && !htlc_recvs_expired,
 					LightningHtlcSubscriptionStatus::Created
 						| LightningHtlcSubscriptionStatus::Accepted => false,
 				};
