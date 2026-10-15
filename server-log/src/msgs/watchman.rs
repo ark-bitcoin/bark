@@ -29,6 +29,16 @@ pub struct ClaimDeadlineExceeded {
 }
 impl_slog!(ClaimDeadlineExceeded, WARN, "claim deadline exceeded");
 
+/// A VTXO we must claim is still unspent close to the deadline after which
+/// the counterparty can spend it too.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimDeadlineApproaching {
+	pub vtxo_id: VtxoId,
+	pub deadline: BlockHeight,
+	pub current_height: BlockHeight,
+}
+impl_slog!(ClaimDeadlineApproaching, ERROR, "claim still unconfirmed close to its deadline");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressDeadlineExceeded {
 	pub vtxo_id: VtxoId,

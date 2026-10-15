@@ -13,6 +13,11 @@ use crate::bitcoind as bcd;
 use crate::database::Db;
 use super::{Action, Config};
 
+/// How many blocks before a claim's deadline we start alerting that it is
+/// still unconfirmed. Past the deadline the counterparty can spend the VTXO
+/// too, and we are racing them.
+const CLAIM_DEADLINE_ALERT_DELTA: BlockDelta = BlockDelta::new(12);
+
 #[derive(Debug, Clone, Copy)]
 struct ProgressSpec {
 	next_txid: Txid,
@@ -310,6 +315,15 @@ impl ActionContextFetcher<'_> {
 			},
 			Action::Claim { deadline: d } if self.chain_tip_height > *d => {
 				slog!(ClaimDeadlineExceeded,
+					vtxo_id: vtxo.id(),
+					deadline: *d,
+					current_height: self.chain_tip_height,
+				);
+			},
+			Action::Claim { deadline: d }
+				if self.chain_tip_height >= d.saturating_sub(CLAIM_DEADLINE_ALERT_DELTA) =>
+			{
+				slog!(ClaimDeadlineApproaching,
 					vtxo_id: vtxo.id(),
 					deadline: *d,
 					current_height: self.chain_tip_height,
