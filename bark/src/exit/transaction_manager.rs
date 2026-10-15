@@ -380,6 +380,7 @@ impl ExitTransactionManager {
 
 		// One scan covers every input: the bitcoind backend walks blocks from the start height
 		// looking for the whole set at once, so asking per input would walk them once each.
+		#[allow(deprecated)]
 		let spends = self.chain_source
 			.txs_spending_inputs(to_scan.clone(), scan_start).await
 			.map_err(|e| ExitError::TransactionRetrievalFailure {
