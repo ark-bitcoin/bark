@@ -31,6 +31,9 @@ pub const NB_NORMAL_CHILDREN: u32 = 1 << 31;
 /// VTXOs exceed it is returned whole.
 pub const MAX_RECOVERY_RESPONSE_VTXO_BYTES: usize = 2 * 1024 * 1024;
 
+/// The number of VTXOs of a single key that one database query reads at most.
+pub const RECOVERY_VTXO_PAGE_SIZE: usize = 1000;
+
 /// The number of [Server::recover_vtxos_by_xpub] calls that wait at most for
 /// a running scan to finish. Calls over the limit are rejected.
 pub const XPUB_RECOVERY_QUEUE_SIZE: usize = 16;
@@ -98,29 +101,17 @@ impl Server {
 				break;
 			}
 
-			let rows = self.db.read(async |tx| {
-				tx.get_vtxos_by_policy(&used).await
-			}).await?;
-
-			let mut chunk = rows.into_iter().map(|state| {
-				let vtxo = state.vtxo.try_into_user_vtxo().ok()
-					.context("database returned a server vtxo for a user policy")?;
-				let derivation_index = *indices.get(&vtxo.user_pubkey())
-					.context("database returned a vtxo for a policy we didn't ask for")?;
-				Ok(RecoveredVtxo { vtxo, derivation_index, spend_state: state.spend_state })
+			// Add the VTXOs one key at a time in derivation order, so a call that
+			// stops at the size limit resumes at the first key it left out.
+			let mut used = used.into_iter().map(|policy| {
+				let index = *indices.get(&policy.user_pubkey())
+					.context("database returned a policy we didn't ask for")?;
+				Ok((index, policy))
 			}).collect::<anyhow::Result<Vec<_>>>()?;
-			chunk.sort_by_key(|v| v.derivation_index);
+			used.sort_by_key(|(index, _)| *index);
 
-			// Add the VTXOs one key at a time, so a call that stops at the size
-			// limit resumes at the first key it left out.
-			let mut chunk = chunk.into_iter().peekable();
-			while let Some(first) = chunk.next() {
-				let index = first.derivation_index;
-				let mut key_vtxos = vec![first];
-				while let Some(next) = chunk.next_if(|v| v.derivation_index == index) {
-					key_vtxos.push(next);
-				}
-
+			for (index, policy) in used {
+				let key_vtxos = self.read_key_vtxos(&policy, index).await?;
 				let key_bytes = key_vtxos.iter().map(|v| v.vtxo.serialize().len()).sum::<usize>();
 				if !found.is_empty() && nb_bytes + key_bytes > MAX_RECOVERY_RESPONSE_VTXO_BYTES {
 					size_limited = true;
@@ -142,6 +133,34 @@ impl Server {
 			nb_keys_scanned: start - start_index,
 			vtxos: found,
 		})
+	}
+
+	/// All VTXOs owned by `policy`, the key at `index` of the xpub, read in
+	/// pages of [RECOVERY_VTXO_PAGE_SIZE].
+	async fn read_key_vtxos(
+		&self,
+		policy: &VtxoPolicy,
+		index: u32,
+	) -> anyhow::Result<Vec<RecoveredVtxo>> {
+		let mut vtxos = Vec::new();
+		let mut after = None;
+		loop {
+			let page = self.db.read(async |tx| {
+				tx.get_vtxos_by_policy_page(policy, after, RECOVERY_VTXO_PAGE_SIZE).await
+			}).await?;
+			let is_last_page = page.len() < RECOVERY_VTXO_PAGE_SIZE;
+
+			for state in page {
+				after = Some(state.vtxo_id);
+				let vtxo = state.vtxo.try_into_user_vtxo().ok()
+					.context("database returned a server vtxo for a user policy")?;
+				vtxos.push(RecoveredVtxo { vtxo, derivation_index: index, spend_state: state.spend_state });
+			}
+
+			if is_last_page {
+				return Ok(vtxos);
+			}
+		}
 	}
 }
 #[cfg(test)]

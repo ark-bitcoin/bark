@@ -414,12 +414,15 @@ impl<'t> Tx<'t> {
 		query::get_existing_vtxos_by_id(&self, ids).await
 	}
 
-	/// The VTXOs owned by any of the given policies, whatever their spend state.
-	pub async fn get_vtxos_by_policy(
+	/// A page of at most `limit` VTXOs owned by `policy` ordered by id,
+	/// starting after the VTXO `after` when given, whatever their spend state.
+	pub async fn get_vtxos_by_policy_page(
 		&self,
-		policies: &[VtxoPolicy],
+		policy: &VtxoPolicy,
+		after: Option<VtxoId>,
+		limit: usize,
 	) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>> {
-		query::get_vtxos_by_policy(&self, policies).await
+		query::get_vtxos_by_policy_page(&self, policy, after, limit).await
 	}
 
 	/// The given policies that own at least one VTXO, whatever its spend state.

@@ -173,21 +173,29 @@ pub async fn get_vtxos_by_id(
 	Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
 }
 
-/// Query the VTXOs owned by any of the given policies, whatever their spend state.
-pub async fn get_vtxos_by_policy(
+/// A page of the VTXOs owned by `policy`, whatever their spend state.
+///
+/// The page holds at most `limit` VTXOs ordered by id, starting after the
+/// VTXO `after` when given.
+pub async fn get_vtxos_by_policy_page(
 	tx: &PgTransaction<'_>,
-	policies: &[VtxoPolicy],
+	policy: &VtxoPolicy,
+	after: Option<VtxoId>,
+	limit: usize,
 ) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>> {
 	let statement = tx.prepare_typed("
 		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
 			banned_until_height, confirmed_height, spend_state::TEXT AS spend_state, created_at, updated_at
 		FROM vtxo
-		WHERE policy = ANY($1);
-	", &[Type::BYTEA_ARRAY]).await?;
+		WHERE policy = $1 AND ($2::TEXT IS NULL OR vtxo_id > $2)
+		ORDER BY vtxo_id
+		LIMIT $3;
+	", &[Type::BYTEA, Type::TEXT, Type::INT8]).await?;
 
-	let params = policies.iter().map(ProtocolEncodedSql).collect::<Vec<_>>();
-	let rows = tx.query(&statement, &[&params]).await
-		.context("Query get_vtxos_by_policy failed")?;
+	let after = after.map(|id| id.to_string());
+	let limit = i64::try_from(limit).context("page limit too large")?;
+	let rows = tx.query(&statement, &[&ProtocolEncodedSql(policy), &after, &limit]).await
+		.context("Query get_vtxos_by_policy_page failed")?;
 
 	rows.into_iter()
 		.map(VtxoState::try_from)
