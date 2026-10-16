@@ -15,11 +15,10 @@ use ark::lightning::{
 
 use crate::Wallet;
 use crate::WalletVtxo;
-use crate::actions::{DriveMode, WalletAction};
-use crate::actions::lightning::pay::ln_pay_action_id;
+use crate::actions::{AdvanceResultExt, DriveMode, WalletAction};
 use crate::actions::lightning::pay::{
 	Htlcs, LightningSend, LightningSendState, settle_lightning_send_payment,
-	start_lightning_send,
+	start_lightning_send, ln_pay_action_id,
 };
 use crate::lightning::{lnaddr_invoice, lnurlp_invoice};
 use crate::movement::PaymentMethod;
@@ -175,7 +174,7 @@ impl Wallet {
 		if preimage.compute_payment_hash() != payment_hash {
 			bail!("preimage mismatch for payment hash {}", payment_hash);
 		}
-		settle_lightning_send_payment(self, &send, &htlcs, preimage).await?;
+		settle_lightning_send_payment(self, &send, &htlcs, preimage).await.into_anyhow()?;
 		// Remove the in-progress row now that the paid_invoice record
 		// is the source of truth.
 		self.inner.db.remove_wallet_action_checkpoint(&ln_pay_action_id(payment_hash)).await?;

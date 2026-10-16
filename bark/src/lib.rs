@@ -2569,17 +2569,18 @@ impl Wallet {
 	/// Registers the signed transaction chains for the given VTXOs with the
 	/// server. This must be called before spending VTXOs so the server can
 	/// publish forfeits if needed.
-	pub async fn register_vtxo_transactions_with_server(
+	pub async fn register_vtxo_transactions_with_server<V: AsRef<Vtxo<Full>>>(
 		&self,
-		vtxos: &[impl AsRef<Vtxo<Full>>],
+		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<()> {
+		let vtxos = vtxos.into_iter().map(|v| v.as_ref().serialize()).collect::<Vec<_>>();
 		if vtxos.is_empty() {
 			return Ok(());
 		}
 
 		let (mut srv, _) = self.require_server().await?;
 		srv.client.register_vtxo_transactions(protos::RegisterVtxoTransactionsRequest {
-			vtxos: vtxos.iter().map(|v| v.as_ref().serialize()).collect(),
+			vtxos: vtxos,
 		}).await.context("failed to register vtxo transactions")?;
 
 		Ok(())

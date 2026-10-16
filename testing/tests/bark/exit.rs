@@ -840,7 +840,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 		.expect_err("The payment fails");
 
 	// The send is now parked in `RevocationFailed`. Advance past the
-	// refresh window so the on_rejection exit branch becomes reachable.
+	// refresh window so the abort-recovery exit branch becomes reachable.
 	let bark1_client = bark_1.client().await;
 	let htlc_expiry_height = bark1_client.all_vtxos().await.unwrap().into_iter().find_map(
 		|v| v.policy().as_server_htlc_send().map(|h| h.htlc_expiry)
@@ -1031,7 +1031,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 		"send should be reported as stuck",
 	);
 
-	// Opt in and sync again: the on_retry branch picks up the flag and
+	// Opt in and sync again: the retry-recovery branch picks up the flag and
 	// the action exits its HTLCs.
 	bark_1.client().await.allow_lightning_send_to_exit(invoice.payment_hash()).await.unwrap();
 	bark_1.sync().await;

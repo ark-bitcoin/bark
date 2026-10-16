@@ -12,6 +12,7 @@ pub mod board;
 pub mod lightning;
 pub mod offboard;
 
+use std::fmt;
 use std::time::Duration;
 
 use log::{debug, trace, warn};
@@ -19,6 +20,7 @@ use server_rpc::StatusExt;
 
 use ark::VtxoId;
 
+use crate::movement::error::MovementError;
 use crate::{Wallet, WalletVtxo};
 use crate::actions::arkoor_send::ArkoorSend;
 use crate::actions::board::Board;
@@ -183,7 +185,16 @@ pub enum Advance<A> {
 	Park {
 		state: A,
 		wake_after: Option<Duration>,
-		error: Option<AdvanceError>,
+		error: Option<anyhow::Error>,
+	},
+	/// The step failed transiently; re-run it later. Executor persists state,
+	/// counts the attempt (in memory, per drive) and either backs off
+	/// quadratically in the number of consecutive retries and re-drives
+	/// ([DriveMode::UntilDone]) or returns `error` to the caller
+	/// ([DriveMode::UntilParkOrDone]).
+	Retry {
+		state: A,
+		error: anyhow::Error,
 	},
 	/// Terminal: executor removes the checkpoint row. Any permanent fact
 	/// the action wants to retain (e.g. an "invoice paid" record) must
@@ -196,39 +207,185 @@ pub enum Advance<A> {
 	Failed(anyhow::Error),
 }
 
-#[derive(Debug, thiserror::Error)]
+/// How a step of an action failed. An action's [WalletAction::advance] returns
+/// it and the executor hands it to [WalletAction::on_retry] or
+/// [WalletAction::on_abort] together with the state the step started from.
+///
+/// Every error crossing into a step function is classified explicitly with
+/// [IntoAdvanceError] or [AdvanceResultExt]; there is no implicit conversion,
+/// so a `?` on an unclassified error is a compile error rather than an
+/// accidental retry.
+#[derive(Debug)]
 pub enum AdvanceError {
-	#[error("An error occurred while communicating with the server: {0}")]
-	Server(tonic::Status),
-	#[error("An error occurred while validating a VTXO: {0}")]
-	Vtxo(VtxoValidationError),
-	#[error("An error occurred while processing the action: {0}")]
-	Other(#[from] anyhow::Error),
+	/// Redoing the exact same step later may succeed
+	Retry(anyhow::Error),
+	/// Redoing the same step can never succeed
+	Abort(anyhow::Error),
 }
 
-impl AdvanceError {
-	pub fn is_server_rejection(&self) -> bool {
+/// The plain error behind a failed call, classified or not.
+///
+/// Lets [or_retry] take both an `anyhow::Result` and a
+/// `Result<_, AdvanceError>`: a failure while handling a failed step is
+/// retried whatever its own classification was.
+trait IntoAnyhow {
+	fn into_anyhow(self) -> anyhow::Error;
+}
+
+impl IntoAnyhow for anyhow::Error {
+	fn into_anyhow(self) -> anyhow::Error {
+		self
+	}
+}
+
+impl IntoAnyhow for AdvanceError {
+	fn into_anyhow(self) -> anyhow::Error {
 		match self {
-			AdvanceError::Server(err) => err.is_rejection(),
-			AdvanceError::Vtxo(_) => false,
-			AdvanceError::Other(err) => err.downcast_ref::<tonic::Status>()
-				.map(|s| s.is_rejection())
-				.unwrap_or(false),
+			Self::Retry(e) => e,
+			Self::Abort(e) => e,
 		}
 	}
 }
 
-/// Park action with backoff
+impl fmt::Display for AdvanceError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			AdvanceError::Retry(e) => write!(f, "action advance error (retry): {:#}", e),
+			AdvanceError::Abort(e) => write!(f, "action advance error (abort): {:#}", e),
+		}
+	}
+}
+
+/// Extention trait on [Result<T, AdvanceError>]
+pub(crate) trait AdvanceResultExt<T> {
+	/// Convert into [anyhow::Result<T>]
+	fn into_anyhow(self) -> anyhow::Result<T>;
+}
+
+impl<T> AdvanceResultExt<T> for Result<T, AdvanceError> {
+	fn into_anyhow(self) -> anyhow::Result<T> {
+	    self.map_err(|e| e.into_anyhow())
+	}
+}
+
+/// Similar to `bail!` but returns an [AdvanceError::Abort] error
+macro_rules! abort {
+	($msg:literal $(,)?) => {
+		return Err(AdvanceError::Abort(::anyhow::anyhow!($msg)))
+	};
+	($err:expr $(,)?) => {
+		return Err(AdvanceError::Abort(::anyhow::anyhow!($err)))
+	};
+	($fmt:expr, $($arg:tt)*) => {
+		return Err(AdvanceError::Abort(::anyhow::anyhow!($fmt, $($arg)*)))
+	};
+}
+use abort;
+
+/// Similar to `bail!` but returns an [AdvanceError::Retry] error
+macro_rules! retry {
+	($msg:literal $(,)?) => {
+		return Err(AdvanceError::Retry(::anyhow::anyhow!($msg)))
+	};
+	($err:expr $(,)?) => {
+		return Err(AdvanceError::Retry(::anyhow::anyhow!($err)))
+	};
+	($fmt:expr, $($arg:tt)*) => {
+		return Err(AdvanceError::Retry(::anyhow::anyhow!($fmt, $($arg)*)))
+	};
+}
+use retry;
+
+/// Unwrap a fallible call made while handling a failed step.
 ///
-/// Pass the error when the caller should hear why it parked.
-pub fn park_with_backoff<A: WalletAction>(
-	state: A,
-	attempts: u32,
-	error: Option<AdvanceError>,
-) -> Advance<A> {
-	let delay = attempts.pow(2) * BASE_RETRY_BACKOFF;
-	debug!("action {} retrying; sleeping {:?} before re-drive", state.id(), delay);
-	Advance::Park { state, wake_after: Some(delay), error }
+/// `?` can't hand the action back on failure, so this returns
+/// [Advance::Retry] with `$state` as it was: the step runs again later and
+/// gets to fail (and be handled) again.
+macro_rules! or_retry {
+	($state:expr, $result:expr $(,)?) => {
+		match $result {
+			Ok(v) => v,
+			Err(e) => return crate::actions::Advance::Retry {
+				state: $state,
+				error: crate::actions::IntoAnyhow::into_anyhow(e),
+			},
+		}
+	};
+}
+use or_retry;
+
+/// Classify an error for a step function.
+///
+/// `retry` means "repeat this exact step later". An error type that can prove
+/// repeating is futile routes `retry` to [AdvanceError::Abort] itself: a
+/// server rejection never becomes a success by resending the request.
+///
+/// Deliberately not a blanket impl: every type that reaches a `?` inside a
+/// step gets an explicit impl here, everything else goes through
+/// `anyhow::Context` first.
+trait IntoAdvanceError {
+	fn retry(self) -> AdvanceError;
+	fn abort(self) -> AdvanceError;
+}
+
+/// Implement [IntoAdvanceError] by converting to an [anyhow::Error]
+macro_rules! impl_into_advance_err {
+	($error:ty) => {
+		impl IntoAdvanceError for $error {
+			fn retry(self) -> AdvanceError { AdvanceError::Retry(self.into()) }
+			fn abort(self) -> AdvanceError { AdvanceError::Abort(self.into()) }
+		}
+	};
+}
+impl_into_advance_err!(anyhow::Error);
+impl_into_advance_err!(MovementError);
+impl_into_advance_err!(VtxoValidationError);
+
+/// [IntoAdvanceError] on the `Err` of a `Result`, so a step reads
+/// `wallet.foo().await.retry()?`.
+trait IntoAdvanceResult<T> {
+	fn retry(self) -> Result<T, AdvanceError>;
+	fn abort(self) -> Result<T, AdvanceError>;
+}
+
+impl<T, E: IntoAdvanceError> IntoAdvanceResult<T> for Result<T, E> {
+	fn retry(self) -> Result<T, AdvanceError> {
+		self.map_err(|e| e.retry())
+	}
+	fn abort(self) -> Result<T, AdvanceError> {
+		self.map_err(|e| e.abort())
+	}
+}
+
+/// Extension trait that maps tonic status codes associated with rejection into
+/// the abort category and retry otherwise
+trait RetryUnlessRejected<T> {
+	/// Map the error to a [AdvanceError::Retry] unless it's a rejection
+	///
+	/// See [StatusExt::is_rejection] for more info about rejections.
+	fn retry_unless_rejected(self) -> Result<T, AdvanceError>;
+}
+
+impl<T> RetryUnlessRejected<T> for Result<T, tonic::Status> {
+	fn retry_unless_rejected(self) -> Result<T, AdvanceError> {
+		self.map_err(|e| if e.is_rejection() {
+			AdvanceError::Abort(e.into())
+		} else {
+			AdvanceError::Retry(e.into())
+		})
+	}
+}
+
+impl<T> RetryUnlessRejected<T> for anyhow::Result<T> {
+	fn retry_unless_rejected(self) -> Result<T, AdvanceError> {
+		self.map_err(|e| {
+			if let Some(s) = e.downcast_ref::<tonic::Status>() && s.is_rejection() {
+				AdvanceError::Abort(e.into())
+			} else {
+				AdvanceError::Retry(e.into())
+			}
+		})
+	}
 }
 
 /// Whether to double-drive each action step to check reentrancy, set via the
@@ -246,23 +403,21 @@ fn double_drive_actions() -> bool {
 /// Assert advancing the same state twice produced an equivalent outcome (same
 /// [`Advance`] kind, same checkpoint for non-terminal kinds); a divergence is a
 /// non-idempotency bug and panics, naming the offending step. Two errors count
-/// as equivalent: [`AdvanceError`] isn't comparable.
+/// as equivalent: `anyhow::Error` isn't comparable.
 #[cfg(debug_assertions)]
-fn assert_reentrant<A>(
-	first: &Result<Advance<A>, AdvanceError>,
-	second: &Result<Advance<A>, AdvanceError>,
-) where
+fn assert_reentrant<A>(first: &Advance<A>, second: &Advance<A>)
+where
 	A: Into<WalletActionCheckpoint> + Clone,
 {
 	fn describe<A: Into<WalletActionCheckpoint> + Clone>(
-		result: &Result<Advance<A>, AdvanceError>,
+		advance: &Advance<A>,
 	) -> (&'static str, Option<WalletActionCheckpoint>) {
-		match result {
-			Ok(Advance::Next(state)) => ("Next", Some(state.clone().into())),
-			Ok(Advance::Park { state, .. }) => ("Park", Some(state.clone().into())),
-			Ok(Advance::Done) => ("Done", None),
-			Ok(Advance::Failed(_)) => ("Failed", None),
-			Err(_) => ("Err", None),
+		match advance {
+			Advance::Next(state) => ("Next", Some(state.clone().into())),
+			Advance::Park { state, .. } => ("Park", Some(state.clone().into())),
+			Advance::Retry { state, .. } => ("Retry", Some(state.clone().into())),
+			Advance::Done => ("Done", None),
+			Advance::Failed(_) => ("Failed", None),
 		}
 	}
 
@@ -298,29 +453,28 @@ pub trait WalletAction: Sized + Send + Sync {
 	/// MUST be re-entrant: it may be called more than once for the same logical
 	/// step (after a crash, after an early wake, after a notification arrives).
 	/// All side effects it triggers must therefore be idempotent.
+	///
+	/// A failed step returns an [AdvanceError]. The executor hands it, with
+	/// the state the step started from, to [WalletAction::on_retry] or
+	/// [WalletAction::on_abort].
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError>;
 
-	/// Called when the action should be retried
+	/// Called when a step failed transiently.
 	///
-	/// `error` is the failure that triggered the retry; implementations can
-	/// attach it to their park so callers driving [DriveMode::UntilParkOrDone]
-	/// see why the action stopped.
-	async fn on_retry(
-		self,
-		_wallet: &Wallet,
-		attempts: u32,
-		_error: AdvanceError,
-	) -> anyhow::Result<Advance<Self>> {
-		Ok(park_with_backoff(self, attempts, None))
+	/// `self` is the state the step started from. The default re-runs the
+	/// same step later with backoff; implementations can give up on the step
+	/// instead once waiting no longer makes sense.
+	async fn on_retry(self, _wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		Advance::Retry { state: self, error }
 	}
 
-	/// Called when the server rejected one of our requests
+	/// Called when a step gave up on its current state: the server rejected
+	/// the request or the step can't be completed as-is.
 	///
-	/// MUST be re-entrant for the same reason as [WalletAction::advance]:
-	/// it may run partially, crash, and be re-driven against the state the action
-	/// subsequently lands in.
-	async fn on_rejection(self, _wallet: &Wallet, _error: AdvanceError)
-		-> anyhow::Result<Advance<Self>>;
+	/// `self` is the state the step started from. MUST be re-entrant for the
+	/// same reason as [WalletAction::advance]: it may run partially, crash,
+	/// and be re-driven against the state the action subsequently lands in.
+	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self>;
 }
 
 /// How aggressively the executor should drive an action.
@@ -416,79 +570,96 @@ impl Wallet {
 		Box::pin(self.run_action_loop(action, mode)).await
 	}
 
-	/// Run one `advance` step.
+	/// Run one `advance` step and hand a failure to the action's handler.
+	async fn run_step<A>(&self, action: A) -> Advance<A>
+	where
+		A: WalletAction + Clone,
+	{
+		// `advance` consumes the action and the handlers need the state the
+		// step started from.
+		let snapshot = action.clone();
+		match action.advance(self).await {
+			Ok(advance) => advance,
+			Err(error) => {
+				warn!("action {} step failed: {}", snapshot.id(), error);
+				match error {
+					AdvanceError::Retry(e) => snapshot.on_retry(self, e).await,
+					AdvanceError::Abort(e) => snapshot.on_abort(self, e).await,
+				}
+			},
+		}
+	}
+
+	/// Run one `advance` step, including its retry or abort handling.
 	///
 	/// In debug builds with `BARK_DOUBLE_DRIVE_ACTIONS` set (see
 	/// [`double_drive_actions`]) the step runs twice from the same state and
 	/// [`assert_reentrant`] checks both reach an equivalent checkpoint,
 	/// exercising `advance`'s idempotency contract. Keep the second run; its
 	/// side effects are the ones the persisted state references.
-	async fn advance_step<A>(&self, action: A) -> Result<Advance<A>, AdvanceError>
+	async fn advance_step<A>(&self, action: A) -> Advance<A>
 	where
 		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
 	{
 		#[cfg(debug_assertions)]
 		if double_drive_actions() {
 			let snapshot = action.clone();
-			let first = action.advance(self).await;
-			let second = snapshot.advance(self).await;
+			let first = self.run_step(action).await;
+			let second = self.run_step(snapshot).await;
 
-			// A first run that parks made no committed progress: it is a
-			// "nothing finished, re-drive me later" outcome (waiting on a
-			// confirmation, polling for an incoming payment, retrying a
-			// transient server rejection). The second run is that later
-			// re-drive and may legitimately diverge once the awaited condition
-			// clears, progressing to the next step or completing. So only
-			// assert equivalence when the first run committed a step (Next),
+			// A first run that parks or retries made no committed progress:
+			// it is a "nothing finished, re-drive me later" outcome (waiting
+			// on a confirmation, polling for an incoming payment, a transient
+			// server failure). The second run is that later re-drive and may
+			// legitimately diverge once the awaited condition clears,
+			// progressing to the next step or completing. So only assert
+			// equivalence when the first run committed a step (Next),
 			// finished (Done) or failed terminally.
-			let first_parked = matches!(first, Ok(Advance::Park { .. }));
-			if !first_parked {
+			let first_waited = matches!(first, Advance::Park { .. } | Advance::Retry { .. });
+			if !first_waited {
 				assert_reentrant(&first, &second);
 			}
 			return second;
 		}
 
-		action.advance(self).await
+		self.run_step(action).await
 	}
 
 	async fn run_action_loop<A>(&self, mut action: A, mode: DriveMode) -> anyhow::Result<()>
 	where
 		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
 	{
-		// In-memory counter for transient errors. Lives only for this
-		// drive_action call so the backoff curve resets between drives.
+		// In-memory counter of consecutive retries, for the backoff curve.
+		// Lives only for this drive_action call so the curve resets between
+		// drives.
 		let mut retries: u32 = 0;
 
 		loop {
 			let id = action.id();
-			// Snapshot for the error path: advance consumes self, and
-			// on_rejection also takes self by value, so we need a
-			// copy around if budget exhausts.
-			let snapshot = action.clone();
 
-			let advance = match self.advance_step(action).await {
-				Ok(advance) => { advance },
-				Err(e) if e.is_server_rejection() => {
-					warn!("action {} got rejected by server: {:#}", id, e);
-					snapshot.on_rejection(self, e).await.inspect_err(|err| {
-						warn!("action {} on_rejection failed, leaving checkpoint for retry: {:#}", id, err);
-					})?
-				}
-				Err(e) => {
-					retries = retries.saturating_add(1);
-					log::error!("Got error {:?} from action {}, retrying", e, id);
-					snapshot.on_retry(self, retries, e).await.inspect_err(|err| {
-						warn!("action {} on_retry failed, leaving checkpoint for retry: {:#}", id, err);
-					})?
-				},
-			};
-
-			match advance {
+			match self.advance_step(action).await {
 				Advance::Next(next) => {
 					retries = 0;
 					let checkpoint: WalletActionCheckpoint = next.clone().into();
 					self.inner.db.upsert_wallet_action_checkpoint(&id, &checkpoint).await?;
 					action = next;
+				},
+				Advance::Retry { state, error } => {
+					retries = retries.saturating_add(1);
+					let checkpoint: WalletActionCheckpoint = state.clone().into();
+					self.inner.db.upsert_wallet_action_checkpoint(&id, &checkpoint).await?;
+					match mode {
+						DriveMode::UntilParkOrDone => {
+							warn!("action {} failed, leaving checkpoint for retry: {:#}", id, error);
+							return Err(error);
+						},
+						DriveMode::UntilDone => {
+							let delay = retries.pow(2) * BASE_RETRY_BACKOFF;
+							warn!("action {} failed, retrying in {:?}: {:#}", id, delay, error);
+							bark_runtime::sleep(delay).await;
+							action = state;
+						},
+					}
 				},
 				Advance::Park { state, wake_after, error } => {
 					let checkpoint: WalletActionCheckpoint = state.clone().into();
@@ -496,7 +667,7 @@ impl Wallet {
 					match mode {
 						DriveMode::UntilParkOrDone => {
 							return match error {
-								Some(error) => Err(error.into()),
+								Some(error) => Err(error),
 								None => Ok(()),
 							};
 						},
@@ -507,7 +678,7 @@ impl Wallet {
 								action = state;
 							} else {
 								return match error {
-									Some(error) => Err(error.into()),
+									Some(error) => Err(error),
 									None => Ok(()),
 								};
 							}

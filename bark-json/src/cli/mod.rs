@@ -654,7 +654,7 @@ pub struct LightningSendInfo {
 	/// The payment hash of the outgoing lightning payment
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub payment_hash: PaymentHash,
-	/// Lifecycle phase of the send: `unknown`, `start`, `htlc-received`,
+	/// Lifecycle phase of the send: `unknown`, `start`, `inputs-locked`, `htlc-received`,
 	/// `payment-initiated`, `revocable-htlcs`, `revocation-stuck`, or `paid`.
 	pub state: String,
 	/// The invoice string, if known.
@@ -683,6 +683,7 @@ impl LightningSendInfo {
 			LightningSendState::InProgress(send) => {
 				let phase = match send.progress {
 					SendProgress::Start => "start",
+					SendProgress::InputsLocked { .. } => "inputs-locked",
 					SendProgress::HtlcReceived(_) => "htlc-received",
 					SendProgress::PaymentInitiated(_) => "payment-initiated",
 					SendProgress::RevocableHtlcs { .. } => "revocable-htlcs",
