@@ -264,6 +264,9 @@ message RecoverVtxosByXpubRequest {
 	// Serialized XpubRecoveryAuthorization, signed by the private key of the
 	// xpub for this server.
 	bytes authorization = 3;
+	// The cursor_vtxo_id of the previous response. The scan of the key at
+	// start_index then continues after this VTXO.
+	optional bytes cursor_vtxo_id = 4;
 }
 
 message RecoveredVtxo {
@@ -277,13 +280,16 @@ message RecoveredVtxo {
 
 message RecoverVtxosByXpubResponse {
 	repeated RecoveredVtxo vtxos = 1;
-	// Number of child indices the server scanned, starting at start_index.
-	// A follow-up call continues at start_index + nb_keys_scanned. The server
-	// stops early once the response holds enough VTXOs, but never between
-	// two VTXOs of the same key.
+	// Number of child indices the server scanned in full, starting at
+	// start_index. A follow-up call continues at start_index + nb_keys_scanned.
+	// The server stops early once the response holds enough VTXOs.
 	uint32 nb_keys_scanned = 2;
 	// Set when more VTXOs may follow at higher indices
 	bool have_more = 3;
+	// Set when the server stopped inside the VTXOs of the key at
+	// start_index + nb_keys_scanned, to the id of the last VTXO returned
+	// for that key. A follow-up call passes it back as cursor_vtxo_id.
+	optional bytes cursor_vtxo_id = 4;
 }
 
 

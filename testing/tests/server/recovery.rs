@@ -28,6 +28,7 @@ fn xpub_request(
 		xpub: Xpub::from_priv(&SECP, xpriv).encode().to_vec(),
 		start_index,
 		authorization: auth(xpriv, server_pubkey),
+		cursor_vtxo_id: None,
 	}
 }
 
@@ -85,6 +86,12 @@ async fn recover_vtxos_by_xpub_rejects_bad_requests() {
 		xpub: vec![1, 2, 3],
 		..xpub_request(&xpriv, server_pubkey, 0)
 	}).await.expect_err("garbage is not an xpub");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err:?}");
+
+	let err = client.recover_vtxos_by_xpub(protos::RecoverVtxosByXpubRequest {
+		cursor_vtxo_id: Some(vec![1, 2, 3]),
+		..xpub_request(&xpriv, server_pubkey, 0)
+	}).await.expect_err("garbage is not a vtxo id");
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err:?}");
 
 	let mainnet = dummy_xpriv(NetworkKind::Main);

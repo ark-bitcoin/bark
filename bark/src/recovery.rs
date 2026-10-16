@@ -622,6 +622,7 @@ impl Wallet {
 		let xpub = self.vtxo_xpub().encode().to_vec();
 
 		let mut start_index = 0u32;
+		let mut cursor_vtxo_id = None;
 		loop {
 			// Each request is signed anew, so a long scan never outlives its
 			// authorization.
@@ -633,6 +634,7 @@ impl Wallet {
 				xpub: xpub.clone(),
 				start_index,
 				authorization: auth.serialize(),
+				cursor_vtxo_id: cursor_vtxo_id.clone(),
 			};
 			let resp = match srv.client.recover_vtxos_by_xpub(req).await {
 				Ok(resp) => resp.into_inner(),
@@ -688,13 +690,16 @@ impl Wallet {
 			}
 			self.store_recovered_vtxos(report, vtxos).await?;
 
-			// A server that scanned nothing would have us ask for the same
-			// range forever.
+			// A server that moved neither past a key nor within one would have
+			// us ask for the same VTXOs forever.
 			let end_index = start_index.saturating_add(resp.nb_keys_scanned);
-			if !resp.have_more || end_index == start_index {
+			let no_progress = end_index == start_index
+				&& (resp.cursor_vtxo_id.is_none() || resp.cursor_vtxo_id == cursor_vtxo_id);
+			if !resp.have_more || no_progress {
 				break;
 			}
 			start_index = end_index;
+			cursor_vtxo_id = resp.cursor_vtxo_id;
 		}
 		Ok(true)
 	}
