@@ -85,18 +85,22 @@ impl Server {
 			let policies = pubkeys.iter().map(|pk| VtxoPolicy::new_pubkey(*pk)).collect::<Vec<_>>();
 			let indices = pubkeys.into_iter().zip(start..end).collect::<HashMap<_, _>>();
 
-			let rows = self.db.read(async |tx| {
-				tx.get_vtxos_by_policy(&policies).await
+			let used = self.db.read(async |tx| {
+				tx.get_used_vtxo_policies(&policies).await
 			}).await?;
 
-			// Stop early at an entire empty chunk (stop-gap). Keys are issued in
+			// Stop early at an entire unused chunk (stop-gap). Keys are issued in
 			// sequence, so this also ends the scan of an xpub without any VTXOs
 			// after a single chunk.
-			if rows.is_empty() {
+			if used.is_empty() {
 				stopped_early = true;
 				start = end;
 				break;
 			}
+
+			let rows = self.db.read(async |tx| {
+				tx.get_vtxos_by_policy(&used).await
+			}).await?;
 
 			let mut chunk = rows.into_iter().map(|state| {
 				let vtxo = state.vtxo.try_into_user_vtxo().ok()

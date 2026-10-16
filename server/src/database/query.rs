@@ -195,6 +195,30 @@ pub async fn get_vtxos_by_policy(
 		.context("Failed to parse VtxoState from database")
 }
 
+/// The given policies that own at least one VTXO, whatever its spend state.
+///
+/// This probes the policy index once per policy and reads no VTXO rows, so
+/// its cost doesn't grow with the number of VTXOs of a policy.
+pub async fn get_used_vtxo_policies(
+	tx: &PgTransaction<'_>,
+	policies: &[VtxoPolicy],
+) -> anyhow::Result<Vec<VtxoPolicy>> {
+	let statement = tx.prepare_typed("
+		SELECT p.policy
+		FROM unnest($1::bytea[]) AS p(policy)
+		CROSS JOIN LATERAL (SELECT 1 FROM vtxo WHERE vtxo.policy = p.policy LIMIT 1) AS used;
+	", &[Type::BYTEA_ARRAY]).await?;
+
+	let params = policies.iter().map(ProtocolEncodedSql).collect::<Vec<_>>();
+	let rows = tx.query(&statement, &[&params]).await
+		.context("Query get_used_vtxo_policies failed")?;
+
+	rows.into_iter()
+		.map(|row| Ok(VtxoPolicy::deserialize(row.get::<_, &[u8]>("policy"))?))
+		.collect::<anyhow::Result<Vec<_>>>()
+		.context("Failed to parse VtxoPolicy from database")
+}
+
 /// Get a bare VTXO by id, constructed from the metadata columns
 /// without deserializing the full vtxo blob.
 pub async fn try_get_bare_vtxo_by_id(

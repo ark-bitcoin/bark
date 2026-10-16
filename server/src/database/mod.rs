@@ -422,6 +422,14 @@ impl<'t> Tx<'t> {
 		query::get_vtxos_by_policy(&self, policies).await
 	}
 
+	/// The given policies that own at least one VTXO, whatever its spend state.
+	pub async fn get_used_vtxo_policies(
+		&self,
+		policies: &[VtxoPolicy],
+	) -> anyhow::Result<Vec<VtxoPolicy>> {
+		query::get_used_vtxo_policies(&self, policies).await
+	}
+
 	pub async fn get_user_vtxo_by_id(&self, id: VtxoId) -> anyhow::Result<VtxoState> {
 		let v = self.get_server_vtxo_by_id(id).await?;
 		match v.try_into_user_vtxo_state() {
