@@ -20,7 +20,7 @@ use ark::fees::validate_and_subtract_fee;
 use ark::lightning::{Bolt11InvoiceExt, PaymentHash, Preimage};
 use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy};
 use ark::vtxo::Full;
-use bitcoin_ext::BlockDelta;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_rpc::protos;
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 
@@ -462,6 +462,13 @@ fn htlc_recv_exit_blocks_needed(
 		.context("HTLC recv exit delta components sum overflows")
 }
 
+/// The HTLC-recv expiry to request when claiming. Leaves out
+/// [LIGHTNING_PREPARE_CLAIM_DELTA] so the claim tolerates our tip being
+/// that many blocks ahead of the sender's.
+fn htlc_recv_expiry(current_height: BlockHeight, cltv_delta: BlockDelta) -> BlockHeight {
+	current_height + cltv_delta.saturating_sub(LIGHTNING_PREPARE_CLAIM_DELTA)
+}
+
 /// The number of blocks of life we need, counted from now, on the tree
 /// backing an HTLC-recv vtxo.
 ///
@@ -501,7 +508,7 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 		},
 	};
 
-	let htlc_recv_expiry = current_height + recv.htlc_recv_cltv_delta;
+	let htlc_recv_expiry = htlc_recv_expiry(current_height, recv.htlc_recv_cltv_delta);
 	let keypair = wallet.peek_keypair(recv.key_index).await?;
 	let req = protos::PrepareLightningReceiveClaimRequest {
 		payment_hash: payment_hash.to_vec(),
@@ -920,6 +927,33 @@ mod tests {
 
 			assert_eq!(requested.saturating_sub(needed), LIGHTNING_PREPARE_CLAIM_DELTA);
 		}
+	}
+
+	#[test]
+	fn htlc_recv_expiry_tolerates_blocks_mined_since_the_sender_paid() {
+		let config = Config::network_default(bitcoin::Network::Bitcoin);
+		let (exit_delta, htlc_expiry_delta) = (BlockDelta::new(144), BlockDelta::new(6));
+		let cltv_delta = requested_cltv_delta(exit_delta, htlc_expiry_delta, &config);
+		let needed = htlc_recv_exit_blocks_needed(exit_delta, htlc_expiry_delta, &config).unwrap();
+
+		// The invoice delta is ours plus the server's `htlc_expiry_delta`.
+		let sender_tip = BlockHeight::new(1000);
+		let incoming_expiry = sender_tip + cltv_delta + htlc_expiry_delta;
+
+		for drift in 0..=LIGHTNING_PREPARE_CLAIM_DELTA.to_u16() {
+			let tip = sender_tip + BlockDelta::new(drift);
+			let expiry = htlc_recv_expiry(tip, cltv_delta);
+			assert!(expiry + htlc_expiry_delta <= incoming_expiry,
+				"server would refuse the claim {drift} blocks after the sender paid",
+			);
+			assert!(tip + needed <= expiry,
+				"vtxo leaves no time to exit {drift} blocks after the sender paid",
+			);
+		}
+
+		let tip = sender_tip + LIGHTNING_PREPARE_CLAIM_DELTA + BlockDelta::new(1);
+		let expiry = htlc_recv_expiry(tip, cltv_delta);
+		assert!(expiry + htlc_expiry_delta > incoming_expiry);
 	}
 
 	#[test]
