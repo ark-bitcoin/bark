@@ -237,7 +237,11 @@ impl captaind::proxy::ArkRpcProxy for CountVtxoRpcs {
 #[tokio::test]
 async fn recovery_uses_batch_rpcs() {
 	let ctx = TestContext::new("bark_sdk/recovery_uses_batch_rpcs").await;
-	let srv = ctx.captaind("server").create().await;
+	// The xpub lookup carries each VTXO's body and status itself, so it is
+	// turned off to send recovery through the mailbox path under test.
+	let srv = ctx.captaind("server")
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
 
 	// The boards post their ids to the recovery mailbox; the arkoor receive
 	// leaves its body in the regular mailbox. Both must go through the batch
@@ -283,7 +287,11 @@ async fn recovery_uses_batch_rpcs() {
 #[tokio::test]
 async fn recovery_retries_a_failed_status_batch() {
 	let ctx = TestContext::new("bark_sdk/recovery_retries_a_failed_status_batch").await;
-	let srv = ctx.captaind("server").create().await;
+	// The xpub lookup carries each VTXO's body and status itself, so it is
+	// turned off to send recovery through the mailbox path under test.
+	let srv = ctx.captaind("server")
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
 
 	let target = ctx.bark_sdk("target", &srv)
 		.boarded(sat(100_000))

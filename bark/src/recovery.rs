@@ -1,11 +1,20 @@
 //! Wallet recovery from seed.
 //!
-//! As a wallet creates or receives VTXOs it posts their ids to a mailbox keyed
-//! by a dedicated, seed-derived recovery key (see
+//! Two sources are combined to rebuild the VTXO set.
+//!
+//! The server can list the VTXOs owned by the children of the wallet's VTXO
+//! xpub (see [`Wallet::vtxo_xpub`]), each with its body, its spend state and
+//! the child index of its key. That needs no backup from the old wallet and no
+//! gap limit on our side: the server scans a fixed range of key indices per
+//! request, stops after a run of unused keys, and the wallet requests the next
+//! range while the server reports that more VTXOs may follow.
+//!
+//! As a wallet creates or receives VTXOs it also posts their ids to a mailbox
+//! keyed by a dedicated, seed-derived recovery key (see
 //! [`Wallet::post_recovery_vtxo_ids`]). Recovering the seed re-derives that key
-//! and reads back every posted id to rebuild the VTXO set. The regular
-//! mailbox's arkoor messages are replayed too, since the recovery post is
-//! best-effort and a VTXO can be missing there.
+//! and reads back every posted id. The regular mailbox's arkoor messages are
+//! replayed too, since the recovery post is best-effort and a VTXO can be
+//! missing there.
 //!
 //! Note that recovery is a trusted process. The server can withhold VTXOs
 //! or may falsely represent spendable VTXOs as spent. Its word on the spend
@@ -19,16 +28,24 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::mailbox::MailboxAuthorization;
+use ark::recovery::XpubRecoveryAuthorization;
 use ark::vtxo::Full;
 use server_rpc::{protos, TryFromBytes, MAX_NB_VTXO_IDS};
+use server_rpc::protos::VtxoSpendState;
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 use crate::Wallet;
 use crate::vtxo::{ServerStatusAdoption, VtxoState};
+
+/// The number of non-hardened child indices of an xpub.
+const NB_NORMAL_CHILDREN: u32 = 1 << 31;
+
+/// The number of keys stored per database call when revealing keys.
+const KEY_REVEAL_BATCH_SIZE: u32 = 10_000;
 
 #[derive(Debug, Default, Clone)]
 pub struct RecoveryReportEntry(HashMap<VtxoId, Option<Amount>>);
@@ -58,6 +75,10 @@ impl RecoveryReportEntry {
 
 	fn remove(&mut self, vtxo_id: VtxoId) {
 		self.0.remove(&vtxo_id);
+	}
+
+	fn contains(&self, vtxo_id: VtxoId) -> bool {
+		self.0.contains_key(&vtxo_id)
 	}
 }
 
@@ -99,6 +120,15 @@ impl RecoveryReport {
 	/// gap limit to be matched.
 	pub fn is_complete(&self) -> bool {
 		self.failed.is_empty() && self.foreign.is_empty()
+	}
+
+	/// Whether this scan already handled the VTXO, whatever the outcome.
+	pub fn seen(&self, vtxo_id: VtxoId) -> bool {
+		self.recovered.contains(vtxo_id)
+			|| self.skipped.contains(vtxo_id)
+			|| self.failed.contains(vtxo_id)
+			|| self.foreign.contains(vtxo_id)
+			|| self.exited.contains(vtxo_id)
 	}
 
 	pub fn recovered(&self) -> &RecoveryReportEntry {
@@ -384,15 +414,10 @@ impl Wallet {
 
 	/// Recover a set of VTXOs: fetch the bodies the mailbox did not carry, check
 	/// we own them, ask the server for their status, and store them in the
-	/// matching state.
+	/// matching state, see [Self::store_recovered_vtxos].
 	///
 	/// A candidate's body is given when the mailbox message carried one;
 	/// otherwise it is fetched from the server.
-	///
-	/// The server's word on the spend state is final, so it is asked before any
-	/// chain lookup: a VTXO it reports spent is stored spent as is, and only a
-	/// VTXO it reports spendable is validated and checked for an exit. Rows are
-	/// written once per state, not once per VTXO.
 	async fn recover_candidates(
 		&self,
 		report: &mut RecoveryReport,
@@ -440,19 +465,39 @@ impl Wallet {
 		let queries = owned.iter().map(|(vtxo, keypair)| (vtxo.id(), keypair)).collect::<Vec<_>>();
 		let states = self.fetch_vtxo_spend_states(&queries).await?;
 
-		let mut spendable = Vec::new();
-		let mut spent = Vec::new();
-		let mut locked = Vec::new();
-		for (vtxo, _) in owned {
-			let id = vtxo.id();
+		let vtxos = owned.into_iter().map(|(vtxo, _)| {
 			// The fetch logged why an answer is missing.
-			let adoption = match states.get(&id) {
+			let adoption = match states.get(&vtxo.id()) {
 				Some(state) => ServerStatusAdoption::from_spend_state(*state),
 				None => Err(anyhow::anyhow!("no answer from the server")),
 			};
+			(vtxo, adoption)
+		}).collect();
+		self.store_recovered_vtxos(report, vtxos).await
+	}
+
+	/// Store owned VTXOs in the state the server reported for them.
+	///
+	/// The server's word on the spend state is final, so it is taken before any
+	/// chain lookup: a VTXO it reports spent is stored spent as is, and only a
+	/// VTXO it reports spendable is validated and checked for an exit. Rows are
+	/// written once per state, not once per VTXO.
+	async fn store_recovered_vtxos(
+		&self,
+		report: &mut RecoveryReport,
+		vtxos: Vec<(Vtxo<Full>, anyhow::Result<ServerStatusAdoption>)>,
+	) -> anyhow::Result<()> {
+		let mut spendable = Vec::new();
+		let mut spent = Vec::new();
+		let mut unclaimed = Vec::new();
+		let mut locked = Vec::new();
+		for (vtxo, adoption) in vtxos {
+			let id = vtxo.id();
 			match adoption {
 				Ok(ServerStatusAdoption::Spendable) => spendable.push(vtxo),
 				Ok(ServerStatusAdoption::Spent) => spent.push(vtxo),
+				Ok(ServerStatusAdoption::InFlight(VtxoSpendState::Unclaimed))
+					if vtxo.unlock_hash().is_some() => unclaimed.push(vtxo),
 				// Finishing the flow the VTXO is stuck in is what decides where it
 				// belongs, so nothing is stored. Arkoor mailbox messages only carry
 				// final Pubkey-policy VTXOs, so the replay cannot bring an in-flight
@@ -479,6 +524,24 @@ impl Wallet {
 			for vtxo in &spent {
 				debug!("Recovery vtxo {} already spent, skipping", vtxo.id());
 				report.push_skipped(vtxo);
+			}
+		}
+
+		// An unclaimed output of a delegated round participation lacks its
+		// unlock preimage, so it can't validate yet. The participation is
+		// rebuilt instead, and the round sync claims the output.
+		for vtxo in unclaimed {
+			let id = vtxo.id();
+			let unlock_hash = vtxo.unlock_hash().expect("checked above");
+			match self.recover_delegated_participation(unlock_hash).await {
+				Ok(()) => {
+					debug!("Recovery vtxo {id} is an unclaimed round output, left to the round sync");
+					report.push_skipped(&vtxo);
+				},
+				Err(e) => {
+					warn!("Could not recover the round participation of vtxo {id}: {:#}", e);
+					report.push_failed(id, Some(vtxo.amount()));
+				},
 			}
 		}
 
@@ -542,20 +605,147 @@ impl Wallet {
 		Ok(report)
 	}
 
-	/// Rebuild the wallet's VTXO set from the seed-derived recovery mailbox and
-	/// the arkoor messages in the regular mailbox.
+	/// Ask the server for the VTXOs owned by the children of our VTXO xpub and
+	/// recover each of them.
 	///
-	/// Both mailboxes are read from checkpoint 0, and every VTXO they reference
-	/// is resolved against the server, and against the chain when the server
+	/// Unlike the mailbox scans this needs no backup posted by the old wallet
+	/// and no gap limit: the server scans a fixed range of key indices per
+	/// call, and we ask for the next range for as long as the server reports
+	/// that more VTXOs may follow. Each VTXO comes with its body and spend
+	/// state, so it needs no further request. Every index up to the highest
+	/// one whose key matches its VTXO is stored as revealed, so the key lookups
+	/// of later scans resolve from the database.
+	///
+	/// Returns `Ok(false)` when the server doesn't offer the rpc.
+	async fn recover_from_xpub(&self, report: &mut RecoveryReport) -> anyhow::Result<bool> {
+		let (mut srv, ark_info) = self.require_server().await?;
+		let xpub = self.vtxo_xpub().encode().to_vec();
+
+		let mut start_index = 0u32;
+		loop {
+			// Each request is signed anew, so a long scan never outlives its
+			// authorization.
+			let expiry = chrono::Local::now() + std::time::Duration::from_secs(60);
+			let auth = XpubRecoveryAuthorization::new(
+				&self.inner.seed.vtxo, ark_info.server_pubkey, expiry,
+			);
+			let req = protos::RecoverVtxosByXpubRequest {
+				xpub: xpub.clone(),
+				start_index,
+				authorization: auth.serialize(),
+			};
+			let resp = match srv.client.recover_vtxos_by_xpub(req).await {
+				Ok(resp) => resp.into_inner(),
+				Err(status) if status.code() == tonic::Code::Unimplemented => {
+					info!("Server doesn't support VTXO recovery by xpub: {}", status.message());
+					return Ok(false);
+				},
+				Err(e) => return Err(e).context("error recovering vtxos by xpub"),
+			};
+			debug!("Server scanned {} xpub children from index {start_index} and returned {} vtxos",
+				resp.nb_keys_scanned, resp.vtxos.len(),
+			);
+
+			let mut max_index = None;
+			let mut vtxos = Vec::with_capacity(resp.vtxos.len());
+			for entry in resp.vtxos {
+				let vtxo = match Vtxo::<Full>::deserialize(&entry.vtxo) {
+					Ok(vtxo) => vtxo,
+					Err(e) => {
+						error!("Ignoring undecodable vtxo from the xpub lookup: {:#}", e);
+						continue;
+					},
+				};
+				if report.seen(vtxo.id()) {
+					continue;
+				}
+
+				// The index is only trusted once it derives the key of the VTXO.
+				let index = entry.derivation_index;
+				if index >= NB_NORMAL_CHILDREN
+					|| self.inner.seed.derive_vtxo_keypair(index).public_key() != vtxo.user_pubkey()
+				{
+					warn!("Recovery vtxo {} is not owned by key {index} of our xpub", vtxo.id());
+					report.push_foreign(&vtxo);
+					continue;
+				}
+				max_index = max_index.max(Some(index));
+
+				let adoption = VtxoSpendState::try_from(entry.spend_state)
+					.map_err(|_| anyhow::anyhow!(
+						"server returned unknown spend state {}; this wallet may need updating",
+						entry.spend_state,
+					))
+					.and_then(ServerStatusAdoption::from_spend_state);
+				vtxos.push((vtxo, adoption));
+			}
+
+			// Keys are issued in sequence, so every index up to the highest one
+			// in use is stored and new addresses continue past it.
+			if let Some(max_index) = max_index {
+				self.reveal_vtxo_keys_up_to(max_index).await
+					.context("failed to store recovered vtxo keys")?;
+			}
+			self.store_recovered_vtxos(report, vtxos).await?;
+
+			// A server that scanned nothing would have us ask for the same
+			// range forever.
+			let end_index = start_index.saturating_add(resp.nb_keys_scanned);
+			if !resp.have_more || end_index == start_index {
+				break;
+			}
+			start_index = end_index;
+		}
+		Ok(true)
+	}
+
+	/// Store every VTXO key up to and including `index` as revealed.
+	async fn reveal_vtxo_keys_up_to(&self, index: u32) -> anyhow::Result<()> {
+		let mut next = self.inner.db.get_last_vtxo_key_index().await?.map(|i| i + 1).unwrap_or(0);
+		while next <= index {
+			let end = next.saturating_add(KEY_REVEAL_BATCH_SIZE).min(index + 1);
+			let keys = (next..end)
+				.map(|i| (i, self.inner.seed.derive_vtxo_keypair(i).public_key()))
+				.collect::<Vec<_>>();
+			self.inner.db.store_vtxo_keys(&keys).await?;
+			next = end;
+		}
+		Ok(())
+	}
+
+	/// Rebuild the wallet's VTXO set from the server's xpub lookup, the
+	/// seed-derived recovery mailbox and the arkoor messages in the regular
+	/// mailbox.
+	///
+	/// The xpub lookup runs to its end before either mailbox is read. Both
+	/// mailboxes are then read from checkpoint 0, and every VTXO they reference
+	/// that the lookup didn't settle is resolved against the server, and against the chain when the server
 	/// reports it spendable, one mailbox page at a time and stored accordingly.
 	/// Returns a [`RecoveryReport`] (see it for why recovered/skipped/failed
 	/// matters).
-	pub(crate) async fn recover_from_mailbox(&self) -> anyhow::Result<RecoveryReport> {
+	pub(crate) async fn recover_from_seed(&self) -> anyhow::Result<RecoveryReport> {
 		let mut report = RecoveryReport::default();
 		let gap_limit = self.inner.config.vtxo_key_gap_limit;
-		let mut seen = HashSet::new();
 
-		// The regular mailbox comes first: its arkoor messages carry full vtxos,
+		// The xpub lookup comes first: it needs no backup and no gap limit, and
+		// it reveals every key up to its highest VTXO, so the mailbox scans find
+		// their keys in the database. Its failure is reported at the end: the
+		// mailboxes are still worth a try.
+		let xpub_result = self.recover_from_xpub(&mut report).await;
+		if let Err(e) = &xpub_result {
+			warn!("VTXO recovery by xpub failed, continuing with the mailboxes: {:#}", e);
+		}
+
+		// A VTXO the lookup settled keeps the state it was given, so the server
+		// is only asked about the VTXOs the lookup missed. One it failed on is
+		// resolved again, by the mailbox scans or by the retries below.
+		let mut seen = report.recovered.ids()
+			.chain(report.skipped.ids())
+			.chain(report.foreign.ids())
+			.chain(report.exited.ids())
+			.collect::<HashSet<_>>();
+
+		// The regular mailbox comes next: its arkoor messages carry full vtxos,
 		// so a duplicate in the recovery mailbox needs no fetch.
 		let keypair = self.mailbox_keypair();
 		self.scan_mailbox_for_recovery(&mut report, &keypair, gap_limit, &mut seen).await?;
@@ -569,16 +759,9 @@ impl Wallet {
 		// gap limit can match them — so they get their own warning.
 		if !report.foreign.is_empty() {
 			warn!(
-				"Recovery mailbox held {} vtxo(s) not derivable from this seed within the \
+				"Recovery found {} vtxo(s) not derivable from this seed within the \
 				gap limit ({gap_limit}); if any are ours they were not recovered: {:?}",
 				report.foreign.len(), report.foreign,
-			);
-		}
-
-		if report.is_complete() {
-			info!(
-				"Recovered {} spendable vtxos from the recovery mailbox ({} skipped)",
-				report.recovered.len(), report.skipped.len(),
 			);
 		}
 
@@ -592,7 +775,17 @@ impl Wallet {
 			self.recover_candidates(&mut report, candidates, gap_limit).await?;
 		}
 
-		if !report.failed.is_empty() {
+		// Claim the outputs of the round participations recovery rebuilt.
+		if let Err(e) = self.sync_pending_rounds().await {
+			warn!("Error syncing recovered round participations: {:#}", e);
+		}
+
+		if report.is_complete() {
+			info!(
+				"Recovered {} spendable vtxos from the server and the recovery mailbox ({} skipped)",
+				report.recovered.len(), report.skipped.len(),
+			);
+		} else if !report.failed.is_empty() {
 			warn!(
 				"Recovery incomplete: recovered {} spendable vtxos, but {} could not be \
 				checked due to errors; funds may be missing — retry recovery to recover \
@@ -602,6 +795,7 @@ impl Wallet {
 			);
 		}
 
+		xpub_result?;
 		Ok(report)
 	}
 }

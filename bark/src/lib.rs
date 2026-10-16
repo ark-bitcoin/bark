@@ -1076,10 +1076,9 @@ impl Wallet {
 			if unrevealed.remove(&pubkey) {
 				// Reveal this key and the unmatched keys below it, because the
 				// wallet issues keys in sequence.
-				for (i, pk) in gap.drain(..) {
-					self.inner.db.store_vtxo_key(i, pk).await?;
-				}
-				self.inner.db.store_vtxo_key(idx, pubkey).await?;
+				gap.push((idx, pubkey));
+				self.inner.db.store_vtxo_keys(&gap).await?;
+				gap.clear();
 				found.insert(pubkey, keypair);
 
 				// `frontier` is the last index the scan tests. This index matched,
@@ -1395,14 +1394,15 @@ impl Wallet {
 			info!("Seed-based wallet recovery explicitly skipped");
 			RecoveryStatus::NotRun
 		} else {
-			// Recover any VTXOs backed up to the seed-derived recovery mailbox.
-			// Best-effort so it can't abort wallet creation, but a failure means
-			// funds may be missing — surface it loudly. Partial failures are
-			// logged inside the recovery call.
-			match ret.recover_from_mailbox().await {
+			// Recover any VTXOs the server knows for our keys or that were
+			// backed up to the seed-derived recovery mailbox. Best-effort so it
+			// can't abort wallet creation, but a failure means funds may be
+			// missing — surface it loudly. Partial failures are logged inside
+			// the recovery call.
+			match ret.recover_from_seed().await {
 				Ok(report) => RecoveryStatus::Completed(report),
 				Err(e) => {
-					error!("VTXO recovery from the recovery mailbox failed; funds may be \
+					error!("VTXO recovery from seed failed; funds may be \
 						missing from this wallet until recovery succeeds: {:#}", e);
 					RecoveryStatus::Failed(e)
 				},

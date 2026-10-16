@@ -1,0 +1,6 @@
+- Added VTXO recovery from the wallet's xpub
+  A restored wallet asks the server for the VTXOs of its keys first, so it no
+  longer depends on the key gap limit for them. The mailboxes are read
+  afterwards and only for the VTXOs the lookup missed.
+  [#2609](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2609)
+  - Added `BarkPersister::store_vtxo_keys` to store key indices in batch.

@@ -8,6 +8,7 @@ mod nursery;
 mod offboard;
 mod postgres;
 mod postgres_migrations;
+mod recovery;
 mod registration;
 mod settler;
 mod watchman;

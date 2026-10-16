@@ -70,6 +70,45 @@ async fn recovered_wallet_finds_boarded_vtxo() {
 	recovered.send(&recipient.ark_address().await, Amount::from_sat(99_443)).await;
 }
 
+/// A round output that was claimed and then spent is recovered as spent: its
+/// unlock hash must not make recovery rebuild the round participation and
+/// store the output as spendable again.
+#[tokio::test]
+async fn recovered_wallet_keeps_spent_round_vtxo_spent() {
+	require_bark_version!(> "0.7.1");
+
+	let ctx = TestContext::new("barkd/recovered_wallet_keeps_spent_round_vtxo_spent").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
+	tokio::join!(barkd.refresh_all(), srv.trigger_round());
+	wait_for_rounds_complete(&ctx, &barkd).await;
+
+	let after_refresh = barkd.vtxos(None).await;
+	assert_eq!(after_refresh.len(), 1, "should hold one round-output VTXO after refresh");
+	let round_id = after_refresh[0].vtxo.id;
+
+	// Spend the round output; the change goes to a new arkoor VTXO.
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	barkd.send(&recipient.ark_address().await, Amount::from_sat(50_000)).await;
+	let change = barkd.vtxos(None).await;
+	assert_eq!(change.len(), 1, "should hold one change VTXO after the send");
+
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("bark_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let (after, spent) = partition_recovered(recovered.vtxos(Some(true)).await);
+	assert_eq!(after.len(), 1, "only the change should be spendable, got {:?}", after);
+	assert_eq!(after[0].vtxo.id, change[0].vtxo.id, "the spendable VTXO should be the change");
+	assert!(spent.iter().any(|v| v.vtxo.id == round_id),
+		"the spent round output should be recorded as spent",
+	);
+}
+
 /// Wallet recovery of a scheduled delegated refresh completed while the
 /// wallet was gone.
 #[tokio::test]
@@ -754,7 +793,11 @@ async fn recovered_wallet_skips_unownable_vtxo() {
 #[tokio::test]
 async fn recovered_wallet_locks_vtxos_without_a_status() {
 	let ctx = TestContext::new("barkd/recovered_wallet_locks_vtxos_without_a_status").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	// The xpub lookup carries each VTXO's body and status itself, so it is
+	// turned off to send recovery through the mailbox path under test.
+	let srv = ctx.captaind("server").funded(btc(10))
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
 
 	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).expose_mnemonic().create().await;
 	let recipient = ctx.barkd("recipient", &srv).create().await;
@@ -806,7 +849,11 @@ async fn recovered_wallet_locks_vtxos_without_a_status() {
 #[tokio::test]
 async fn recovered_wallet_stores_spent_vtxos_on_the_servers_word() {
 	let ctx = TestContext::new("barkd/recovered_wallet_stores_spent_vtxos_on_the_servers_word").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	// The xpub lookup carries each VTXO's body and status itself, so it is
+	// turned off to send recovery through the mailbox path under test.
+	let srv = ctx.captaind("server").funded(btc(10))
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
 
 	let sender = ctx.barkd("sender", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
 	let boards = sender.vtxos(None).await;
@@ -858,7 +905,11 @@ async fn recovered_wallet_stores_spent_vtxos_on_the_servers_word() {
 #[tokio::test]
 async fn recovered_wallet_skips_invalid_vtxo() {
 	let ctx = TestContext::new("barkd/recovered_wallet_skips_invalid_vtxo").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	// The xpub lookup carries each VTXO's body and status itself, so it is
+	// turned off to send recovery through the mailbox path under test.
+	let srv = ctx.captaind("server").funded(btc(10))
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
 
 	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
 	let mnemonic = barkd.mnemonic().await;
@@ -990,17 +1041,20 @@ async fn recovered_wallet_reads_paginated_mailbox() {
 	}
 }
 
-/// The gap limit decides whether recovery reaches a far VTXO.
+/// The gap limit decides whether mailbox recovery reaches a far VTXO.
 ///
-/// The recipient advances its key index well past 50 before it receives, then
-/// two wallets recover from that seed: one pinned to 50, which cannot reach the
-/// key, and one pinned wide enough to cross the run of unused indices. Both
-/// halves matter, so they share one setup: the narrow wallet must find nothing
-/// and the wide one must find the VTXO.
+/// The server's xpub lookup is disabled so only the mailboxes feed the
+/// recovery. The recipient advances its key index well past 50 before it
+/// receives, then two wallets recover from that seed: one pinned to 50, which
+/// cannot reach the key, and one pinned wide enough to cross the run of unused
+/// indices. Both halves matter, so they share one setup: the narrow wallet must
+/// find nothing and the wide one must find the VTXO.
 #[tokio::test]
 async fn recovered_wallet_finds_vtxo_only_within_the_gap_limit() {
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_vtxo_only_within_the_gap_limit").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").funded(btc(10))
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
 
 	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).create().await;
 	let recipient = ctx.barkd("recipient", &srv).expose_mnemonic().create().await;
@@ -1036,6 +1090,46 @@ async fn recovered_wallet_finds_vtxo_only_within_the_gap_limit() {
 	assert_eq!(after.len(), 1, "a gap limit of 100 must reach the VTXO at key index 59");
 	assert_eq!(after[0].vtxo.id, before[0].vtxo.id,
 		"the recovered VTXO should be the one that was received");
+}
+
+/// The server's xpub lookup scans a fixed range of key indices, so a VTXO
+/// beyond the wallet's gap limit is recovered anyway.
+#[tokio::test]
+async fn recovered_wallet_finds_vtxo_beyond_the_gap_limit_via_xpub() {
+	require_bark_version!(> "0.7.1");
+
+	let ctx = TestContext::new("barkd/recovered_wallet_finds_vtxo_beyond_the_gap_limit_via_xpub").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).create().await;
+	let recipient = ctx.barkd("recipient", &srv).expose_mnemonic().create().await;
+
+	// Receive on the key at index 59, past a gap limit of 50.
+	let mut dest = String::new();
+	for _ in 0..60 {
+		dest = recipient.ark_address().await;
+	}
+	sender.send(&dest, sat(50_000)).await;
+	recipient.sync().await;
+	let before = recipient.vtxos(None).await;
+	assert_eq!(before.len(), 1, "recipient should hold the received VTXO");
+	let mnemonic = recipient.mnemonic().await;
+
+	let narrow = ctx.barkd("recovered_narrow", &srv)
+		.mnemonic(mnemonic)
+		.cfg(|c| c.vtxo_key_gap_limit = 50)
+		.create().await;
+	narrow.onchain_sync().await;
+	narrow.sync().await;
+	let after = narrow.vtxos(Some(true)).await;
+	assert_eq!(after.len(), 1, "the xpub lookup must reach the VTXO at key index 59");
+	assert_eq!(after[0].vtxo.id, before[0].vtxo.id,
+		"the recovered VTXO should be the one that was received");
+
+	// The run of unused keys below the match was revealed too, so the next
+	// address continues past the recovered key.
+	let next = narrow.ark_address().await;
+	assert_ne!(next, dest, "the recovered key must not be handed out again");
 }
 
 /// Recovery from the same seed is repeatable.

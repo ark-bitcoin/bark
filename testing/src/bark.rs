@@ -257,7 +257,7 @@ impl Bark {
 		self.timeout = None;
 	}
 
-	async fn mnemonic(&self) -> anyhow::Result<bip39::Mnemonic> {
+	pub async fn mnemonic(&self) -> anyhow::Result<bip39::Mnemonic> {
 		const MNEMONIC_FILE: &str = "mnemonic";
 		let mnemonic_path = self.datadir.join(MNEMONIC_FILE);
 

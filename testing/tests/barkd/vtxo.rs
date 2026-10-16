@@ -69,7 +69,11 @@ async fn import_vtxo_barkd() {
 async fn import_vtxo_gap_limit_barkd() {
 	let ctx = TestContext::new("barkd/import_vtxo_gap_limit_barkd").await;
 
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	// Without the server's xpub lookup, seed recovery is bound by the gap
+	// limit, so the recovered wallet below starts empty.
+	let srv = ctx.captaind("server").funded(btc(10))
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
 	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).create().await;
 	let recipient = ctx.barkd("recipient", &srv).expose_mnemonic().create().await;
 
@@ -123,7 +127,11 @@ async fn import_vtxo_gap_limit_barkd() {
 async fn import_vtxo_skips_status_check_barkd() {
 	let ctx = TestContext::new("barkd/import_vtxo_skips_status_check_barkd").await;
 
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	// Without the server's xpub lookup, seed recovery is bound by the gap
+	// limit, so the recovered wallets below start empty.
+	let srv = ctx.captaind("server").funded(btc(10))
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
 	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).create().await;
 	let recipient = ctx.barkd("recipient", &srv).expose_mnemonic().create().await;
 
@@ -187,7 +195,11 @@ async fn import_vtxo_skips_status_check_barkd() {
 async fn import_vtxo_partial_barkd() {
 	let ctx = TestContext::new("barkd/import_vtxo_partial_barkd").await;
 
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	// Without the server's xpub lookup, seed recovery is bound by the gap
+	// limit, so the recovered wallet below starts empty.
+	let srv = ctx.captaind("server").funded(btc(10))
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
 	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).create().await;
 	let recipient = ctx.barkd("recipient", &srv).expose_mnemonic().create().await;
 	let stranger = ctx.barkd("stranger", &srv).boarded(sat(1_000_000)).create().await;

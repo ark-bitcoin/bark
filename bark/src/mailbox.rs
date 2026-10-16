@@ -36,18 +36,6 @@ use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
 use crate::utils::ReconnectBackoff;
 
-
-/// The maximum number of times we will call the fetch mailbox endpoint in one go
-///
-/// We can't trust the server to honestly tell us to keep trying more forever.
-/// A malicious server could send us empty messages or invalid messages and
-/// lock up our resources forever. So we limit the number of times we will fetch.
-/// If a user actually has more messages left, he will have to call sync again.
-///
-/// (Note that currently the server sends 100 messages per fetch, so this would
-/// only happen for users with more than 1000 pending items.)
-pub(crate) const MAX_MAILBOX_REQUEST_BURST: usize = 10;
-
 /// Key for the lock that serializes the arkoor receive dedup within a wallet.
 ///
 /// Several consumers of one wallet process the same mailbox messages: the
@@ -314,7 +302,7 @@ impl Wallet {
 		let auth = self.mailbox_authorization(expiry);
 		let mailbox_id = auth.mailbox();
 
-		for _ in 0..MAX_MAILBOX_REQUEST_BURST {
+		loop {
 			let checkpoint = self.get_mailbox_checkpoint().await?;
 			let mailbox_req = protos::mailbox_server::MailboxRequest {
 				mailbox_id: mailbox_id.serialize(),
@@ -459,7 +447,7 @@ impl Wallet {
 				true
 			}
 			Some(Message::LightningSendFinished(msg)) => {
-				if let Err(e) = self.handle_lightning_send_finished(msg, mailbox_msg.checkpoint).await {
+				if let Err(e) = self.handle_lightning_send_finished(msg).await {
 					error!("Error handling lightning send finished notification: {:#}", e);
 				}
 				true
@@ -623,7 +611,6 @@ impl Wallet {
 	async fn handle_lightning_send_finished(
 		&self,
 		notif: protos::mailbox_server::LightningSendFinishedMessage,
-		checkpoint: u64,
 	) -> anyhow::Result<()> {
 		let payment_hash = PaymentHash::try_from(notif.payment_hash)
 			.context("invalid payment hash in lightning send finished notification")?;
@@ -679,7 +666,6 @@ impl Wallet {
 			},
 		}
 
-		self.store_mailbox_checkpoint(checkpoint).await?;
 		Ok(())
 	}
 

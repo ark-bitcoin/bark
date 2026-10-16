@@ -764,6 +764,35 @@ pub fn store_vtxo_key(
 	Ok(())
 }
 
+/// Store many derivation index to public key mappings.
+///
+/// Same semantics as [store_vtxo_key] for each pair, with both statements
+/// prepared once for the whole batch. Run inside a transaction, so a batch
+/// of up to hundreds of thousands of keys is a single commit.
+pub fn store_vtxo_keys(conn: &Connection, keys: &[(u32, PublicKey)]) -> anyhow::Result<()> {
+	let mut existing_stmt = conn.prepare(
+		"SELECT public_key FROM bark_vtxo_key WHERE idx = ?1",
+	)?;
+	let mut insert_stmt = conn.prepare(
+		"INSERT INTO bark_vtxo_key (idx, public_key) VALUES (?1, ?2) ON CONFLICT DO NOTHING;",
+	)?;
+
+	for (index, public_key) in keys {
+		let public_key = public_key.to_string();
+		let existing = existing_stmt.query_row(
+			[index.to_sql()?],
+			|row| row.get::<_, String>(0),
+		).optional()?;
+		if let Some(existing) = existing {
+			ensure!(existing == public_key,
+				"vtxo key index {index} already stored under a different public key");
+			continue;
+		}
+		insert_stmt.execute([index.to_sql()?, public_key.to_sql()?])?;
+	}
+	Ok(())
+}
+
 pub fn get_public_key_idx(conn: &Connection, public_key: &PublicKey) -> anyhow::Result<Option<u32>> {
 	let query = "SELECT idx FROM bark_vtxo_key WHERE public_key = (?1)";
 
