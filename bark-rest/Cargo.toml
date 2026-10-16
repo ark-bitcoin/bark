@@ -39,6 +39,6 @@ subtle.workspace = true
 
 axum = { version = "0.8.4", features = ["macros", "tokio", "http2", "query", "json", "ws"], default-features = false }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
-utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-axum = "0.2.0"
+utoipa = { version = "6.0.0", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-axum = "0.3.0"
 rust-embed = { version = "8.5", features = ["mime-guess", "interpolate-folder-path"], optional = true }
