@@ -220,6 +220,10 @@ pub struct Server {
 	/// The payment hash locks. Each lightning call that decides on a payment
 	/// holds the lock of its payment hash for the whole call.
 	payment_guards: PaymentGuards,
+	/// One permit for each xpub recovery call that may run or wait at once.
+	xpub_recovery_queue: tokio::sync::Semaphore,
+	/// One permit for each xpub recovery scan that may run at once.
+	xpub_recovery_permits: tokio::sync::Semaphore,
 	lightning_manager: LightningManager,
 	htlc_settler: Arc<HtlcSettler>,
 	vtxopool: VtxoPool,
@@ -469,6 +473,10 @@ impl Server {
 			forfeit_nonces: parking_lot::Mutex::new(TimedEntryMap::new()),
 			vtxos_in_flux: VtxosInFlux::new(),
 			payment_guards,
+			xpub_recovery_queue: tokio::sync::Semaphore::new(
+				cfg.max_concurrent_xpub_recoveries.saturating_add(recovery::XPUB_RECOVERY_QUEUE_SIZE),
+			),
+			xpub_recovery_permits: tokio::sync::Semaphore::new(cfg.max_concurrent_xpub_recoveries),
 			config: cfg.clone(),
 			db,
 			server_pubkey: server_key.public_key(),

@@ -31,6 +31,10 @@ pub const NB_NORMAL_CHILDREN: u32 = 1 << 31;
 /// VTXOs exceed it is returned whole.
 pub const MAX_RECOVERY_RESPONSE_VTXO_BYTES: usize = 2 * 1024 * 1024;
 
+/// The number of [Server::recover_vtxos_by_xpub] calls that wait at most for
+/// a running scan to finish. Calls over the limit are rejected.
+pub const XPUB_RECOVERY_QUEUE_SIZE: usize = 16;
+
 /// derive the child pubkeys at indices
 fn derive_child_pubkeys(xpub: &Xpub, indices: Range<u32>) -> anyhow::Result<Vec<PublicKey>> {
 	indices.map(|idx| {

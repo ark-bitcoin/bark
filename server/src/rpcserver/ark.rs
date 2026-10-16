@@ -311,6 +311,11 @@ impl rpc::server::ArkService for Server {
 			macros::badarg!("start_index {} is not a non-hardened child index", req.start_index);
 		}
 
+		let _queued = self.xpub_recovery_queue.try_acquire()
+			.map_err(|_| tonic::Status::resource_exhausted("too many xpub recoveries in progress, try again later"))?;
+		let _permit = self.xpub_recovery_permits.acquire().await
+			.context("xpub recovery semaphore closed")?;
+
 		let start = Instant::now();
 		let res = self.recover_vtxos_by_xpub(xpub, req.start_index).await.to_status()?;
 		slog!(XpubRecoveryScanned, start_index: req.start_index, nb_keys: res.nb_keys_scanned,

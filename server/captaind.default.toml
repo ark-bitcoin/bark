@@ -86,6 +86,10 @@ max_read_mailbox_items = 100
 # Zero disables the rpc.
 recovery_xpub_nb_keys = 100000
 
+# The maximum number of xpub recovery scans that run at once. Each scan holds
+# a database connection while it reads, and calls over the limit wait in a queue.
+max_concurrent_xpub_recoveries = 1
+
 
 ##########
 # ROUNDS #

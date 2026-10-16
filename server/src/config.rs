@@ -200,6 +200,9 @@ mod defaults {
 
 	/// Seed recovery scans this many child keys of the client's xpub.
 	pub fn recovery_xpub_nb_keys() -> u32 { 100_000 }
+
+	/// Seed recovery runs at most this many xpub scans at once.
+	pub fn max_concurrent_xpub_recoveries() -> usize { 1 }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -436,6 +439,17 @@ pub struct Config {
 	#[serde(default = "defaults::recovery_xpub_nb_keys")]
 	pub recovery_xpub_nb_keys: u32,
 
+	/// The maximum number of `RecoverVtxosByXpub` calls that scan at once.
+	///
+	/// A scan holds a database connection for each chunk of keys it reads,
+	/// so this keeps concurrent scans from taking the whole connection pool.
+	/// Calls over the limit wait in a queue of [crate::recovery::XPUB_RECOVERY_QUEUE_SIZE] calls,
+	/// which holds no database connection.
+	///
+	/// Default value: 1
+	#[serde(default = "defaults::max_concurrent_xpub_recoveries")]
+	pub max_concurrent_xpub_recoveries: usize,
+
 	/// The fee schedule outlining any fees that must be paid to interact with the Ark server.
 	pub fees: FeeSchedule,
 
@@ -591,6 +605,11 @@ impl Config {
 		// At 0 mailbox pages are empty while have_more stays true, so readers page forever.
 		if self.max_read_mailbox_items == 0 {
 			bail!("Invalid configuration: max_read_mailbox_items must be at least 1");
+		}
+
+		// At 0 every xpub scan is rejected; recovery_xpub_nb_keys = 0 disables the rpc instead.
+		if self.max_concurrent_xpub_recoveries == 0 {
+			bail!("Invalid configuration: max_concurrent_xpub_recoveries must be at least 1");
 		}
 
 		if self.network == bitcoin::Network::Bitcoin && !self.require_board_funding_tx {
