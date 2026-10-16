@@ -8,6 +8,8 @@ pub mod config;
 pub mod error;
 #[cfg(feature = "web-ui")]
 pub mod web;
+#[cfg(feature = "swagger-ui")]
+mod swagger;
 
 mod notifications;
 
@@ -361,10 +363,7 @@ impl RestServer {
 		#[cfg(feature = "swagger-ui")]
 		let router = {
 			log::info!("Swagger UI is hosted on http://{}/swagger-ui", socket_addr);
-			router.merge(
-				utoipa_swagger_ui::SwaggerUi::new("/swagger-ui")
-					.url("/api-docs/openapi.json", _api.clone()),
-			)
+			router.merge(swagger::router(_api.clone()))
 		};
 
 		#[cfg(feature = "web-ui")]

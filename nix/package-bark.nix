@@ -37,8 +37,6 @@ let
 
 	cargoVendorDir = craneLib.vendorCargoDeps { inherit src; };
 
-	swaggerUi = import ./swagger-ui.nix { inherit pkgs; };
-
 	commonSettings = {
 		pname = "bark";
 		version = crateInfo.version;
@@ -63,10 +61,6 @@ let
 		GIT_HASH = gitHash;
 		BARK_VERSION = barkVersion;
 		LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
-		# Points the utoipa-swagger-ui build script at a store-pinned copy of
-		# the swagger-ui distribution; without it the script tries to download
-		# from GitHub, which the sandbox forbids.
-		SWAGGER_UI_DOWNLOAD_URL = "file://${swaggerUi}";
 		# Points the bark-rest build script at a store-pinned copy of the
 		# bark-web distribution so release barkd binaries ship the web UI.
 		BARK_WEB_DIST = "${barkWeb}";
