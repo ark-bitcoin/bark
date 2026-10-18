@@ -65,7 +65,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::{info, trace, warn};
 
-use ark::{ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{ProtocolEncoding, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::vtxo::Full;
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
@@ -887,11 +887,34 @@ impl Server {
 		Ok(())
 	}
 
+	/// Refuses a vtxo that differs from the stored vtxo with the same id in
+	/// anything but its witnesses.
+	///
+	/// The id only commits to the vtxo's point. Validation against the chain
+	/// anchor doesn't pin the rest either: a pubkey vtxo can be re-anchored
+	/// at its own point with an empty chain, and its output doesn't commit to
+	/// the expiry. Registration overwrites the stored blob, which offboards,
+	/// arkoor and the watchman build on, so it may only add signatures.
+	fn check_registration_matches_stored(
+		stored: &Vtxo<Full>,
+		vtxo: &Vtxo<Full>,
+	) -> anyhow::Result<()> {
+		// The bare encoding holds every field outside the chain, and the txids
+		// pin everything in the chain but its witnesses.
+		let stored_txids = stored.transactions().map(|i| i.tx.compute_txid()).collect::<Vec<_>>();
+		let txids = vtxo.transactions().map(|i| i.tx.compute_txid()).collect::<Vec<_>>();
+		if vtxo.to_bare().serialize() != stored.to_bare().serialize() || txids != stored_txids {
+			return badarg!("vtxo {} does not match the stored vtxo", vtxo.id());
+		}
+		Ok(())
+	}
+
 	/// Registers the given VTXOs: validates and stores their signed
 	/// transaction chains and flips them from `unregistered` to `spendable`.
 	///
 	/// For each VTXO:
 	/// - Checks it exists in the database
+	/// - Checks it matches the stored vtxo apart from its witnesses
 	/// - Checks it is fully signed
 	/// - Validates signatures against the chain anchor transaction
 	/// - Extracts transactions for the virtual_transaction table
@@ -929,9 +952,11 @@ impl Server {
 			let vtxo_id = vtxo.id();
 
 			// Check vtxo exists in database
-			let _stored_vtxo = self.db.read(async |t| t.get_user_vtxo_by_id(vtxo_id).await).await
+			let stored = self.db.read(async |t| t.get_user_vtxo_by_id(vtxo_id).await).await
 				.context(vtxo_id)
 				.badarg("vtxo not found in database")?;
+
+			Self::check_registration_matches_stored(&stored.vtxo, vtxo)?;
 
 			// Check vtxo is fully signed
 			if !vtxo.has_all_witnesses() {
@@ -975,8 +1000,7 @@ impl Server {
 		// vtxos from `unregistered` to `spendable` in a single tx. The state
 		// flip only affects `unregistered` vtxos; the stored vtxo bytes are
 		// overwritten regardless of state, which is safe because each vtxo was
-		// validated above as a fully-signed version of that id, and any valid
-		// fully-signed version serves recovery equally well.
+		// checked above to differ from the stored one only in its witnesses.
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_txs)
 			.provide_signatures(vtxos)
