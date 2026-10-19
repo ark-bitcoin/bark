@@ -620,7 +620,10 @@ async fn check_lightning_send_payment_status(
 				},
 			}
 		},
-		Ok(Some(lightning_payment_status::PaymentStatus::Failed(_))) => {
+		Ok(Some(lightning_payment_status::PaymentStatus::Failed(f))) => {
+			// Logged rather than returned: PaymentStatus has no room for a
+			// reason yet. Retrying on it is the fee-escalation work.
+			info!("Payment {} failed: reason={:?}", payment_hash, f.reason());
 			Ok(PaymentStatus::Failed)
 		},
 		Ok(Some(lightning_payment_status::PaymentStatus::Pending(_))) => {

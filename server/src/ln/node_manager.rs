@@ -330,6 +330,9 @@ impl LightningManager {
 				node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids,
 				lightning_htlc_subscription_id,
 				attempt_block_height, user_fee, user_agent.as_deref(), retry_for,
+				// An intra-Ark payment short-circuits before xpay, so no
+				// routing budget is ever authorised for it.
+				lightning_htlc_subscription_id.is_none().then_some(max_routing_fee),
 			).await
 		).await?;
 
@@ -548,7 +551,7 @@ impl LightningManager {
 
 		let invoice = Bolt11Invoice::from_str(&res.bolt11)?;
 
-		// Raw agent, not the bucketed label -- see start_lightning_payment.
+		// Raw agent, not the bucketed label -- see start_payment.
 		let user_agent = telemetry::current_user_agent();
 
 		self.db.write(async |t|
@@ -639,6 +642,8 @@ impl LightningManager {
 				telemetry::LightningDirection::Receive,
 				is_self_payment,
 				htlc_subscription.user_agent.as_deref(),
+				None,
+				None,
 			);
 		}
 

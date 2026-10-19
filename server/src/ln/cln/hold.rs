@@ -601,6 +601,8 @@ impl ClnHoldProcess {
 				telemetry::LightningDirection::Receive,
 				false,
 				htlc_subscription.user_agent.as_deref(),
+				None,
+				None,
 			);
 		}
 

@@ -132,6 +132,7 @@ impl<'t> Tx<'t> {
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
 				lpa.user_agent, lpa.lightning_htlc_subscription_id,
+				lpa.max_routing_fee_msat,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.status != $1 AND lpa.status != $2 AND lpa.lightning_node_id = $3
@@ -156,6 +157,7 @@ impl<'t> Tx<'t> {
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
 				lpa.user_agent, lpa.lightning_htlc_subscription_id,
+				lpa.max_routing_fee_msat,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1 AND
@@ -195,6 +197,7 @@ impl<'t> Tx<'t> {
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
 				lpa.user_agent, lpa.lightning_htlc_subscription_id,
+				lpa.max_routing_fee_msat,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.lightning_htlc_subscription_id = $1 AND
@@ -242,6 +245,8 @@ impl<'t> Tx<'t> {
 		user_fee: Amount,
 		user_agent: Option<&str>,
 		retry_for: Duration,
+		// `None` for intra-Ark self-payments, which never reach CLN.
+		max_routing_fee: Option<Amount>,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 
@@ -274,10 +279,11 @@ impl<'t> Tx<'t> {
 				user_fee_sat,
 				user_agent,
 				retry_for_secs,
+				max_routing_fee_msat,
 				created_at,
 				updated_at,
 				lightning_htlc_subscription_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), $10)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW(), $11)
 			RETURNING id, updated_at;
 		").await?;
 
@@ -286,12 +292,16 @@ impl<'t> Tx<'t> {
 		let block_height_i32 = i32::try_from(block_height.to_u32())?;
 		let user_fee_sat_i64 = i64::try_from(user_fee.to_sat())?;
 		let retry_for_secs_i32 = i32::try_from(retry_for.as_secs())?;
+		let max_routing_fee_msat_i64 = max_routing_fee
+			.map(|f| i64::try_from(f.to_msat()))
+			.transpose()?;
 		let row = self.query_one(
 			&stmt,
 			&[
 				&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64),
 				&mailbox_str, &requested_status,
 				&block_height_i32, &user_fee_sat_i64, &user_agent, &retry_for_secs_i32,
+				&max_routing_fee_msat_i64,
 				&lightning_htlc_subscription_id,
 			],
 		).await?;
@@ -365,6 +375,26 @@ impl<'t> Tx<'t> {
 		Ok(row.map(|r| r.get("updated_at")))
 	}
 
+	/// Record an error on a payment attempt without changing its status.
+	///
+	/// Returns `None` if the optimistic-lock predicate missed.
+	pub async fn set_lightning_payment_attempt_error(
+		&self,
+		attempt: &LightningPaymentAttempt,
+		error: &str,
+	) -> anyhow::Result<Option<DateTime<Local>>> {
+		let stmt = self.prepare("
+			UPDATE lightning_payment_attempt
+			SET error = $3,
+				updated_at = NOW()
+			WHERE id = $1 AND updated_at = $2
+			RETURNING updated_at;
+		").await?;
+		let row = self.query_opt(&stmt, &[&attempt.id, &attempt.updated_at, &error]).await?;
+
+		Ok(row.map(|r| r.get("updated_at")))
+	}
+
 	/// Update a payment attempt with final result (status, final amount).
 	pub async fn update_lightning_payment_attempt_result(
 		&self,
@@ -376,7 +406,7 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			UPDATE lightning_payment_attempt
 			SET status = $3,
-				error = COALESCE($4, error),
+				error = CASE WHEN $3 = 'succeeded'::lightning_payment_status THEN NULL ELSE COALESCE($4, error) END,
 				final_amount_msat = COALESCE($5, final_amount_msat),
 				updated_at = NOW()
 			WHERE id = $1 AND updated_at = $2
@@ -406,6 +436,7 @@ impl<'t> Tx<'t> {
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
 				lpa.user_agent, lpa.lightning_htlc_subscription_id,
+				lpa.max_routing_fee_msat,
 				lpa.created_at, lpa.updated_at
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1

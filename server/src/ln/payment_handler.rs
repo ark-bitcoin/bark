@@ -7,6 +7,7 @@ use ark::lightning::{PaymentHash, Preimage};
 
 use crate::database;
 use crate::database::ln::{LightningPaymentAttempt, LightningPaymentStatus};
+use crate::ln::LightningFailureKind;
 use crate::ln::settler::HtlcSettler;
 use crate::telemetry;
 
@@ -48,7 +49,13 @@ impl<'a> PaymentAttemptHandler<'a> {
 			self.payment_update_tx.send(attempt.payment_hash)
 				.context("payment update channel broken")?;
 
-			self.post_lightning_send_finished(attempt.payment_hash, None).await;
+			// Falls back to the stored error: `update_..._status` keeps it
+			// when handed `None`.
+			let failure = LightningFailureKind::classify(error.or(attempt.error.as_deref()));
+
+			self.post_lightning_send_finished(
+				attempt.payment_hash, None, Some(failure),
+			).await;
 
 			// Attempted amount (not final_amount_msat) so failed/succeeded
 			// volumes stay comparable.
@@ -59,6 +66,10 @@ impl<'a> PaymentAttemptHandler<'a> {
 				telemetry::LightningDirection::Send,
 				attempt.is_self_payment(),
 				attempt.user_agent.as_deref(),
+				// Falls back to the stored error: `update_..._status` keeps it
+				// when handed `None`.
+				Some(LightningFailureKind::classify(error.or(attempt.error.as_deref()))),
+				None,
 			);
 		}
 
@@ -127,8 +138,14 @@ impl<'a> PaymentAttemptHandler<'a> {
 			self.payment_update_tx.send(attempt.payment_hash)
 				.context("payment update channel broken")?;
 
+			let failure = (status == LightningPaymentStatus::Failed).then(||
+				LightningFailureKind::classify(payment_error.or(attempt.error.as_deref()))
+			);
+
 			if status.is_final() {
-				self.post_lightning_send_finished(attempt.payment_hash, preimage).await;
+				self.post_lightning_send_finished(
+					attempt.payment_hash, preimage, failure,
+				).await;
 			}
 
 			// Record the fee only on the caller that actually transitioned
@@ -144,6 +161,11 @@ impl<'a> PaymentAttemptHandler<'a> {
 			}
 
 			if let Some(metric_status) = telemetry::LightningPaymentMetricStatus::from_status(status) {
+				// Utilisation only means something once a routing fee was
+				// actually paid.
+				let utilisation = (status == LightningPaymentStatus::Succeeded)
+					.then(|| attempt.routing_budget_utilisation_ppm(final_amount_msat))
+					.flatten();
 				// Attempted amount (not final_amount_msat / CLN's amount_sent_msat)
 				// so failed/succeeded volumes stay comparable.
 				telemetry::add_lightning_payment(
@@ -153,6 +175,8 @@ impl<'a> PaymentAttemptHandler<'a> {
 					telemetry::LightningDirection::Send,
 					attempt.is_self_payment(),
 					attempt.user_agent.as_deref(),
+					failure,
+					utilisation,
 				);
 			}
 		}
@@ -165,6 +189,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 		&self,
 		payment_hash: PaymentHash,
 		preimage: Option<Preimage>,
+		failure: Option<LightningFailureKind>,
 	) {
 		let mailbox_id = match self.db.read(async |t|
 			t.get_lightning_sender_mailbox_id(payment_hash).await
@@ -178,7 +203,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 		};
 
 		match self.db.write(async |t|
-			t.store_lightning_send_finished(mailbox_id, payment_hash, preimage).await
+			t.store_lightning_send_finished(mailbox_id, payment_hash, preimage, failure).await
 		).await {
 			Ok(Some(checkpoint)) => {
 				self.mailbox_manager.notify(mailbox_id, checkpoint);

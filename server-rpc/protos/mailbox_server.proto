@@ -68,6 +68,9 @@ message LightningSendFinishedMessage {
 	// The preimage, present only on success (proves payment was made).
 	// Absent when payment failed.
 	optional bytes preimage = 2;
+	// Why it failed, present only on failure. A failed notification without
+	// it comes from a server that predates this field.
+	optional core.LightningPaymentFailure failure = 3;
 }
 
 message MailboxMessages {
