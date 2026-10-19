@@ -251,6 +251,30 @@ enum Command {
 	#[command(subcommand)]
 	Message(MessageCommand),
 
+	/// Generate a BIP 321 payment string
+	///
+	/// It always includes an Ark address, and a BOLT11 invoice when an amount
+	/// is given.
+	#[command()]
+	Bip321 {
+		/// The amount to receive
+		///
+		/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
+		///
+		/// Optional. If omitted, no BOLT11 invoice is generated.
+		#[arg(long)]
+		amount: Option<Amount>,
+		/// The label to add to the payment
+		#[arg(long)]
+		label: Option<String>,
+		/// The message to add to the payment
+		#[arg(long)]
+		message: Option<String>,
+		/// Whether to include an onchain address in the payment
+		#[arg(long)]
+		onchain: bool,
+	},
+
 	/// Get the wallet balance
 	#[command()]
 	Balance,
@@ -481,6 +505,16 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 				}
 				output_json(&resp);
 			},
+		},
+		Command::Bip321 { amount, label, message, onchain } => {
+			let req = models::Bip321UriRequest {
+				amount_sat: amount.map(|a| a.to_sat()),
+				onchain: Some(onchain),
+				label,
+				message,
+			};
+			let resp = wallet_api::bip321_uri(config, req, None).await.rest()?;
+			println!("{}", resp.bip321);
 		},
 		Command::Balance => {
 			let balance = wallet_api::balance(config).await.rest()?;
