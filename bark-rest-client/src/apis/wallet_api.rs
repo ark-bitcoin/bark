@@ -1135,7 +1135,7 @@ pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh
     }
 }
 
-/// Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses, Lightning addresses, and LNURL but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses and LNURL. To send to an on-chain bitcoin address, use `send-onchain` instead.
+/// Sends a payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, LNURL, bitcoin address, or BIP 321 URI. When the destination offers several payment methods, `method` picks the kind to pay with; without it the wallet picks Ark, then Lightning, then on-chain. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required unless the destination carries an amount. Comments are only supported for Lightning addresses and LNURL.
 pub async fn send(configuration: &configuration::Configuration, send_request: models::SendRequest) -> Result<models::SendResponse, Error<SendError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_send_request = send_request;

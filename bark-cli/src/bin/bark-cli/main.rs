@@ -625,6 +625,7 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 				amount_sat: amount.map(|a| a.to_sat()),
 				comment,
 				retry_for_secs,
+				method: None,
 			};
 			let resp = wallet_api::send(config, req).await.rest()?;
 			match resp.payment_hash {

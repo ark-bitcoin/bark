@@ -12,13 +12,10 @@ use bitcoin_ext::BlockHeight;
 use utoipa::OpenApi;
 
 use ark::VtxoId;
-use ark::lightning::{Bolt11Invoice, Offer};
 use ark::ProtocolEncoding;
 
 use bark::{ImportVtxoError, LightningSendOptions};
-use bark::lnurllib::lightning_address::LightningAddress;
-use bark::lnurllib::lnurl::LnUrl;
-use bark::payment_request::ArkAddressType;
+use bark::payment_request::PaymentInitOutput;
 use bark::round::RoundStatus;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;
@@ -114,6 +111,7 @@ pub fn router() -> Router<Arc<ServerState>> {
 		bark_json::web::EncodedVtxoResponse,
 		bark_json::movements::Movement,
 		bark_json::web::SendRequest,
+		bark_json::web::PaymentMethodKind,
 		bark_json::web::SendResponse,
 		bark_json::web::RefreshRequest,
 		bark_json::web::DelegatedRefreshRequest,
@@ -721,17 +719,18 @@ pub async fn pending_rounds(
 	request_body = bark_json::web::SendRequest,
 	responses(
 		(status = 200, description = "Payment sent successfully", body = bark_json::web::SendResponse),
-		(status = 400, description = "The provided destination is not a valid Ark address, \
-			BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL", body = error::BadRequestError),
+		(status = 400, description = "The destination is not a valid payment string, has no \
+			valid payment method, or the request lacks a required amount", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Sends an Ark or Lightning payment to the specified destination. Accepts \
-		an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. Ark address \
-		payments are settled instantly via an out-of-round (arkoor) transaction. The \
-		`amount_sat` field is required for Ark addresses, Lightning addresses, and LNURL but \
-		optional for invoices and offers that already encode an amount. Comments are \
-		only supported for Lightning addresses and LNURL. To send to an on-chain bitcoin \
-		address, use `send-onchain` instead.",
+	description = "Sends a payment to the specified destination. Accepts \
+		an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, LNURL, bitcoin \
+		address, or BIP 321 URI. When the destination offers several payment methods, \
+		`method` picks the kind to pay with; without it the wallet picks Ark, then \
+		Lightning, then on-chain. Ark address payments \
+		are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field \
+		is required unless the destination carries an amount. Comments are only supported \
+		for Lightning addresses and LNURL.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -741,61 +740,60 @@ pub async fn send(
 ) -> HandlerResult<Json<bark_json::web::SendResponse>> {
 	let wallet = state.require_wallet()?;
 
-	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
+	let request = match wallet.parse_payment_request(&body.destination).await {
+		Ok(request) => request,
+		Err(e) => badarg!("invalid destination: {:#}", e),
+	};
+
+	let option = match body.method {
+		Some(kind) => {
+			let valid = request.options.iter().filter(|o| o.errors.is_empty());
+			match valid.clone().find(|o| kind.matches(&o.method)) {
+				Some(option) => option,
+				None => {
+					let methods = valid.map(|o| o.method.type_str()).collect::<Vec<_>>();
+					badarg!("no valid {} payment method, valid methods are [{}]",
+						kind, methods.join(", "));
+				},
+			}
+		},
+		None => match request.default_option() {
+			Some(option) => option,
+			None => {
+				let problems = request.options.iter()
+					.map(|o| {
+						let errors = o.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>();
+						format!("{} ({})", o.method.type_str(), errors.join(", "))
+					})
+					.collect::<Vec<_>>();
+				badarg!("no valid payment method: {}", problems.join(", "));
+			},
+		},
+	};
+	let method = &option.method;
+
+	let amount = body.amount_sat.map(Amount::from_sat).or(request.amount);
+	if amount.is_none() && method.requires_amount() {
+		badarg!("amount is required for {}", method.type_str());
+	}
+	if body.comment.is_some() && !method.supports_comment() {
+		badarg!("comment is not supported for {}", method.type_str());
+	}
+
 	let opts = LightningSendOptions::default()
 		.retry_for(body.retry_for_secs.map(Duration::from_secs));
+	let output = wallet.send_payment_with(method, amount, body.comment, opts).await?;
 
-	match ArkAddressType::from_str(&body.destination) {
-		Ok(ArkAddressType::Bark(addr)) => {
-			let amount = amount.context("amount missing")?;
-
-			wallet.validate_arkoor_address(&addr).await
-				.badarg("invalid arkoor address")?;
-			log::info!("Sending arkoor payment of {} to address {}", amount, addr);
-			wallet.send_arkoor_payment(&addr, amount).await?;
-			return Ok(axum::Json(bark_json::web::SendResponse {
-				message: "Payment sent successfully".to_string(),
-				payment_hash: None,
-			}));
+	let (message, payment_hash) = match output {
+		PaymentInitOutput::Lightning(invoice) => {
+			("Payment sent successfully".to_string(), Some(invoice.payment_hash()))
 		},
-		// Explicitly handle Arkade addresses
-		Ok(ArkAddressType::Arkade(_)) => badarg!("Ark address is for different server"),
-		// Ignore other errors, we want to check payment methods below
-		Err(_) => {}
+		PaymentInitOutput::Ark(_) => ("Payment sent successfully".to_string(), None),
+		PaymentInitOutput::Onchain(txid) => {
+			(format!("Payment sent successfully in transaction {}", txid), None)
+		},
 	};
-
-	let invoice = if let Ok(inv) = Bolt11Invoice::from_str(&body.destination) {
-		if body.comment.is_some() {
-			badarg!("comment is not supported for BOLT-11 invoices");
-		}
-		wallet.pay_lightning_invoice_with(inv, amount, opts).await?
-	} else if let Ok(offer) = Offer::from_str(&body.destination) {
-		if body.comment.is_some() {
-			badarg!("comment is not supported for BOLT-12 offers");
-		}
-		wallet.pay_lightning_offer_with(offer, amount, opts).await?
-	} else if let Ok(addr) = LightningAddress::from_str(&body.destination) {
-		let amount = amount.badarg("amount is required for Lightning addresses")?;
-		wallet.pay_lightning_address_with(&addr, amount, body.comment, opts).await?
-	} else if let Ok(lnurl) = LnUrl::from_str(&body.destination) {
-		let amount = amount.badarg("amount is required for LNURL")?;
-		wallet.pay_lnurl_with(&lnurl, amount, body.comment, opts).await?
-	} else if let Ok(addr) = bitcoin::Address::from_str(&body.destination) {
-		let _checked_addr = addr
-			.require_network(wallet.network().await?)
-			.context("bitcoin address is not valid for configured network")?;
-		let _amount = amount.context("amount missing")?;
-
-		return Err(anyhow!("offboards are temporarily disabled").into());
-	} else {
-		badarg!("Argument is not a valid destination. Supported are: \
-			Ark addresses, BOLT-11 invoices, BOLT-12 offers, Lightning addresses and LNURL");
-	};
-
-	Ok(axum::Json(bark_json::web::SendResponse {
-		message: "Payment sent successfully".to_string(),
-		payment_hash: Some(invoice.payment_hash()),
-	}))
+	Ok(axum::Json(bark_json::web::SendResponse { message, payment_hash }))
 }
 
 #[utoipa::path(

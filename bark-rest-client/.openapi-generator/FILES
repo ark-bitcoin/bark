@@ -160,6 +160,7 @@ docs/OnchainFeeRatesResponse.md
 docs/OnchainSendManyRequest.md
 docs/OnchainSendRequest.md
 docs/PaymentMethod.md
+docs/PaymentMethodKind.md
 docs/PendingBoardInfo.md
 docs/PendingRoundInfo.md
 docs/PpmExpiryFeeEntry.md
@@ -368,6 +369,7 @@ src/models/onchain_fee_rates_response.rs
 src/models/onchain_send_many_request.rs
 src/models/onchain_send_request.rs
 src/models/payment_method.rs
+src/models/payment_method_kind.rs
 src/models/pending_board_info.rs
 src/models/pending_round_info.rs
 src/models/ppm_expiry_fee_entry.rs

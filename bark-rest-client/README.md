@@ -256,6 +256,7 @@ Class | Method | HTTP request | Description
  - [OnchainSendManyRequest](docs/OnchainSendManyRequest.md)
  - [OnchainSendRequest](docs/OnchainSendRequest.md)
  - [PaymentMethod](docs/PaymentMethod.md)
+ - [PaymentMethodKind](docs/PaymentMethodKind.md)
  - [PendingBoardInfo](docs/PendingBoardInfo.md)
  - [PendingRoundInfo](docs/PendingRoundInfo.md)
  - [PpmExpiryFeeEntry](docs/PpmExpiryFeeEntry.md)
