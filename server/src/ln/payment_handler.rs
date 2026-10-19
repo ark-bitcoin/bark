@@ -37,8 +37,29 @@ impl<'a> PaymentAttemptHandler<'a> {
 	pub async fn fail_payment_attempt(
 		&self, attempt: &LightningPaymentAttempt, error: Option<&str>,
 	) -> anyhow::Result<Option<DateTime<Local>>> {
+		self.fail_attempt(attempt, error, false).await
+	}
+
+	/// Mark an intra-Ark payment attempt that its receive refused as failed,
+	/// and unlink it from that receive in the same transaction.
+	///
+	/// Revoking the attempt's HTLCs must never see it failed while still
+	/// linked, or the revoke cancels a receive that this payment never paid.
+	///
+	/// Returns `None` if the optimistic-lock predicate missed.
+	pub async fn fail_refused_payment_attempt(
+		&self, attempt: &LightningPaymentAttempt, error: Option<&str>,
+	) -> anyhow::Result<Option<DateTime<Local>>> {
+		self.fail_attempt(attempt, error, true).await
+	}
+
+	async fn fail_attempt(
+		&self, attempt: &LightningPaymentAttempt, error: Option<&str>, unlink_subscription: bool,
+	) -> anyhow::Result<Option<DateTime<Local>>> {
 		let new_status = LightningPaymentStatus::Failed;
-		let updated_at = self.db.write(async |t| {
+		let updated_at = self.db.write(async |t| if unlink_subscription {
+			t.fail_refused_lightning_payment_attempt(attempt, error).await
+		} else {
 			let updated_at = t.update_lightning_payment_attempt_status(
 				attempt, new_status, error,
 			).await?;

@@ -391,17 +391,31 @@ impl LightningManager {
 			// it: `initiate_lightning_payment` checks the same thing, but a
 			// receive registered after that check would otherwise land here
 			// unvalidated and be paid out of our vtxopool.
+			// `refused` is whether the receive was left unpromoted. Once this
+			// payment promoted it, a later failure must keep the link: revoking
+			// then has to see the receive and refuse while HTLC-recvs are granted.
 			let res = match validate_intra_ark_payment(&sub, &invoice, amount) {
-				Ok(()) => self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await,
-				Err(e) => Err(e),
+				Ok(()) => self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await
+					.map_err(|e| {
+						let refused = e.downcast_ref::<PayInvoiceRace>().is_some();
+						(e, refused)
+					}),
+				Err(e) => Err((e, true)),
 			};
-			if let Err(e) = res {
+			if let Err((e, refused)) = res {
 				trace!("Failed to update subscription status: {e:#}");
 				let payment_attempt = self.db
 					.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
 					.expect("we inserted a payment attempt");
 
-				self.payment_handler().fail_payment_attempt(&payment_attempt, Some(&e.to_string())).await?;
+				// A refused payment never funded the receive, so revoking it must
+				// not cancel the receive.
+				let payment_handler = self.payment_handler();
+				if refused {
+					payment_handler.fail_refused_payment_attempt(&payment_attempt, Some(&e.to_string())).await?;
+				} else {
+					payment_handler.fail_payment_attempt(&payment_attempt, Some(&e.to_string())).await?;
+				}
 				return Err(e);
 			}
 

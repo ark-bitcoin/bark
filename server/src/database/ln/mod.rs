@@ -226,7 +226,8 @@ impl<'t> Tx<'t> {
 	///
 	/// `lightning_htlc_subscription_id` records the subscription the payment
 	/// was initiated against, making it an intra-Ark self-payment. This is
-	/// decided at initiation time and stored; it is never re-derived.
+	/// decided at initiation time and stored; it is never re-derived. It is
+	/// only cleared if that subscription refuses the payment.
 	///
 	/// `user_agent` is the raw `x-user-agent` of the initiating client
 	/// ([`crate::telemetry::current_user_agent`]), not the bucketed metric
@@ -608,6 +609,39 @@ impl<'t> Tx<'t> {
 			Some(row) => Ok(Some(row.try_into()?)),
 			None => Ok(None),
 		}
+	}
+
+	/// Fail a payment attempt that its receive subscription refused, and
+	/// unlink it from that subscription in the same statement, so revoking its
+	/// HTLCs leaves that receive alone.
+	///
+	/// Keeps any previous error when `error` is `None`. Returns `None` if the
+	/// optimistic-lock predicate missed.
+	pub async fn fail_refused_lightning_payment_attempt(
+		&self,
+		old_payment_attempt: &LightningPaymentAttempt,
+		error: Option<&str>,
+	) -> anyhow::Result<Option<DateTime<Local>>> {
+		let stmt = self.prepare("
+			UPDATE lightning_payment_attempt
+			SET status = $3,
+				error = COALESCE($4, error),
+				lightning_htlc_subscription_id = NULL,
+				updated_at = NOW()
+			WHERE id = $1 AND updated_at = $2
+			RETURNING updated_at;
+		").await?;
+		let row = self.query_opt(
+			&stmt,
+			&[
+				&old_payment_attempt.id,
+				&old_payment_attempt.updated_at,
+				&LightningPaymentStatus::Failed,
+				&error,
+			],
+		).await?;
+
+		Ok(row.map(|r| r.get("updated_at")))
 	}
 
 	/// Cancel the receive subscription an intra-Ark payment was initiated
