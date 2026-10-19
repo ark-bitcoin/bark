@@ -222,6 +222,13 @@ enum MessageCommand {
 	},
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum PaymentMethodArg {
+	Ark,
+	Lightning,
+	Onchain,
+}
+
 #[derive(clap::Subcommand)]
 enum Command {
 	/// Create a new wallet
@@ -347,10 +354,17 @@ enum Command {
 		all: bool,
 	},
 
-	/// Send money using Ark
+	/// Send a payment to an Ark, Lightning, Bitcoin or BIP-321 destination
 	#[command()]
 	Send {
-		/// The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
+		/// Supported destinations are:
+		/// - Ark address
+		/// - BOLT11 invoice
+		/// - BOLT12 offer
+		/// - Lightning address
+		/// - LNURL
+		/// - Bitcoin address
+		/// - BIP321 payment URI
 		destination: String,
 		/// The amount to send (optional for bolt11)
 		///
@@ -361,6 +375,11 @@ enum Command {
 		/// Wait for the payment to be completed
 		#[arg(long)]
 		wait: bool,
+		/// In case the destination offers several payment methods, such as a
+		/// BIP 321 URI, the kind of method to pay with. Without it, barkd picks
+		/// Ark, then Lightning, then on-chain.
+		#[arg(long, value_enum)]
+		method: Option<PaymentMethodArg>,
 		/// For lightning payments, how many seconds the server should keep
 		/// trying to pay, capped to the server's maximum. Defaults to the
 		/// server's choice.
@@ -619,13 +638,17 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 			};
 			output_json(&board);
 		},
-		Command::Send { destination, amount, comment, wait, retry_for_secs } => {
+		Command::Send { destination, amount, comment, wait, method, retry_for_secs } => {
 			let req = models::SendRequest {
 				destination,
 				amount_sat: amount.map(|a| a.to_sat()),
 				comment,
 				retry_for_secs,
-				method: None,
+				method: method.map(|m| match m {
+					PaymentMethodArg::Ark => models::PaymentMethodKind::Ark,
+					PaymentMethodArg::Lightning => models::PaymentMethodKind::Lightning,
+					PaymentMethodArg::Onchain => models::PaymentMethodKind::Onchain,
+				}),
 			};
 			let resp = wallet_api::send(config, req).await.rest()?;
 			match resp.payment_hash {
@@ -635,7 +658,7 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 						lightning::wait_for_lightning_send(config, &hash.to_string()).await?;
 					}
 				},
-				None => info!("Payment sent successfully!"),
+				None => info!("{}", resp.message),
 			}
 		},
 		Command::SendOnchain { destination, amount } => {
