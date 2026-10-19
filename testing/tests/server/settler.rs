@@ -130,3 +130,36 @@ async fn concurrent_subscribers_no_missed_wakeups() {
 	futures::future::join_all(tasks).await
 		.into_iter().collect::<Result<Vec<_>, _>>().unwrap();
 }
+
+/// A failed database read must not end the subscribe stream: the hold
+/// settler treats a finished stream as fatal.
+#[tokio::test]
+async fn subscribe_survives_db_read_error() {
+	let mut ctx = TestContext::new_minimal("server/subscribe_survives_db_read_error").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.unwrap();
+	let db = Db::connect(&postgres_cfg).await.unwrap();
+
+	let settler = HtlcSettler::start(db.clone(), RuntimeManager::new(), Duration::from_secs(9999));
+	let preimage = Preimage::random();
+	settler.settle(preimage).await.unwrap();
+
+	// Hide the table so the stream's read fails.
+	db.write(async |t| {
+		t.execute("ALTER TABLE htlc_settlement RENAME TO htlc_settlement_hidden", &[]).await?;
+		Ok(())
+	}).await.unwrap();
+
+	let mut stream = Box::pin(settler.subscribe(0));
+	assert!(stream.next().try_wait_millis(2_000).await.is_err(), "stream must keep waiting");
+
+	db.write(async |t| {
+		t.execute("ALTER TABLE htlc_settlement_hidden RENAME TO htlc_settlement", &[]).await?;
+		Ok(())
+	}).await.unwrap();
+
+	let s = stream.next().wait_millis(10_000).await.expect("stream ended after a db error");
+	assert_eq!(s.preimage, preimage);
+}
