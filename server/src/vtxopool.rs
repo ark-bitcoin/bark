@@ -447,14 +447,50 @@ impl VtxoPool {
 			})
 			.collect::<Vec<_>>();
 
+		// We stored all change output VTXOs, but in the pool we only keep the
+		// first one (nondust) to avoid later serving one whose ephemeral key was deleted.
+		// Change past the arkoor depth cap or already pruned for expiry is not
+		// kept either; like dust change, it is swept after expiry.
+		let pool_change = match change.first() {
+			Some(change) if change.exit_depth() > self.config.max_vtxo_exit_depth => {
+				info!("Dropping vtxo pool change {} from the pool: exit depth {} \
+					exceeds the maximum of {}",
+					change.id(), change.exit_depth(), self.config.max_vtxo_exit_depth,
+				);
+				None
+			},
+			Some(change) if self.data.lock().is_pruned(change.expiry_height()) => {
+				info!("Dropping vtxo pool change {} from the pool: expiry {} \
+					is within the pre-expiry margin",
+					change.id(), change.expiry_height(),
+				);
+				None
+			},
+			Some(change) => Some(PoolVtxo::new(change.clone())),
+			None => None,
+		};
+
 		srv.db.write(async |t| {
 			t.execute_vtxo_tree_update(update).await?;
 			htlc_vtxo::create_htlc_vtxos(&t, &htlc_recvs, HtlcDirection::Outgoing).await?;
 			t.mark_vtxopool_vtxos_spent(input_ids.iter().copied()).await
 				.context("failed to mark vtxopool vtxos as spent")?;
+			if let Some(change) = &pool_change {
+				t.store_vtxopool_vtxo(change).await
+					.context("failed to store vtxopool change")?;
+			}
 			commit(&t, &sent).await
 		}).await?;
 		let inputs = inputs.spent();
+
+		// Insert before any await, so cancellation can't leave the change out.
+		if let Some(change) = pool_change {
+			let mut data = self.data.lock();
+			if !data.is_pruned(change.expiry_height()) {
+				data.insert_vtxos(&[change.clone()]);
+				slog!(ChangePoolVtxo, vtxo: change.id(), amount: change.amount());
+			}
+		}
 
 		for input in inputs {
 			slog!(SpentPoolVtxo, vtxo: input.0, amount: input.2, destination: dest.clone());
@@ -465,37 +501,6 @@ impl VtxoPool {
 			if let Err(e) = srv.drop_ephemeral_cosign_key(key.public_key()).await {
 				warn!("Failed to drop ephemeral cosign key {} for arkoored pool vtxo: {:#}",
 					key.public_key(), e);
-			}
-		}
-
-		// We stored all change output VTXOs, but in the pool we only keep the
-		// first one (nondust) to avoid later serving one whose ephemeral key was deleted.
-		// Change past the arkoor depth cap or already pruned for expiry is not
-		// kept either; like dust change, it is swept after expiry.
-		if let Some(change) = change.first() {
-			if change.exit_depth() > self.config.max_vtxo_exit_depth {
-				info!("Dropping vtxo pool change {} from the pool: exit depth {} \
-					exceeds the maximum of {}",
-					change.id(), change.exit_depth(), self.config.max_vtxo_exit_depth,
-				);
-			} else if self.data.lock().is_pruned(change.expiry_height()) {
-				info!("Dropping vtxo pool change {} from the pool: expiry {} \
-					is within the pre-expiry margin",
-					change.id(), change.expiry_height(),
-				);
-			} else {
-				let new = PoolVtxo::new(change.clone());
-				if let Err(e) = srv.db.write(async |t| t.store_vtxopool_vtxo(&new).await).await {
-					// don't abort for this
-					warn!("Failed to store change from a vtxopool spend: {:#}", e);
-				} else {
-					// The bucket may have been pruned during the write.
-					let mut data = self.data.lock();
-					if !data.is_pruned(new.expiry_height()) {
-						data.insert_vtxos(&[new.clone()]);
-						slog!(ChangePoolVtxo, vtxo: new.id(), amount: new.amount());
-					}
-				}
 			}
 		}
 
