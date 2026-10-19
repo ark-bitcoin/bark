@@ -47,7 +47,7 @@ impl TryFrom<Row> for PoolVtxo {
 impl<'t> Tx<'t> {
 	pub async fn get_pool_vtxos_by_ids(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<PoolVtxo>> {
 		let stmt = self.prepare_typed(
-			"SELECT vtxo FROM vtxo_pool WHERE vtxo_id = ANY($1)",
+			"SELECT vtxo FROM vtxo_pool WHERE vtxo_id = ANY($1) AND spent_at IS NULL",
 			&[Type::TEXT_ARRAY],
 		).await?;
 		let rows = self.query(&stmt, &[&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>()]).await?;
