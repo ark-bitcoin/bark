@@ -1238,6 +1238,14 @@ async fn round_participation() {
 	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(100)).await).await.unwrap();
 	assert_eq!(pending.len(), 1, "due once the scheduled height is reached");
 	assert_eq!(pending[0].scheduled_height, Some(BlockHeight::new(100)));
+
+	// a height that doesn't fit the column is refused, not stored wrapped negative
+	let too_high: UnlockPreimage = [3u8; 32];
+	let err = db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), too_high, &[vtxo.id()], std::iter::once(&output), Some(BlockHeight::new(u32::MAX))).await).await.unwrap_err();
+	assert!(format!("{:#}", err).contains("out of range"), "{:#}", err);
+	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(100)).await).await.unwrap();
+	assert_eq!(pending.len(), 1, "the refused request changed nothing");
+	assert_eq!(pending[0].scheduled_height, Some(BlockHeight::new(100)));
 }
 
 #[tokio::test]

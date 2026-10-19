@@ -264,6 +264,12 @@ pub async fn store_round_participation(
 	outputs: impl IntoIterator<Item = &StoredRoundOutput>,
 	scheduled_height: Option<BlockHeight>,
 ) -> anyhow::Result<()> {
+	// The column is an INTEGER, so a larger height would wrap negative.
+	let scheduled_height = scheduled_height
+		.map(|h| i32::try_from(h.to_u32())
+			.map_err(|_| badarg_err!("scheduled height {} is out of range", h)))
+		.transpose()?;
+
 	let part_stmt = tx.prepare_typed(
 		"INSERT INTO round_participation \
 			(unlock_hash, unlock_preimage, scheduled_height, created_at) \
@@ -274,7 +280,7 @@ pub async fn store_round_participation(
 	let part_row = tx.query_one(&part_stmt, &[
 		&unlock_hash.to_string(),
 		&unlock_preimage.to_lower_hex_string(),
-		&scheduled_height.map(|h| h.to_u32() as i32),
+		&scheduled_height,
 	]).await?;
 
 	let part_id = part_row.get::<_, i64>("id");
@@ -402,7 +408,8 @@ pub async fn complete_round_participation(
 
 	let forfeited_at = part_row.get::<_, Option<chrono::DateTime<chrono::Local>>>("forfeited_at");
 	let scheduled_height = part_row.get::<_, Option<i32>>("scheduled_height")
-		.map(|h| BlockHeight::try_from(h).expect("invalid block height in db"));
+		.map(|h| BlockHeight::try_from(h).context("invalid scheduled_height in db"))
+		.transpose()?;
 
 	Ok(StoredRoundParticipation {
 		unlock_preimage: Secret::new(unlock_preimage),

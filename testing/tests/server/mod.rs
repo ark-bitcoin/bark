@@ -2772,3 +2772,31 @@ async fn board_exit_tx_prevents_registration() {
 	assert_eq!(balance, Amount::ZERO, "spendable balance should be zero since board was not registered");
 }
 
+#[tokio::test]
+async fn scheduled_height_must_not_poison_round_loading() {
+	let ctx = TestContext::new("server/scheduled_height_round_loading").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		// Run the coordinator's database read in this test, not the daemon.
+		cfg.round_interval = Duration::from_secs(10_000_000);
+		cfg.fees.refresh.base_fee = Amount::ZERO;
+	}).create().await;
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+
+	// No vtxo or signature is needed: with no inputs and outputs nothing is checked,
+	// and u32::MAX would be stored as -1 in the INTEGER column.
+	let err = srv.get_public_rpc().await.submit_round_participation(
+		protos::RoundParticipationRequest {
+			input_vtxos: vec![],
+			vtxo_requests: vec![],
+			unblinded_mailbox_id: None,
+			scheduled_height: Some(u32::MAX),
+		},
+	).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err.message());
+
+	// The same read the round coordinator does at the start of each round.
+	let pending = db.read(async |t| {
+		t.get_all_pending_round_participations(BlockHeight::ZERO).await
+	}).await.expect("a public request must not poison round loading");
+	assert!(pending.is_empty());
+}

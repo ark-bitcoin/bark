@@ -1911,6 +1911,13 @@ impl Server {
 		outputs: Vec<StoredRoundOutput>,
 		scheduled_height: Option<BlockHeight>,
 	) -> anyhow::Result<UnlockHash> {
+		if inputs.is_empty() {
+			return badarg!("invalid request: no inputs");
+		}
+		if outputs.is_empty() {
+			return badarg!("invalid request: no outputs");
+		}
+
 		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
 
 		// check input proofs
