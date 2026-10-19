@@ -486,6 +486,12 @@ impl VtxoPool {
 			return;
 		}
 
+		// Issuance waits for sync, but rpcs don't: drop vtxos that are
+		// already in the pre-expiry margin before they can be served.
+		let threshold = srv.chain_tip().height + self.config.vtxo_pre_expiry;
+		self.data.lock().prune_expiring(threshold);
+		update_all_bucket_metrics(&self.data);
+
 		let proc = Process {
 			srv: srv.clone(),
 			config: self.config.clone(),
