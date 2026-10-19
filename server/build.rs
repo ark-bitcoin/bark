@@ -52,6 +52,8 @@ fn main() {
 /// refinery's embed_migrations! macro embeds the migration files in filesystem
 /// readdir order, which differs between machines and makes the build
 /// unreproducible. Generate the equivalent module from a sorted file list.
+///
+/// This is fixed in refinery v0.10.0, but it requires Rust v1.92.
 fn generate_migrations() {
 	println!("cargo:rerun-if-changed=src/database/migrations");
 
