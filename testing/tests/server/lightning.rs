@@ -815,6 +815,88 @@ impl RawHtlcSend {
 	}
 }
 
+/// A server with a victim holding an open bolt11 receive and a funded
+/// attacker, both on the same server.
+struct ForeignReceive {
+	srv: Arc<Captaind>,
+	/// The server's node, kept so it isn't stopped on drop.
+	_srv_ln: ark_testing::Lightningd,
+	payer: Arc<ark_testing::Lightningd>,
+	victim: Arc<Bark>,
+	attacker: Bark,
+	attacker_vtxos: Vec<ark::VtxoId>,
+	invoice: String,
+	payment_hash: PaymentHash,
+	db: Db,
+}
+
+impl ForeignReceive {
+	async fn setup(ctx: &TestContext) -> ForeignReceive {
+		let lightning = ctx.new_lightning_setup("lightningd").await;
+		let srv = ctx.captaind("server").lightningd(&lightning.external).funded(btc(10)).create().await;
+		srv.wait_for_vtxopool(ctx).await;
+
+		let victim = Arc::new(ctx.bark("victim", &srv).create().await);
+		let attacker = ctx.bark("attacker", &srv).funded(btc(3)).create().await;
+		let attacker_vtxos = attacker.board_and_confirm_and_register(ctx, btc(2)).await;
+
+		let invoice = victim.bolt11_invoice(btc(1)).await.invoice;
+		let payment_hash = PaymentHash::from(&Bolt11Invoice::from_str(&invoice).unwrap());
+		let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+
+		ForeignReceive {
+			srv, _srv_ln: lightning.external, payer: Arc::new(lightning.internal), victim, attacker, attacker_vtxos,
+			invoice, payment_hash, db,
+		}
+	}
+
+	/// Pay the victim's invoice from the external node in the background.
+	fn spawn_payment(&self) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+		let payer = self.payer.clone();
+		let invoice = self.invoice.clone();
+		tokio::spawn(async move { payer.try_pay_bolt11(invoice).await })
+	}
+
+	/// The victim claims its receive and the external payment completes.
+	async fn assert_victim_paid(&self, payment: tokio::task::JoinHandle<anyhow::Result<()>>) {
+		self.victim.try_lightning_receive(&self.invoice).wait_millis(60_000).await
+			.expect("victim should claim its receive");
+		payment.wait_millis(60_000).await.unwrap().expect("external payment should succeed");
+		assert!(self.victim.spendable_balance().await > Amount::ZERO);
+	}
+}
+
+/// While an external payer holds the victim's invoice in `accepted`, a client
+/// pays the same invoice intra-Ark. The server fails that payment because the
+/// invoice is already being paid, and the client revokes its HTLCs. That
+/// failed attempt never funded the receive, so its revoke must not cancel it.
+#[tokio::test]
+async fn revoke_of_refused_intra_ark_payment_leaves_accepted_receive_open() {
+	let ctx = TestContext::new(
+		"server/revoke_of_refused_intra_ark_payment_leaves_accepted_receive_open",
+	).await;
+	let f = ForeignReceive::setup(&ctx).await;
+
+	let payment = f.spawn_payment();
+	wait_for_subscription_status(&f.db, f.payment_hash, "accepted").await;
+
+	let attacker_client = f.attacker.client().await;
+	let htlcs = RawHtlcSend::cosign(
+		&ctx, &f.srv, &attacker_client, &f.attacker_vtxos, f.payment_hash,
+	).await;
+	// The server records the refusal on the attempt, not in the response.
+	htlcs.initiate(&f.srv, &f.invoice, btc(1)).await.unwrap();
+	wait_for_attempt_status(&f.db, f.payment_hash, "failed").await;
+	htlcs.revoke(&f.srv).await.expect("revoke of the refused payment should be cosigned");
+
+	assert_eq!(
+		lightning_subscription_status(&f.db, f.payment_hash).await.as_deref(),
+		Some("accepted"),
+	);
+
+	f.assert_victim_paid(payment).await;
+}
+
 /// An honest sender's payment fails and a client then starts its own payment
 /// to the same payment hash, which stays in flight. The honest sender's revoke
 /// must be judged on its own failed payment, not on the newer one that merely
