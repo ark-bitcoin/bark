@@ -20,7 +20,7 @@ use ark::vtxo::Full;
 use ark::vtxo::TapScriptClause;
 use ark::vtxo::policy::VtxoPolicyKind;
 use bark::Wallet;
-use bark::lightning_invoice::Bolt11Invoice;
+use bark::lightning_invoice::{Bolt11Invoice, Currency, InvoiceBuilder, PaymentSecret};
 use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
 use server_log::{LightningReceiveCanceled, LightningReceiveKeptCommitted};
 use server_rpc::protos;
@@ -135,14 +135,23 @@ async fn try_request_htlc_revocation(
 		keypairs.push(client.get_vtxo_key(&vtxo).await.unwrap());
 		htlc_vtxos.push(vtxo);
 	}
+	revoke_htlc_vtxos(srv, htlc_vtxos, &keypairs).await
+}
 
+/// Send a "claim all" revocation of `htlc_vtxos`, signed with `keypairs`,
+/// straight to the server.
+async fn revoke_htlc_vtxos(
+	srv: &Captaind,
+	htlc_vtxos: Vec<Vtxo<Full>>,
+	keypairs: &[Keypair],
+) -> Result<(), tonic::Status> {
 	// Any pubkey works for the revocation output; the tests never claim it.
 	let revocation_pubkey =
 		Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key();
 	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
-		htlc_vtxos.iter().cloned(),
+		htlc_vtxos,
 		ark::VtxoPolicy::new_pubkey(revocation_pubkey),
-	).unwrap().generate_user_nonces(&keypairs).unwrap();
+	).unwrap().generate_user_nonces(keypairs).unwrap();
 
 	let cosign_request =
 		protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
@@ -757,6 +766,113 @@ async fn intra_ark_revoke_refused_while_watchman_is_behind() {
 	parked.srv.watchmand().wait_for_sync_height(tip).await;
 	parked.revoke().await.expect("revoke should be cosigned once the watchman caught up");
 	parked.assert_claim_refused().await;
+}
+
+/// HTLC-send vtxos that a client cosigned straight through the server RPC,
+/// keyed to a fresh keypair it holds, so a test can initiate and revoke them
+/// for any payment hash.
+struct RawHtlcSend {
+	keypair: Keypair,
+	vtxos: Vec<Vtxo<Full>>,
+}
+
+impl RawHtlcSend {
+	/// Lock `input_ids` of `client` into registered HTLC-send vtxos for
+	/// `payment_hash`, without initiating a payment.
+	async fn cosign(
+		ctx: &TestContext,
+		srv: &Captaind,
+		client: &Wallet,
+		input_ids: &[ark::VtxoId],
+		payment_hash: PaymentHash,
+	) -> RawHtlcSend {
+		let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+		let vtxos = cosign_htlc_send_to_pubkey(
+			ctx, srv, client, input_ids, keypair.public_key(), payment_hash,
+		).await;
+
+		let mut srv_rpc = srv.get_public_rpc().await;
+		srv_rpc.register_vtxo_transactions(protos::RegisterVtxoTransactionsRequest {
+			vtxos: vtxos.iter().map(|v| v.serialize().to_vec()).collect(),
+		}).await.unwrap();
+
+		RawHtlcSend { keypair, vtxos }
+	}
+
+	async fn initiate(&self, srv: &Captaind, invoice: &str, amount: Amount) -> Result<(), tonic::Status> {
+		let mut srv_rpc = srv.get_public_rpc().await;
+		srv_rpc.initiate_lightning_payment(protos::InitiateLightningPaymentRequest {
+			invoice: invoice.to_string(),
+			htlc_vtxo_ids: self.vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+			payment_amount_sat: amount.to_sat(),
+			mailbox_id: None,
+			retry_for_secs: None,
+		}).await.map(|_| ())
+	}
+
+	async fn revoke(&self, srv: &Captaind) -> Result<(), tonic::Status> {
+		revoke_htlc_vtxos(srv, self.vtxos.clone(), &vec![self.keypair; self.vtxos.len()]).await
+	}
+}
+
+/// An honest sender's payment fails and a client then starts its own payment
+/// to the same payment hash, which stays in flight. The honest sender's revoke
+/// must be judged on its own failed payment, not on the newer one that merely
+/// shares the payment hash.
+#[tokio::test]
+async fn revoke_judged_on_own_attempt_not_newer_same_hash_attempt() {
+	let ctx = TestContext::new(
+		"server/revoke_judged_on_own_attempt_not_newer_same_hash_attempt",
+	).await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	let eve_ln = lightning.external;
+
+	let sender = ctx.bark("sender", &srv).funded(btc(3)).create().await;
+	let sender_vtxos = sender.board_and_confirm_and_register(&ctx, btc(2)).await;
+	let attacker = ctx.bark("attacker", &srv).funded(btc(3)).create().await;
+	let attacker_vtxos = attacker.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let payment_hash = ark::lightning::Preimage::random().compute_payment_hash();
+	let amount = sat(10_000);
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+
+	// The honest payment goes to a node nobody can route to, so it fails.
+	let secp = bitcoin::secp256k1::Secp256k1::new();
+	let unknown_key = bitcoin::secp256k1::SecretKey::new(&mut bip39::rand::thread_rng());
+	let unroutable = InvoiceBuilder::new(Currency::Regtest)
+		.description("unroutable".into())
+		.payment_hash(sha256::Hash::from_byte_array(payment_hash.to_byte_array()))
+		.payment_secret(PaymentSecret([0x11; 32]))
+		.current_timestamp()
+		.min_final_cltv_expiry_delta(18)
+		.amount_milli_satoshis(amount.to_msat())
+		.build_signed(|hash| secp.sign_ecdsa_recoverable(hash, &unknown_key))
+		.unwrap();
+	let sender_client = sender.client().await;
+	let honest = RawHtlcSend::cosign(&ctx, &srv, &sender_client, &sender_vtxos, payment_hash).await;
+	honest.initiate(&srv, &unroutable.to_string(), amount).await.unwrap();
+	wait_for_attempt_status(&db, payment_hash, "failed").await;
+
+	// The attacker pays its own hold invoice for the same hash and holds it.
+	lightning.internal.wait_for_block_sync().await;
+	eve_ln.wait_for_block_sync().await;
+	let mut eve_hold = eve_ln.hold_client().await;
+	let held_invoice = eve_hold.invoice(hold::InvoiceRequest {
+		payment_hash: payment_hash.to_byte_array().to_vec(),
+		amount_msat: amount.to_msat(),
+		description: Some(hold::invoice_request::Description::Memo("held".to_string())),
+		min_final_cltv_expiry: Some(18),
+		expiry: Some(3600),
+		routing_hints: vec![],
+	}).await.unwrap().into_inner().bolt11;
+	let attacker_client = attacker.client().await;
+	let held = RawHtlcSend::cosign(&ctx, &srv, &attacker_client, &attacker_vtxos, payment_hash).await;
+	held.initiate(&srv, &held_invoice, amount).await.unwrap();
+	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
+
+	honest.revoke(&srv).await.expect("revoke of the failed payment should be cosigned");
 }
 
 /// Requests the server to sign a HTLC while using a HTCL VTXO as an input
