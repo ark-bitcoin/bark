@@ -120,21 +120,18 @@ impl Server {
 		if status == integration_token.status {
 			return Ok(integration_token);
 		}
-
+		if integration_token.status == TokenStatus::Abused {
+			return badarg!("You cannot change a token that is flagged as abused");
+		}
 
 		match status {
-			TokenStatus::Abused => {}
-			TokenStatus::Disabled => {
-				if integration_token.status == TokenStatus::Abused {
-					bail!("You cannot disable a token that is flagged as abused")
-				}
-			}
+			TokenStatus::Abused | TokenStatus::Disabled => {}
 			TokenStatus::Unused => {
-				bail!("You cannot mark a token unused")
+				return badarg!("You cannot mark a token unused");
 			}
 			TokenStatus::Used => {
 				if integration_token.is_expired() {
-					bail!("Token is expired")
+					return badarg!("Token is expired");
 				}
 			}
 		};

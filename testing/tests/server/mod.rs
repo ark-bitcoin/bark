@@ -356,6 +356,55 @@ async fn integration() {
 }
 
 #[tokio::test]
+async fn integration_preserves_operator_abuse_classification() {
+	let ctx = TestContext::new("server/integration_preserves_operator_abuse_classification").await;
+	let srv = ctx.captaind("server").create().await;
+
+	srv.integration_cmd(&["add", "abuse-status"]).await;
+	let stdout = srv.integration_cmd(&[
+		"generate-api-key", "abuse-status", "integrator", "1h",
+	]).await;
+	let api_key = stdout.split_whitespace().last().unwrap().to_string();
+	srv.integration_cmd(&[
+		"configure-token-type", "abuse-status", "single-use-board", "1", "3600",
+	]).await;
+
+	let channel = tonic::transport::Channel::from_shared(srv.integration_url()).unwrap()
+		.connect().await.unwrap();
+	let mut client = protos::intman::integration_service_client::IntegrationServiceClient::new(channel);
+	let mut issued = client.get_tokens(protos::intman::TokensRequest {
+		api_key: api_key.clone(),
+		r#type: protos::intman::TokenType::SingleUseBoard.into(),
+		count: Some(1),
+	}).await.unwrap().into_inner().tokens;
+	assert_eq!(issued.len(), 1);
+	let token = issued.pop().unwrap().token;
+
+	// The operator flags the token through the CLI.
+	srv.integration_cmd(&["update-token-status", "abuse-status", &token, "abused"]).await;
+
+	// The integrator can't move the token out of abused, directly or through used.
+	for status in [
+		protos::intman::TokenStatus::Disabled,
+		protos::intman::TokenStatus::Used,
+		protos::intman::TokenStatus::Disabled,
+	] {
+		let err = client.update_token(protos::intman::UpdateTokenRequest {
+			api_key: api_key.clone(),
+			token: token.clone(),
+			status: status.into(),
+		}).await.unwrap_err();
+		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{:?}: {}", status, err.message());
+	}
+
+	let info = client.get_token_info(protos::intman::TokenInfoRequest {
+		api_key,
+		token,
+	}).await.unwrap().into_inner();
+	assert_eq!(info.status, protos::intman::TokenStatus::Abused as i32);
+}
+
+#[tokio::test]
 async fn integration_token_quota_is_atomic() {
 	// Regression test for a TOCTOU race between the quota check and token
 	// insert in Server::get_integration_tokens. Two concurrent callers that
