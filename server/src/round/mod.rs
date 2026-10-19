@@ -39,7 +39,7 @@ use crate::database::rounds::{StoredRoundOutput, StoredRoundParticipation};
 use crate::database::tree::VtxoTreeUpdate;
 use crate::{check_max_amount, telemetry, Server, SECP};
 use crate::secret::Secret;
-use crate::error::{ContextExt, NotFound};
+use crate::error::{BadArgument, ContextExt, NotFound};
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
 use crate::nursery::NurseryTxKind;
 use crate::telemetry::{RoundStep, TimedRoundStep};
@@ -1326,6 +1326,12 @@ async fn persist_round(
 	telemetry::set_round_step_duration(round_step);
 
 	if let Err(e) = result {
+		// An input can exit onchain while we collect signatures. A rejected
+		// input is only returned after a rollback, so nothing was stored.
+		if e.downcast_ref::<BadArgument>().is_some() {
+			return Err(RoundError::Recoverable(e.context("round input no longer spendable")));
+		}
+
 		server_rslog!(FatalStoringRound, round_step,
 			error: format!("{:?}", e),
 			unsigned_funding_tx: serialize(unsigned_funding_tx),
