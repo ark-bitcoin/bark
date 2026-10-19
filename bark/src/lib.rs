@@ -449,7 +449,7 @@ use ark::rounds::{RoundAttempt, RoundEvent};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef, VTXO_DUST};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
-use server_rpc::{protos, ServerConnection, MAX_NB_VTXO_IDS};
+use server_rpc::{protos, ServerConnection, MAX_NB_REGISTER_VTXOS, MAX_NB_VTXO_IDS};
 use server_rpc::protos::VtxoSpendState;
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
@@ -2567,8 +2567,8 @@ impl Wallet {
 	}
 
 	/// Registers the signed transaction chains for the given VTXOs with the
-	/// server. This must be called before spending VTXOs so the server can
-	/// publish forfeits if needed.
+	/// server, in batches of [`MAX_NB_REGISTER_VTXOS`]. This must be called
+	/// before spending VTXOs so the server can publish forfeits if needed.
 	pub async fn register_vtxo_transactions_with_server<V: AsRef<Vtxo<Full>>>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
@@ -2579,9 +2579,11 @@ impl Wallet {
 		}
 
 		let (mut srv, _) = self.require_server().await?;
-		srv.client.register_vtxo_transactions(protos::RegisterVtxoTransactionsRequest {
-			vtxos: vtxos,
-		}).await.context("failed to register vtxo transactions")?;
+		for chunk in vtxos.chunks(MAX_NB_REGISTER_VTXOS) {
+			srv.client.register_vtxo_transactions(protos::RegisterVtxoTransactionsRequest {
+				vtxos: chunk.to_vec(),
+			}).await.context("failed to register vtxo transactions")?;
+		}
 
 		Ok(())
 	}
