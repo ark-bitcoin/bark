@@ -581,32 +581,46 @@ impl<'t> Tx<'t> {
 		Ok(rows_affected == 1)
 	}
 
-	/// Whether any of the given HTLC-send vtxos funded a lightning payment attempt.
-	pub async fn htlc_vtxos_funded_payment_attempt(
+	/// Get the latest payment attempt that any of `htlc_vtxo_ids` was
+	/// committed to (any status).
+	pub async fn get_latest_payment_attempt_by_htlc_vtxos(
 		&self,
-		vtxo_ids: &[VtxoId],
-	) -> anyhow::Result<bool> {
+		htlc_vtxo_ids: &[VtxoId],
+	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
 		let stmt = self.prepare("
-			SELECT EXISTS(
-				SELECT 1 FROM lightning_payment_attempt_htlc_vtxo WHERE vtxo_id = ANY($1)
-			) AS funded;
+			SELECT lpa.id,
+				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
+				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
+				lpa.user_agent, lpa.lightning_htlc_subscription_id,
+				lpa.max_routing_fee_msat,
+				lpa.created_at, lpa.updated_at
+			FROM lightning_payment_attempt lpa
+			JOIN lightning_payment_attempt_htlc_vtxo link ON link.lightning_payment_attempt_id = lpa.id
+			WHERE link.vtxo_id = ANY($1)
+			ORDER BY lpa.created_at DESC
+			LIMIT 1;
 		").await?;
-		let ids = vtxo_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
-		let row = self.query_one(&stmt, &[&ids]).await?;
-		Ok(row.get("funded"))
+
+		let ids = htlc_vtxo_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+		let row = self.query_opt(&stmt, &[&ids]).await?;
+
+		match row {
+			Some(row) => Ok(Some(row.try_into()?)),
+			None => Ok(None),
+		}
 	}
 
-	/// Cancel the latest receive subscription for `payment_hash` as part of
-	/// revoking the matching HTLC-send vtxos of an intra-Ark payment.
+	/// Cancel the receive subscription an intra-Ark payment was initiated
+	/// against, as part of revoking that payment's HTLC-send vtxos.
 	///
 	/// Only `Created`, `Accepted`, and `HtlcsReady` once `htlc_recvs_expired`,
 	/// are canceled. Returns the status *before* this call and whether
-	/// HTLC-recv vtxos were ever granted, or `None` for a plain outgoing
-	/// payment. The caller MUST refuse the revocation while these show the
+	/// HTLC-recv vtxos were ever granted, or `None` if the subscription does
+	/// not exist. The caller MUST refuse the revocation while these show the
 	/// receive is still committed.
 	pub async fn cancel_revocable_htlc_subscription(
 		&self,
-		payment_hash: PaymentHash,
+		subscription_id: i64,
 		htlc_recvs_expired: bool,
 	) -> anyhow::Result<Option<(LightningHtlcSubscriptionStatus, bool)>> {
 		// The row is locked `FOR UPDATE` so this serializes against
@@ -618,10 +632,10 @@ impl<'t> Tx<'t> {
 				SELECT 1 FROM vtxo WHERE vtxo.lightning_htlc_subscription_id = lhs.id
 			) AS htlc_recvs_granted
 			FROM lightning_htlc_subscription lhs
-			WHERE lhs.payment_hash = $1
+			WHERE lhs.id = $1
 			FOR UPDATE;
 		").await?;
-		let Some(row) = self.query_opt(&select, &[&payment_hash.to_string()]).await? else {
+		let Some(row) = self.query_opt(&select, &[&subscription_id]).await? else {
 			return Ok(None);
 		};
 

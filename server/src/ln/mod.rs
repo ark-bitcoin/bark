@@ -506,9 +506,12 @@ impl Server {
 		let builder = self.validate_cosign_request(validation, cosign_request)
 			.badarg("invalid cosign request")?;
 
+		// The payment these HTLCs were committed to, not another sender's
+		// payment to the same hash.
 		let attempt = db.read(async |t|
-			t.get_latest_payment_attempt_by_payment_hash(payment_hash).await
+			t.get_latest_payment_attempt_by_htlc_vtxos(&htlc_vtxo_ids).await
 		).await?;
+		let subscription_id = attempt.as_ref().and_then(|a| a.lightning_htlc_subscription_id);
 
 		// If payment not found but input vtxos are found, we can allow revoke
 		if let Some(attempt) = attempt {
@@ -555,16 +558,14 @@ impl Server {
 			// the sender AND pay the payee for one payment.
 			// A canceled receive only refuses the cooperative claim, so granted
 			// HTLC-recv vtxos commit it until [htlc_recvs_expired].
-			// HTLCs that never funded a payment attempt can't have paid the
-			// receive, so they must not cancel it.
-			let funded = t.htlc_vtxos_funded_payment_attempt(&htlc_vtxo_ids).await?;
+			// Only the receive these HTLCs paid for is canceled, never another
+			// user's receive on the same hash.
 			let htlc_vtxos = htlc_vtxo::get_htlc_vtxo_states_by_payment_hash(&t, payment_hash).await?;
 			let watchman_tip = t.get_highest_block(BlockTable::Watchmand).await?.map(|b| b.height);
 			let htlc_recvs_expired = htlc_recvs_expired(&htlc_vtxos, tip, watchman_tip);
-			let canceled = if funded {
-				t.cancel_revocable_htlc_subscription(payment_hash, htlc_recvs_expired).await?
-			} else {
-				None
+			let canceled = match subscription_id {
+				Some(id) => t.cancel_revocable_htlc_subscription(id, htlc_recvs_expired).await?,
+				None => None,
 			};
 			if let Some((status, htlc_recvs_granted)) = canceled {
 				// Stays committed even once the grants expired: the sender then
