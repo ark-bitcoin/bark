@@ -65,11 +65,10 @@ impl BarkClient {
 		self.try_run(args).await.expect("bark client command failed")
 	}
 
-	pub async fn try_run<I, S>(&self, args: I) -> anyhow::Result<String>
+	/// The command for `args` against this client's datadir and barkd.
+	fn command<I, S>(&self, args: I) -> Command
 		where I: IntoIterator<Item = S>, S: AsRef<str>
 	{
-		let args: Vec<String> = args.into_iter().map(|x| x.as_ref().to_string()).collect();
-
 		let mut command = BarkClient::cmd();
 		if let Ok(nb) = env::var(BARK_TOKIO_WORKER_THREADS) {
 			command.env("TOKIO_WORKER_THREADS", nb);
@@ -78,8 +77,25 @@ impl BarkClient {
 		if let Some(url) = &self.base_url {
 			command.args(["--url", url]);
 		}
-		command.args(&args);
+		command.args(args.into_iter().map(|a| a.as_ref().to_string()));
 		command.kill_on_drop(true);
+		command
+	}
+
+	/// Start a command that does not exit on its own, such as `watch`, with
+	/// its stdout piped. The process is killed when the child is dropped.
+	pub fn spawn<I, S>(&self, args: I) -> tokio::process::Child
+		where I: IntoIterator<Item = S>, S: AsRef<str>
+	{
+		let mut command = self.command(args);
+		command.stdout(Stdio::piped());
+		command.spawn().expect("failed to spawn bark client command")
+	}
+
+	pub async fn try_run<I, S>(&self, args: I) -> anyhow::Result<String>
+		where I: IntoIterator<Item = S>, S: AsRef<str>
+	{
+		let mut command = self.command(args);
 		let command_str = format!("{:?}", command.as_std());
 		trace!("{}: {}", self.name, command_str);
 
