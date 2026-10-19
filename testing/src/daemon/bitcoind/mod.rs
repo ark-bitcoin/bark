@@ -22,7 +22,7 @@ use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
 use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
-use crate::util::{FutureExt, poll_interval, resolve_path, get_tx_propagation_timeout_millis};
+use crate::util::{FutureExt, poll_interval, resolve_path, get_tx_propagation_timeout_millis, wait_timeout};
 
 struct BitcoindRpcTipSource {
 	rpc: rpc::BitcoinRpcClient,
@@ -372,9 +372,14 @@ impl BitcoindHelper {
 			Err(_) => return false,
 		};
 
+		// The mempool loads after block import: a peer connected during
+		// import has its headers dropped and never relays new blocks to us.
 		// The extra time-out ensures this method returns even if bitcoind
 		// accepts the TCP connection but never answers during startup.
-		async { client.get_blockchain_info().await.is_ok() }
+		async {
+			client.call_raw::<serde_json::Value>("getmempoolinfo", &[]).await
+				.is_ok_and(|info| info["loaded"].as_bool() == Some(true))
+		}
 			.try_wait_millis(500)
 			.await
 			.unwrap_or(false)
@@ -456,10 +461,6 @@ impl DaemonHelper for BitcoindHelper {
 			cmd.arg(format!("-minrelaytxfee={}", fr.to_btc_per_kvb()));
 		}
 
-		if let Some(a) = &self.add_node {
-			cmd.arg(format!("-addnode={}", a));
-		}
-
 		Ok(cmd)
 	}
 
@@ -478,6 +479,32 @@ impl DaemonHelper for BitcoindHelper {
 
 		let watcher = TipWatcher::start_zmq(source, &self.zmq_url(), poll_interval()).await?;
 		*self.tip_watcher.lock() = Some(watcher);
+
+		if let Some(a) = &self.add_node {
+			let sync_client = rpc::BitcoinRpcClient::new(&self.rpc_url(), self.auth())?;
+			let client = self.new_async_client();
+			let peer = a.clone();
+			async {
+				// addnode returns null, which only the sync client accepts.
+				tokio::task::spawn_blocking(move || {
+					sync_client.onetry_node(&peer)?;
+					sync_client.add_node(&peer)
+				}).await??;
+				// The peer sends sendcmpct once it has our verack, so it relays to us from then on.
+				loop {
+					let peers = client.call_raw::<Vec<serde_json::Value>>("getpeerinfo", &[]).await?;
+					if peers.iter().any(|p| p["addr"] == a.as_str()
+						&& p["bytesrecv_per_msg"].get("sendcmpct").is_some())
+					{
+						return anyhow::Ok(());
+					}
+					tokio::time::sleep(poll_interval()).await;
+				}
+			}
+				.try_wait(wait_timeout())
+				.await
+				.map_err(|_| anyhow::anyhow!("{} did not connect to peer {}", self.name, a))??;
+		}
 		Ok(())
 	}
 }
