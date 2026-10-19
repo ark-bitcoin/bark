@@ -13,6 +13,7 @@ mod daemon;
 mod exit;
 mod lightning;
 mod onchain;
+mod round;
 
 use std::{env, process};
 use std::path::PathBuf;
@@ -408,6 +409,10 @@ enum Command {
 	#[command(subcommand, visible_alias = "ln")]
 	Lightning(lightning::LightningCommand),
 
+	/// round-related commands
+	#[command(subcommand)]
+	Round(round::RoundCommand),
+
 	/// Watch the wallet for updates
 	#[command()]
 	Watch,
@@ -660,6 +665,7 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 		Command::Onchain(cmd) => onchain::execute_onchain_command(cmd, config).await?,
 		Command::Exit(cmd) => exit::execute_exit_command(cmd, config).await?,
 		Command::Lightning(cmd) => lightning::execute_lightning_command(cmd, config).await?,
+		Command::Round(cmd) => round::execute_round_command(cmd, config).await?,
 		Command::Watch => {
 			// Only notifications from now on, like the in-process watch. The
 			// `since` bound is exclusive, so none is printed twice.
