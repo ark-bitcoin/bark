@@ -30,7 +30,9 @@ use bark_cli::log::init_logging;
 use bark_cli::util::output_json;
 use bark_json::primitives::VtxoStateInfo;
 use bark_rest_client::apis::configuration::Configuration;
-use bark_rest_client::apis::{bitcoin_api, boards_api, history_api, message_api, wallet_api};
+use bark_rest_client::apis::{
+	bitcoin_api, boards_api, history_api, message_api, notifications_api, wallet_api,
+};
 use bark_rest_client::models;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
@@ -406,6 +408,10 @@ enum Command {
 	#[command(subcommand, visible_alias = "ln")]
 	Lightning(lightning::LightningCommand),
 
+	/// Watch the wallet for updates
+	#[command()]
+	Watch,
+
 	/// Show whether a barkd is running for this datadir
 	#[command()]
 	Status,
@@ -654,6 +660,21 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 		Command::Onchain(cmd) => onchain::execute_onchain_command(cmd, config).await?,
 		Command::Exit(cmd) => exit::execute_exit_command(cmd, config).await?,
 		Command::Lightning(cmd) => lightning::execute_lightning_command(cmd, config).await?,
+		Command::Watch => {
+			// Only notifications from now on, like the in-process watch. The
+			// `since` bound is exclusive, so none is printed twice.
+			let mut since = chrono::Utc::now();
+			loop {
+				let resp = notifications_api::wait_notification(config, Some(since.fixed_offset()))
+					.await.rest()?;
+				for notification in &resp.notifications {
+					output_json(notification);
+				}
+				if let Some(last) = resp.last_pushed_at {
+					since = last;
+				}
+			}
+		},
 	}
 	Ok(())
 }
