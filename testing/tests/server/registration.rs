@@ -30,8 +30,14 @@ async fn register_vtxo_transactions_accepts_duplicate_ids() {
 
 	let mut client = srv.get_public_rpc().await;
 	client.register_vtxo_transactions(protos::RegisterVtxoTransactionsRequest {
-		vtxos: vec![blob.clone(), blob],
+		vtxos: vec![blob.clone(), blob.clone()],
 	}).await.expect("duplicate ids in one request should be accepted");
+
+	// Over the cap is rejected, even when the vtxos would dedupe.
+	let err = client.register_vtxo_transactions(protos::RegisterVtxoTransactionsRequest {
+		vtxos: vec![blob; server_rpc::MAX_NB_REGISTER_VTXOS + 1],
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument);
 }
 
 /// Acknowledges vtxo transaction registrations without forwarding them, so

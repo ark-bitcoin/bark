@@ -405,6 +405,9 @@ impl rpc::server::ArkService for Server {
 		if req.vtxos.is_empty() {
 			macros::badarg!("no vtxos provided");
 		}
+		if req.vtxos.len() > rpc::MAX_NB_REGISTER_VTXOS {
+			macros::badarg!("too many vtxos, max is {}", rpc::MAX_NB_REGISTER_VTXOS);
+		}
 
 		let vtxos = req.vtxos.iter()
 			.map(|v| <Vtxo<Full>>::deserialize(&v[..]))
@@ -429,6 +432,9 @@ impl rpc::server::ArkService for Server {
 
 		if req.vtxos.is_empty() {
 			macros::badarg!("no vtxos provided");
+		}
+		if req.vtxos.len() > rpc::MAX_NB_REGISTER_VTXOS {
+			macros::badarg!("too many vtxos, max is {}", rpc::MAX_NB_REGISTER_VTXOS);
 		}
 
 		let vtxos = req.vtxos.iter()

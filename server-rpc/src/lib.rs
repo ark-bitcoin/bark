@@ -144,6 +144,9 @@ pub const MAX_NB_FORFEIT_NONCE_IDS: usize = 1000;
 /// The maximum number of vtxo IDs that the server accepts per by-ids request.
 pub const MAX_NB_VTXO_IDS: usize = 1000;
 
+/// The maximum number of vtxos that the server accepts per register request.
+pub const MAX_NB_REGISTER_VTXOS: usize = 1000;
+
 /// The maximum number of vtxos that the server accepts per arkoor mailbox
 /// post. Generous for a single payment's outputs to one recipient; clients
 /// sending more should split into multiple posts.
