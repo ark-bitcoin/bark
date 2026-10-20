@@ -148,16 +148,31 @@ pub struct EmergencyExitFeeEstimateResponse {
 	pub fee_rate_sat_per_vb: f64,
 	/// The number of exit transactions that still need to be broadcast and CPFP-bumped.
 	pub txs_to_broadcast: usize,
+	/// Whether the wallet's on-chain balance covers `exit_broadcast_fee_sat`.
+	///
+	/// **Deprecated**: the estimate is a funding target and no longer consults
+	/// the wallet's funds. Compare `exit_broadcast_fee_sat` against the on-chain
+	/// balance instead. This field is still populated from the last synced
+	/// on-chain balance for backwards compatibility and will be removed in a
+	/// future release.
+	#[deprecated(note = "compare `exit_broadcast_fee` against the on-chain balance instead")]
+	#[serde(default)]
+	#[cfg_attr(feature = "utoipa", schema(required = true))]
+	pub fundable: bool,
 }
 
-impl From<bark::exit::ExitFeeEstimate> for EmergencyExitFeeEstimateResponse {
-	fn from(e: bark::exit::ExitFeeEstimate) -> Self {
+impl EmergencyExitFeeEstimateResponse {
+	/// Builds the response from an estimate and the wallet's on-chain balance,
+	/// `None` when the wallet has no on-chain wallet to fund the exit from.
+	#[allow(deprecated)] // fundable kept for old clients
+	pub fn new(e: bark::exit::ExitFeeEstimate, onchain_balance: Option<Amount>) -> Self {
 		EmergencyExitFeeEstimateResponse {
 			total_fee: e.total(),
 			exit_broadcast_fee: e.exit_broadcast_fee,
 			claim_fee: e.claim_fee,
 			fee_rate_sat_per_vb: e.fee_rate.to_sat_per_kwu() as f64 / 250.0,
 			txs_to_broadcast: e.txs_to_broadcast,
+			fundable: onchain_balance.map_or(false, |b| b >= e.exit_broadcast_fee),
 		}
 	}
 }

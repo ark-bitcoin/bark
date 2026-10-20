@@ -427,6 +427,11 @@ pub async fn estimate_exit_fee(
 	}
 
 	let estimate = wallet.estimate_emergency_exit_fee(&vtxos, fee_rate, destination, opts.fee_margin).await?;
-	output_json(&bark_json::web::EmergencyExitFeeEstimateResponse::from(estimate));
+	// Only feeds the deprecated `fundable` field, so the last synced balance will do.
+	let onchain_balance = match wallet.onchain() {
+		Some(w) => Some(w.read().await.balance().await),
+		None => None,
+	};
+	output_json(&bark_json::web::EmergencyExitFeeEstimateResponse::new(estimate, onchain_balance));
 	Ok(())
 }

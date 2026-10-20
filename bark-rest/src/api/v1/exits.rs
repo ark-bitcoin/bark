@@ -660,5 +660,11 @@ pub async fn emergency_exit_fee(
 		_ => result.context("Failed to estimate emergency exit fee")?,
 	};
 
-	Ok(axum::Json(estimate.into()))
+	// Only feeds the deprecated `fundable` field, so the last synced balance will do.
+	let onchain_balance = match wallet.onchain() {
+		Some(w) => Some(w.read().await.balance().await),
+		None => None,
+	};
+
+	Ok(axum::Json(bark_json::web::EmergencyExitFeeEstimateResponse::new(estimate, onchain_balance)))
 }
