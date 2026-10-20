@@ -1,11 +1,16 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
-use bitcoin::NetworkKind;
+use bitcoin::{Amount, NetworkKind};
 use bitcoin::bip32::{Xpriv, Xpub};
 use bitcoin::secp256k1::{Keypair, PublicKey};
 
-use ark::{ProtocolEncoding, SECP};
+use ark::{ProtocolEncoding, ServerVtxo, Vtxo, VtxoId, SECP};
 use ark::recovery::XpubRecoveryAuthorization;
+use ark::test_util::dummy::DummyTestVtxoSpec;
+use ark::vtxo::Full;
+use server::database::Db;
+use server::recovery::{MAX_RECOVERY_RESPONSE_VTXO_BYTES, RECOVERY_VTXO_PAGE_SIZE};
 use server_rpc::protos;
 
 use ark_testing::TestContext;
@@ -72,6 +77,85 @@ async fn recover_vtxos_by_xpub_stops_after_an_empty_chunk() {
 	assert!(resp.vtxos.is_empty());
 	assert_eq!(resp.nb_keys_scanned, server_rpc::RECOVERY_XPUB_CHUNK_SIZE);
 	assert!(!resp.have_more);
+}
+
+/// A key that owns more VTXOs than fit in one response is split over several
+/// calls, each one continuing after the cursor_vtxo_id of the previous one,
+/// until the scan moves on to the next keys.
+#[tokio::test]
+async fn recover_vtxos_by_xpub_splits_a_key_over_several_calls() {
+	let ctx = TestContext::new("server/recover_vtxos_by_xpub_splits_a_key_over_several_calls").await;
+	let srv = ctx.captaind("server").cfg(|c| c.recovery_xpub_nb_keys = 1_000).create().await;
+	let server_pubkey = srv.ark_info().await.server_pubkey;
+	let mut client = srv.get_public_rpc().await;
+	let xpriv = dummy_xpriv(NetworkKind::Test);
+
+	let keypair = |idx: u32| xpriv.derive_priv(&SECP, &[idx.into()]).unwrap().to_keypair(&SECP);
+	let build = |user_keypair: Keypair, i: usize| DummyTestVtxoSpec {
+		amount: Amount::ONE_BTC + Amount::from_sat(i as u64),
+		user_keypair,
+		..Default::default()
+	}.build().1;
+
+	// Key 0 owns enough VTXOs to fill more than two responses, each of them
+	// read in several database pages, and key 2 owns a few more.
+	let mut key0 = Vec::new();
+	let mut key0_bytes = 0;
+	while key0_bytes <= 2 * MAX_RECOVERY_RESPONSE_VTXO_BYTES {
+		let vtxo = build(keypair(0), key0.len());
+		key0_bytes += vtxo.serialize().len();
+		key0.push(vtxo);
+	}
+	assert!(key0.len() > 2 * RECOVERY_VTXO_PAGE_SIZE);
+	let key2 = (0..3).map(|i| build(keypair(2), i)).collect::<Vec<_>>();
+
+	let db = Db::connect(&srv.config().postgres).await.expect("connect to captaind's postgres");
+	for batch in key0.chunks(RECOVERY_VTXO_PAGE_SIZE).chain([&key2[..]]) {
+		db.write(async |t| t.upsert_vtxos(batch.iter().map(|v| ServerVtxo::from(v.clone()))).await)
+			.await.expect("upsert vtxos");
+	}
+
+	let mut returned = Vec::<(u32, VtxoId)>::new();
+	let mut nb_splits = 0;
+	let mut nb_calls = 0;
+	let mut start_index = 0;
+	let mut cursor_vtxo_id = None;
+	loop {
+		assert!(nb_calls < 10, "the scan should end after a handful of calls");
+		nb_calls += 1;
+		let resp = client.recover_vtxos_by_xpub(protos::RecoverVtxosByXpubRequest {
+			cursor_vtxo_id: cursor_vtxo_id.clone(),
+			..xpub_request(&xpriv, server_pubkey, start_index)
+		}).await.expect("a valid request is accepted").into_inner();
+
+		let nb_bytes = resp.vtxos.iter().map(|v| v.vtxo.len()).sum::<usize>();
+		assert!(nb_bytes <= MAX_RECOVERY_RESPONSE_VTXO_BYTES, "response holds {nb_bytes} bytes of vtxos");
+		returned.extend(resp.vtxos.iter().map(|v| {
+			(v.derivation_index, Vtxo::<Full>::deserialize(&v.vtxo).unwrap().id())
+		}));
+
+		start_index += resp.nb_keys_scanned;
+		if let Some(ref cursor) = resp.cursor_vtxo_id {
+			assert_eq!(start_index, 0, "only key 0 has too many vtxos for one response");
+			assert_eq!(Some(cursor), returned.last().map(|(_, id)| id.to_bytes().to_vec()).as_ref(),
+				"the cursor is the last vtxo returned",
+			);
+			nb_splits += 1;
+		}
+		cursor_vtxo_id = resp.cursor_vtxo_id;
+		if !resp.have_more {
+			break;
+		}
+	}
+	assert_eq!(nb_splits, 2, "key 0 fills two responses and ends in the third");
+
+	assert!(returned.is_sorted_by_key(|(idx, _)| *idx), "keys are returned in derivation order");
+	let unique = returned.iter().copied().collect::<HashSet<_>>();
+	assert_eq!(unique.len(), returned.len(), "no vtxo is returned twice");
+	let expected = key0.iter().map(|v| (0, v.id()))
+		.chain(key2.iter().map(|v| (2, v.id())))
+		.collect::<HashSet<_>>();
+	assert_eq!(unique, expected);
 }
 
 #[tokio::test]
