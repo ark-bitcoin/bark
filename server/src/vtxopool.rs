@@ -331,6 +331,8 @@ pub struct VtxoPool {
 	started: AtomicBool,
 
 	data: Arc<parking_lot::Mutex<Data>>,
+	/// Wakes the issuance process when a send finds the pool empty
+	issue_trigger: Arc<tokio::sync::Notify>,
 }
 
 impl VtxoPool {
@@ -524,6 +526,7 @@ impl VtxoPool {
 		F: AsyncFnOnce(&database::Tx<'_>, &[Vtxo<Full>]) -> anyhow::Result<()>,
 	{
 		let Some(inputs) = TakenInputs::take(&self.data, dest.total_amount) else {
+			self.issue_trigger.notify_one();
 			bail!("vtxo pool is empty");
 		};
 
@@ -532,6 +535,7 @@ impl VtxoPool {
 		Ok(sent)
 	}
 
+	/// Loads the pool from the database, call [Self::start] to begin issuance.
 	pub async fn new(config: Config, db: &database::Db) -> anyhow::Result<VtxoPool> {
 		let data = Data::load_from_db(db, config.max_vtxo_exit_depth).await?;
 
@@ -539,9 +543,11 @@ impl VtxoPool {
 			config,
 			started: false.into(),
 			data: Arc::new(parking_lot::Mutex::new(data)),
+			issue_trigger: Arc::new(tokio::sync::Notify::new()),
 		})
 	}
 
+	/// Spawns the issuance process, later calls do nothing.
 	pub fn start(
 		&self,
 		srv: Arc<Server>,
@@ -561,6 +567,7 @@ impl VtxoPool {
 			srv: srv.clone(),
 			config: self.config.clone(),
 			data: self.data.clone(),
+			issue_trigger: self.issue_trigger.clone(),
 			sync_height_rx,
 		};
 		tokio::spawn(proc.run());
@@ -572,6 +579,7 @@ struct Process {
 	config: Config,
 
 	data: Arc<parking_lot::Mutex<Data>>,
+	issue_trigger: Arc<tokio::sync::Notify>,
 
 	/// Issuance occurs after a sync has completed
 	sync_height_rx: tokio::sync::watch::Receiver<BlockRef>,
@@ -786,6 +794,7 @@ impl Process {
 		Ok(())
 	}
 
+	/// Checks issuance after every sync, and when a send wakes it.
 	async fn run(mut self) {
 		let _worker = self.srv.rtmgr.spawn_critical("VtxoPool");
 
@@ -807,6 +816,9 @@ impl Process {
 						info!("Sync height watcher closed. Exiting VtxoPool...");
 						return;
 					}
+				},
+				_ = self.issue_trigger.notified() => {
+					info!("VTXO pool ran empty, checking issuance");
 				},
 				_ = self.srv.rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting VtxoPool...");
