@@ -194,7 +194,7 @@ pub struct Config {
 	/// The number of confirmations required before considering a round tx
 	/// fully confirmed
 	///
-	/// Default value: 6 for mainnet, 2 for testnets
+	/// Default value: 1
 	pub round_tx_required_confirmations: BlockDelta,
 
 	/// The number of confirmations required before considering an offboard tx
