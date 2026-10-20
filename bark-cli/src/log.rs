@@ -75,7 +75,10 @@ pub fn init_logging(
 			.filter_module("hyper", log::LevelFilter::Warn)
 			.filter_module("h2", log::LevelFilter::Warn)
 			.filter_module("tower", log::LevelFilter::Warn)
-			.filter_module("tonic", log::LevelFilter::Info);
+			.filter_module("tonic", log::LevelFilter::Info)
+			// The websocket stack logs every frame at trace and debug.
+			.filter_module("tokio_tungstenite", log::LevelFilter::Warn)
+			.filter_module("tungstenite", log::LevelFilter::Warn);
 
 		// We first set the default and then let the env_logger
 		// env overwrite it.
