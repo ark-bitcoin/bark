@@ -1,0 +1,4 @@
+- Cap `RegisterVtxoTransactions` at 1000 VTXOs per request
+  Larger requests are rejected, matching the other bulk VTXO rpcs. This
+  limits how much database work one unauthenticated request can cause.
+  [#2646](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2646)
