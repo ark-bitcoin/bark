@@ -773,12 +773,15 @@ impl Process {
 		(issuance, must_issue)
 	}
 
+	/// Issues vtxos if the pool is below its threshold, or if `force` is set.
+	///
+	/// Returns whether an issuance ran.
 	#[tracing::instrument(
 		name = "vtxo_pool_issuance"
 		skip(self),
 		fields(otel.kind = "server")
 	)]
-	async fn check_maybe_issue_vtxos(&self) -> anyhow::Result<()> {
+	async fn check_maybe_issue_vtxos(&self, force: bool) -> anyhow::Result<bool> {
 		let tip = self.srv.chain_tip().height;
 		let threshold = tip + self.config.vtxo_pre_expiry;
 
@@ -787,17 +790,20 @@ impl Process {
 		let (issuance, must_issue) = self.calculate_required_issuance(threshold);
 		update_all_bucket_metrics(&self.data);
 
-		if must_issue {
+		if must_issue || force {
 			self.issue_vtxos(issuance).await?;
+			return Ok(true);
 		}
 
-		Ok(())
+		Ok(false)
 	}
 
 	/// Checks issuance after every sync, and when a send wakes it.
 	async fn run(mut self) {
 		let _worker = self.srv.rtmgr.spawn_critical("VtxoPool");
 
+		let mut force_issue = false;
+		let mut last_forced = None;
 		loop {
 			// Don't issue until we are fully caught up: the wallet only holds
 			// every confirmed utxo once we reach the tip. Comparing the whole
@@ -805,8 +811,18 @@ impl Process {
 			// has moved to another block of the same height.
 			let synced = *self.sync_height_rx.borrow() == self.srv.chain_tip();
 			if synced {
-				if let Err(e) = self.check_maybe_issue_vtxos().await {
-					error!("Error from VTXO pool: {:#}", e);
+				// Force at most once per block to bound issuance txs.
+				let tip = self.srv.chain_tip();
+				let force = force_issue && last_forced.as_ref() != Some(&tip);
+				if force {
+					last_forced = Some(tip);
+				}
+				match self.check_maybe_issue_vtxos(force).await {
+					// Any issuance refills the pool, so a pending force is no
+					// longer needed.
+					Ok(true) => force_issue = false,
+					Ok(false) => {},
+					Err(e) => error!("Error from VTXO pool: {:#}", e),
 				}
 			}
 
@@ -818,7 +834,8 @@ impl Process {
 					}
 				},
 				_ = self.issue_trigger.notified() => {
-					info!("VTXO pool ran empty, checking issuance");
+					info!("VTXO pool ran empty, requesting forced issuance");
+					force_issue = true;
 				},
 				_ = self.srv.rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting VtxoPool...");
