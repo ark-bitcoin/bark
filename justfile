@@ -504,7 +504,10 @@ release-new-version NEW_VERSION: (bump-workspace-versions NEW_VERSION) generate-
 [doc("pre-run every CI recipe so the CI base image ships with a warm build cache")]
 ci-warmup: check build check-fuzz check-release check-bark-as-libs test-doc test-bark-wasm-indexed-db build-bark-wasm build-lib-wasm-release check-lib-arithmetic check-use-bark-as-dependency build-unit-tests-ci build-ci
 
-cachix-push:
+[doc("build the dev shells and all flake packages and push them to the bark cachix cache")]
+cachix-push: cachix-push-shells cachix-push-packages
+
+cachix-push-shells:
 	nix develop .#default  --profile /tmp/bark-shell-dev      -c true
 	nix develop .#build    --profile /tmp/bark-shell-build    -c true
 	nix develop .#ci       --profile /tmp/bark-shell-ci       -c true
@@ -513,6 +516,23 @@ cachix-push:
 	cachix push bark /tmp/bark-shell-build
 	cachix push bark /tmp/bark-shell-ci
 	cachix push bark /tmp/bark-shell-msrv-lib
+
+# Builds and pushes every package of the flake for this system, including
+# the vendored cargo deps, the generated barkd client, the bark-web node
+# modules
+[doc("build every flake package and push it with its build closure to the bark cachix cache")]
+cachix-push-packages:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	system=$(nix eval --raw --impure --expr builtins.currentSystem)
+	for pkg in $(nix eval --json ".#packages.$system" --apply builtins.attrNames | jq -r '.[]')
+	do
+		echo "Building and pushing $pkg"
+		nix build --no-link ".#$pkg"
+		nix-store -qR --include-outputs "$(nix path-info --derivation ".#$pkg")" \
+			| grep -v '\.drv$' \
+			| xargs cachix push bark
+	done
 
 [doc("build a single nix release package and copy its binaries into build/ suffixed with the target triple")]
 _nix-build-collect package target:
@@ -582,6 +602,12 @@ nix-build-server-all:
 	just _nix-build-checksums
 
 nix-build-all: nix-build-bark-all nix-build-server-all
+
+# Like nix-build-all, but without the bark cachix cache
+[doc("nix-build-all without the bark cachix cache, to check a release against what the sources produce")]
+nix-build-all-no-cachix:
+	NIX_BUILD_FLAGS="--option substituters https://cache.nixos.org --option accept-flake-config false ${NIX_BUILD_FLAGS:-}" \
+		just nix-build-all
 
 # Regenerates build/SHA256SUMS over all collected artifacts. Removed first so
 # the glob can't pick up a stale copy and hash the file into itself; LC_ALL=C
