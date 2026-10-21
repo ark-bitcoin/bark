@@ -9,8 +9,11 @@ use log::info;
 
 use ark::lightning::{PaymentHash, Preimage};
 use bark_rest_client::apis::configuration::Configuration;
-use bark_rest_client::apis::lightning_api;
+use bark_rest_client::apis::{lightning_api, Error};
 use bark_rest_client::models;
+use bark_rest_client::models::{
+	LightningReceiveStateKind as ReceiveState, LightningSendStateKind as SendState,
+};
 
 use bark_cli::util::output_json;
 
@@ -244,12 +247,22 @@ async fn execute_receive_command(
 /// claims the receive in the background.
 async fn wait_for_lightning_receive(config: &Configuration, invoice: &str) -> anyhow::Result<()> {
 	loop {
-		let status = lightning_api::get_receive_status(config, invoice).await.rest()?;
-		if status.state == models::LightningReceiveStateKind::Settled {
-			info!("Payment received: hash = {}", status.payment_hash);
-			return Ok(());
+		let status = match lightning_api::get_receive_status(config, invoice).await {
+			// barkd drops a receive that ends without settling.
+			Err(Error::ResponseError(resp)) if resp.status == 404 => {
+				bail!("lightning receive ended without settling: invoice = {}", invoice);
+			},
+			res => res.rest()?,
+		};
+		match status.state {
+			ReceiveState::Settled => {
+				info!("Payment received: hash = {}", status.payment_hash);
+				return Ok(());
+			},
+			ReceiveState::AwaitingPayment | ReceiveState::HtlcsReady
+				| ReceiveState::PreimageRevealed | ReceiveState::Delivering
+				| ReceiveState::Other => tokio::time::sleep(WAIT_POLL_INTERVAL).await,
 		}
-		tokio::time::sleep(WAIT_POLL_INTERVAL).await;
 	}
 }
 
@@ -259,14 +272,18 @@ pub async fn wait_for_lightning_send(config: &Configuration, hash: &str) -> anyh
 	loop {
 		let status = lightning_api::get_send_status(config, hash).await.rest()?;
 		match status.state {
-			models::LightningSendStateKind::Paid => {
+			SendState::Paid => {
 				info!("Payment completed: hash = {}", status.payment_hash);
 				return Ok(());
 			},
 			// The wallet has no trace anymore: the payment failed and its
 			// HTLCs were revoked.
-			models::LightningSendStateKind::Unknown => bail!("payment failed: hash = {}", hash),
-			_ => tokio::time::sleep(WAIT_POLL_INTERVAL).await,
+			SendState::Unknown => bail!("payment failed: hash = {}", hash),
+			SendState::RevocationStuck => bail!("payment failed and revoking its HTLCs is stuck; \
+				barkd keeps retrying, consider an emergency exit: hash = {}", hash),
+			SendState::Start | SendState::InputsLocked | SendState::HtlcReceived
+				| SendState::PaymentInitiated | SendState::RevocableHtlcs
+				| SendState::Other => tokio::time::sleep(WAIT_POLL_INTERVAL).await,
 		}
 	}
 }
