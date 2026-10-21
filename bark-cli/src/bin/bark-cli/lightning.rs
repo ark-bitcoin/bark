@@ -245,7 +245,7 @@ async fn execute_receive_command(
 async fn wait_for_lightning_receive(config: &Configuration, invoice: &str) -> anyhow::Result<()> {
 	loop {
 		let status = lightning_api::get_receive_status(config, invoice).await.rest()?;
-		if status.state == "settled" {
+		if status.state == models::LightningReceiveStateKind::Settled {
 			info!("Payment received: hash = {}", status.payment_hash);
 			return Ok(());
 		}
@@ -258,14 +258,14 @@ async fn wait_for_lightning_receive(config: &Configuration, invoice: &str) -> an
 pub async fn wait_for_lightning_send(config: &Configuration, hash: &str) -> anyhow::Result<()> {
 	loop {
 		let status = lightning_api::get_send_status(config, hash).await.rest()?;
-		match status.state.as_str() {
-			"paid" => {
+		match status.state {
+			models::LightningSendStateKind::Paid => {
 				info!("Payment completed: hash = {}", status.payment_hash);
 				return Ok(());
 			},
 			// The wallet has no trace anymore: the payment failed and its
 			// HTLCs were revoked.
-			"unknown" => bail!("payment failed: hash = {}", hash),
+			models::LightningSendStateKind::Unknown => bail!("payment failed: hash = {}", hash),
 			_ => tokio::time::sleep(WAIT_POLL_INTERVAL).await,
 		}
 	}

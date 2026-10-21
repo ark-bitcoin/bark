@@ -1357,7 +1357,7 @@ async fn server_claim_lightning_receive_is_idempotent(
 
 	let vtxos_before = bark.vtxo_ids_no_sync().await;
 	let status_before = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
-	assert_eq!(status_before.state, "settled");
+	assert_eq!(status_before.state, bark_json::cli::LightningReceiveStateKind::Settled);
 	assert!(status_before.settled_at.is_some());
 
 	// Claiming again should be a no-op.

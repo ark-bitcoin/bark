@@ -1,0 +1,6 @@
+- Type the lightning send and receive states
+  `LightningSendInfo::state` and `LightningReceiveInfo::state` are now the
+  `LightningSendStateKind` and `LightningReceiveStateKind` enums. The JSON
+  is unchanged. A state that this version does not know parses as `other`.
+  [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+  - **BREAKING:** `LightningSendInfo::state` and `LightningReceiveInfo::state` are no longer a `String`

@@ -6104,10 +6104,22 @@
             "description": "The timestamp at which the receive settled, if it has."
           },
           "state": {
-            "type": "string",
-            "description": "Lifecycle phase of the receive: `awaiting-payment`, `htlcs-ready`,\n`preimage-revealed`, `delivering`, or `settled`."
+            "$ref": "#/components/schemas/LightningReceiveStateKind",
+            "description": "Lifecycle phase of the receive"
           }
         }
+      },
+      "LightningReceiveStateKind": {
+        "type": "string",
+        "description": "Lifecycle phase of a lightning receive.",
+        "enum": [
+          "awaiting-payment",
+          "htlcs-ready",
+          "preimage-revealed",
+          "delivering",
+          "settled",
+          "other"
+        ]
       },
       "LightningSendFees": {
         "type": "object",
@@ -6165,10 +6177,25 @@
             "description": "The payment preimage, revealed once the payment succeeded."
           },
           "state": {
-            "type": "string",
-            "description": "Lifecycle phase of the send: `unknown`, `start`, `inputs-locked`, `htlc-received`,\n`payment-initiated`, `revocable-htlcs`, `revocation-stuck`, or `paid`."
+            "$ref": "#/components/schemas/LightningSendStateKind",
+            "description": "Lifecycle phase of the send"
           }
         }
+      },
+      "LightningSendStateKind": {
+        "type": "string",
+        "description": "Lifecycle phase of a lightning send.",
+        "enum": [
+          "unknown",
+          "start",
+          "inputs-locked",
+          "htlc-received",
+          "payment-initiated",
+          "revocable-htlcs",
+          "revocation-stuck",
+          "paid",
+          "other"
+        ]
       },
       "MailboxSyncResponse": {
         "type": "object",

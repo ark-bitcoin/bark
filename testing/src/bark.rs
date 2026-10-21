@@ -879,10 +879,7 @@ impl Bark {
 		let args = vec!["lightning", "receive", "status", &filter];
 		let res = self.run(args).await;
 		if res.is_empty() { return None; }
-		let info = serde_json::from_str::<LightningReceiveInfo>(&res).expect("json error");
-		// The command now always emits a status; treat "unknown" as absent so
-		// callers keep the previous Option semantics.
-		if info.state == "unknown" { None } else { Some(info) }
+		Some(serde_json::from_str::<LightningReceiveInfo>(&res).expect("json error"))
 	}
 
 	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::cli::PendingBoardInfo> {

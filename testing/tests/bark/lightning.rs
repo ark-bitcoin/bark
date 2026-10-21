@@ -13,6 +13,7 @@ use ark_testing::context::LightningPaymentSetup;
 use bark::actions::lightning::receive::LightningReceiveState;
 use bark::lightning_invoice::{Bolt11Invoice, Currency, InvoiceBuilder, PaymentSecret};
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
+use bark_json::cli::LightningReceiveStateKind;
 use bark_json::primitives::VtxoStateInfo;
 use log::{info, trace};
 
@@ -525,7 +526,7 @@ async fn bark_can_receive_lightning(
 	assert_eq!(receives.len(), 1);
 	assert_eq!(receives[0].invoice, invoice_info.invoice);
 	// Preimage hasn't been revealed yet: still awaiting payment.
-	assert_eq!(receives[0].state, "awaiting-payment");
+	assert_eq!(receives[0].state, LightningReceiveStateKind::AwaitingPayment);
 
 	tokio::join!(
 		pay(invoice_info.invoice.clone()),
@@ -772,7 +773,7 @@ async fn bark_check_lightning_receive_no_wait(
 					.wait(Duration::from_secs(10)).await.expect("should not fail");
 
 				if let Some(receive) = bark.lightning_receive_status(&invoice).await {
-					if receive.state == "settled" {
+					if receive.state == LightningReceiveStateKind::Settled {
 						success = true;
 						break;
 					}
