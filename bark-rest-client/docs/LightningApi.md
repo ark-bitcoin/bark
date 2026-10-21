@@ -109,7 +109,7 @@ Name | Type | Description  | Required | Notes
 > models::LightningReceiveInfo get_receive_status(identifier)
 Get receive status
 
-Returns the status of a specified Lightning receive, identified by its payment hash, invoice string, or preimage. The response tracks progress through timestamps: `htlc_vtxos` is populated once HTLCs are created by the Ark server, `preimage_revealed_at` records when the preimage was sent, and `finished_at` indicates the receive has settled or been canceled.
+Returns the status of a specified Lightning receive, identified by its payment hash, invoice string, or preimage. `state` tracks its progress and `settled_at` records when it settled. A receive that ended without settling, for example a canceled one, is no longer known and returns 404.
 
 ### Parameters
 

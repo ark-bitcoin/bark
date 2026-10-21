@@ -129,10 +129,9 @@ pub async fn generate_invoice_for_address(
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns the status of a specified Lightning receive, identified by its \
-		payment hash, invoice string, or preimage. The response tracks progress through \
-		timestamps: `htlc_vtxos` is populated once HTLCs are created by the Ark server, \
-		`preimage_revealed_at` records when the preimage was sent, and `finished_at` \
-		indicates the receive has settled or been canceled.",
+		payment hash, invoice string, or preimage. `state` tracks its progress and \
+		`settled_at` records when it settled. A receive that ended without settling, \
+		for example a canceled one, is no longer known and returns 404.",
 	tag = "lightning"
 )]
 #[debug_handler]
@@ -153,7 +152,7 @@ pub async fn get_receive_status(
 	};
 
 	let state = wallet.lightning_receive_state(payment_hash).await
-		.context("Failed to get lightning receive status")?;
+		.not_found([payment_hash], "Lightning receive not found")?;
 	Ok(axum::Json(bark_json::cli::LightningReceiveInfo::from_state(&state)))
 }
 
