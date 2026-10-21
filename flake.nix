@@ -25,7 +25,7 @@
 		# bark-web version or a locally built dist instead, set the
 		# BARK_WEB_VERSION or BARK_WEB_DIST env var (see below).
 		bark-web = {
-			url = "gitlab:ark-bitcoin/bark-web/v0.9.0";
+			url = "gitlab:ark-bitcoin/bark-web/main";
 			inputs.nixpkgs.follows = "nixpkgs";
 			inputs.flake-utils.follows = "flake-utils";
 		};
