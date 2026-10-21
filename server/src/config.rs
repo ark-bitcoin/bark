@@ -362,9 +362,10 @@ pub struct Config {
 	/// route yet, so it needs this config to be sufficiently high to account
 	/// for the worst routing scenario.
 	///
-	/// Default is `min_final_cltv_expiry_delta + n_hops * cltv_expiry_delta`
-	/// where _n_hops_ is an upper bound on the expected number of hops a lightning
-	/// route usually takes and other vars are lightning defaults: _18 + 6*40 = 258_
+	/// Default is 1008 blocks (one week). Paying another Ark server's invoices,
+	/// which ask for up to `max_user_invoice_cltv_delta + htlc_expiry_delta`,
+	/// needs at least `htlc_expiry_delta + max invoice cltv + n_hops * cltv_expiry_delta`:
+	/// _40 + 290 + 6*40 = 570_. The rest is headroom for longer routes.
 	///
 	/// Note: it is added to [Config::htlc_expiry_delta] to provide `maxdelay` in
 	/// xpay call.

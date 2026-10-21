@@ -182,7 +182,7 @@ htlc_expiry_delta = 40
 # When granting an HTLC-send VTXO, the Server doesn't know the lightning
 # route yet, so it needs this config to be sufficiently high to account
 # for the worst routing scenario.
-htlc_send_expiry_delta = 258
+htlc_send_expiry_delta = 1008
 
 # Maximum CLTV delta server will allow clients to request an
 # invoice generation with.
