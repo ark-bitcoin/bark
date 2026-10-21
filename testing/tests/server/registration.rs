@@ -220,7 +220,7 @@ async fn reanchoring_cannot_make_watchman_sweep_offboard_connector_early() {
 		vtxos: forged,
 	}).await;
 
-	let offboard_txid = bark.offboard_all(ctx.bitcoind().get_new_address()).await.offboard_txid;
+	let offboard_txid = bark.offboard_all(ctx.bitcoind().get_new_address()).await;
 	ctx.generate_blocks(1).await;
 	// the connector root is the second output of the offboard tx
 	let connector_point = OutPoint::new(offboard_txid, 1);

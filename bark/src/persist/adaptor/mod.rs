@@ -575,6 +575,18 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		Ok((id, true))
 	}
 
+	async fn get_movement_id_by_action(
+		&self,
+		action_id: &str,
+	) -> anyhow::Result<Option<MovementId>> {
+		let guard = self.inner.read().await;
+		let Some(rec) = guard.get(partition::MOVEMENT_ACTION, action_id.as_bytes()).await? else {
+			return Ok(None);
+		};
+		let id = rec.to_data::<u32>().context("corrupt db: movement action index value")?;
+		Ok(Some(MovementId::new(id)))
+	}
+
 	async fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
 		write_movement_records(&mut *guard, movement).await

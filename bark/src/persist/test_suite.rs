@@ -724,6 +724,14 @@ pub async fn test_get_or_create_movement_for_action(db: &impl BarkPersister) {
 
 	let movement = db.get_movement_by_id(id).await.expect("get after reuse");
 	assert_eq!(movement.intended_balance, balance, "reuse must not re-apply the update");
+
+	// The action index is what lets a caller find the movement of an action
+	// after its checkpoint is gone.
+	let found = db.get_movement_id_by_action(action_id).await.expect("get by action");
+	assert_eq!(found, Some(id), "lookup by action id");
+	let missing = db.get_movement_id_by_action("no.such.action").await
+		.expect("get by unknown action");
+	assert_eq!(missing, None, "an unknown action must not resolve to a movement");
 }
 
 // ---------------------------------------------------------------------------

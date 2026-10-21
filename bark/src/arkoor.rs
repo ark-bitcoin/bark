@@ -13,6 +13,7 @@ use server_rpc::{protos, ServerConnection};
 use crate::{VtxoDelivery, Wallet, WalletVtxo};
 use crate::actions::DriveMode;
 use crate::actions::arkoor_send::{ArkoorSend, start_arkoor_send};
+use crate::movement::MovementId;
 
 /// The result of creating an arkoor transaction
 pub struct ArkoorCreateResult {
@@ -287,19 +288,35 @@ impl Wallet {
 	/// Note that a change [Vtxo] may be created as a result of this call. With each payment these
 	/// will become more uneconomical to unilaterally exit, so you should eventually refresh them
 	/// with [Wallet::refresh_vtxos] or periodically call [Wallet::maintenance_refresh].
+	///
+	/// Returns the id of the movement that records this payment, so the caller
+	/// can attach its own data (notes, contacts) to the right history entry
+	/// without matching on amount and time.
 	pub async fn send_arkoor_payment(
 		&self,
 		destination: &ark::Address,
 		amount: Amount,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<MovementId> {
 		let action = start_arkoor_send(self, destination.clone(), amount).await?;
+		let action_id = action.id();
+
+		// Lock the action before its checkpoint exists. Otherwise a wallet sync
+		// can pick up the checkpoint and drive it, and this call would skip
+		// driving and return before the payment is done.
+		let guard = self.inner.lock_manager.try_lock(&action_id).await
+			.context("arkoor send already in progress")?;
 
 		// Persist the action before driving it, so a crash between this point
 		// and `drive_action` leaves a checkpoint to resume from. The first step
 		// locks the inputs, so no vtxo is ever locked without a checkpoint row.
 		self.inner.db.upsert_wallet_action_checkpoint(&action.id, &action.clone().into()).await?;
 
-		self.drive_action(action, DriveMode::UntilDone).await
+		self.drive_action_with_guard(action, DriveMode::UntilDone, guard).await?;
+
+		// The checkpoint is deleted once the action is done, but the movement
+		// keeps its action index.
+		self.inner.db.get_movement_id_by_action(&action_id).await?
+			.with_context(|| format!("arkoor send {} finished without a movement", action_id))
 	}
 
 	/// Returns every in-progress arkoor send checkpoint.

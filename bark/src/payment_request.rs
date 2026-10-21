@@ -33,6 +33,7 @@ use log::debug;
 
 use crate::{FeeEstimate, LightningSendOptions, Wallet};
 use crate::arkoor::ArkoorAddressError;
+use crate::movement::MovementId;
 use crate::onchain::OnchainWalletTrait;
 
 /// Enum for representing either a bark address ([ark::Address]) or an arkade address.
@@ -199,7 +200,8 @@ impl From<AvailablePaymentMethod> for PaymentRequest {
 pub enum PaymentInitOutput {
 	Onchain(Txid),
 	Lightning(Invoice),
-	Ark,
+	/// The id of the movement that records the arkoor payment.
+	Ark(MovementId),
 }
 
 /// Builder for constructing a [`Bip321Uri`] backed by a bark [`Wallet`].
@@ -792,7 +794,7 @@ impl Wallet {
 			PaymentMethod::Bitcoin(address) => {
 				let address = address.clone().require_network(network)?;
 				let amount = input_amount.context("amount is required for bitcoin address")?;
-				let txid = self.send_onchain(address, amount).await?;
+				let txid = self.send_onchain(address, amount).await?.txid;
 				PaymentInitOutput::Onchain(txid)
 			},
 			PaymentMethod::Invoice(invoice) => {
@@ -810,8 +812,8 @@ impl Wallet {
 			},
 			PaymentMethod::Ark(address) => {
 				let amount = input_amount.context("amount is required for arkoor payment")?;
-				self.send_arkoor_payment(&address, amount).await?;
-				PaymentInitOutput::Ark
+				let movement_id = self.send_arkoor_payment(&address, amount).await?;
+				PaymentInitOutput::Ark(movement_id)
 			},
 			PaymentMethod::Lnurl(lnurl) => {
 				let amount = input_amount.context("amount is required for lnurl payment")?;

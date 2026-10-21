@@ -2780,7 +2780,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the offboard transaction id",
+            "description": "Returns the offboard transaction id and the movement id",
             "content": {
               "application/json": {
                 "schema": {
@@ -2822,7 +2822,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the offboard transaction id",
+            "description": "Returns the offboard transaction id and the movement id",
             "content": {
               "application/json": {
                 "schema": {
@@ -3162,7 +3162,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the offboard transaction id",
+            "description": "Returns the offboard transaction id and the movement id",
             "content": {
               "application/json": {
                 "schema": {
@@ -6439,9 +6439,16 @@
       "OffboardResult": {
         "type": "object",
         "required": [
-          "offboard_txid"
+          "offboard_txid",
+          "movement_id"
         ],
         "properties": {
+          "movement_id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The movement that records this offboard in the wallet history",
+            "minimum": 0
+          },
           "offboard_txid": {
             "type": "string",
             "description": "The transaction id of the offboard transaction"

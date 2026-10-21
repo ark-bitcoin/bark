@@ -183,7 +183,7 @@ async fn nursery_reports_chunk_fee_rate() {
 
 	// Offboard to the central bitcoind's wallet so the test can spend the output.
 	let address = ctx.bitcoind().get_new_address();
-	let offboard_txid = bark.offboard_all(&address).await.offboard_txid;
+	let offboard_txid = bark.offboard_all(&address).await;
 	let offboard_tx = srv.bitcoind().await_transaction(offboard_txid).await;
 	let alone = nursery_chunk_fee_rate_kwu(&srv, offboard_txid).await;
 	assert_eq!(alone, chunk_fee_rate_kwu(&srv, offboard_txid));
@@ -289,7 +289,7 @@ async fn wallet_txs_keep_a_change_output() {
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark.sync().await;
 	let address = ctx.bitcoind().get_new_address();
-	let offboard_txid = bark.offboard_all(&address).await.offboard_txid;
+	let offboard_txid = bark.offboard_all(&address).await;
 	assert_has_wallet_change(&srv, offboard_txid).await;
 }
 

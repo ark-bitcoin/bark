@@ -1,0 +1,2 @@
+- Return `movement_id` from the offboard and send-onchain endpoints
+  [#2610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2610)

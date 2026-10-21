@@ -207,6 +207,23 @@ pub trait BarkPersister: Send + Sync + 'static {
 		update: MovementUpdate,
 	) -> anyhow::Result<(MovementId, bool)>;
 
+	/// Looks up the movement owned by `action_id`, if the action created one.
+	///
+	/// The index is written by [BarkPersister::get_or_create_movement_for_action]
+	/// and outlives the action's checkpoint, so the movement of an action that
+	/// already finished can still be found.
+	///
+	/// Returns:
+	/// - `Ok(Some(id))` if the action owns a movement.
+	/// - `Ok(None)` if no movement is indexed under `action_id`.
+	///
+	/// Errors:
+	/// - If the query fails.
+	async fn get_movement_id_by_action(
+		&self,
+		action_id: &str,
+	) -> anyhow::Result<Option<MovementId>>;
+
 	/// Persists the given movement state.
 	///
 	/// Parameters:

@@ -5,8 +5,8 @@ use bitcoin_ext::{BlockDelta, P2TR_DUST, TxStatus};
 use crate::chain::BroadcastError;
 use crate::exit::models::{
 	ExitError, ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
-	ExitClaimedState, ExitState, ExitStartState, ExitTx, ExitTxStatus, ExitVtxoAlreadySpentState,
-	ExitVtxoSweptState,
+	ExitClaimedState, ExitState, ExitStateKind, ExitStartState, ExitTx, ExitTxStatus,
+	ExitVtxoAlreadySpentState, ExitVtxoSweptState,
 	ExitCanceledState,
 };
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
@@ -20,6 +20,15 @@ impl ExitStateProgress for ExitState {
 		self,
 		ctx: &mut ProgressContext<'_>,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
+		// Finished exits never progress again, so return them untouched before the
+		// spent-guard below runs. `VtxoAlreadySpent` doesn't warrant an exited VTXO,
+		// so without this the guard would rebuild it with the current tip height on
+		// every sync: a fresh (unequal) state that appends to the exit history and
+		// re-finishes the movement, bumping its `completed_at` forever.
+		if ExitStateKind::FINISHED_STATES.contains(&self.kind()) {
+			return Ok(self);
+		}
+
 		// While the exit is still pre-broadcast another consumer (round forfeit, send, etc.)
 		// can still take the VTXO out from under us. If we notice that's happened, bail to
 		// the terminal `VtxoAlreadySpent` state so the caller can cancel the movement.

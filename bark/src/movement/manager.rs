@@ -323,7 +323,10 @@ impl MovementManager {
 	///
 	/// See also: [MovementManager::new_movement] and [MovementManager::update_movement]
 	///
-	/// This method also dispatches the movement as a notification.
+	/// This method also dispatches the movement as a notification. If the movement already has
+	/// `new_status`, nothing changes: `completed_at` keeps its value and no notification is sent.
+	/// If the movement already finished with a different status, `new_status` replaces it and a
+	/// warning is logged.
 	///
 	/// Parameters:
 	/// - id: The ID of the movement previously created by [MovementManager::new_movement].
@@ -344,6 +347,20 @@ impl MovementManager {
 
 		// Ensure the movement is loaded.
 		let mut guard = self.get_cached_movement(id).await?;
+
+		// Finishing is idempotent: a movement already in `new_status` keeps its
+		// original `completed_at` and dispatches no notification. Subsystems that
+		// re-derive a terminal state on every sync (e.g. exits) rely on this to
+		// not churn history ordering or spam `MovementUpdated`.
+		if guard.status == new_status {
+			drop(guard);
+			return self.unload_movement_from_cache(id).await;
+		}
+		if guard.status != MovementStatus::Pending {
+			log::warn!("Movement {} was already finished as {:?}, overriding with {:?}",
+				id, guard.status, new_status,
+			);
+		}
 
 		// Update the status and persist it.
 		guard.status = new_status;
@@ -405,14 +422,16 @@ impl MovementManager {
 
 		let movement_lock = {
 			// Acquire a write lock and check if another thread already loaded the movement.
-			let active_guard = self.active_movements.write().await;
+			let mut active_guard = self.active_movements.write().await;
 			if let Some(lock) = active_guard.get(&id).cloned() {
 				lock
 			} else {
-				Arc::new(Mutex::new(
+				let lock = Arc::new(Mutex::new(
 					self.db.get_movement_by_id(id).await
 						.map_err(|e| MovementError::LoadError { id, e })?
-				))
+				));
+				active_guard.insert(id, lock.clone());
+				lock
 			}
 		};
 		Ok(movement_lock.lock_owned().await)
@@ -549,6 +568,48 @@ impl Drop for MovementGuard {
 					log::error!("An error occurred in MovementGuard::drop(): {:#}", e);
 				}
 			});
+		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use futures::{FutureExt, StreamExt};
+
+	use crate::notification::WalletNotification;
+	use crate::persist::adaptor::StorageAdaptorWrapper;
+
+	use super::*;
+
+	#[tokio::test]
+	async fn finish_movement_twice_with_same_status_is_noop() {
+		let db = Arc::new(StorageAdaptorWrapper::new_memory());
+		let notifications = NotificationDispatch::new();
+		let manager = MovementManager::new(db.clone(), notifications.clone());
+		manager.register_subsystem(Subsystem::EXIT).await.unwrap();
+		let id = manager.new_movement(Subsystem::EXIT, "start").await.unwrap();
+
+		manager.finish_movement(id, MovementStatus::Canceled).await.unwrap();
+		let finished = db.get_movement_by_id(id).await.unwrap();
+		assert_eq!(finished.status, MovementStatus::Canceled);
+		assert!(finished.time.completed_at.is_some());
+
+		let mut stream = notifications.subscribe();
+		manager.finish_movement(id, MovementStatus::Canceled).await.unwrap();
+		let again = db.get_movement_by_id(id).await.unwrap();
+		assert_eq!(again.status, MovementStatus::Canceled);
+		assert_eq!(again.time.completed_at, finished.time.completed_at);
+		assert!(stream.next().now_or_never().is_none(), "no notification expected");
+
+		// A different terminal status still replaces the old one.
+		manager.finish_movement(id, MovementStatus::Successful).await.unwrap();
+		let replaced = db.get_movement_by_id(id).await.unwrap();
+		assert_eq!(replaced.status, MovementStatus::Successful);
+		match stream.next().now_or_never() {
+			Some(Some(WalletNotification::MovementUpdated { movement })) => {
+				assert_eq!(movement.id, id);
+			},
+			other => panic!("expected a MovementUpdated notification, got {:?}", other),
 		}
 	}
 }

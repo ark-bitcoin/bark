@@ -348,6 +348,13 @@ impl BarkPersister for Dummy {
 		Ok((MovementId::new(0), true))
 	}
 
+	async fn get_movement_id_by_action(
+		&self,
+		_action_id: &str,
+	) -> anyhow::Result<Option<MovementId>> {
+		Ok(None)
+	}
+
 	async fn update_movement(&self, _movement: &Movement) -> anyhow::Result<()> {
 		Ok(())
 	}

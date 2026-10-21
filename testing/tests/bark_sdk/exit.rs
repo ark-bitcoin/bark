@@ -2,9 +2,12 @@ use std::time::Duration;
 
 use bitcoincore_rpc::RpcApi;
 
+use bark::WalletNotification;
 use bark::exit::{ExitError, ExitState};
+use bark::movement::{Movement, MovementId, MovementStatus};
 use bitcoin_ext::BlockHeight;
 use bitcoin_ext::rpc::BitcoinRpcExt;
+use futures::StreamExt;
 use server_log::ClaimBroadcast;
 
 use ark_testing::{TestContext, btc, sat};
@@ -324,4 +327,60 @@ async fn watchman_sweeps_vtxo_chain_during_exit() {
 	assert_eq!(refreshed[0].amount(), amount,
 		"the refresh should preserve the amount the server still owes",
 	);
+}
+
+async fn find_movement(wallet: &bark::Wallet, id: MovementId) -> Movement {
+	wallet.history().await.expect("history")
+		.into_iter().find(|m| m.id == id).expect("movement should exist")
+}
+
+/// A finished exit must stay as it is while the wallet stays open.
+///
+/// The VTXO of a pending exit is spent through arkoor, so the exit ends in
+/// `VtxoAlreadySpent` and its movement is `Canceled`. Syncing after the tip
+/// moves must not rebuild that state at the new tip, grow the exit history or
+/// finish the movement again.
+#[tokio::test]
+async fn finished_exit_does_not_change_on_sync() {
+	let ctx = TestContext::new("bark_sdk/finished_exit_does_not_change_on_sync").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(400_000))
+		.create().await;
+	let receiver = ctx.bark_sdk("bark2", &srv).create().await;
+
+	let [boarded] = wallet.vtxos().await.expect("list vtxos")
+		.try_into().expect("expected exactly one boarded vtxo");
+	let vtxo_id = boarded.vtxo.id();
+
+	// Queue the exit, then spend its VTXO before the exit broadcasts anything.
+	wallet.exit_mgr().start_exit_for_entire_wallet().await.expect("starting the exit");
+	let address = receiver.new_address().await.expect("new address");
+	wallet.send_arkoor_payment(&address, sat(100_000)).await.expect("arkoor send");
+
+	wallet.progress_exits().await.expect("progress exits");
+	let exit = wallet.exit_mgr().get_exit_vtxo(vtxo_id).await.expect("exit is tracked");
+	assert!(matches!(exit.state(), ExitState::VtxoAlreadySpent(_)), "{:?}", exit.state());
+	let movement_id = exit.movement_id().expect("exit has a movement");
+	let movement = find_movement(&wallet, movement_id).await;
+	assert_eq!(movement.status, MovementStatus::Canceled);
+
+	let mut notifications = wallet.subscribe_notifications();
+	ctx.generate_blocks(2).await;
+	wallet.sync().await;
+	wallet.progress_exits().await.expect("progress exits");
+
+	let after = wallet.exit_mgr().get_exit_vtxo(vtxo_id).await.expect("exit is tracked");
+	assert_eq!(after.state(), exit.state());
+	assert_eq!(after.history().len(), exit.history().len());
+	let after_movement = find_movement(&wallet, movement_id).await;
+	assert_eq!(after_movement.status, MovementStatus::Canceled);
+	assert_eq!(after_movement.time.completed_at, movement.time.completed_at);
+	while let Some(Some(n)) = futures::FutureExt::now_or_never(notifications.next()) {
+		if let WalletNotification::MovementUpdated { movement } = n {
+			assert_ne!(movement.id, movement_id, "the exit movement must not be updated again");
+		}
+	}
 }

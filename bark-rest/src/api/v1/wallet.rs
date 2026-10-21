@@ -974,7 +974,7 @@ pub async fn refresh_counterparty(
 	summary = "Offboard specific VTXOs",
 	request_body = bark_json::web::OffboardVtxosRequest,
 	responses(
-		(status = 200, description = "Returns the offboard transaction id",
+		(status = 200, description = "Returns the offboard transaction id and the movement id",
 			body = bark_json::cli::OffboardResult),
 		(status = 400, description = "No VTXO IDs provided, or one of the provided \
 			VTXO IDs is invalid, or destination address is invalid", body = error::BadRequestError),
@@ -1018,9 +1018,12 @@ pub async fn offboard_vtxos(
 		vtxo_ids.push(id);
 	}
 
-	let offboard_txid = wallet.offboard_vtxos(vtxo_ids, address).await?;
+	let offboard = wallet.offboard_vtxos(vtxo_ids, address).await?;
 
-	Ok(axum::Json(bark_json::cli::OffboardResult { offboard_txid }))
+	Ok(axum::Json(bark_json::cli::OffboardResult {
+		offboard_txid: offboard.txid,
+		movement_id: offboard.movement_id,
+	}))
 }
 
 #[utoipa::path(
@@ -1029,7 +1032,7 @@ pub async fn offboard_vtxos(
 	summary = "Offboard all VTXOs",
 	request_body = bark_json::web::OffboardAllRequest,
 	responses(
-		(status = 200, description = "Returns the offboard transaction id",
+		(status = 200, description = "Returns the offboard transaction id and the movement id",
 			body = bark_json::cli::OffboardResult),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
@@ -1059,9 +1062,12 @@ pub async fn offboard_all(
 		onchain.write().await.address().await?
 	};
 
-	let offboard_txid = wallet.offboard_all(address).await?;
+	let offboard = wallet.offboard_all(address).await?;
 
-	Ok(axum::Json(bark_json::cli::OffboardResult { offboard_txid }))
+	Ok(axum::Json(bark_json::cli::OffboardResult {
+		offboard_txid: offboard.txid,
+		movement_id: offboard.movement_id,
+	}))
 }
 
 #[utoipa::path(
@@ -1070,7 +1076,7 @@ pub async fn offboard_all(
 	summary = "Send on-chain from Ark balance",
 	request_body = bark_json::web::SendOnchainRequest,
 	responses(
-		(status = 200, description = "Returns the offboard transaction id",
+		(status = 200, description = "Returns the offboard transaction id and the movement id",
 			body = bark_json::cli::OffboardResult),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
@@ -1096,9 +1102,12 @@ pub async fn send_onchain(
 
 	let amount = Amount::from_sat(body.amount_sat);
 
-	let offboard_txid = wallet.send_onchain(addr, amount).await?;
+	let offboard = wallet.send_onchain(addr, amount).await?;
 
-	Ok(axum::Json(bark_json::cli::OffboardResult { offboard_txid }))
+	Ok(axum::Json(bark_json::cli::OffboardResult {
+		offboard_txid: offboard.txid,
+		movement_id: offboard.movement_id,
+	}))
 }
 
 #[utoipa::path(

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Address, Amount, FeeRate, Network};
+use bitcoin::{Address, Amount, FeeRate, Network, Txid};
 use log::{error, info, trace, warn};
 use serde_json;
 use tokio::fs;
@@ -37,7 +37,7 @@ use crate::{Bitcoind, TestContext};
 use crate::constants::BOARD_CONFIRMATIONS;
 use crate::context::ToArkUrl;
 use crate::constants::env::{BARK_COMMAND_TIMEOUT_MILLIS, BARK_EXEC, BARK_TOKIO_WORKER_THREADS, USE_FILESTORE};
-use crate::util::resolve_path;
+use crate::util::{BarkVersion, resolve_path};
 
 const COMMAND_LOG_FILE: &str = "commands.log";
 const DEFAULT_CMD_TIMEOUT: Duration = Duration::from_secs(60);
@@ -65,7 +65,16 @@ impl Bark {
 
 	/// Version of the BARK_EXEC binary, e.g. `0.1.0-beta.8` or `0.6.0-dev`.
 	pub async fn version() -> String {
-		let build = Self::build_of(&Self::bark_exec()).await;
+		Self::version_of(&Self::build_of(&Self::bark_exec()).await)
+	}
+
+	/// Version of this instance's binary, which differs from [Bark::version]
+	/// when an upgrade test points the instance at an older release.
+	pub async fn instance_version(&self) -> String {
+		Self::version_of(&self.instance_build().await)
+	}
+
+	fn version_of(build: &str) -> String {
 		build.strip_prefix("bark ")
 			.and_then(|rest| rest.split_whitespace().next())
 			.unwrap_or_else(|| panic!("unexpected bark --version output: {}", build))
@@ -692,13 +701,13 @@ impl Bark {
 		&self,
 		destination: impl fmt::Display,
 		amount: Amount,
-	) -> anyhow::Result<json::cli::OffboardResult> {
+	) -> anyhow::Result<Txid> {
 		let destination = destination.to_string();
 		let amount = amount.to_string();
-		self.try_run_json(["send-onchain", &destination, &amount, "--verbose"]).await
+		self.try_run_offboard_json(["send-onchain", &destination, &amount, "--verbose"]).await
 	}
 
-	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) -> json::cli::OffboardResult {
+	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) -> Txid {
 		self.try_send_onchain(destination, amount).await.unwrap()
 	}
 
@@ -987,13 +996,13 @@ impl Bark {
 			.context("running refresh --all --delegated --no-sync command failed")
 	}
 
-	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<json::cli::OffboardResult> {
-		Ok(self.try_run_json(
+	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<Txid> {
+		Ok(self.try_run_offboard_json(
 			["offboard", "--all", "--address", &address.to_string()],
 		).await.context("running offboard --all command failed")?)
 	}
 
-	pub async fn offboard_all(&self, address: impl fmt::Display) -> json::cli::OffboardResult {
+	pub async fn offboard_all(&self, address: impl fmt::Display) -> Txid {
 		self.try_offboard_all(address).await.expect("offboard --all command failed")
 	}
 
@@ -1011,10 +1020,32 @@ impl Bark {
 		&self,
 		vtxo: impl fmt::Display,
 		address: impl fmt::Display,
-	) -> json::cli::OffboardResult {
-		self.run_json([
+	) -> Txid {
+		self.try_run_offboard_json([
 			"offboard", "--vtxo", &vtxo.to_string(), "--address", &address.to_string(),
-		]).await
+		]).await.expect("offboard --vtxo command failed")
+	}
+
+	/// Run a command that prints a [json::cli::OffboardResult] and return the
+	/// offboard txid
+	///
+	/// Bark 0.7.1 and older don't print the movement id, so only parse their
+	/// output for the txid.
+	async fn try_run_offboard_json<I, S>(&self, args: I) -> anyhow::Result<Txid>
+	where
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
+		let version = BarkVersion::parse(&self.instance_version().await);
+		if version > BarkVersion::parse("0.7.1") {
+			let ret = self.try_run_json::<json::cli::OffboardResult, _, _>(args).await?;
+			return Ok(ret.offboard_txid);
+		}
+
+		let ret = self.try_run_json::<serde_json::Value, _, _>(args).await?;
+		let txid = serde_json::from_value(ret["offboard_txid"].clone())
+			.with_context(|| format!("unexpected offboard output: {}", ret))?;
+		Ok(txid)
 	}
 
 	pub async fn drop_vtxos(&self) {

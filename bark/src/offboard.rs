@@ -8,6 +8,17 @@ use ark::vtxo::VtxoRef;
 use crate::Wallet;
 use crate::actions::{DriveMode, WalletActionId};
 use crate::actions::offboard::{Offboard, Progress, StartOffboardSpec, start_offboard};
+use crate::movement::MovementId;
+
+/// What an offboard call broadcast, and where it shows up in history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OffboardResult {
+	/// The offboard transaction the server built and we broadcast.
+	pub txid: Txid,
+	/// The movement that records this offboard. A caller can attach its own
+	/// data to the right history entry with it.
+	pub movement_id: MovementId,
+}
 
 impl Wallet {
 	/// Returns every in-progress offboard checkpoint.
@@ -56,7 +67,7 @@ impl Wallet {
 		&self,
 		destination: bitcoin::Address,
 		amount: Amount,
-	) -> anyhow::Result<Txid> {
+	) -> anyhow::Result<OffboardResult> {
 		let action = start_offboard(
 			self, destination, StartOffboardSpec::SendOnchain { amount },
 		).await?;
@@ -64,7 +75,7 @@ impl Wallet {
 	}
 
 	/// Offboard all VTXOs to a given [bitcoin::Address].
-	pub async fn offboard_all(&self, address: bitcoin::Address) -> anyhow::Result<Txid> {
+	pub async fn offboard_all(&self, address: bitcoin::Address) -> anyhow::Result<OffboardResult> {
 		let input_vtxos = self.spendable_vtxos().await?;
 		let action = start_offboard(
 			self, address, StartOffboardSpec::OffboardWhole { vtxos: input_vtxos },
@@ -77,7 +88,7 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 		address: bitcoin::Address,
-	) -> anyhow::Result<Txid> {
+	) -> anyhow::Result<OffboardResult> {
 		let mut input_vtxos = vec![];
 		for v in vtxos {
 			let id = v.vtxo_id();
@@ -93,7 +104,7 @@ impl Wallet {
 		self.run_offboard(action).await
 	}
 
-	async fn run_offboard(&self, action: Offboard) -> anyhow::Result<Txid> {
+	async fn run_offboard(&self, action: Offboard) -> anyhow::Result<OffboardResult> {
 		let offboard_id = action.id();
 		let guard = self.inner.lock_manager.try_lock(&offboard_id).await
 			.context("offboard action already in progress")?;
@@ -107,7 +118,9 @@ impl Wallet {
 
 		match self.offboard_checkpoint(&offboard_id).await? {
 			Some(o) => match o.progress {
-				Progress::AwaitingConfirmations { offboard_txid, .. } => Ok(offboard_txid),
+				Progress::AwaitingConfirmations { offboard_txid, movement_id, .. } => {
+					Ok(OffboardResult { txid: offboard_txid, movement_id })
+				},
 				// A transient error parked the action before broadcast (the
 				// executor logged the error itself). The checkpoint
 				// survives, so the next wallet sync re-drives it.

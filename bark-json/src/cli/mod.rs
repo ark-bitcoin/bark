@@ -15,6 +15,7 @@ use ark::lightning::{PaymentHash, Preimage};
 use bitcoin_ext::{AmountExt, BlockDelta};
 
 use bark::actions::lightning::pay::{LightningSendState, Progress as SendProgress};
+use bark::movement::MovementId;
 use bark::actions::lightning::receive::{
 	LightningReceive, LightningReceiveState, Progress as ReceiveProgress,
 };
@@ -582,6 +583,9 @@ pub struct OffboardResult {
 	/// The transaction id of the offboard transaction
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub offboard_txid: Txid,
+	/// The movement that records this offboard in the wallet history
+	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
+	pub movement_id: MovementId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
