@@ -7,6 +7,7 @@ use bitcoin::Amount;
 use tokio::io::AsyncReadExt;
 
 use bark_json::notifications::WalletNotification;
+use bark_rest_client::apis::lightning_api;
 
 use ark_testing::{btc, sat, BarkClient, Barkd, TestContext};
 use ark_testing::util::{poll_interval, wait_timeout};
@@ -97,3 +98,39 @@ async fn watch_prints_received_payment() {
 	assert!(matches!(notification, WalletNotification::MovementCreated { .. }),
 		"unexpected notification: {:?}", notification);
 }
+
+/// `ln invoice --wait` stops with an error once the receive is canceled,
+/// rather than waiting for a payment that cannot come.
+#[tokio::test]
+async fn invoice_wait_stops_on_canceled_receive() {
+	let ctx = TestContext::new("bark_client/invoice_wait_stops_on_canceled_receive").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server")
+		.lightningd(&lightning.internal)
+		.funded(btc(10))
+		.create().await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
+	let bark = BarkClient::new("bark", barkd.datadir(), Some(barkd.base_url()));
+	let config = barkd.client_config();
+
+	let cancel = async {
+		let deadline = Instant::now() + wait_timeout();
+		let invoice = loop {
+			let receives = lightning_api::list_receive_statuses(&config).await
+				.expect("failed to list receives");
+			if let Some(receive) = receives.first() {
+				break receive.invoice.clone();
+			}
+			assert!(Instant::now() < deadline, "the invoice was never created");
+			tokio::time::sleep(poll_interval()).await;
+		};
+		lightning_api::cancel_receive(&config, &invoice).await
+			.expect("failed to cancel the receive");
+	};
+	let (wait, ()) = tokio::join!(bark.try_run(["ln", "invoice", "10000 sats", "--wait"]), cancel);
+
+	let err = wait.expect_err("ln invoice --wait should fail once the receive is canceled");
+	assert!(err.to_string().contains("ended without settling"), "unexpected error: {:#}", err);
+}
+
