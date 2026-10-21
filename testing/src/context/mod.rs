@@ -508,6 +508,7 @@ impl TestContext {
 			ln_max_fee_ppm: 900_000,
 			max_read_mailbox_items: 100,
 			recovery_xpub_nb_keys: 100_000,
+			max_concurrent_xpub_recoveries: 1,
 			fees: FeeSchedule {
 				board: BoardFees {
 					min_fee: Amount::ZERO,

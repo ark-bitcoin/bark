@@ -2614,10 +2614,10 @@ CREATE INDEX vtxo_onchain_spent_active_ix ON public.vtxo USING btree (onchain_sp
 
 
 --
--- Name: vtxo_policy_ix; Type: INDEX; Schema: public; Owner: -
+-- Name: vtxo_policy_vtxo_id_ix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX vtxo_policy_ix ON public.vtxo USING btree (policy);
+CREATE INDEX vtxo_policy_vtxo_id_ix ON public.vtxo USING btree (policy, vtxo_id);
 
 
 --

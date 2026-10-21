@@ -311,8 +311,17 @@ impl rpc::server::ArkService for Server {
 			macros::badarg!("start_index {} is not a non-hardened child index", req.start_index);
 		}
 
+		let _queued = self.xpub_recovery_queue.try_acquire()
+			.map_err(|_| tonic::Status::resource_exhausted("too many xpub recoveries in progress, try again later"))?;
+		let _permit = self.xpub_recovery_permits.acquire().await
+			.context("xpub recovery semaphore closed")?;
+
+		let cursor_vtxo_id = req.cursor_vtxo_id.as_ref()
+			.map(|id| VtxoId::from_slice(id)).transpose()
+			.badarg("invalid cursor_vtxo_id")?;
+
 		let start = Instant::now();
-		let res = self.recover_vtxos_by_xpub(xpub, req.start_index).await.to_status()?;
+		let res = self.recover_vtxos_by_xpub(xpub, req.start_index, cursor_vtxo_id).await.to_status()?;
 		slog!(XpubRecoveryScanned, start_index: req.start_index, nb_keys: res.nb_keys_scanned,
 			nb_vtxos: res.vtxos.len(), duration: start.elapsed(),
 		);
@@ -333,6 +342,7 @@ impl rpc::server::ArkService for Server {
 			vtxos,
 			nb_keys_scanned: res.nb_keys_scanned,
 			have_more: res.have_more,
+			cursor_vtxo_id: res.cursor_vtxo_id.map(|id| id.to_bytes().to_vec()),
 		}))
 	}
 
