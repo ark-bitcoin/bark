@@ -1,7 +1,26 @@
 {
   "nodes": {
+    "bark": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789124636,
+        "narHash": "sha256-nHoMhOqAVPjMePqKrJLuZxBIjHstA+AHLc0b/T/pnfQ=",
+        "owner": "ark-bitcoin",
+        "repo": "bark",
+        "rev": "8f5d8c4f4afae87c8e4b3c6fb26fe06e9ae50e6a",
+        "type": "gitlab"
+      },
+      "original": {
+        "owner": "ark-bitcoin",
+        "ref": "bark-0.7.1",
+        "repo": "bark",
+        "type": "gitlab"
+      }
+    },
     "bark-web": {
       "inputs": {
+        "bark": "bark",
+        "barkd-clients": "barkd-clients",
         "flake-utils": [
           "flake-utils"
         ],
@@ -10,17 +29,33 @@
         ]
       },
       "locked": {
-        "lastModified": 1789727824,
-        "narHash": "sha256-GjwXhd0taPmPYcC3UQm89PrdMXRyaDmnI+jsuug9M9Q=",
+        "lastModified": 1792584011,
+        "narHash": "sha256-bIPlrHH9k4qaxFP1p9aAHVYI4RUoD2joX4AbGDGKNKw=",
         "owner": "ark-bitcoin",
         "repo": "bark-web",
-        "rev": "dad02198df52fe1f6c8d0d4cfde74d42927dbfe2",
+        "rev": "54cd204a6984cdea498b8cef7ae5a20d45816287",
         "type": "gitlab"
       },
       "original": {
         "owner": "ark-bitcoin",
-        "ref": "v0.9.0",
+        "ref": "main",
         "repo": "bark-web",
+        "type": "gitlab"
+      }
+    },
+    "barkd-clients": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789137808,
+        "narHash": "sha256-zSCWb6gMSshuyZFh3m9BBXm98s6MMbpP+pJTHoGgQog=",
+        "owner": "ark-bitcoin",
+        "repo": "barkd-clients",
+        "rev": "c0bf5325bdade1f33b2d9b2a0f41d93ef811a066",
+        "type": "gitlab"
+      },
+      "original": {
+        "owner": "ark-bitcoin",
+        "repo": "barkd-clients",
         "type": "gitlab"
       }
     },

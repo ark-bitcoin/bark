@@ -32,6 +32,7 @@ let
 			(craneLib.fileset.commonCargoSources ./..)
 			./../server-rpc/protos
 			./../cln-rpc/protos
+			./../bark-rest/swagger-ui
 		];
 	};
 

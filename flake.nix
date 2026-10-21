@@ -17,12 +17,15 @@
 		};
 		# The bark-web SPA embedded into release barkd binaries. Its flake
 		# exposes the built distribution as `packages.dist`, which we hand to
-		# the bark-rest build script through BARK_WEB_DIST. The input tracks
-		# bark-web main, pinned by flake.lock; to embed a specific bark-web
-		# version or a locally built dist instead, set the BARK_WEB_VERSION
-		# or BARK_WEB_DIST env var (see below).
+		# the bark-rest build script through BARK_WEB_DIST. By default the
+		# dist is built against a `@secondts/barkd` client generated from
+		# this tree's `bark-rest/openapi.json` (see `barkWebDist` below), so
+		# the embedded UI is typed against the barkd being built rather than
+		# the npm client release pinned by bark-web. To embed a specific
+		# bark-web version or a locally built dist instead, set the
+		# BARK_WEB_VERSION or BARK_WEB_DIST env var (see below).
 		bark-web = {
-			url = "gitlab:ark-bitcoin/bark-web/v0.9.0";
+			url = "gitlab:ark-bitcoin/bark-web/main";
 			inputs.nixpkgs.follows = "nixpkgs";
 			inputs.flake-utils.follows = "flake-utils";
 		};
@@ -155,21 +158,44 @@
 				# precedence (the env vars are visible only under
 				# `nix build --impure`):
 				#
-				# - `BARK_WEB_DIST`: absolute path to an already built bark-web dist
+				# - `BARK_WEB_DIST`: absolute path to an already built bark-web dist,
+				#   used as is.
 				# - `BARK_WEB_VERSION`: another ref of the bark-web repo
-				#   (a vX.Y.Z tag, a branch, or a commit)
+				#   (a vX.Y.Z tag, a branch, or a commit) instead of the flake
+				#   input's flake.lock pin.
 				# - Otherwise the flake input's flake.lock pin.
+				#
+				# In the last two cases the dist is built from the bark-web
+				# source: its `barkd-client` package is regenerated from this
+				# tree's `bark-rest/openapi.json` and the UI is compiled against
+				# that, so an API change that breaks the UI fails the build
+				# (`nix build .#bark-web-dist` checks this without building the
+				# Rust side). A bark-web ref that predates `barkd-client` falls
+				# back to its plain `dist`, built against the npm client release
+				# pinned in its package-lock.json.
 				envBarkWebDist = builtins.getEnv "BARK_WEB_DIST";
 				envBarkWebVersion = builtins.getEnv "BARK_WEB_VERSION";
 				barkWebFlake = if envBarkWebVersion != ""
 					then builtins.getFlake "gitlab:ark-bitcoin/bark-web/${envBarkWebVersion}"
 					else bark-web;
+				barkWebPkgs = barkWebFlake.packages.${system};
 				barkWebDist = if envBarkWebDist != ""
 					then builtins.path {
 						path = /. + envBarkWebDist;
 						name = "bark-web-dist";
 					}
-					else barkWebFlake.packages.${system}.dist;
+					else if barkWebPkgs ? barkd-client
+					then barkWebPkgs.dist.override {
+						barkdClient = barkWebPkgs.barkd-client.override {
+							# Only the OpenAPI spec goes into the client generator, so the
+							# client and the dist are cache hits unless the spec changes.
+							barkSrc = lib.fileset.toSource {
+								root = ./.;
+								fileset = ./bark-rest/openapi.json;
+							};
+						};
+					}
+					else barkWebPkgs.dist;
 
 				barkPackages = import ./nix/package-bark.nix {
 					pkgs = releasePkgs;
@@ -201,8 +227,6 @@
 			in
 			{
 				packages = {
-					"slog-tools" = slog-tools;
-
 					# Release artifacts keyed by target triple.
 					bark-x86_64-unknown-linux-gnu  = barkPackages.x86_64-unknown-linux-gnu;
 					bark-x86_64-unknown-linux-musl = barkPackages.x86_64-unknown-linux-musl;
@@ -215,6 +239,13 @@
 					# Release artifacts keyed by target triple.
 					bark-server-x86_64-unknown-linux-gnu  = serverPackages.x86_64-unknown-linux-gnu;
 					bark-server-x86_64-unknown-linux-musl = serverPackages.x86_64-unknown-linux-musl;
+
+					# The bark-web dist embedded into barkd (see `barkWebDist`), as
+					# its own output so the UI can be checked against an API change
+					# without the full Rust build.
+					bark-web-dist = barkWebDist;
+
+					"slog-tools" = slog-tools;
 				}
 				# `bark` and `bark-server` build for the current system. Only
 				# defined when the host triple is one of the packaged targets.

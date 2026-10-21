@@ -61,6 +61,10 @@ async fn simple_exit() {
 		}
 		assert_eq!(est.claim_fee, sat(645), "{:?}", est);
 		assert_eq!(est.total_fee, est.exit_broadcast_fee + est.claim_fee, "{:?}", est);
+		// The deprecated field is still served for old clients: the on-chain
+		// balance left after boarding covers the broadcast fee.
+		#[allow(deprecated)]
+		{ assert!(est.fundable, "{:?}", est); }
 	}
 
 	bark.start_exit_all().await;

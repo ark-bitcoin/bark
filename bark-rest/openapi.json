@@ -4097,7 +4097,8 @@
           "claim_fee_sat",
           "total_fee_sat",
           "fee_rate_sat_per_vb",
-          "txs_to_broadcast"
+          "txs_to_broadcast",
+          "fundable"
         ],
         "properties": {
           "claim_fee_sat": {
@@ -4116,6 +4117,11 @@
             "type": "number",
             "format": "double",
             "description": "The fee rate the exit-broadcast leg was priced at (sat/vB), before the fee margin. Unless\nan explicit fee rate was supplied, the claim leg is priced separately at the chain's\n`regular` rate."
+          },
+          "fundable": {
+            "type": "boolean",
+            "description": "Whether the wallet's on-chain balance covers `exit_broadcast_fee_sat`.\n\n**Deprecated**: the estimate is a funding target and no longer consults\nthe wallet's funds. Compare `exit_broadcast_fee_sat` against the on-chain\nbalance instead. This field is still populated from the last synced\non-chain balance for backwards compatibility and will be removed in a\nfuture release.",
+            "deprecated": true
           },
           "total_fee_sat": {
             "type": "integer",

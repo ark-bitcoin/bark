@@ -2,8 +2,10 @@
 CARGO_TARGET := `cargo metadata --format-version 1 --no-deps | jq -r '.target_directory'`
 JUSTFILE_DIR := justfile_directory()
 # The rust target triple of this machine, the default for single-target nix
-# builds. Matches the target suffixes of the flake's release packages.
-HOST_TARGET := `rustc -vV | sed -n 's/^host: //p'`
+# builds. Matches the target suffixes of the flake's release packages. On
+# Linux this picks the static musl build, like the flake's `bark` package:
+# the gnu build uses the /lib64 loader and doesn't run on NixOS without nix-ld.
+HOST_TARGET := `rustc -vV | sed -n 's/^host: //p' | sed 's/-linux-gnu$/-linux-musl/'`
 export CAPTAIND_EXEC := env("CAPTAIND_EXEC", CARGO_TARGET / "debug" / "captaind")
 export WATCHMAND_EXEC := env("WATCHMAND_EXEC", CARGO_TARGET / "debug" / "watchmand")
 export BARK_EXEC := env("BARK_EXEC", CARGO_TARGET / "debug" / "bark")
