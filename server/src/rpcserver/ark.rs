@@ -311,10 +311,12 @@ impl rpc::server::ArkService for Server {
 			macros::badarg!("start_index {} is not a non-hardened child index", req.start_index);
 		}
 
-		let _queued = self.xpub_recovery_queue.try_acquire()
+		let queued = self.xpub_recovery_queue.try_acquire()
 			.map_err(|_| tonic::Status::resource_exhausted("too many xpub recoveries in progress, try again later"))?;
 		let _permit = self.xpub_recovery_permits.acquire().await
 			.context("xpub recovery semaphore closed")?;
+		// Once we start the recovery for this request, we can release the queue slot.
+		drop(queued);
 
 		let cursor_vtxo_id = req.cursor_vtxo_id.as_ref()
 			.map(|id| VtxoId::from_slice(id)).transpose()
