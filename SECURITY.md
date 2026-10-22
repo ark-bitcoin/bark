@@ -1,5 +1,22 @@
 # Security Policy
 
+## Scope
+
+captaind delegates network-level protection to the deployment
+infrastructure. The following are documented design decisions.
+
+- captaind does not rate-limit its public gRPC API. The reverse proxy in
+  front of captaind must implement rate limiting.
+- The admin and integration gRPC APIs have no authentication, by design.
+  The deployment must keep them reachable only on a trusted network.
+
+See [the captaind deployment guide](contrib/docs/captaind-deployment.md)
+for the rationale and for operator guidance.
+
+A resource-exhaustion issue can still be in scope: for example, a single
+request that costs the server disproportionate resources, or an attack that
+works through a correctly configured proxy.
+
 ## Reporting a Vulnerability
 
 Please report any vulnerability or any bug that could potentially affect the
