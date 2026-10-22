@@ -426,9 +426,11 @@ pub struct BoardRequest {
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct SendRequest {
-	/// The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
+	/// The destination can be an Ark address, a BOLT11 invoice, a BOLT12 offer, a lightning
+	/// address, LNURL, a bitcoin address or a BIP 321 URI
 	pub destination: String,
-	/// The amount to send (in satoshis). Optional for bolt11 invoices. Depending on the
+	/// The amount to send (in satoshis). Optional when the destination carries an amount,
+	/// such as a BOLT11 invoice or a BIP 321 URI with an amount. Depending on the
 	/// `destination`, the wallet must contain this amount plus any fees configured by the server in
 	/// [FeeSchedule](crate::cli::fees::FeeSchedule).
 	pub amount_sat: Option<u64>,
@@ -439,6 +441,46 @@ pub struct SendRequest {
 	/// default when empty.
 	#[serde(default)]
 	pub retry_for_secs: Option<u64>,
+	/// For a destination with several payment methods, such as a BIP 321 URI,
+	/// the kind of method to pay with. When empty, the wallet picks Ark, then
+	/// Lightning, then on-chain.
+	#[serde(default)]
+	pub method: Option<PaymentMethodKind>,
+}
+
+/// A kind of payment method a destination can offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+#[serde(rename_all = "kebab-case")]
+pub enum PaymentMethodKind {
+	/// An Ark address
+	Ark,
+	/// A BOLT11 invoice, BOLT12 offer, lightning address or LNURL
+	Lightning,
+	/// A bitcoin address
+	Onchain,
+}
+
+impl PaymentMethodKind {
+	/// Whether `method` is of this kind.
+	pub fn matches(&self, method: &bark::payment_request::PaymentMethod) -> bool {
+		match self {
+			PaymentMethodKind::Ark => method.is_ark(),
+			PaymentMethodKind::Lightning => method.is_lightning(),
+			PaymentMethodKind::Onchain => method.is_bitcoin(),
+		}
+	}
+}
+
+impl std::fmt::Display for PaymentMethodKind {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let s = match self {
+			PaymentMethodKind::Ark => "ark",
+			PaymentMethodKind::Lightning => "lightning",
+			PaymentMethodKind::Onchain => "onchain",
+		};
+		f.write_str(s)
+	}
 }
 
 #[derive(Serialize, Deserialize)]

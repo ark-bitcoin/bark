@@ -21,3 +21,4 @@ bark-rest = { version = "0.8.0", path = "../bark-rest", default-features = false
 default = ["rustls"]
 native-tls = ["reqwest/native-tls"]
 rustls = ["reqwest/rustls"]
+rustls-no-provider = ["reqwest/rustls-no-provider"]

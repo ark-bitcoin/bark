@@ -13,6 +13,7 @@ pub mod lightning;
 pub mod ports;
 pub mod util;
 pub mod bark;
+pub mod bark_client;
 pub mod postgres;
 pub mod exit;
 pub mod control_server;
@@ -26,6 +27,7 @@ pub use daemon::barkd::Barkd;
 pub use daemon::lightningd::{Lightningd, LightningdConfig};
 pub use daemon::tor::{Tor, TorConfig, HiddenServiceConfig};
 pub use bark::Bark;
+pub use bark_client::BarkClient;
 
 
 use std::fmt;

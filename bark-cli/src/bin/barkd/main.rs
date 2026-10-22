@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -401,7 +401,7 @@ async fn main() -> anyhow::Result<()>{
 		match command {
 			Command::Secret { action: SecretCommand::Show } => {
 				let token = load_auth_token(&datadir)?
-					.context("no auth token found — run `barkd secret refresh` to generate one")?;
+					.context("no auth token found - run `barkd secret refresh` to generate one")?;
 				println!("{}", token.encode());
 				return Ok(());
 			},
@@ -433,10 +433,21 @@ async fn main() -> anyhow::Result<()>{
 
 	let _barkd_lock = connection::acquire_barkd_lock(&datadir)?;
 
+	// Server can bind to 0.0.0.0 (unspecified)
+	// If that happens client must connect to 127.0.0.1
+	let mut connect_addr = config.socket_addr();
+	if connect_addr.ip().is_unspecified() {
+		connect_addr.set_ip(match connect_addr.ip() {
+			IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
+			IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
+		});
+	}
+	connection::store_barkd_url(&datadir, &format!("http://{}", connect_addr))?;
+
 	let auth_token = if cli.auth_disabled() {
 		check_remote_no_auth(config.host, cli.dangerously_allow_remote_no_auth)?;
 		if cli.allowed_origins.is_empty() {
-			warn!("Auth is disabled and no CORS origins are configured — \
+			warn!("Auth is disabled and no CORS origins are configured - \
 				any client that can reach this port has full API access.");
 		}
 		None
@@ -445,7 +456,7 @@ async fn main() -> anyhow::Result<()>{
 			Some(token) => token,
 			None => {
 				let token = generate_store_auth_token(&datadir)?;
-				info!("No auth token found — generated a new one. Use `barkd secret show` to view it.");
+				info!("No auth token found - generated a new one. Use `barkd secret show` to view it.");
 				token
 			},
 		};

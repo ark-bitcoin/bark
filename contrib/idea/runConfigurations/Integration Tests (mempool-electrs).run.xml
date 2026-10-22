@@ -4,7 +4,8 @@
     <option name="command" value="test --package ark-testing" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
-      <env name="BARK_EXEC" value="../target/debug/bark" />
+      <env name="BARK_EXEC" value="../target/debug/bark-legacy" />
+      <env name="BARK_CLIENT_EXEC" value="../target/debug/bark-cli" />
       <env name="BARKD_EXEC" value="../target/debug/barkd" />
       <env name="CAPTAIND_EXEC" value="../target/debug/captaind" />
       <env name="WATCHMAND_EXEC" value="../target/debug/watchmand" />

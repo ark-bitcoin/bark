@@ -3,12 +3,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bark_json::cli::LightningSendStateKind;
+
 use ark_testing::{btc, lightning_test, require_bark_version, sat, Captaind, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::context::LightningPaymentSetup;
 use ark_testing::util::{FutureExt, poll_interval};
 use ark::lightning::Invoice;
-use bark_rest_client::apis::lightning_api;
+use bark_rest_client::apis::{lightning_api, Error};
 use bark_rest_client::models::LightningPayRequest;
 use server::database::Db;
 
@@ -88,12 +90,28 @@ async fn lightning_send_status_unknown_for_unseen_hash() {
 	let hash = "0000000000000000000000000000000000000000000000000000000000000000";
 	let info = lightning_api::get_send_status(&config, hash).await
 		.expect("send status for an unseen hash should not error");
-	assert_eq!(info.state, "unknown");
+	assert_eq!(info.state, LightningSendStateKind::Unknown);
 	assert_eq!(info.payment_hash.to_string(), hash);
 	assert_eq!(info.preimage, None);
 
 	lightning_api::get_send_status(&config, "lnbc1invalid").await
 		.expect_err("an identifier that is neither a hash nor an invoice should be rejected");
+}
+
+/// `GET /lightning/receives/{identifier}` is a 404 for a payment hash the
+/// wallet does not know, which includes a receive that ended without settling.
+#[tokio::test]
+async fn lightning_receive_status_not_found_for_unseen_hash() {
+	let ctx = TestContext::new("barkd/lightning_receive_status_not_found_for_unseen_hash").await;
+
+	let srv = ctx.captaind("server").create().await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
+
+	let hash = "0000000000000000000000000000000000000000000000000000000000000000";
+	match lightning_api::get_receive_status(&barkd.client_config(), hash).await {
+		Err(Error::ResponseError(rc)) => assert_eq!(rc.status, 404),
+		other => panic!("expected 404 for an unseen hash, got {:?}", other.map(|r| r.state)),
+	}
 }
 
 /// Both REST payment endpoints pass `retry_for_secs` on to the server.

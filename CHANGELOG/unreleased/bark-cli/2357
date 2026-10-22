@@ -1,0 +1,18 @@
+- Add `bark-cli`, a thin client that drives a running barkd over its REST API
+  The command tree and printed JSON match the in-process CLI, so a wallet
+  can move to the daemon model without new commands. `bark-cli` reaches
+  the barkd on its datadir through the recorded listen address or an
+  explicit `--url`. It authenticates with the bearer token in the datadir.
+  Release builds do not ship `bark-cli` yet. Build it from source.
+  [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+
+- Add `bark-legacy`, an alias of the in-process `bark` CLI
+  `bark` does not change. The integration tests run the in-process CLI as
+  `bark-legacy`, so `bark` can later become the thin client.
+  [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+
+- barkd records its listen address in the datadir
+  Clients that share the datadir connect to the correct barkd, also when
+  it runs on a non-default port. A wildcard bind is recorded as its
+  loopback equivalent.
+  [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)

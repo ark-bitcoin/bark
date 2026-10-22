@@ -8,7 +8,7 @@
 //! - Opens `db.sqlite` as a [`bark::persist::sqlite::SqliteClient`] and loads persisted properties
 //! - Loads or creates the [`bark::onchain::OnchainWallet`], wraps it in
 //!   `Arc<RwLock<_>>`, and stores it inside the [`bark::Wallet`] via
-//!   [`bark::OpenWalletArgs::onchain`] — BDK-specific methods are accessed
+//!   [`bark::OpenWalletArgs::onchain`] - BDK-specific methods are accessed
 //!   via downcasting through [`bark::Wallet::onchain`]
 //! ## Errors
 //! Returns an [`anyhow::Error`] with context describing the failing step (I/O, parsing,
@@ -52,7 +52,7 @@ use bark::persist::adaptor::filestore::FileStorageAdaptor;
 
 use bitcoin_ext::BlockHeight;
 
-use crate::connection::{self, BARKD_LOCK_FILE};
+use crate::connection::{self, BARKD_LOCK_FILE, BARKD_URL_FILE};
 use crate::util;
 
 /// File name of the mnemonic file.
@@ -300,13 +300,14 @@ pub struct CreateOpts {
 }
 
 /// Non-wallet files barkd leaves in the datadir; they must survive a wallet create.
-const EXPECTED_DATADIR_FILES: [&str; 6] = [
+const EXPECTED_DATADIR_FILES: [&str; 7] = [
 	DEBUG_LOG_FILE,
 	STDOUT_LOG_FILE,
 	STDERR_LOG_FILE,
 	LOCK_FILE,
 	AUTH_TOKEN_FILE,
 	BARKD_LOCK_FILE,
+	BARKD_URL_FILE,
 ];
 
 /// Whether `name` is an expected datadir file or an atomic-write temp
@@ -494,7 +495,7 @@ async fn try_create_wallet(
 	// a wallet restored from a mnemonic rebuilds its spendable VTXO set from the
 	// recovery mailbox. The on-chain scan above has already run, so recovery can
 	// validate recovered VTXOs against their chain anchors. `run_daemon` stays
-	// off — this only needs to create and recover.
+	// off - this only needs to create and recover.
 	BarkWallet::open(
 		net.as_bitcoin(),
 		WalletSeed::new_from_mnemonic(net.as_bitcoin(), &mnemonic),
@@ -669,6 +670,7 @@ mod test {
 	fn expected_datadir_files_and_their_temps() {
 		assert!(is_expected_datadir_file("auth_token"));
 		assert!(is_expected_datadir_file("barkd.lock"));
+		assert!(is_expected_datadir_file("barkd.url"));
 		// Atomic-write temp siblings, mid-write or left by a crash.
 		assert!(is_expected_datadir_file(".auth_token.temp.42.3.tmp"));
 		assert!(is_expected_datadir_file(".config.toml.temp.42.0.tmp"));

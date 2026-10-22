@@ -20,6 +20,7 @@ pub mod env {
 	pub const ESPLORA_ELECTRS_EXEC: &str = "ESPLORA_ELECTRS_EXEC";
 	pub const MEMPOOL_ELECTRS_EXEC: &str = "MEMPOOL_ELECTRS_EXEC";
 	pub const BARK_EXEC: &str = "BARK_EXEC";
+	pub const BARK_CLIENT_EXEC: &str = "BARK_CLIENT_EXEC";
 	pub const BARKD_EXEC: &str = "BARKD_EXEC";
 	pub const CAPTAIND_EXEC: &str = "CAPTAIND_EXEC";
 	/// Path to a previous captaind release binary. Used by the

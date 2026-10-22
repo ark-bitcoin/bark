@@ -8,7 +8,15 @@ authors = [ "Team Second <hello@second.tech>" ]
 
 [[bin]]
 name = "bark"
-path = "src/bin/bark/main.rs"
+path = "src/bin/bark-legacy/main.rs"
+
+[[bin]]
+name = "bark-cli"
+path = "src/bin/bark-cli/main.rs"
+
+[[bin]]
+name = "bark-legacy"
+path = "src/bin/bark-legacy/main.rs"
 
 [[bin]]
 name = "barkd"
@@ -17,11 +25,12 @@ path = "src/bin/barkd/main.rs"
 [features]
 default = ["tls-native-roots", "barkd-swagger-ui"]
 
-# TLS certificate verification options (pick one)
-tls-native-roots = ["bark-wallet/tls-native-roots", "bark-server-rpc/tls-native-roots"]
+# TLS certificate verification options (pick one). The bark-cli REST client
+# verifies against the platform's certificate store under either option.
+tls-native-roots = ["bark-wallet/tls-native-roots", "bark-server-rpc/tls-native-roots", "bark-rest-client/rustls-no-provider", "dep:rustls"]
 # Use this feature for cross-compilation. It uses rustls with bundled Mozilla
 # CA certificates instead of the system's native TLS and certificate store.
-tls-webpki-roots = ["bark-wallet/tls-webpki-roots", "bark-server-rpc/tls-webpki-roots"]
+tls-webpki-roots = ["bark-wallet/tls-webpki-roots", "bark-server-rpc/tls-webpki-roots", "bark-rest-client/rustls-no-provider", "dep:rustls"]
 # Compile SQLite from source instead of linking against the system library; useful for cross-compilation.
 sqlite-bundled = ["bark-wallet/sqlite-bundled"]
 
@@ -39,6 +48,10 @@ bark-wallet = { version = "0.8.0", path = "../bark", default-features = false, f
 bark-bitcoin-ext = { version = "0.8.0", path = "../bitcoin-ext", features = ["rpc-socks5-proxy"] }
 bark-server-rpc = { version = "0.8.0", path = "../server-rpc", default-features = false, features = ["tonic-native", "socks5-proxy"] }
 bark-rest = { version = "0.8.0", path = "../bark-rest", default-features = false }
+bark-rest-client = { version = "0.8.0", path = "../bark-rest-client", default-features = false }
+reqwest = { version = "0.13", default-features = false }
+# Without default features: rustls's defaults bring aws-lc next to bark's ring.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 
 anyhow.workspace = true
 bitcoin.workspace = true

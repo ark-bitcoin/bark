@@ -1,0 +1,16 @@
+- Add `GET /api/v1/wallet/debug-info`
+  It returns the network, the mailbox ID and the VTXO xpub of the wallet,
+  which you can share in support requests.
+  [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+
+- `POST /api/v1/wallet/send` accepts BIP 321 URIs and bitcoin addresses
+  The new `method` field (`ark`, `lightning` or `onchain`) selects the kind
+  of payment method when the destination offers several. Without it, the
+  wallet uses Ark, then Lightning, then on-chain. A bitcoin address is paid
+  on-chain, as `send-onchain` does.
+  [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+
+- `GET /api/v1/lightning/receives/{identifier}` returns 404 for an unknown receive
+  This includes a receive that ended without settling, for example a
+  canceled one. It used to return 500.
+  [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)

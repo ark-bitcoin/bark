@@ -8,7 +8,8 @@ JUSTFILE_DIR := justfile_directory()
 HOST_TARGET := `rustc -vV | sed -n 's/^host: //p' | sed 's/-linux-gnu$/-linux-musl/'`
 export CAPTAIND_EXEC := env("CAPTAIND_EXEC", CARGO_TARGET / "debug" / "captaind")
 export WATCHMAND_EXEC := env("WATCHMAND_EXEC", CARGO_TARGET / "debug" / "watchmand")
-export BARK_EXEC := env("BARK_EXEC", CARGO_TARGET / "debug" / "bark")
+export BARK_EXEC := env("BARK_EXEC", CARGO_TARGET / "debug" / "bark-legacy")
+export BARK_CLIENT_EXEC := env("BARK_CLIENT_EXEC", CARGO_TARGET / "debug" / "bark-cli")
 export BARKD_EXEC := env("BARKD_EXEC", CARGO_TARGET / "debug" / "barkd")
 export BITCOIND_SNAPSHOT_DIR := JUSTFILE_DIR / "test" / "_bitcoind_snapshot"
 
@@ -196,7 +197,7 @@ alias int-upgrade := test-integration-upgrade
 # run integration tests for bark and barkd test files only
 test-integration-bark: ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
-		--test bark --test barkd
+		--test bark --test barkd --test bark-client
 alias int-bark := test-integration-bark
 
 # Run the integration tests that drive wallet actions (bark, barkd, bark-sdk)
@@ -238,6 +239,10 @@ test-integration-bark-prebuilt: docker-pull
 test-integration-bark-sdk-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
 		-E 'binary(=bark-sdk)'
+
+test-integration-bark-client-prebuilt: docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
+		-E 'binary(=bark-client)'
 
 test-integration-core-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
@@ -398,6 +403,10 @@ generate-bark-rest-client: dump-bark-rest-openapi-schema
 		--artifact-version "$BARK_REST_VERSION" \
 		--additional-properties packageVersion="$BARK_REST_VERSION" \
 		--additional-properties reqwestDefaultFeatures="rustls"
+	# reqwest's rustls feature brings the aws-lc backend while bark uses ring;
+	# users of this feature install a ring provider themselves. Added before
+	# cargo add, which resolves the workspace and bark-cli needs the feature.
+	echo 'rustls-no-provider = ["reqwest/rustls-no-provider"]' >> {{BARK_REST_CLIENT_DIR}}/Cargo.toml
 	cargo add --package bark-rest-client --path bark-json
 	cargo add --package bark-rest-client --path bark-rest --no-default-features
 	rm {{BARK_REST_CLIENT_DIR}}/src/models/*.rs

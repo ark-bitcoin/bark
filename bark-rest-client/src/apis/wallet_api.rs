@@ -65,6 +65,14 @@ pub enum CreateWalletError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`debug_info`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DebugInfoError {
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`get_vtxo`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -492,6 +500,44 @@ pub async fn create_wallet(configuration: &configuration::Configuration, create_
     } else {
         let content = resp.text().await?;
         let entity: Option<CreateWalletError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Returns wallet information that helps to debug issues: the bitcoin network, the ID of the wallet's server mailbox and the xpub from which all VTXO keypairs are derived.
+pub async fn debug_info(configuration: &configuration::Configuration, ) -> Result<models::DebugInfo, Error<DebugInfoError>> {
+
+    let uri_str = format!("{}/api/v1/wallet/debug-info", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::DebugInfo`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::DebugInfo`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<DebugInfoError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }
@@ -1089,7 +1135,7 @@ pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh
     }
 }
 
-/// Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses, Lightning addresses, and LNURL but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses and LNURL. To send to an on-chain bitcoin address, use `send-onchain` instead.
+/// Sends a payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, LNURL, bitcoin address, or BIP 321 URI. When the destination offers several payment methods, `method` picks the kind to pay with; without it the wallet picks Ark, then Lightning, then on-chain. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required unless the destination carries an amount. Comments are only supported for Lightning addresses and LNURL.
 pub async fn send(configuration: &configuration::Configuration, send_request: models::SendRequest) -> Result<models::SendResponse, Error<SendError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_send_request = send_request;

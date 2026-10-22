@@ -1532,7 +1532,7 @@
           "lightning"
         ],
         "summary": "Get receive status",
-        "description": "Returns the status of a specified Lightning receive, identified by its payment hash, invoice string, or preimage. The response tracks progress through timestamps: `htlc_vtxos` is populated once HTLCs are created by the Ark server, `preimage_revealed_at` records when the preimage was sent, and `finished_at` indicates the receive has settled or been canceled.",
+        "description": "Returns the status of a specified Lightning receive, identified by its payment hash, invoice string, or preimage. `state` tracks its progress and `settled_at` records when it settled. A receive that ended without settling, for example a canceled one, is no longer known and returns 404.",
         "operationId": "get_receive_status",
         "parameters": [
           {
@@ -2539,6 +2539,38 @@
         }
       }
     },
+    "/api/v1/wallet/debug-info": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "summary": "Get wallet debug info",
+        "description": "Returns wallet information that helps to debug issues: the bitcoin network, the ID of the wallet's server mailbox and the xpub from which all VTXO keypairs are derived.",
+        "operationId": "debug_info",
+        "responses": {
+          "200": {
+            "description": "Returns the wallet debug info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DebugInfo"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/history": {
       "get": {
         "tags": [
@@ -3096,7 +3128,7 @@
           "wallet"
         ],
         "summary": "Send a payment",
-        "description": "Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses, Lightning addresses, and LNURL but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses and LNURL. To send to an on-chain bitcoin address, use `send-onchain` instead.",
+        "description": "Sends a payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, LNURL, bitcoin address, or BIP 321 URI. When the destination offers several payment methods, `method` picks the kind to pay with; without it the wallet picks Ark, then Lightning, then on-chain. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required unless the destination carries an amount. Comments are only supported for Lightning addresses and LNURL.",
         "operationId": "send",
         "requestBody": {
           "content": {
@@ -3120,7 +3152,7 @@
             }
           },
           "400": {
-            "description": "The provided destination is not a valid Ark address, BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL",
+            "description": "The destination is not a valid payment string, has no valid payment method, or the request lacks a required amount",
             "content": {
               "application/json": {
                 "schema": {
@@ -4026,6 +4058,29 @@
         "properties": {
           "fingerprint": {
             "type": "string"
+          }
+        }
+      },
+      "DebugInfo": {
+        "type": "object",
+        "description": "Wallet information that helps to debug issues.",
+        "required": [
+          "network",
+          "mailbox_id",
+          "vtxo_xpub"
+        ],
+        "properties": {
+          "mailbox_id": {
+            "type": "string",
+            "description": "The ID of the wallet's server mailbox"
+          },
+          "network": {
+            "type": "string",
+            "description": "The bitcoin network the wallet operates on"
+          },
+          "vtxo_xpub": {
+            "type": "string",
+            "description": "The xpub from which all VTXO keypairs are derived"
           }
         }
       },
@@ -6049,10 +6104,22 @@
             "description": "The timestamp at which the receive settled, if it has."
           },
           "state": {
-            "type": "string",
-            "description": "Lifecycle phase of the receive: `awaiting-payment`, `htlcs-ready`,\n`preimage-revealed`, `delivering`, or `settled`."
+            "$ref": "#/components/schemas/LightningReceiveStateKind",
+            "description": "Lifecycle phase of the receive"
           }
         }
+      },
+      "LightningReceiveStateKind": {
+        "type": "string",
+        "description": "Lifecycle phase of a lightning receive.",
+        "enum": [
+          "awaiting-payment",
+          "htlcs-ready",
+          "preimage-revealed",
+          "delivering",
+          "settled",
+          "other"
+        ]
       },
       "LightningSendFees": {
         "type": "object",
@@ -6110,10 +6177,25 @@
             "description": "The payment preimage, revealed once the payment succeeded."
           },
           "state": {
-            "type": "string",
-            "description": "Lifecycle phase of the send: `unknown`, `start`, `inputs-locked`, `htlc-received`,\n`payment-initiated`, `revocable-htlcs`, `revocation-stuck`, or `paid`."
+            "$ref": "#/components/schemas/LightningSendStateKind",
+            "description": "Lifecycle phase of the send"
           }
         }
+      },
+      "LightningSendStateKind": {
+        "type": "string",
+        "description": "Lifecycle phase of a lightning send.",
+        "enum": [
+          "unknown",
+          "start",
+          "inputs-locked",
+          "htlc-received",
+          "payment-initiated",
+          "revocable-htlcs",
+          "revocation-stuck",
+          "paid",
+          "other"
+        ]
       },
       "MailboxSyncResponse": {
         "type": "object",
@@ -6637,6 +6719,15 @@
           }
         }
       },
+      "PaymentMethodKind": {
+        "type": "string",
+        "description": "A kind of payment method a destination can offer.",
+        "enum": [
+          "ark",
+          "lightning",
+          "onchain"
+        ]
+      },
       "PendingBoardInfo": {
         "type": "object",
         "description": "Describes a completed transition of funds from onchain to offchain.",
@@ -6996,7 +7087,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "The amount to send (in satoshis). Optional for bolt11 invoices. Depending on the\n`destination`, the wallet must contain this amount plus any fees configured by the server in\n[FeeSchedule](crate::cli::fees::FeeSchedule).",
+            "description": "The amount to send (in satoshis). Optional when the destination carries an amount,\nsuch as a BOLT11 invoice or a BIP 321 URI with an amount. Depending on the\n`destination`, the wallet must contain this amount plus any fees configured by the server in\n[FeeSchedule](crate::cli::fees::FeeSchedule).",
             "minimum": 0
           },
           "comment": {
@@ -7008,7 +7099,18 @@
           },
           "destination": {
             "type": "string",
-            "description": "The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address"
+            "description": "The destination can be an Ark address, a BOLT11 invoice, a BOLT12 offer, a lightning\naddress, LNURL, a bitcoin address or a BIP 321 URI"
+          },
+          "method": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaymentMethodKind",
+                "description": "For a destination with several payment methods, such as a BIP 321 URI,\nthe kind of method to pay with. When empty, the wallet picks Ark, then\nLightning, then on-chain."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "retry_for_secs": {
             "type": [

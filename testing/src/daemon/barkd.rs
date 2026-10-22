@@ -289,6 +289,7 @@ impl Barkd {
 			amount_sat: None,
 			comment: None,
 			retry_for_secs,
+			method: None,
 		}).await.expect("barkd lightning send failed");
 	}
 
@@ -727,6 +728,7 @@ impl Barkd {
 			amount_sat: Some(amount.to_sat()),
 			comment: None,
 			retry_for_secs: None,
+			method: None,
 		};
 		wallet_api::send(&config, req).await.expect("barkd send failed");
 	}

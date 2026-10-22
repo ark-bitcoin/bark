@@ -109,7 +109,7 @@ async fn lightning_receive_parked_at_awaiting_payment_completes_after_upgrade() 
 	let receives = old.list_lightning_receives().await;
 	assert_eq!(receives.len(), 1, "the old release should have checkpointed a receive");
 	assert_eq!(
-		receives[0].state, "awaiting-payment",
+		receives[0].state, bark_json::cli::LightningReceiveStateKind::AwaitingPayment,
 		"the receive should be waiting for payment, not further along",
 	);
 
