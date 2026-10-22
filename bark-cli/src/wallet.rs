@@ -8,7 +8,7 @@
 //! - Opens `db.sqlite` as a [`bark::persist::sqlite::SqliteClient`] and loads persisted properties
 //! - Loads or creates the [`bark::onchain::OnchainWallet`], wraps it in
 //!   `Arc<RwLock<_>>`, and stores it inside the [`bark::Wallet`] via
-//!   [`bark::OpenWalletArgs::onchain`] — BDK-specific methods are accessed
+//!   [`bark::OpenWalletArgs::onchain`] - BDK-specific methods are accessed
 //!   via downcasting through [`bark::Wallet::onchain`]
 //! ## Errors
 //! Returns an [`anyhow::Error`] with context describing the failing step (I/O, parsing,
@@ -495,7 +495,7 @@ async fn try_create_wallet(
 	// a wallet restored from a mnemonic rebuilds its spendable VTXO set from the
 	// recovery mailbox. The on-chain scan above has already run, so recovery can
 	// validate recovered VTXOs against their chain anchors. `run_daemon` stays
-	// off — this only needs to create and recover.
+	// off - this only needs to create and recover.
 	BarkWallet::open(
 		net.as_bitcoin(),
 		WalletSeed::new_from_mnemonic(net.as_bitcoin(), &mnemonic),

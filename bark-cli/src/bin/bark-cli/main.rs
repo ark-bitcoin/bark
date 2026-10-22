@@ -304,8 +304,6 @@ enum Command {
 	},
 
 	/// List the wallet's payments
-	///
-	/// By default will fetch the 10 first items
 	#[command(alias="movements")]
 	History,
 
@@ -496,7 +494,9 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 					let address = if let Some(address) = address {
 						address.to_string()
 					} else if let Some(index) = index {
-						wallet_api::peek_address(config, index as i32).await.rest()?.address
+						wallet_api::peek_address(
+							config, index.try_into().context("index overflow")?,
+						).await.rest()?.address
 					} else {
 						unreachable!("clap requires --address or --index");
 					};
@@ -505,7 +505,9 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 				},
 				None => {
 					let resp = if let Some(index) = index {
-						wallet_api::peek_address(config, index as i32).await.rest()?
+						wallet_api::peek_address(
+							config, index.try_into().context("index overflow")?,
+						).await.rest()?
 					} else {
 						wallet_api::address(config).await.rest()?
 					};

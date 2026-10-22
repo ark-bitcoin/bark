@@ -1,6 +1,6 @@
 //! The barkd lifecycle from the client side.
 //!
-//! The `barkd.lock` flock is the liveness signal — the OS releases it the
+//! The `barkd.lock` flock is the liveness signal - the OS releases it the
 //! instant barkd dies, even on SIGKILL.
 
 use std::path::Path;
@@ -13,7 +13,7 @@ use bark_cli::connection;
 /// request is attempted.
 pub fn require_up(datadir: &Path) -> anyhow::Result<u32> {
 	connection::barkd_pid(datadir)?.with_context(|| format!(
-		"no barkd is running for datadir {} — start one with barkd",
+		"no barkd is running for datadir {} - start one with barkd",
 		datadir.display(),
 	))
 }

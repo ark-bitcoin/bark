@@ -245,8 +245,6 @@ enum Command {
 	},
 
 	/// List the wallet's payments
-	///
-	/// By default will fetch the 10 first items
 	#[command(alias="movements")]
 	History {
 		/// Skip syncing wallet
