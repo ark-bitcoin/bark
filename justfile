@@ -476,7 +476,7 @@ update-allowed-bark-versions:
 	total=$(wc -l <<<"$sorted")
 	echo "added $cur → $target ($total entries total)"
 
-generate-static-files: dump-server-sql-schema dump-bark-sql-schema generate-bark-rest-client update-allowed-bark-versions
+generate-static-files: update-allowed-bark-versions dump-server-sql-schema dump-bark-sql-schema generate-bark-rest-client
 
 # Bump lockstep-group Cargo.toml versions to NEW_VERSION (idempotent).
 bump-workspace-versions NEW_VERSION:

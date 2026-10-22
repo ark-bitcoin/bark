@@ -1,5 +1,0 @@
-- Add `movement_id` to `OffboardResult`
-  Clients can find the wallet history entry of an offboard or on-chain send.
-  [#2610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2610)
-  - **BREAKING:** `OffboardResult` requires `movement_id`, so output from bark
-    0.7.1 or older no longer deserializes into it

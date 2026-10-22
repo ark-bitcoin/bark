@@ -1,3 +1,0 @@
-- Register VTXO transactions in batches of up to 1000
-  Wallets stay under the server's new per-request cap.
-  [#2646](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2646)
