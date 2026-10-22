@@ -1,0 +1,2 @@
+- Don't write history records for updates that change nothing
+  [#2660](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2660)

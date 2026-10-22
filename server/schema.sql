@@ -143,7 +143,17 @@ CREATE TYPE public.wallet_kind AS ENUM (
 CREATE FUNCTION public.integration_api_key_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+    new_updated_at integration_api_key.updated_at%TYPE := NEW.updated_at;
 BEGIN
+    -- An update that changes nothing but updated_at is a no-op: don't bump
+    -- updated_at and don't write a history record for it.
+    NEW.updated_at := OLD.updated_at;
+    IF NEW IS NOT DISTINCT FROM OLD THEN
+        RETURN OLD;
+    END IF;
+    NEW.updated_at := new_updated_at;
+
     INSERT INTO integration_api_key_history (
         id, name, api_key, filters, integration_id, expires_at,
         created_at, updated_at, deleted_at
@@ -172,7 +182,17 @@ $$;
 CREATE FUNCTION public.integration_token_config_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+    new_updated_at integration_token_config.updated_at%TYPE := NEW.updated_at;
 BEGIN
+    -- An update that changes nothing but updated_at is a no-op: don't bump
+    -- updated_at and don't write a history record for it.
+    NEW.updated_at := OLD.updated_at;
+    IF NEW IS NOT DISTINCT FROM OLD THEN
+        RETURN OLD;
+    END IF;
+    NEW.updated_at := new_updated_at;
+
     INSERT INTO integration_token_config_history (
         id, type, maximum_open_tokens, active_seconds,
         integration_id,
@@ -203,7 +223,17 @@ $$;
 CREATE FUNCTION public.integration_token_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+    new_updated_at integration_token.updated_at%TYPE := NEW.updated_at;
 BEGIN
+    -- An update that changes nothing but updated_at is a no-op: don't bump
+    -- updated_at and don't write a history record for it.
+    NEW.updated_at := OLD.updated_at;
+    IF NEW IS NOT DISTINCT FROM OLD THEN
+        RETURN OLD;
+    END IF;
+    NEW.updated_at := new_updated_at;
+
     INSERT INTO integration_token_history (
         id, token, type, status, filters, integration_id,
         expires_at,
@@ -238,7 +268,17 @@ $$;
 CREATE FUNCTION public.lightning_htlc_subscription_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+	new_updated_at lightning_htlc_subscription.updated_at%TYPE := NEW.updated_at;
 BEGIN
+	-- An update that changes nothing but updated_at is a no-op: don't bump
+	-- updated_at and don't write a history record for it.
+	NEW.updated_at := OLD.updated_at;
+	IF NEW IS NOT DISTINCT FROM OLD THEN
+		RETURN OLD;
+	END IF;
+	NEW.updated_at := new_updated_at;
+
 	INSERT INTO lightning_htlc_subscription_history (
 		id, lightning_node_id, payment_hash, invoice, final_amount_msat,
 		receiver_mailbox_id, status, accepted_at, user_agent, created_at, updated_at
@@ -267,7 +307,17 @@ $$;
 CREATE FUNCTION public.lightning_invoice_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+	new_updated_at lightning_invoice.updated_at%TYPE := NEW.updated_at;
 BEGIN
+	-- An update that changes nothing but updated_at is a no-op: don't bump
+	-- updated_at and don't write a history record for it.
+	NEW.updated_at := OLD.updated_at;
+	IF NEW IS NOT DISTINCT FROM OLD THEN
+		RETURN OLD;
+	END IF;
+	NEW.updated_at := new_updated_at;
+
 	INSERT INTO lightning_invoice_history (
 		id, invoice, payment_hash, final_amount_msat,
 		created_at, updated_at
@@ -296,7 +346,17 @@ $$;
 CREATE FUNCTION public.lightning_node_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+    new_updated_at lightning_node.updated_at%TYPE := NEW.updated_at;
 BEGIN
+    -- An update that changes nothing but updated_at is a no-op: don't bump
+    -- updated_at and don't write a history record for it.
+    NEW.updated_at := OLD.updated_at;
+    IF NEW IS NOT DISTINCT FROM OLD THEN
+        RETURN OLD;
+    END IF;
+    NEW.updated_at := new_updated_at;
+
     INSERT INTO lightning_node_history (
         id, pubkey, payment_created_index, payment_updated_index,
         created_at, updated_at
@@ -325,7 +385,17 @@ $$;
 CREATE FUNCTION public.lightning_payment_attempt_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+	new_updated_at lightning_payment_attempt.updated_at%TYPE := NEW.updated_at;
 BEGIN
+	-- An update that changes nothing but updated_at is a no-op: don't bump
+	-- updated_at and don't write a history record for it.
+	NEW.updated_at := OLD.updated_at;
+	IF NEW IS NOT DISTINCT FROM OLD THEN
+		RETURN OLD;
+	END IF;
+	NEW.updated_at := new_updated_at;
+
 	INSERT INTO lightning_payment_attempt_history (
 		id, lightning_node_id, payment_hash, amount_msat, final_amount_msat,
 		sender_mailbox_id, status, error,
@@ -413,7 +483,17 @@ $$;
 CREATE FUNCTION public.virtual_transaction_history_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+	new_updated_at virtual_transaction.updated_at%TYPE := NEW.updated_at;
 BEGIN
+	-- An update that changes nothing but updated_at is a no-op: don't bump
+	-- updated_at and don't write a history record for it.
+	NEW.updated_at := OLD.updated_at;
+	IF NEW IS NOT DISTINCT FROM OLD THEN
+		RETURN OLD;
+	END IF;
+	NEW.updated_at := new_updated_at;
+
 	INSERT INTO virtual_transaction_history (
 		txid, signed_tx, is_funding, created_at, updated_at
 	) VALUES (
@@ -455,7 +535,17 @@ $$;
 CREATE FUNCTION public.vtxo_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+	new_updated_at vtxo.updated_at%TYPE := NEW.updated_at;
 BEGIN
+	-- An update that changes nothing but updated_at is a no-op: don't bump
+	-- updated_at and don't write a history record for it.
+	NEW.updated_at := OLD.updated_at;
+	IF NEW IS NOT DISTINCT FROM OLD THEN
+		RETURN OLD;
+	END IF;
+	NEW.updated_at := new_updated_at;
+
 	INSERT INTO vtxo_history (
 		id, vtxo_id, vtxo_txid, vtxo, expiry, exit_delta, policy_type, policy,
 		server_pubkey, amount, anchor_point,
