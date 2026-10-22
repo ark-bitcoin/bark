@@ -17,7 +17,7 @@ wasm-web = [ "dep:wasm-bindgen-futures" ]
 
 [dependencies]
 anyhow.workspace = true
-bark-bitcoin-ext = { version = "0.7.1", path = "../bitcoin-ext", default-features = false }
+bark-bitcoin-ext = { version = "0.8.0", path = "../bitcoin-ext", default-features = false }
 bitcoin.workspace = true
 chrono.workspace = true
 log.workspace = true

@@ -1,3 +1,0 @@
-- Lightning send progress has a new `inputs-locked` phase
-  It sits between `start` and `htlc-received`.
-  [#2615](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2615)

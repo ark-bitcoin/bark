@@ -6,6 +6,332 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.8.0
+
+- `ark-lib`
+  - Use the `BlockHeight` and `BlockDelta` types for heights and deltas
+    [#2499](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2499)
+    - **BREAKING:** Expiry heights and exit deltas on VTXOs, policies, trees
+      and builders are `BlockHeight` and `BlockDelta` instead of `u32` and `u16`.
+  - Added `recovery::XpubRecoveryAuthorization`
+    It authorizes listing the VTXOs of an xpub, signed by the private key of the
+    xpub for one server.
+    [#2609](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2609)
+
+- `bark`
+  - Round registration no longer locks the input VTXOs
+    Joining a round only records the intent; an interactive participation locks
+    its inputs once a round attempt starts. Interrupting `bark refresh` while it
+    waits no longer strands locked VTXOs: the leftover participation holds no
+    locks, is driven again by the next sync, and can always be canceled.
+    [#2443](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2443)
+    - **BREAKING:** `RoundFlowState` has a new `Redelegating` variant, so an
+      exhaustive match on it must handle one more case.
+    - A participation awaiting its round notices the inputs another operation
+      took: it shrinks to the ones it still has, or is canceled when too little
+      remains. `Wallet::sync_awaiting_round_participations` runs that pass on a
+      wallet sync, on the daemon chain-sync tick and on every mailbox message.
+    - A delegated participation that lost inputs is resubmitted with the rest,
+      keeping its scheduled height, because the server drops one wholesale as
+      soon as one of its inputs is consumed.
+    - `Wallet::join_next_round` and `Wallet::join_delegated_round` require
+      spendable inputs. Neither supersedes a participation already pending over
+      the same inputs; the server drops the ones it holds on a new submission,
+      and those records settle on their next sync.
+  - Use the `BlockHeight` and `BlockDelta` types for heights and deltas
+    [#2499](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2499)
+    - **BREAKING:** Heights and deltas in `Config`, the wallet API and the
+      persistence traits are `BlockHeight` and `BlockDelta` instead of `u32`
+      and `u16`. The JSON and REST formats are unchanged.
+  - Wallet balance overhaul
+    `Wallet::balance` had multiple issues which needed addressing. Instead
+    of trying to calculate the pending balance of each subsystem we now use
+    an action-based approach, multiple new categories have been added and
+    we now differentiate between VTXOs which are immediately spendable by
+    any operation and those which require a refresh to remain usable.
+    Finally, a new summary type has been added to better display the most
+    important balance numbers to users.
+    [#2509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2509)
+    - `pending_in_round` counts the locked inputs of a round instead of its
+      requested outputs. `Wallet::pending_round_balance` still reports the
+      requested outputs.
+    - `claimable_lightning_receive` only counts an incoming payment once its
+      preimage has been revealed; before that the payment can still be
+      canceled.
+    - Add `pending_arkoor_send` and `pending_offboard` for sats held by an
+      arkoor send or an offboard in progress. These sats used to be missing
+      from every field. An offboard stops holding its sats once its transaction
+      is on the network, where the on-chain wallet sees them.
+    - Add `needs_refresh` for VTXOs that can no longer be sent in an arkoor
+      payment: expired ones and ones whose exit depth has reached the server's
+      limit. They can still be offboarded, exited or refreshed, but used to be
+      counted as spendable.
+    - **BREAKING:** `pending_exit` is an `Amount` instead of an `Option<Amount>`.
+      `Exit::try_pending_total` is removed.
+    - Add `Balance::total`, `Balance::pending`, `Balance::has_pending` and
+      `Balance::summary`. Show `spendable` as what a user can pay with and
+      `total` as what a user owns.
+  - Rework `estimate_emergency_exit_fee` into deterministic weight arithmetic
+    Each remaining package is priced at the requested feerate with a canonical
+    CPFP child, scaled by a caller-supplied `fee_margin` (default 1.2) that
+    covers feerate movement and UTXO consolidation. The estimate no longer
+    touches the onchain wallet, so it works with any wallet. It also rejects
+    VTXOs spent outside the exit flow and no longer bumps packages that
+    already pay the requested rate.
+    [#2511](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2511)
+    - **BREAKING:** `ExitFeeEstimate::fundable` is removed; the estimate is a
+      funding target to compare against your on-chain balance
+    - **BREAKING:** `estimate_emergency_exit_fee` takes a `fee_margin` parameter
+    - **BREAKING:** `OnchainWalletTrait::estimate_p2a_cpfp_walk`,
+      `CpfpWalkEstimate` and `FundingShortfall` are removed
+  - Implement recovery for delegated rounds
+    Wallets recovered from seed can now recover the outputs of delegated round
+    participations that completed while the wallet was deleted.
+    [#2536](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2536)
+  - Provide proper error when trying to exit a VTXO that has been swept by the server
+    [#2542](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2542)
+    - Attempting a refresh may still yield a fresh VTXO
+  - Add the `bark debug-info` command
+    The command prints useful info to help on debug, such as the network,
+    the mailbox ID and the VTXO xpub of the wallet as JSON. Users can share
+    this output in support requests.
+    [#2578](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2578)
+  - Let the caller choose how long the server tries to pay a lightning invoice
+    New `LightningSendOptions` with `wait` and `retry_for`, taken by new
+    `_with` variants of the payment methods: `pay_lightning_invoice_with`,
+    `pay_lightning_offer_with`, `pay_lightning_address_with`,
+    `pay_lnurl_with`, `make_lightning_payment_with` and `send_payment_with`.
+    A `retry_for` above the server maximum is capped to it, and 0 makes a
+    single attempt.
+    [#2582](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2582)
+  - Prevent CLI wallet creation from conflicting with a daemon or another CLI creator
+    `bark create` now refuses to run while `barkd` or another CLI creation holds
+    the lifecycle lock on the same datadir, even with `--force`. The lock remains
+    held through creation and failure cleanup to protect files in use by these
+    processes. Wallet creation through the daemon API remains unchanged.
+    [#2583](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2583)
+  - Added VTXO recovery from the wallet's xpub
+    A restored wallet asks the server for the VTXOs of its keys first, so it no
+    longer depends on the key gap limit for them. The mailboxes are read
+    afterwards and only for the VTXOs the lookup missed.
+    [#2609](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2609)
+    - Added `BarkPersister::store_vtxo_keys` to store key indices in batch.
+  - Stop finished exits from changing their movement on every sync
+    An exit that stopped because its VTXO was already spent finished its
+    movement again each time the chain tip moved. This moved `completed_at`
+    forward, sent a new `MovementUpdated` notification and grew the exit
+    history, so apps that sort history by completion time showed old canceled
+    exits at the top. Wallets that already have a moved `completed_at` keep it.
+    [#2610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2610)
+    - `MovementManager::finish_movement` does nothing when the movement already
+      has the requested status
+  - Return the movement id from arkoor sends and offboards
+    You can link a payment you just made to its entry in the wallet history,
+    for example to add a label. Before, you had to match on destination, amount
+    and time, which fails for repeated payments of the same amount.
+    [#2610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2610)
+    - **BREAKING:** `Wallet::send_arkoor_payment` returns `MovementId` instead of `()`
+    - **BREAKING:** `Wallet::send_onchain`, `Wallet::offboard_all` and
+      `Wallet::offboard_vtxos` return `OffboardResult` instead of `Txid`
+    - **BREAKING:** `PaymentInitOutput::Ark` carries the `MovementId`
+    - **BREAKING:** `BarkPersister` implementations must provide
+      `get_movement_id_by_action`
+    - `Wallet::send_arkoor_payment` no longer returns before the payment is done
+      when a wallet sync drives it at the same time
+  - Wallet actions handle their own errors and report transient failures
+    [#2615](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2615)
+    - **BREAKING:** `AdvanceError` is either `Retry` or `Abort`. A step
+      classifies each failure, and the executor hands it to
+      `WalletAction::on_retry` or `WalletAction::on_abort`.
+    - **BREAKING:** `WalletAction::on_rejection` is renamed to `on_abort`.
+      `on_retry` no longer takes a retry count. Both take an `anyhow::Error`
+      and return `Advance` directly.
+    - **BREAKING:** `Advance` has a new `Retry` variant, and the error in
+      `Advance::Park` is an `anyhow::Error`. `park_with_backoff` is removed.
+    - The lightning receive claim retry budget counts across restarts.
+    - A server rejection of the arkoor that prepares a send-onchain, or an
+      unusable offboard preparation, fails the offboard instead of retrying it
+      forever.
+    - A board whose funding transaction was double-spent no longer retries
+      forever when the wallet crashed during its teardown.
+    - The lightning receive returns errors where it used to panic.
+    - Lightning sends and arkoor sends lock their inputs inside the action, so
+      a crash before the checkpoint is written no longer leaves VTXOs locked
+      forever.
+  - Make wallet recovery faster for wallets with many spent VTXOs
+    Recovery now asks the Ark server for the status of each VTXO before it
+    validates the VTXO. A VTXO that the server reports as spent is stored as
+    spent, with no validation and no on-chain lookup. Only a VTXO that the server
+    reports as spendable is validated and checked for an emergency exit. Recovery
+    also finds the keys of a mailbox page in one scan, so the order of the VTXOs
+    in the page has no effect on which keys it finds.
+    [#2618](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2618)
+  - Register VTXO transactions in batches of up to 1000
+    Wallets stay under the server's new per-request cap.
+    [#2646](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2646)
+
+- `bark-cli`
+  - Add `--fee-margin` to `bark exit estimate-fee`
+    The estimate is deterministic weight arithmetic scaled by the margin
+    (default 1.2) and no longer depends on the wallet's funds; the `fundable`
+    output field is removed.
+    [#2511](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2511)
+  - Add `--retry-for` to `bark send` and `bark lightning pay invoice`
+    Sets how many seconds the server keeps trying to pay, capped to the
+    server's maximum.
+    [#2582](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2582)
+  - Print the movement id after `send-onchain` and `offboard`
+    [#2610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2610)
+
+- `bark-json`
+  - Add `needs_refresh_sat`, `pending_arkoor_send_sat` and `pending_offboard_sat`
+    to `Balance`
+    `needs_refresh_sat` holds the VTXOs that cannot be sent in an arkoor
+    payment until a round has refreshed them; they are no longer part of
+    `spendable_sat`. The
+    two `pending_*` fields hold the sats locked in an arkoor send or an
+    offboard in progress, which no field reported before.
+    [#2509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2509)
+    - `pending_exit_sat` is always present; it used to be `null` while the
+      exit subsystem was busy.
+  - Add `BalanceSummary`
+    The numbers to show a user without the breakdown of `Balance`:
+    `spendable_sat`, `needs_refresh_sat`, `pending_sat` and `total_sat`. Build
+    it from a `Balance` with `From`.
+    [#2509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2509)
+  - Drop `fundable` from `EmergencyExitFeeEstimateResponse`
+    The estimate is a funding target rather than an affordability check.
+    `EmergencyExitFeeEstimateQuery` gains an optional `fee_margin`.
+    [#2511](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2511)
+    - **BREAKING:** `fundable` is removed from `EmergencyExitFeeEstimateResponse`
+    - `fee_rate_sat_per_vb` on `EmergencyExitFeeEstimateQuery` and
+      `EmergencyExitFeeEstimateResponse` is now a float, so fractional sat/vB
+      rates round-trip
+  - **BREAKING:** Add the `vtxo-swept` exit state and error
+    `ExitState` and `ExitStateKind` gained a `VtxoSwept` variant, reported when an
+    exit ends because an output its chain needed was spent on chain. It carries
+    the exit transaction inputs that were taken. `ExitError` gained a matching
+    `VtxoSwept` variant, kept apart from `VtxoAlreadySpent` because the cause
+    differs.
+    [#2542](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2542)
+  - Add `retry_for_secs` to `SendRequest` and `LightningPayRequest`
+    [#2582](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2582)
+    - **BREAKING:** Code that builds these structs with a struct literal must
+      set the new fields
+  - Add `movement_id` to `OffboardResult`
+    Clients can find the wallet history entry of an offboard or on-chain send.
+    [#2610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2610)
+    - **BREAKING:** `OffboardResult` requires `movement_id`, so output from bark
+      0.7.1 or older no longer deserializes into it
+  - Lightning send progress has a new `inputs-locked` phase
+    It sits between `start` and `htlc-received`.
+    [#2615](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2615)
+
+- `bark-rest`
+  - `barkd` now can host the `bark-web` UI web wallet
+    - bark releases will include latest bark-web, `BARK_WEB_VERSION` on (Nix)
+      compilation can be used to change what version you want to include
+    - `--no-ui` or `BARKD_NO_UI` will disable hosting the wallet
+    [#2221](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2221)
+  - Add `needs_refresh_sat`, `pending_arkoor_send_sat` and `pending_offboard_sat`
+    to the `Balance` schema
+    A client can now tell the sats that need a refresh before they can be
+    sent again from the spendable ones, and sees the sats held by an arkoor send or
+    an offboard in progress. `pending_exit_sat` is no longer nullable.
+    [#2509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2509)
+  - Price `GET /v1/exits/fee` deterministically and add `fee_margin`
+    The broadcast fee is weight-based at the requested feerate, scaled by the
+    optional `fee_margin` query parameter (default 1.2), and no longer consults
+    the wallet's funds.
+    [#2511](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2511)
+    - **BREAKING:** the `fundable` response field is removed
+    - **BREAKING:** the `fee_rate_sat_per_vb` query parameter and response field accept and
+      report fractional sat/vB
+  - Exit responses can report the `vtxo-swept` state
+    Exits now report a `vtxo-swept` state, with a `spent_inputs` field listing the
+    exit transaction inputs that were taken, when they end because an output the
+    exit chain needed was spent on chain. Fee
+    estimation returns a distinct error for such a VTXO rather than reporting it
+    as already spent, and suggests attempting a refresh.
+    [#2542](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2542)
+  - Add `retry_for_secs` to `POST /api/v1/wallet/send` and
+    `POST /api/v1/lightning/pay`
+    Sets how many seconds the server keeps trying to pay, capped to the
+    server's maximum.
+    [#2582](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2582)
+  - Return `movement_id` from the offboard and send-onchain endpoints
+    [#2610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2610)
+
+- `bitcoin-ext`
+  - Add `BlockHeight` and `BlockDelta` types
+    Heights and deltas are no longer plain integers, so they can't be mixed up
+    and arithmetic on them saturates instead of overflowing.
+    [#2499](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2499)
+    - **BREAKING:** `BlockHeight` wraps a `u32` and `BlockDelta` wraps a `u16`.
+      Use `BlockHeight::new`, `BlockDelta::new`, `to_u32` and `to_u16` to
+      convert. `BlockHeight + BlockDelta` and `BlockDelta + BlockDelta`
+      saturate; `checked_*` variants are available.
+
+- `server`
+  - Add `direction` and `self_payment` labels to `lightning_payment_*`, plus a `canceled` status for released receives. Failed volume now uses the attempted amount, and telemetry only fires when the DB update commits.
+    [#2206](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2206)
+  - Use the `BlockHeight` and `BlockDelta` types for heights and deltas
+    [#2499](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2499)
+    - **BREAKING:** Height and delta fields in the server `Config` are
+      `BlockHeight` and `BlockDelta` instead of `u32` and `u16`. The config
+      file format is unchanged.
+  - The server ensures that transactions confirm onchain more reliably
+    A funding transaction paying insufficient fees will be correctly
+    fee-bumped by its descendants.
+    [#2503](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2503)
+    - **BREAKING:** `min_trusted_confs` must be at least 1. At 0 an
+      unconfirmed third-party deposit counted as trusted.
+  - Let clients choose how long the server tries to pay a lightning invoice
+    Clients can set `retry_for_secs` on `InitiateLightningPaymentRequest`,
+    up to the new `cln_xpay_max_retry_for` setting (default 5m). The server
+    caps larger values to it and makes a single attempt at 0.
+    [#2580](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2580)
+    - `cln_xpay_timeout` may not exceed `cln_xpay_max_retry_for`. When
+      `cln_xpay_max_retry_for` is unset, its default is raised to at least
+      `cln_xpay_timeout`.
+  - Don't fail a lightning send when the connection to CLN breaks during xpay
+    xpay may still be paying, so the server now waits out the retry time
+    before it checks the payment, instead of revoking HTLCs CLN may still use.
+    [#2580](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2580)
+  - Add the `GetVtxosByIds` rpc
+    This new method allows to request up to 1000 VTXOs in a single batch
+    request. The response holds the known VTXOs in request order and lists
+    the unknown ids in `missing_vtxo_ids`, so one bad id does not cost the
+    client the whole batch. A wallet that recovers many VTXOs from the
+    recovery mailbox makes far fewer requests and stays under the
+    server's rate limit.
+    [#2593](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2593)
+  - Add the `GetVtxosStatusByIds` rpc
+    This new rpc method enables batch request of VTXO status, up to 1000
+    VTXOs per request.
+    Each entry carries its own `VtxoStatusAttestation`, and the response
+    lists one state per entry in request order. A wallet that recovers or
+    reconciles many VTXOs makes far fewer requests and stays under the
+    server's rate limit. An unknown id is skipped and listed in
+    `missing_vtxo_ids`.
+    [#2594](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2594)
+  - Added the `RecoverVtxosByXpub` rpc
+    [#2609](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2609)
+    - Requests carry an `XpubRecoveryAuthorization` signed by the private key of
+      the xpub for this server, so the xpub alone doesn't reveal its VTXOs.
+    - Added the `recovery_xpub_nb_keys` config field (default 100000, 0 disables
+      the rpc).
+    - The request takes a `start_index`, so a client continues the scan past the
+      configured number of keys, and the response sets `have_more` when more VTXOs
+      may follow. Each VTXO comes with its body, its spend state and the child
+      index of its key, and a response stops early once it holds about 2 MB of
+      VTXOs.
+    - Added the `vtxo_policy_ix` index on `vtxo.policy`.
+  - Cap `RegisterVtxoTransactions` at 1000 VTXOs per request
+    Larger requests are rejected, matching the other bulk VTXO rpcs. This
+    limits how much database work one unauthenticated request can cause.
+    [#2646](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2646)
+
 # v0.7.1
 
 - `bark`
@@ -749,7 +1075,7 @@ We’re grateful to 0xaudron, benthecarman and Greg Sanders for the testing behi
     server's response mid-offboard recovers by adopting the broadcast tx
     from chain, or falls back to preparing a fresh session; if that fresh
     session can no longer succeed (e.g. fee rates moved), the offboard is
-    cancelled and its funds are released. A broadcast offboard tx that
+    canceled and its funds are released. A broadcast offboard tx that
     disappears from chain is reported instead of silently retried forever.
     - Pending offboards can be inspected via `Wallet::pending_offboards`
       and are driven by `Wallet::sync_pending_offboards` on every sync
@@ -1417,7 +1743,7 @@ vulnerabilities fixed in this release.
           instead.
     - the wallet maintenance will now do rounds JIT, so it will not lock VTXOs
       while waiting for a round to start
-        - if any existing rounds were ongoing and can be cancelled, it will cancel them first;
+        - if any existing rounds were ongoing and can be canceled, it will cancel them first;
           this is done to clean up probably stuck rounds and later refresh again
           [#2113](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2113)
     - Surface `is_cpfp` on `bark::onchain::WalletTxInfo`
