@@ -24,7 +24,7 @@ use bitcoin_ext::bdk::{TrustedBalance, TrustedCanonicalization, WalletExt, KEYCH
 use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::bitcoind as bcd;
 use crate::utils::{InstrumentedLock, InstrumentedOwnedLockGuard};
-use crate::{database, fs_perms, SECP};
+use crate::{database, fs_perms, telemetry, SECP};
 
 
 /// The location of the mnemonic file in server's datadir.
@@ -173,6 +173,7 @@ impl PersistedWallet {
 			self.db.write(async |t| t.store_changeset(self.kind, &change).await).await
 				.context("error persisting wallet changes to db")?;
 			self.wallet.take_staged();
+			telemetry::set_wallet_balance(self.kind, self.balance());
 		}
 		Ok(())
 	}
