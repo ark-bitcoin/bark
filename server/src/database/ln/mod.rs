@@ -23,6 +23,16 @@ use crate::database::{Checkpoint, Tx};
 /// Identifier by which lightning nodes are stored in the database.
 pub type LightningNodeId = i64;
 
+/// The columns of a [LightningPaymentAttempt], selected from
+/// `lightning_payment_attempt lpa`.
+const LIGHTNING_PAYMENT_ATTEMPT_COLUMNS: &str = "
+	lpa.id, lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat,
+	lpa.final_amount_msat, lpa.status, lpa.error, lpa.block_height,
+	lpa.user_fee_sat, lpa.retry_for_secs, lpa.user_agent,
+	lpa.lightning_htlc_subscription_id, lpa.max_routing_fee_msat,
+	lpa.created_at, lpa.updated_at
+";
+
 impl<'t> Tx<'t> {
 	// *******************
 	// * lightning state *
@@ -127,17 +137,12 @@ impl<'t> Tx<'t> {
 		&self,
 		node_id: LightningNodeId,
 	) -> anyhow::Result<Vec<LightningPaymentAttempt>> {
-		let stmt = self.prepare("
-			SELECT lpa.id,
-				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
-				lpa.user_agent, lpa.lightning_htlc_subscription_id,
-				lpa.max_routing_fee_msat,
-				lpa.created_at, lpa.updated_at
+		let stmt = self.prepare(&format!("
+			SELECT {LIGHTNING_PAYMENT_ATTEMPT_COLUMNS}
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.status != $1 AND lpa.status != $2 AND lpa.lightning_node_id = $3
 			ORDER BY lpa.created_at DESC;
-		").await?;
+		")).await?;
 
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
@@ -152,18 +157,13 @@ impl<'t> Tx<'t> {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
-		let stmt = self.prepare("
-			SELECT lpa.id,
-				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
-				lpa.user_agent, lpa.lightning_htlc_subscription_id,
-				lpa.max_routing_fee_msat,
-				lpa.created_at, lpa.updated_at
+		let stmt = self.prepare(&format!("
+			SELECT {LIGHTNING_PAYMENT_ATTEMPT_COLUMNS}
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1 AND
 				lpa.status != $2 AND lpa.status != $3
 			ORDER BY lpa.created_at DESC;
-		").await?;
+		")).await?;
 
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
@@ -192,18 +192,13 @@ impl<'t> Tx<'t> {
 		&self,
 		lightning_htlc_subscription_id: i64,
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
-		let stmt = self.prepare("
-			SELECT lpa.id,
-				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
-				lpa.user_agent, lpa.lightning_htlc_subscription_id,
-				lpa.max_routing_fee_msat,
-				lpa.created_at, lpa.updated_at
+		let stmt = self.prepare(&format!("
+			SELECT {LIGHTNING_PAYMENT_ATTEMPT_COLUMNS}
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.lightning_htlc_subscription_id = $1 AND
 				lpa.status != $2 AND lpa.status != $3
 			ORDER BY lpa.created_at DESC;
-		").await?;
+		")).await?;
 
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
@@ -432,18 +427,13 @@ impl<'t> Tx<'t> {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
-		let stmt = self.prepare("
-			SELECT lpa.id,
-				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
-				lpa.user_agent, lpa.lightning_htlc_subscription_id,
-				lpa.max_routing_fee_msat,
-				lpa.created_at, lpa.updated_at
+		let stmt = self.prepare(&format!("
+			SELECT {LIGHTNING_PAYMENT_ATTEMPT_COLUMNS}
 			FROM lightning_payment_attempt lpa
 			WHERE lpa.payment_hash = $1
 			ORDER BY lpa.created_at DESC
 			LIMIT 1;
-		").await?;
+		")).await?;
 
 		let row = self.query_opt(
 			&stmt, &[&payment_hash.to_string()],
@@ -588,19 +578,14 @@ impl<'t> Tx<'t> {
 		&self,
 		htlc_vtxo_ids: &[VtxoId],
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
-		let stmt = self.prepare("
-			SELECT lpa.id,
-				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
-				lpa.status, lpa.error, lpa.block_height, lpa.user_fee_sat, lpa.retry_for_secs,
-				lpa.user_agent, lpa.lightning_htlc_subscription_id,
-				lpa.max_routing_fee_msat,
-				lpa.created_at, lpa.updated_at
+		let stmt = self.prepare(&format!("
+			SELECT {LIGHTNING_PAYMENT_ATTEMPT_COLUMNS}
 			FROM lightning_payment_attempt lpa
 			JOIN lightning_payment_attempt_htlc_vtxo link ON link.lightning_payment_attempt_id = lpa.id
 			WHERE link.vtxo_id = ANY($1)
 			ORDER BY lpa.created_at DESC
 			LIMIT 1;
-		").await?;
+		")).await?;
 
 		let ids = htlc_vtxo_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
 		let row = self.query_opt(&stmt, &[&ids]).await?;
