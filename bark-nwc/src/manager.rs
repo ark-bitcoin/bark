@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context;
 use log::{info, warn};
@@ -25,7 +26,8 @@ use crate::service::NwcService;
 /// host's job: every service answers through the same one.
 pub struct NwcManager<H> {
 	handler: Arc<H>,
-	relays: Vec<RelayUrl>,
+	/// The connections and the relays they are served on. The relays change
+	/// through [NwcManager::set_relays], so each service start reads them.
 	connections: Arc<RwLock<ConnectionStore>>,
 	persister: Arc<dyn ConnectionPersister>,
 	/// Keyed by client pubkey, matching [ConnectionStore].
@@ -33,6 +35,9 @@ pub struct NwcManager<H> {
 	/// Held across the whole of add and revoke, so a revoke cannot slip in
 	/// between an add persisting a connection and starting its service.
 	operation: Mutex<()>,
+	/// Set between [NwcManager::start_all] and [NwcManager::stop_all], so a
+	/// relay change only brings services up while the host is serving.
+	serving: AtomicBool,
 	shutdown: CancellationToken,
 }
 
@@ -58,17 +63,16 @@ impl<H: RequestHandler> NwcManager<H> {
 	/// and charge the same connections the manager serves.
 	pub fn new(
 		handler: Arc<H>,
-		relays: Vec<RelayUrl>,
 		connections: Arc<RwLock<ConnectionStore>>,
 		persister: Arc<dyn ConnectionPersister>,
 	) -> Arc<Self> {
 		Arc::new(NwcManager {
 			handler: handler,
-			relays: relays,
 			connections: connections,
 			persister: persister,
 			running: RwLock::new(HashMap::new()),
 			operation: Mutex::new(()),
+			serving: AtomicBool::new(false),
 			// Owned rather than supplied: the manager's lifetime is the
 			// daemon's, and stop_all is what ends it.
 			shutdown: CancellationToken::new(),
@@ -79,14 +83,46 @@ impl<H: RequestHandler> NwcManager<H> {
 		&self.connections
 	}
 
-	pub fn relays(&self) -> &[RelayUrl] {
-		&self.relays
+	pub fn relays(&self) -> Vec<RelayUrl> {
+		self.connections.read().relays().to_vec()
+	}
+
+	/// Persist `relays` and serve every connection on them from now on.
+	///
+	/// Running services are restarted on the new relays. A connection URI
+	/// names the relays it was created with, so an app only follows a relay
+	/// change as far as its URI does: dropping every relay it knows cuts it off
+	/// until it is given a new connection.
+	pub fn set_relays(self: &Arc<Self>, relays: Vec<RelayUrl>) -> anyhow::Result<()> {
+		let _operation = self.operation.lock();
+		let existing = {
+			let mut connections = self.connections.write();
+			let rollback = connections.clone();
+			connections.set_relays(relays);
+			if let Err(e) = self.persister.save(&connections) {
+				// Relays that were not written down would be served now and
+				// gone after a restart.
+				*connections = rollback;
+				return Err(e).context("failed to persist NWC relays");
+			}
+			connections.iter().cloned().collect::<Vec<_>>()
+		};
+
+		if !self.serving.load(Ordering::SeqCst) {
+			return Ok(());
+		}
+		self.stop_services();
+		for connection in existing {
+			self.start(&connection);
+		}
+		Ok(())
 	}
 
 	/// Start a service for every connection already in the store.
 	pub fn start_all(self: &Arc<Self>) {
 		// A revoke must not land between the snapshot and its services starting.
 		let _operation = self.operation.lock();
+		self.serving.store(true, Ordering::SeqCst);
 		let existing = self.connections.read().iter().cloned().collect::<Vec<_>>();
 		if existing.is_empty() {
 			info!("No NWC connections configured, nothing to serve");
@@ -102,6 +138,12 @@ impl<H: RequestHandler> NwcManager<H> {
 	/// A service that fails to start is logged and skipped rather than taking
 	/// the daemon down: one unreachable relay must not stop the wallet.
 	fn start(self: &Arc<Self>, connection: &Connection) {
+		let relays = self.connections.read().relays().to_vec();
+		if relays.is_empty() {
+			info!("No NWC relays configured, not serving connection {}", connection.name);
+			return;
+		}
+
 		let keys = match connection.service_keys() {
 			Ok(keys) => keys,
 			Err(e) => {
@@ -110,7 +152,7 @@ impl<H: RequestHandler> NwcManager<H> {
 			},
 		};
 
-		let service = NwcService::new(keys, self.relays.clone(), Arc::clone(&self.handler));
+		let service = NwcService::new(keys, relays, Arc::clone(&self.handler));
 
 		// Child of the manager token, so stop_all stops every service
 		// at once, while a revoke stops just this one.
@@ -201,6 +243,11 @@ impl<H: RequestHandler> NwcManager<H> {
 
 	/// Stop every running service.
 	pub fn stop_all(&self) {
+		self.serving.store(false, Ordering::SeqCst);
+		self.stop_services();
+	}
+
+	fn stop_services(&self) {
 		for (_, service) in self.running.write().drain() {
 			service.shutdown.cancel();
 			#[cfg(not(feature = "wasm-web"))]
@@ -256,20 +303,26 @@ mod test {
 	fn manager_with(
 		persister: Arc<dyn ConnectionPersister>,
 	) -> (Arc<NwcManager<StubHandler>>, Arc<RwLock<ConnectionStore>>) {
-		let connections = Arc::new(RwLock::new(ConnectionStore::new()));
+		let mut store = ConnectionStore::new();
+		store.set_relays(vec![relay()]);
+		let connections = Arc::new(RwLock::new(store));
 		let manager = NwcManager::new(
 			Arc::new(StubHandler),
-			Vec::new(),
 			Arc::clone(&connections),
 			persister,
 		);
 		(manager, connections)
 	}
 
+	/// A closed local port, so a started service never reaches the network.
+	fn relay() -> RelayUrl {
+		RelayUrl::parse("ws://127.0.0.1:1").unwrap()
+	}
+
 	fn connection(now: chrono::DateTime<chrono::Utc>) -> Connection {
 		Connection::generate(
 			"app".into(),
-			vec![RelayUrl::parse("wss://relay.example.com").unwrap()],
+			vec![relay()],
 			["get_balance".to_string()].into_iter().collect(),
 			now,
 		).0
@@ -309,6 +362,18 @@ mod test {
 		manager.revoke(&pubkey).unwrap_err();
 	}
 
+	/// Relays we failed to write down would be served now and gone after a
+	/// restart.
+	#[test]
+	fn relays_that_could_not_be_persisted_are_not_kept() {
+		let (manager, _connections) = manager();
+
+		let other = RelayUrl::parse("ws://127.0.0.1:2").unwrap();
+		manager.set_relays(vec![other]).unwrap_err();
+
+		assert_eq!(manager.relays(), vec![relay()], "the failed change was kept");
+	}
+
 	/// A service displaced out of the running map could never be stopped again,
 	/// since revoke and stop_all both work from it.
 	#[tokio::test]
@@ -332,6 +397,55 @@ mod test {
 			.shutdown.clone();
 		assert!(!current.is_cancelled());
 
+		manager.stop_all();
+	}
+
+	/// A relay change has to reach the running services, otherwise they keep
+	/// listening on relays that were removed and never join the added ones.
+	#[tokio::test]
+	async fn changing_relays_restarts_the_running_services() {
+		let (manager, connections) = manager_with(Arc::new(NoopPersister));
+		let connection = connection(now());
+		let pubkey = connection.client_pubkey.clone();
+		connections.write().insert(connection);
+
+		manager.start_all();
+		let before = manager.running.read().get(&pubkey)
+			.expect("the service should be running")
+			.shutdown.clone();
+
+		let other = RelayUrl::parse("ws://127.0.0.1:2").unwrap();
+		manager.set_relays(vec![other.clone()]).unwrap();
+
+		assert!(before.is_cancelled(), "the service on the old relays was left running");
+		assert!(manager.running.read().contains_key(&pubkey), "the service was not restarted");
+		assert_eq!(manager.relays(), vec![other]);
+
+		manager.stop_all();
+	}
+
+	/// Relays can be set up before the host serves, and doing so must not
+	/// bring services up early.
+	#[tokio::test]
+	async fn changing_relays_before_serving_starts_nothing() {
+		let (manager, connections) = manager_with(Arc::new(NoopPersister));
+		connections.write().insert(connection(now()));
+
+		manager.set_relays(vec![relay()]).unwrap();
+
+		assert!(manager.running.read().is_empty());
+	}
+
+	/// With no relays there is nowhere to listen, so nothing is started.
+	#[tokio::test]
+	async fn no_relays_serves_nothing() {
+		let (manager, connections) = manager_with(Arc::new(NoopPersister));
+		connections.write().insert(connection(now()));
+		manager.set_relays(Vec::new()).unwrap();
+
+		manager.start_all();
+
+		assert!(manager.running.read().is_empty());
 		manager.stop_all();
 	}
 }

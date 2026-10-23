@@ -11,9 +11,10 @@ use nostr::filter::Filter;
 use nostr::key::{Keys, PublicKey};
 use nostr::nips::nip04;
 use nostr::nips::nip44::{self, Version};
-use nostr::nips::nip47::{ErrorCode, Method, NIP47Error, Request, Response};
+use nostr::nips::nip47::{ErrorCode, Method, NIP47Error, Request, Response, ResponseResult};
 use nostr::types::{RelayUrl, Timestamp};
 use nostr_sdk::client::{Client, ClientNotification};
+use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::handler::RequestHandler;
@@ -96,6 +97,13 @@ impl Encryption {
 			Encryption::Nip04 => ENCRYPTION_NIP04,
 		}
 	}
+}
+
+
+/// The part of a request that is still readable when [Request] rejects it.
+#[derive(Deserialize)]
+struct RequestMethod {
+	method: Method,
 }
 
 
@@ -274,15 +282,32 @@ impl<H: RequestHandler> NwcService<H> {
 			.context("failed to decrypt NWC request")?;
 		trace!("Decrypted NWC request from {}", event.pubkey);
 
-		let request = Request::from_json(&plaintext)
-			.context("failed to parse NWC request")?;
-		let method = request.method.clone();
-
-		let result = self.handler.handle(event.pubkey, request).await;
-		let response = match result {
-			Ok(result) => Response { result_type: method, error: None, result: Some(result) },
-			Err(error) => {
-				debug!("NWC request from {} failed: {}", event.pubkey, error);
+		let response = match Request::from_json(&plaintext) {
+			Ok(request) => {
+				let method = request.method.clone();
+				match self.handler.handle(event.pubkey, request).await {
+					Ok(result) => Response { result_type: method, error: None, result: Some(result) },
+					Err(error) => {
+						debug!("NWC request from {} failed: {}", event.pubkey, error);
+						Response { result_type: method, error: Some(error), result: None }
+					},
+				}
+			},
+			// The typed parser rejects both methods it does not know and
+			// params it cannot read. Either way the client still expects a
+			// reply, which only needs the method name to address it.
+			Err(e) => {
+				let method = serde_json::from_str::<RequestMethod>(&plaintext)
+					.context("failed to parse NWC request")?
+					.method;
+				let error = match method {
+					Method::Unknown(_) => not_implemented(&method),
+					_ => NIP47Error {
+						code: ErrorCode::Other,
+						message: format!("invalid {method} request: {e}"),
+					},
+				};
+				debug!("Rejecting NWC request from {}: {}", event.pubkey, error.message);
 				Response { result_type: method, error: Some(error), result: None }
 			},
 		};
@@ -296,7 +321,7 @@ impl<H: RequestHandler> NwcService<H> {
 		encryption: Encryption,
 		response: &Response,
 	) -> anyhow::Result<()> {
-		let content = encryption.encrypt(&self.keys, &request.pubkey, &response.as_json())
+		let content = encryption.encrypt(&self.keys, &request.pubkey, &response_json(response)?)
 			.context("failed to encrypt NWC response")?;
 
 		let event = EventBuilder::new(RESPONSE_KIND, content)
@@ -314,6 +339,22 @@ impl<H: RequestHandler> NwcService<H> {
 
 		Ok(())
 	}
+}
+
+/// Serialise a response for the wire.
+///
+/// NIP-47 requires `type` in a `make_invoice` result, but nostr's
+/// MakeInvoiceResponse has no such field. Clients that parse strictly, such as
+/// Primal, reject the response without it.
+fn response_json(response: &Response) -> anyhow::Result<String> {
+	let mut json = serde_json::to_value(response)
+		.context("failed to serialise NWC response")?;
+	if let Some(ResponseResult::MakeInvoice(_)) = response.result {
+		if let Some(result) = json.get_mut("result").and_then(|r| r.as_object_mut()) {
+			result.insert("type".into(), "incoming".into());
+		}
+	}
+	Ok(json.to_string())
 }
 
 /// Build the error a handler should return for a method it does not implement.
@@ -338,8 +379,8 @@ mod test {
 	use nostr::key::{Keys, PublicKey};
 	use nostr::nips::nip44::{self, Version};
 	use nostr::nips::nip47::{
-		ErrorCode, GetBalanceResponse, Method, NIP47Error, Request, RequestParams, Response,
-		ResponseResult,
+		ErrorCode, GetBalanceResponse, MakeInvoiceResponse, Method, NIP47Error, Request,
+		RequestParams, Response, ResponseResult,
 	};
 	use nostr::types::Timestamp;
 	use nostr_sdk::client::Client;
@@ -347,7 +388,7 @@ mod test {
 	use tokio_util::sync::CancellationToken;
 
 	use crate::handler::RequestHandler;
-	use super::NwcService;
+	use super::{NwcService, response_json};
 
 	// Spelled out rather than taken from the parent module, so that the tests
 	// drive the service the way an outside client does. Reusing the service's
@@ -415,11 +456,13 @@ mod test {
 	}
 
 	/// Send a NIP-47 request as a client would and wait for the response event.
+	///
+	/// Takes the request as raw JSON so tests can send what [Request] cannot build.
 	async fn round_trip(
 		url: &str,
 		service_key: PublicKey,
 		client_keys: &Keys,
-		request: &Request,
+		request_json: &str,
 	) -> Response {
 		let client = Client::new();
 		client.add_relay(url).await.unwrap();
@@ -432,7 +475,7 @@ mod test {
 		).await.unwrap();
 
 		let content = nip44::encrypt(
-			client_keys.secret_key(), &service_key, request.as_json(), Version::V2,
+			client_keys.secret_key(), &service_key, request_json, Version::V2,
 		).unwrap();
 
 		let event = EventBuilder::new(REQUEST_KIND, content)
@@ -471,7 +514,7 @@ mod test {
 			method: Method::GetBalance,
 			params: RequestParams::GetBalance,
 		};
-		let response = round_trip(&url, service_key, &client_keys, &request).await;
+		let response = round_trip(&url, service_key, &client_keys, &request.as_json()).await;
 
 		assert_eq!(response.result_type, Method::GetBalance);
 		assert!(response.error.is_none(), "unexpected error: {:?}", response.error);
@@ -500,11 +543,44 @@ mod test {
 				tlv_records: Vec::new(),
 			}),
 		};
-		let response = round_trip(&url, service_key, &client_keys, &request).await;
+		let response = round_trip(&url, service_key, &client_keys, &request.as_json()).await;
 
 		assert_eq!(response.result_type, Method::PayKeysend);
 		assert!(response.result.is_none());
 		assert_eq!(response.error.unwrap().code, ErrorCode::NotImplemented);
+
+		shutdown.cancel();
+	}
+
+	/// A method the request parser does not know is answered with
+	/// NOT_IMPLEMENTED, as NIP-47 asks, rather than dropped.
+	#[tokio::test]
+	async fn unknown_methods_are_answered_as_not_implemented() {
+		let (url, service_key, shutdown) = spawn_service().await;
+		let client_keys = Keys::generate();
+
+		let request = r#"{"method":"multi_pay_invoice","params":{"invoices":[]}}"#;
+		let response = round_trip(&url, service_key, &client_keys, request).await;
+
+		assert_eq!(response.result_type, Method::Unknown("multi_pay_invoice".into()));
+		assert!(response.result.is_none());
+		assert_eq!(response.error.unwrap().code, ErrorCode::NotImplemented);
+
+		shutdown.cancel();
+	}
+
+	/// A known method with params the parser rejects still gets an error reply.
+	#[tokio::test]
+	async fn unreadable_params_are_answered_with_an_error() {
+		let (url, service_key, shutdown) = spawn_service().await;
+		let client_keys = Keys::generate();
+
+		let request = r#"{"method":"pay_invoice","params":{}}"#;
+		let response = round_trip(&url, service_key, &client_keys, request).await;
+
+		assert_eq!(response.result_type, Method::PayInvoice);
+		assert!(response.result.is_none());
+		assert_eq!(response.error.unwrap().code, ErrorCode::Other);
 
 		shutdown.cancel();
 	}
@@ -554,5 +630,27 @@ mod test {
 
 		client.disconnect().await;
 		shutdown.cancel();
+	}
+
+	#[test]
+	fn make_invoice_result_carries_its_type() {
+		let response = Response {
+			result_type: Method::MakeInvoice,
+			error: None,
+			result: Some(ResponseResult::MakeInvoice(MakeInvoiceResponse {
+				invoice: "lnbc1".into(),
+				payment_hash: None,
+				description: None,
+				description_hash: None,
+				preimage: None,
+				amount: None,
+				created_at: None,
+				expires_at: None,
+			})),
+		};
+
+		let json = serde_json::from_str::<serde_json::Value>(&response_json(&response).unwrap()).unwrap();
+		assert_eq!(json["result"]["type"], "incoming");
+		assert_eq!(json["result"]["invoice"], "lnbc1");
 	}
 }

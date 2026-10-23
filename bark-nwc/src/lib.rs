@@ -30,17 +30,17 @@ pub use self::connection::{Connection, ConnectionStore};
 pub use self::persist::ConnectionPersister;
 
 
-/// Parse the configured relay urls.
+/// Parse relay urls.
 ///
-/// Done up front so a typo fails when NWC is registered, rather than leaving
-/// the wallet serving on fewer relays than asked for, which looks like the
-/// feature working.
+/// Done before a relay is stored, so a typo fails when it is added, rather than
+/// leaving the wallet serving on fewer relays than asked for, which looks like
+/// the feature working.
 pub fn parse_relays(relays: &[String]) -> anyhow::Result<Vec<nostr::types::RelayUrl>> {
 	use anyhow::Context;
 
 	relays.iter()
 		.map(|r| nostr::types::RelayUrl::parse(r)
-			.with_context(|| format!("invalid NWC relay url: {r}")))
+			.with_context(|| format!("invalid NWC relay url {r}: expected a ws:// or wss:// url")))
 		.collect()
 }
 
@@ -91,6 +91,14 @@ mod relay_test {
 	fn an_invalid_relay_url_is_rejected() {
 		let err = parse_relays(&["not a url".to_string()]).unwrap_err();
 		assert!(err.to_string().contains("invalid NWC relay url"), "{err:#}");
+	}
+
+	/// nostr's own error only says the scheme is unsupported, which leaves the
+	/// operator guessing which one it wants.
+	#[test]
+	fn a_wrong_scheme_names_the_supported_ones() {
+		let err = parse_relays(&["https://relay.example.com".to_string()]).unwrap_err();
+		assert!(err.to_string().contains("ws:// or wss://"), "{err:#}");
 	}
 }
 
