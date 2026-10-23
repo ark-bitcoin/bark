@@ -1,0 +1,4 @@
+- Require mailbox authorization to post recovery VTXO IDs
+  The authorization was optional for backward compat; all bark clients
+  have sent it since the field was introduced.
+  [#2667](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2667)

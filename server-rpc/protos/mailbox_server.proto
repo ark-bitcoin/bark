@@ -85,6 +85,6 @@ message PostRecoveryVtxoIdsRequest {
 	// The recovery IDs.
 	// Maximum number of IDs is set in the `MAX_NB_MAILBOX_RECOVERY_IDS` constant
 	repeated bytes vtxo_ids = 2;
-	// Signed proof of mailbox ownership. Optional for now for backward compat.
+	// A signed proof of mailbox ownership, required by the server
 	optional bytes authorization = 3;
 }
