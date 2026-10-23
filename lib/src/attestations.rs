@@ -459,6 +459,50 @@ impl ProtocolEncoding for RoundParticipationStatusAttestation {
 	}
 }
 
+/// Attestation for requesting hArk forfeit nonces for a round input
+///
+/// Proves the requester owns the input, so the server only tells the owner
+/// whether the input belongs to the participation with this unlock hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct ForfeitNoncesAttestation {
+	signature: schnorr::Signature,
+}
+
+impl ForfeitNoncesAttestation {
+	const CHALLENGE_MESSAGE_PREFIX: &'static [u8; 32] = b"hArk forfeit nonces attestation ";
+
+	pub fn new(unlock_hash: UnlockHash, vtxo_id: VtxoId, vtxo_keypair: &Keypair) -> Self {
+		let msg = Self::compute_message(unlock_hash, vtxo_id);
+		let signature = SECP.sign_schnorr_with_aux_rand(&msg, vtxo_keypair, &rand::random());
+		Self { signature }
+	}
+
+	/// Verify the attestation against a VTXO and unlock hash
+	pub fn verify(&self, unlock_hash: UnlockHash, vtxo: &Vtxo) -> Result<(), secp256k1::Error> {
+		let msg = Self::compute_message(unlock_hash, vtxo.id());
+		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+	}
+
+	fn compute_message(unlock_hash: UnlockHash, vtxo_id: VtxoId) -> Message {
+		let mut eng = sha256::Hash::engine();
+		eng.input(Self::CHALLENGE_MESSAGE_PREFIX);
+		eng.input(&unlock_hash.to_byte_array());
+		eng.input(&vtxo_id.to_bytes());
+		Message::from_digest(sha256::Hash::from_engine(eng).to_byte_array())
+	}
+}
+
+impl ProtocolEncoding for ForfeitNoncesAttestation {
+	fn encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<(), io::Error> {
+		self.signature.encode(writer)
+	}
+
+	fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let signature = schnorr::Signature::decode(reader)?;
+		Ok(Self { signature })
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -665,5 +709,26 @@ mod tests {
 		let hardcoded = RoundParticipationStatusAttestation::deserialize_hex(&vector)
 			.expect("valid attestation");
 		hardcoded.verify(unlock_hash, mailbox_id).expect("hardcoded verification failed");
+	}
+
+	#[test]
+	fn test_forfeit_nonces_attestation() {
+		let spec = DummyTestVtxoSpec::default();
+		let (_tx, vtxo) = spec.build();
+
+		let unlock_hash = UnlockHash::hash(&[0x42; 32]);
+		let attestation = ForfeitNoncesAttestation::new(unlock_hash, vtxo.id(), &DUMMY_USER_KEY);
+		println!("ForfeitNoncesAttestation hex: {}", attestation.serialize().as_hex());
+		encoding_roundtrip(&attestation);
+		attestation.verify(unlock_hash, &vtxo).expect("verification failed");
+
+		let other_hash = UnlockHash::hash(&[0x43; 32]);
+		attestation.verify(other_hash, &vtxo).expect_err("bound to the unlock hash");
+
+		// Hard-coded attestation test
+		let vector = "1c7bea6d769abf1d33db6ad0f90409c177ad05c7bb2b7f4cbf0f1aaf149263db1d593145933331f1d75165782674dc30f1bb4d94d82c284d0e4de86f5ddc4334";
+		let hardcoded = ForfeitNoncesAttestation::deserialize_hex(&vector)
+			.expect("valid attestation");
+		hardcoded.verify(unlock_hash, &vtxo).expect("hardcoded verification failed");
 	}
 }
