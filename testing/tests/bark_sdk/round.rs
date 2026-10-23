@@ -212,7 +212,9 @@ async fn manual_maintenance_refresh_drops_server_rejected_vtxo() {
 
 async fn participation_status(srv: &Captaind, unlock_hash: Vec<u8>) -> i32 {
 	srv.get_public_rpc().await
-		.round_participation_status(protos::RoundParticipationStatusRequest { unlock_hash })
+		.round_participation_status(protos::RoundParticipationStatusRequest {
+			unlock_hash, attestation: vec![],
+		})
 		.await.expect("status request failed").into_inner().status
 }
 

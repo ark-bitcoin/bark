@@ -604,6 +604,8 @@ message RoundParticipationResponse {
 
 message RoundParticipationStatusRequest {
 	bytes unlock_hash = 1;
+	// a RoundParticipationStatusAttestation signed with the participation's mailbox key
+	bytes attestation = 2;
 }
 
 enum RoundParticipationStatus {
