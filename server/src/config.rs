@@ -79,6 +79,9 @@ impl Bitcoind {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Rpc {
 	/// The socket to bind to for the public Ark gRPC.
+	///
+	/// captaind does not rate-limit this API; the reverse proxy in front of
+	/// it must. See `contrib/docs/captaind-deployment.md`.
 	pub public_address: SocketAddr,
 
 	/// The value set for the `http2_max_pending_accept_reset_streams` variable
