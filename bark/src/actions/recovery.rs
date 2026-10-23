@@ -31,7 +31,7 @@ use crate::Wallet;
 use crate::actions::{
 	Advance, AdvanceError, IntoAdvanceResult, WalletAction, WalletActionCheckpoint, WalletActionId,
 };
-use crate::recovery::RecoveryReport;
+use crate::recovery::{RecoveryReport, MAX_RECOVERY_ATTEMPTS};
 use crate::vtxo::{ServerStatusAdoption, VtxoLockHolder, VtxoState};
 
 /// The id of the recovery action. A wallet recovers from one seed, so there is
@@ -212,6 +212,13 @@ impl WalletAction for Recovery {
 						report.recovered().len(), report.skipped().len(),
 						report.exited().len(), report.not_found().len(),
 					);
+					if !report.abandoned().is_empty() {
+						warn!(
+							"Recovery gave up on {} vtxos after {} attempts each; they are kept \
+							locked as they may be spent: {:?}",
+							report.abandoned().len(), MAX_RECOVERY_ATTEMPTS, report.abandoned(),
+						);
+					}
 					*wallet.inner.finished_recovery.lock() = Some(self.report);
 					return Ok(Advance::Done);
 				}

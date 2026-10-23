@@ -423,7 +423,7 @@ pub use self::lightning::{Bolt11InvoiceBuilder, LightningSendOptions};
 pub use self::import::{ImportVtxoArgs, ImportVtxoError};
 pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::offboard::OffboardResult;
-pub use self::recovery::{RecoveryReport, RecoveryReportEntry, RecoveryStatus};
+pub use self::recovery::{MAX_RECOVERY_ATTEMPTS, RecoveryReport, RecoveryReportEntry, RecoveryStatus};
 pub use self::vtxo::WalletVtxo;
 
 use std::borrow::Cow;
@@ -1667,16 +1667,18 @@ impl Wallet {
 	///
 	/// Each keypair must be its VTXO's private key so we can prove ownership.
 	///
-	/// A VTXO the server does not know, whose batch request failed, or whose
-	/// answer is unusable, is absent from the result. Only a server that cannot
-	/// be reached is an error.
+	/// Returns the spend states, and the ids whose batch the server answered. A
+	/// VTXO the server does not know, whose batch request failed, or whose answer
+	/// is unusable, has no spend state. Only a server that cannot be reached is
+	/// an error.
 	pub(crate) async fn fetch_vtxo_spend_states(
 		&self,
 		queries: &[(VtxoId, &Keypair)],
-	) -> anyhow::Result<HashMap<VtxoId, VtxoSpendState>> {
+	) -> anyhow::Result<(HashMap<VtxoId, VtxoSpendState>, HashSet<VtxoId>)> {
 		let mut ret = HashMap::with_capacity(queries.len());
+		let mut answered = HashSet::new();
 		if queries.is_empty() {
-			return Ok(ret);
+			return Ok((ret, answered));
 		}
 
 		let (mut srv, _) = self.require_server().await?;
@@ -1694,6 +1696,7 @@ impl Wallet {
 					continue;
 				},
 			};
+			answered.extend(chunk.iter().map(|(id, _)| *id));
 
 			// The caller decides what an unanswered id means and logs it.
 			for raw in &resp.missing_vtxo_ids {
@@ -1720,7 +1723,7 @@ impl Wallet {
 			}
 		}
 
-		Ok(ret)
+		Ok((ret, answered))
 	}
 
 	/// Retrieves the full state of a [Vtxo] for a given [VtxoId] if it exists in the database.

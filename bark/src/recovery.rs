@@ -131,8 +131,8 @@ pub struct RecoveryReport {
 	/// these are not retried.
 	not_found: RecoveryReportEntry,
 	/// VTXOs recovery gave up on after [`MAX_RECOVERY_ATTEMPTS`] failed attempts.
-	/// They stay locked, as they may be spent, and a later recovery tries them
-	/// again.
+	/// One with a stored body stays locked, as it may be spent, and a later
+	/// recovery tries it again.
 	#[serde(default)]
 	abandoned: RecoveryReportEntry,
 	/// The failed attempts so far of each VTXO in `failed`.
@@ -298,17 +298,18 @@ impl Wallet {
 	/// The recovery mailbox only stores ids, so we ask the server for the full
 	/// VTXO data. The result is untrusted until validated by the caller.
 	///
-	/// Returns the fetched VTXOs and the ids the server does not know. An id
-	/// whose batch request failed is in neither. Only a server that cannot be
-	/// reached is an error.
+	/// Returns the fetched VTXOs, the ids the server does not know, and the ids
+	/// whose batch the server answered. An id whose batch request failed is in
+	/// none of them. Only a server that cannot be reached is an error.
 	pub(crate) async fn fetch_vtxos(
 		&self,
 		ids: &[VtxoId],
-	) -> anyhow::Result<(HashMap<VtxoId, Vtxo<Full>>, HashSet<VtxoId>)> {
+	) -> anyhow::Result<(HashMap<VtxoId, Vtxo<Full>>, HashSet<VtxoId>, HashSet<VtxoId>)> {
 		let mut ret = HashMap::with_capacity(ids.len());
 		let mut missing = HashSet::new();
+		let mut answered = HashSet::new();
 		if ids.is_empty() {
-			return Ok((ret, missing));
+			return Ok((ret, missing, answered));
 		}
 
 		let (mut srv, _) = self.require_server().await?;
@@ -324,6 +325,7 @@ impl Wallet {
 					continue;
 				},
 			};
+			answered.extend(chunk.iter().copied());
 
 			for raw in &resp.missing_vtxo_ids {
 				match VtxoId::from_bytes(raw) {
@@ -353,7 +355,7 @@ impl Wallet {
 			}
 		}
 
-		Ok((ret, missing))
+		Ok((ret, missing, answered))
 	}
 
 	/// Check if a VTXO is confirmed on-chain.
@@ -446,7 +448,7 @@ impl Wallet {
 			.filter(|(_, vtxo)| vtxo.is_none())
 			.map(|(id, _)| *id)
 			.collect::<Vec<_>>();
-		let (mut fetched, missing) = self.fetch_vtxos(&to_fetch).await?;
+		let (mut fetched, missing, answered) = self.fetch_vtxos(&to_fetch).await?;
 
 		let mut new = Vec::with_capacity(unknown.len());
 		for (id, vtxo) in unknown {
@@ -454,6 +456,7 @@ impl Wallet {
 			match vtxo.or_else(|| fetched.remove(&id)) {
 				Some(vtxo) => new.push(vtxo),
 				None if missing.contains(&id) => report.push_not_found(id),
+				None if answered.contains(&id) => report.push_failed_attempt(id, None),
 				None => report.push_failed(id, None),
 			}
 		}
@@ -500,7 +503,7 @@ impl Wallet {
 		for vtxo in staged.into_iter().chain(owned) {
 			let Some(keypair) = keypairs.get(&vtxo.user_pubkey()) else {
 				warn!("Staged recovery vtxo {} has no key on record", vtxo.id());
-				report.push_failed(vtxo.id(), Some(vtxo.amount()));
+				report.push_failed_attempt(vtxo.id(), Some(vtxo.amount()));
 				continue;
 			};
 			report.push_failed(vtxo.id(), Some(vtxo.amount()));
@@ -514,7 +517,9 @@ impl Wallet {
 	///
 	/// A VTXO without an answer, or whose validation fails on the chain, stays
 	/// locked and reported failed: it may well be spent, so it must not be offered
-	/// as an input. An invalid VTXO is dropped and reported skipped.
+	/// as an input. One the server or the chain answered for is abandoned after
+	/// [`MAX_RECOVERY_ATTEMPTS`] such failures. An invalid VTXO is dropped and
+	/// reported skipped.
 	pub(crate) async fn settle_recovery_vtxos(
 		&self,
 		report: &mut RecoveryReport,
@@ -524,16 +529,23 @@ impl Wallet {
 		// The server is the authority on whether a vtxo was spent elsewhere,
 		// and recovery has nothing else to go on.
 		let queries = staged.iter().map(|(vtxo, keypair)| (vtxo.id(), keypair)).collect::<Vec<_>>();
-		let states = self.fetch_vtxo_spend_states(&queries).await?;
+		let (states, answered) = self.fetch_vtxo_spend_states(&queries).await?;
 
-		let vtxos = staged.into_iter().map(|(vtxo, _)| {
+		// A VTXO whose batch got no answer stays staged, and the attempt doesn't
+		// count against its budget.
+		let mut vtxos = Vec::with_capacity(staged.len());
+		for (vtxo, _) in staged {
+			if !answered.contains(&vtxo.id()) {
+				report.push_failed(vtxo.id(), Some(vtxo.amount()));
+				continue;
+			}
 			// The fetch logged why an answer is missing.
 			let adoption = match states.get(&vtxo.id()) {
 				Some(state) => ServerStatusAdoption::from_spend_state(*state),
-				None => Err(anyhow::anyhow!("no answer from the server")),
+				None => Err(anyhow::anyhow!("no usable answer from the server")),
 			};
-			(vtxo, adoption)
-		}).collect();
+			vtxos.push((vtxo, adoption));
+		}
 		self.store_recovered_vtxos(report, vtxos, holder).await
 	}
 
@@ -607,7 +619,7 @@ impl Wallet {
 				},
 				Err(e) => {
 					warn!("Could not recover the round participation of vtxo {id}: {:#}", e);
-					report.push_failed(id, Some(vtxo.amount()));
+					report.push_failed_attempt(id, Some(vtxo.amount()));
 				},
 			}
 		}
@@ -627,10 +639,16 @@ impl Wallet {
 					continue;
 				},
 				// A chain error or an anchor not yet visible is a non-decision, so
-				// it is a failure, not a clean skip.
-				Err(e) => {
+				// it is a failure, not a clean skip. Only an anchor the chain
+				// answered for counts against the budget.
+				Err(VtxoValidationError::Chain(e)) => {
 					warn!("Could not validate recovery VTXO {}: {:#}", vtxo.id(), e);
 					report.push_failed(vtxo.id(), Some(vtxo.amount()));
+					continue;
+				},
+				Err(e) => {
+					warn!("Could not validate recovery VTXO {}: {:#}", vtxo.id(), e);
+					report.push_failed_attempt(vtxo.id(), Some(vtxo.amount()));
 					continue;
 				},
 			}
@@ -662,7 +680,7 @@ impl Wallet {
 				it is known", locked.len());
 			self.store_vtxos(locked.iter(), &VtxoState::Locked { holder: holder.clone() }).await?;
 			for vtxo in &locked {
-				report.push_failed(vtxo.id(), Some(vtxo.amount()));
+				report.push_failed_attempt(vtxo.id(), Some(vtxo.amount()));
 			}
 		}
 
