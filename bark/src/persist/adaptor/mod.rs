@@ -587,6 +587,11 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		Ok(Some(MovementId::new(id)))
 	}
 
+	async fn unlink_movement_from_action(&self, action_id: &str) -> anyhow::Result<()> {
+		self.inner.write().await.delete(partition::MOVEMENT_ACTION, action_id.as_bytes()).await?;
+		Ok(())
+	}
+
 	async fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
 		write_movement_records(&mut *guard, movement).await

@@ -224,6 +224,17 @@ pub trait BarkPersister: Send + Sync + 'static {
 		action_id: &str,
 	) -> anyhow::Result<Option<MovementId>>;
 
+	/// Removes the index from `action_id` to its movement, if there is one.
+	/// The movement itself does not change.
+	///
+	/// After this, [BarkPersister::get_or_create_movement_for_action] creates
+	/// a new movement for `action_id`. A lightning send uses this when it pays
+	/// an invoice again, so that every attempt has a movement of its own.
+	///
+	/// Errors:
+	/// - If the update fails.
+	async fn unlink_movement_from_action(&self, action_id: &str) -> anyhow::Result<()>;
+
 	/// Persists the given movement state.
 	///
 	/// Parameters:

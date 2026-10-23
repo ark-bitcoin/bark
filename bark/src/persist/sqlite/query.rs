@@ -164,6 +164,14 @@ pub fn get_movement_id_by_action(
 	Ok(id.map(MovementId::new))
 }
 
+pub fn unlink_movement_from_action(conn: &Connection, action_id: &str) -> anyhow::Result<()> {
+	conn.execute(
+		"UPDATE bark_movements SET action_id = NULL WHERE action_id = ?1",
+		[action_id],
+	)?;
+	Ok(())
+}
+
 pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<()> {
 	let id = movement.id.0;
 	tx.execute(

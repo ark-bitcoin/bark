@@ -86,6 +86,7 @@ macro_rules! bark_persister_tests {
 			test_get_all_movements,
 			test_get_movements_by_payment_method,
 			test_get_or_create_movement_for_action,
+			test_unlink_movement_from_action,
 
 			test_store_and_get_round_state,
 			test_update_round_state,
@@ -732,6 +733,34 @@ pub async fn test_get_or_create_movement_for_action(db: &impl BarkPersister) {
 	let missing = db.get_movement_id_by_action("no.such.action").await
 		.expect("get by unknown action");
 	assert_eq!(missing, None, "an unknown action must not resolve to a movement");
+}
+
+pub async fn test_unlink_movement_from_action(db: &impl BarkPersister) {
+	let subsystem = test_subsystem();
+	let time = test_time();
+	let action_id = "ln_pay.retry";
+
+	let (first, _) = db.get_or_create_movement_for_action(
+		&subsystem, time, action_id, MovementUpdate::new(),
+	).await.expect("create the first movement");
+	let mut finished = db.get_movement_by_id(first).await.expect("get the first movement");
+	finished.status = MovementStatus::Failed;
+	db.update_movement(&finished).await.expect("finish the first movement");
+
+	db.unlink_movement_from_action(action_id).await.expect("unlink");
+	assert_eq!(db.get_movement_id_by_action(action_id).await.expect("get by action"), None);
+
+	// The action gets a new movement, and the first one keeps its state.
+	let (second, created) = db.get_or_create_movement_for_action(
+		&subsystem, time, action_id, MovementUpdate::new(),
+	).await.expect("create the second movement");
+	assert!(created, "an unlinked action must get a new movement");
+	assert_ne!(second, first);
+	assert_eq!(db.get_movement_id_by_action(action_id).await.expect("get by action"), Some(second));
+	assert_eq!(db.get_movement_by_id(first).await.expect("get the first movement"), finished);
+
+	db.unlink_movement_from_action("no.such.action").await
+		.expect("unlinking an unknown action is a no-op");
 }
 
 // ---------------------------------------------------------------------------
