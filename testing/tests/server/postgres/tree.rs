@@ -1,8 +1,9 @@
 use ark_testing::util::ToAltString;
 use bitcoin::Txid;
+use chrono::{DateTime, Local};
 use bitcoin::hashes::Hash;
 
-use ark::ServerVtxo;
+use ark::{ServerVtxo, VtxoId};
 use ark::encode::ProtocolEncoding;
 use ark::test_util::VTXO_VECTORS;
 
@@ -24,6 +25,19 @@ async fn test_db(name: &str) -> (TestContext, Db) {
 /// Helper: dummy txid (different from any vtxo-related txid).
 fn dummy_txid(byte: u8) -> Txid {
 	Txid::from_byte_array([byte; 32])
+}
+
+/// Helper: number of history records and `updated_at` of a vtxo.
+async fn vtxo_history_state(db: &Db, vtxo_id: VtxoId) -> (i64, DateTime<Local>) {
+	db.read(async |t| {
+		let row = t.query_one(
+			"SELECT
+				(SELECT COUNT(*) FROM vtxo_history WHERE vtxo_id = $1),
+				(SELECT updated_at FROM vtxo WHERE vtxo_id = $1)",
+			&[&vtxo_id.to_string()],
+		).await?;
+		Ok((row.get(0), row.get(1)))
+	}).await.expect("query vtxo history")
 }
 
 /// Helper: insert a dummy round row and return its id.
@@ -159,11 +173,15 @@ async fn mark_oor_spent_is_idempotent() {
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), spending_txid)]);
 	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first mark");
+	let before = vtxo_history_state(&db, vtxo.id()).await;
 
 	// Same mark again should succeed
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), spending_txid)]);
 	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("idempotent mark");
+
+	// Nothing changed, so neither a history record nor a new updated_at
+	assert_eq!(vtxo_history_state(&db, vtxo.id()).await, before);
 }
 
 #[tokio::test]
