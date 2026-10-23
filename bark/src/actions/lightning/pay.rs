@@ -30,7 +30,7 @@ use server_rpc::protos::{self, lightning_payment_status};
 use crate::Wallet;
 use crate::actions::{
 	abort, or_retry, Advance, AdvanceError, IntoAdvanceResult,
-	RetryUnlessRejected, WalletAction, WalletActionCheckpoint, WalletActionId,
+	GuardedCheckpoint, RetryUnlessRejected, WalletAction, WalletActionCheckpoint, WalletActionId,
 };
 use crate::arkoor::{resolve_change_pieces, split_change_amount};
 use crate::movement::update::MovementUpdate;
@@ -430,6 +430,22 @@ pub(crate) async fn start_lightning_send(
 	})
 }
 
+/// Store the `Start` checkpoint of a new attempt to pay an invoice.
+///
+/// The caller holds the lock of the action and found no checkpoint, so any
+/// earlier attempt to pay the invoice has ended. The movement of that
+/// attempt is still indexed by the same action id. Unlink it, so that the
+/// `Start` step creates a movement for this attempt, and the earlier
+/// movement keeps its own final state.
+pub(crate) async fn store_new_lightning_send(
+	wallet: &Wallet,
+	checkpoint: &mut GuardedCheckpoint<LightningSend>,
+	send: LightningSend,
+) -> anyhow::Result<()> {
+	wallet.inner.db.unlink_movement_from_action(&send.id()).await?;
+	checkpoint.create(wallet, send).await
+}
+
 /// The movement of the send, created on first use.
 ///
 /// Keyed by the action id, so a re-driven step finds the movement an
@@ -821,4 +837,150 @@ pub(crate) async fn exit_lightning_send_htlcs(
 	).await.retry()?;
 
 	Ok(())
+}
+
+#[cfg(all(test, feature = "sqlite"))]
+mod test {
+	use bitcoin::secp256k1::{Message, Secp256k1, SecretKey};
+	use lightning_invoice::{Currency, InvoiceBuilder, PaymentSecret};
+
+	use ark::Vtxo;
+	use ark::test_util::VTXO_VECTORS;
+	use ark::test_util::dummy::DummyTestVtxoSpec;
+	use ark::vtxo::Full;
+
+	use crate::movement::Movement;
+	use crate::vtxo::VtxoState;
+
+	use super::*;
+
+	fn invoice_for(preimage: Preimage) -> Invoice {
+		let secp = Secp256k1::new();
+		let key = SecretKey::from_slice(&[2; 32]).unwrap();
+		let invoice = InvoiceBuilder::new(Currency::Regtest)
+			.description("test".into())
+			.payment_hash(preimage.compute_payment_hash().to_sha256_hash())
+			.payment_secret(PaymentSecret([42; 32]))
+			.duration_since_epoch(Duration::from_secs(1_700_000_000))
+			.min_final_cltv_expiry_delta(144)
+			.amount_milli_satoshis(1_000_000)
+			.build_signed(|hash: &Message| secp.sign_ecdsa_recoverable(hash, &key))
+			.unwrap();
+		Invoice::Bolt11(invoice)
+	}
+
+	/// A VTXO of `sats`, different for every amount.
+	fn vtxo(sats: u64) -> Vtxo<Full> {
+		let spec = DummyTestVtxoSpec { amount: Amount::from_sat(sats), fee: Amount::ZERO, ..Default::default() };
+		spec.build().1
+	}
+
+	async fn movement(wallet: &Wallet, id: MovementId) -> Movement {
+		wallet.inner.db.get_movement_by_id(id).await.unwrap()
+	}
+
+	/// End the action, like a driver that finished it.
+	async fn finish(wallet: &Wallet, id: &WalletActionId) {
+		let checkpoint = wallet.try_lock_action::<LightningSend>(id).await.unwrap().unwrap();
+		checkpoint.finish(wallet).await.unwrap();
+	}
+
+	/// Start an attempt to pay `invoice` from `input` like the pay path does,
+	/// and run its `Start` step, which creates the movement of the attempt.
+	async fn start_attempt(
+		wallet: &Wallet,
+		invoice: &Invoice,
+		input: &Vtxo<Full>,
+		fee: Amount,
+	) -> (LightningSend, MovementId) {
+		wallet.inner.db.store_vtxos(&[(input, &VtxoState::Spendable)]).await.unwrap();
+		let key = VTXO_VECTORS.server_key.public_key();
+		let send = LightningSend {
+			invoice: invoice.clone(),
+			original_payment_method: PaymentMethod::Custom("test".into()),
+			input_vtxo_ids: vec![input.id()],
+			payment_amount: Amount::from_sat(1_000),
+			fee,
+			change_pieces: None,
+			htlc_key: key,
+			htlc_expiry: BlockHeight::new(1_000),
+			movement_id: None,
+			revocation_key: key,
+			retry_for: None,
+			progress: Progress::Start,
+			allow_exit_of_htlcs: false,
+		};
+		let mut checkpoint = wallet.try_lock_action::<LightningSend>(&send.id()).await.unwrap().unwrap();
+		store_new_lightning_send(wallet, &mut checkpoint, send.clone()).await.unwrap();
+
+		let Ok(Advance::Next(send)) = send.advance(wallet).await else {
+			panic!("the Start step must advance");
+		};
+		checkpoint.update(wallet, |stored| *stored = send.clone()).await.unwrap();
+		let Progress::InputsLocked { movement_id } = send.progress else {
+			panic!("the Start step must lock the inputs");
+		};
+		(send, movement_id)
+	}
+
+	/// Write what the HTLC step writes once the server cosigned `htlc`.
+	async fn receive_htlc(wallet: &Wallet, send: LightningSend, htlc: &Vtxo<Full>) -> LightningSend {
+		let Progress::InputsLocked { movement_id } = send.progress else {
+			panic!("HTLCs come after the inputs are locked");
+		};
+		let locked = VtxoState::Locked { holder: Some(VtxoLockHolder::Action { id: send.id() }) };
+		wallet.inner.db.store_vtxos(&[(htlc, &locked)]).await.unwrap();
+		wallet.mark_vtxos_as_spent(&send.input_vtxo_ids).await.unwrap();
+		wallet.inner.movements.update_movement(
+			movement_id,
+			MovementUpdate::new().effective_balance(-htlc.amount().to_signed().unwrap()),
+		).await.unwrap();
+
+		let htlcs = Htlcs { vtxo_ids: vec![htlc.id()], mailbox_id: wallet.mailbox_identifier(), movement_id };
+		let send = LightningSend { progress: Progress::PaymentInitiated(htlcs), ..send };
+		let mut checkpoint = wallet.try_lock_action::<LightningSend>(&send.id()).await.unwrap().unwrap();
+		checkpoint.update(wallet, |stored| *stored = send.clone()).await.unwrap();
+		send
+	}
+
+	/// A failed attempt to pay an invoice and a successful retry must each
+	/// have a movement of their own.
+	#[tokio::test]
+	async fn successful_retry_of_a_failed_payment_has_its_own_movement() {
+		let (wallet, _conn) = Wallet::offline_for_test().await;
+		let preimage = Preimage::random();
+		let invoice = invoice_for(preimage);
+
+		// The server rejects the HTLC request of the first attempt.
+		let first_input = vtxo(10_000);
+		let (first, first_id) = start_attempt(&wallet, &invoice, &first_input, Amount::from_sat(10)).await;
+		let Advance::Failed(_) = first.clone().on_abort(&wallet, anyhow!("rejected")).await else {
+			panic!("a rejected attempt without HTLCs must fail");
+		};
+		finish(&wallet, &first.id()).await;
+
+		// The retry gets HTLCs and the payment succeeds.
+		let second_input = vtxo(20_000);
+		let (second, second_id) = start_attempt(&wallet, &invoice, &second_input, Amount::from_sat(20)).await;
+		assert_ne!(second_id, first_id);
+		let htlc = vtxo(1_020);
+		let second = receive_htlc(&wallet, second, &htlc).await;
+		let Progress::PaymentInitiated(htlcs) = &second.progress else { unreachable!() };
+		settle_lightning_send_payment(&wallet, &second, htlcs, preimage).await.unwrap();
+		finish(&wallet, &second.id()).await;
+
+		let first = movement(&wallet, first_id).await;
+		assert_eq!(first.status, MovementStatus::Failed);
+		assert_eq!(first.input_vtxos, vec![first_input.id()]);
+		assert_eq!(first.offchain_fee, Amount::from_sat(10));
+		assert_eq!(first.effective_balance, SignedAmount::ZERO);
+		assert_eq!(first.metadata["payment_preimage"], serde_json::Value::Null);
+
+		let second = movement(&wallet, second_id).await;
+		assert_eq!(second.status, MovementStatus::Successful);
+		assert_eq!(second.input_vtxos, vec![second_input.id()]);
+		assert_eq!(second.offchain_fee, Amount::from_sat(20));
+		assert_eq!(second.effective_balance, -htlc.amount().to_signed().unwrap());
+		assert_eq!(second.metadata["payment_preimage"], serde_json::to_value(preimage).unwrap());
+	}
 }
