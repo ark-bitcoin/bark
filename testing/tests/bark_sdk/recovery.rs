@@ -635,3 +635,52 @@ async fn recovery_resumes_failed_status_batches_on_sync() {
 	recovered_ids.sort();
 	assert_eq!(recovered_ids, expected, "the resumed recovery must recover every vtxo");
 }
+
+/// A recovery gives up on a VTXO the server keeps answering for without a
+/// status, finishes, and keeps that VTXO locked. Once the server gives its
+/// status again, recovering the VTXO by id makes it spendable.
+#[tokio::test]
+async fn recovery_gives_up_on_a_vtxo_without_a_usable_status() {
+	let ctx = TestContext::new("bark_sdk/recovery_gives_up_on_a_vtxo_without_a_usable_status").await;
+	// The xpub lookup carries each VTXO's body and status itself, so it is
+	// turned off to send recovery through the mailbox path under test.
+	let srv = ctx.captaind("server")
+		.cfg(|c| c.recovery_xpub_nb_keys = 0)
+		.create().await;
+
+	let target = ctx.bark_sdk("target", &srv).boarded(sat(100_000)).create().await;
+	assert_eq!(target.spendable_vtxos().await.expect("list target vtxos").len(), 1);
+
+	#[derive(Clone)]
+	struct NoStatus(Arc<AtomicBool>);
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for NoStatus {
+		async fn get_vtxos_status_by_ids(
+			&self, upstream: &mut ArkClient, req: protos::GetVtxosStatusByIdsRequest,
+		) -> Result<protos::GetVtxosStatusByIdsResponse, tonic::Status> {
+			if self.0.load(Ordering::Relaxed) {
+				return Ok(protos::GetVtxosStatusByIdsResponse::default());
+			}
+			Ok(upstream.get_vtxos_status_by_ids(req).await?.into_inner())
+		}
+	}
+	let no_status = Arc::new(AtomicBool::new(true));
+	let proxy = srv.start_proxy_with_mailbox(NoStatus(no_status.clone()), ()).await;
+
+	let recovered = ctx.bark_sdk("recovered", &proxy)
+		.mnemonic(read_mnemonic(&ctx, "target").await)
+		.create().await;
+	sync_until_recovered(&recovered).await;
+
+	let vtxos = recovered.all_vtxos().await.expect("list recovered vtxos");
+	assert_eq!(vtxos.len(), 1, "the abandoned vtxo must be kept");
+	assert!(matches!(vtxos[0].state, VtxoState::Locked { .. }),
+		"the abandoned vtxo must stay locked, got {:?}", vtxos[0].state);
+
+	no_status.store(false, Ordering::Relaxed);
+	let report = recovered.recover_vtxos([vtxos[0].id()], None).await.expect("recover by id");
+	assert_eq!(report.recovered().len(), 1, "the abandoned vtxo must be recovered: {:?}", report);
+	let vtxos = recovered.spendable_vtxos().await.expect("list spendable vtxos");
+	assert_eq!(vtxos.len(), 1, "the abandoned vtxo must be spendable again");
+}
