@@ -4,7 +4,7 @@ use std::time::Duration;
 use async_stream::stream;
 use futures::Stream;
 use tokio::sync::watch;
-use tracing::info;
+use tracing::{error, info};
 
 use ark::lightning::{PaymentHash, Preimage};
 
@@ -12,6 +12,8 @@ use crate::database::{Checkpoint, Db};
 use crate::system::RuntimeManager;
 
 const DEFAULT_BATCH_SIZE: usize = 100;
+
+const READ_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 pub struct Settlement {
 	pub checkpoint: Checkpoint,
@@ -122,7 +124,12 @@ impl HtlcSettler {
 					.await
 				{
 					Ok(b) => b,
-					Err(_) => break,
+					Err(e) => {
+						// Ending the stream would stop the hold settler and shut down the server.
+						error!("Failed to read htlc settlements, retrying: {:#}", e);
+						tokio::time::sleep(READ_RETRY_DELAY).await;
+						continue;
+					},
 				};
 
 				for s in &batch {
