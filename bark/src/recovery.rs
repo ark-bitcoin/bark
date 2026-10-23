@@ -50,6 +50,12 @@ use crate::vtxo::{
 	ServerStatusAdoption, VtxoLockHolder, VtxoState, VtxoStateKind, VtxoValidationError, WalletVtxo,
 };
 
+/// How many answered attempts a VTXO gets before recovery gives up on it.
+///
+/// Only an attempt the server or the chain answered without deciding counts, so
+/// an outage does not use it up. A drive makes up to four attempts per VTXO.
+pub const MAX_RECOVERY_ATTEMPTS: u32 = 40;
+
 /// VTXO ids, each with its amount when the body is known, ordered by id.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecoveryReportEntry(BTreeMap<VtxoId, Option<Amount>>);
@@ -124,23 +130,32 @@ pub struct RecoveryReport {
 	/// VTXO ids the server reported as unknown. Recovery trusts the server, so
 	/// these are not retried.
 	not_found: RecoveryReportEntry,
+	/// VTXOs recovery gave up on after [`MAX_RECOVERY_ATTEMPTS`] failed attempts.
+	/// They stay locked, as they may be spent, and a later recovery tries them
+	/// again.
+	#[serde(default)]
+	abandoned: RecoveryReportEntry,
+	/// The failed attempts so far of each VTXO in `failed`.
+	#[serde(default)]
+	attempts: BTreeMap<VtxoId, u32>,
 }
 
 impl RecoveryReport {
 	/// Whether the scan accounted for every VTXO in the mailbox.
 	///
-	/// A `failed` VTXO or `foreign` id both mean funds may be missing, so neither
-	/// may be present. `failed` is retryable; a `foreign` id instead needs a wider
-	/// gap limit to be matched.
+	/// A `failed`, `abandoned` or `foreign` VTXO means funds may be missing, so
+	/// none may be present. `failed` is retryable; a `foreign` id instead needs a
+	/// wider gap limit to be matched.
 	pub fn is_complete(&self) -> bool {
-		self.failed.is_empty() && self.foreign.is_empty()
+		self.failed.is_empty() && self.abandoned.is_empty() && self.foreign.is_empty()
 	}
 
 	/// Whether the VTXO is in any entry of the report.
 	pub fn contains(&self, vtxo_id: VtxoId) -> bool {
 		self.recovered.contains(vtxo_id) || self.skipped.contains(vtxo_id) ||
 			self.failed.contains(vtxo_id) || self.foreign.contains(vtxo_id) ||
-			self.exited.contains(vtxo_id) || self.not_found.contains(vtxo_id)
+			self.exited.contains(vtxo_id) || self.not_found.contains(vtxo_id) ||
+			self.abandoned.contains(vtxo_id)
 	}
 
 	pub fn recovered(&self) -> &RecoveryReportEntry {
@@ -148,7 +163,7 @@ impl RecoveryReport {
 	}
 
 	pub fn push_recovered<G>(&mut self, vtxo: &Vtxo<G>) {
-		self.failed.remove(vtxo.id());
+		self.clear_failed(vtxo.id());
 		self.recovered.insert(vtxo.id(), Some(vtxo.amount()));
 	}
 
@@ -157,7 +172,7 @@ impl RecoveryReport {
 	}
 
 	pub fn push_skipped<G>(&mut self, vtxo: &Vtxo<G>) {
-		self.failed.remove(vtxo.id());
+		self.clear_failed(vtxo.id());
 		self.skipped.insert(vtxo.id(), Some(vtxo.amount()));
 	}
 
@@ -166,7 +181,7 @@ impl RecoveryReport {
 	}
 
 	pub fn push_foreign<G>(&mut self, vtxo: &Vtxo<G>) {
-		self.failed.remove(vtxo.id());
+		self.clear_failed(vtxo.id());
 		self.foreign.insert(vtxo.id(), Some(vtxo.amount()));
 	}
 
@@ -183,12 +198,36 @@ impl RecoveryReport {
 		}
 	}
 
+	/// Report a failed attempt the server or the chain answered without
+	/// deciding on the VTXO. After [`MAX_RECOVERY_ATTEMPTS`] of them the VTXO is
+	/// abandoned instead.
+	pub fn push_failed_attempt(&mut self, id: VtxoId, amount: Option<Amount>) {
+		let attempts = self.attempts.entry(id).or_default();
+		*attempts += 1;
+		if *attempts < MAX_RECOVERY_ATTEMPTS {
+			self.push_failed(id, amount);
+			return;
+		}
+		let amount = amount.or(self.failed.0.get(&id).copied().flatten());
+		self.clear_failed(id);
+		self.abandoned.insert(id, amount);
+	}
+
+	pub fn abandoned(&self) -> &RecoveryReportEntry {
+		&self.abandoned
+	}
+
+	fn clear_failed(&mut self, id: VtxoId) {
+		self.failed.remove(id);
+		self.attempts.remove(&id);
+	}
+
 	pub fn exited(&self) -> &RecoveryReportEntry {
 		&self.exited
 	}
 
 	pub fn push_exited<G>(&mut self, vtxo: &Vtxo<G>) {
-		self.failed.remove(vtxo.id());
+		self.clear_failed(vtxo.id());
 		self.exited.insert(vtxo.id(), Some(vtxo.amount()));
 	}
 
@@ -197,7 +236,7 @@ impl RecoveryReport {
 	}
 
 	pub fn push_not_found(&mut self, id: VtxoId) {
-		self.failed.remove(id);
+		self.clear_failed(id);
 		self.not_found.insert(id, None);
 	}
 
@@ -205,7 +244,7 @@ impl RecoveryReport {
 	pub fn push_decided(&mut self, stored: &WalletVtxo) {
 		let id = stored.vtxo.id();
 		let amount = Some(stored.vtxo.amount());
-		self.failed.remove(id);
+		self.clear_failed(id);
 		match stored.state {
 			VtxoState::Spendable => self.recovered.insert(id, amount),
 			VtxoState::Exited => self.exited.insert(id, amount),
@@ -818,6 +857,8 @@ mod test {
 			failed: RecoveryReportEntry(BTreeMap::new()),
 			exited: RecoveryReportEntry(BTreeMap::new()),
 			not_found: RecoveryReportEntry(BTreeMap::from([(dummy_id(3), None)])),
+			abandoned: RecoveryReportEntry(BTreeMap::new()),
+			attempts: BTreeMap::new(),
 		};
 		assert!(clean.is_complete(),
 			"recovered, skipped and not found VTXOs are clean decisions, not failures");
@@ -832,6 +873,32 @@ mod test {
 			foreign: RecoveryReportEntry(BTreeMap::from([(dummy_id(2), Some(Amount::from_sat(1000)))])),
 			..Default::default()
 		}.is_complete(), "a foreign id is likely an owned VTXO beyond the gap limit, so recovery is incomplete");
+	}
+
+	/// A VTXO is abandoned once its failed attempts reach the budget, and a
+	/// decision before that resets its count.
+	#[test]
+	fn recovery_report_abandons_after_max_attempts() {
+		let amount = Some(Amount::from_sat(1000));
+		let mut report = RecoveryReport::default();
+		for _ in 1..MAX_RECOVERY_ATTEMPTS {
+			report.push_failed_attempt(dummy_id(0), amount);
+		}
+		assert!(report.failed().contains(dummy_id(0)), "below the budget the VTXO is failed");
+
+		report.push_failed_attempt(dummy_id(0), None);
+		assert!(!report.failed().contains(dummy_id(0)), "an abandoned VTXO is not failed");
+		assert_eq!(report.abandoned().0.get(&dummy_id(0)), Some(&amount),
+			"the abandoned VTXO keeps the amount it was failed with");
+		assert!(report.contains(dummy_id(0)), "scans must skip an abandoned VTXO");
+		assert!(!report.is_complete(), "an abandoned VTXO means funds may be missing");
+
+		for _ in 1..MAX_RECOVERY_ATTEMPTS {
+			report.push_failed_attempt(dummy_id(1), amount);
+		}
+		report.clear_failed(dummy_id(1));
+		report.push_failed_attempt(dummy_id(1), amount);
+		assert!(report.failed().contains(dummy_id(1)), "a decision resets the attempt count");
 	}
 }
 
