@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use ark::attestations::DelegatedRoundParticipationAttestation;
 use ark::attestations::OffboardRequestAttestation;
+use ark::attestations::RoundParticipationStatusAttestation;
 use ark::attestations::VtxoStatusAttestation;
 use ark::rounds::RoundAttemptAttestation;
 use bitcoin::consensus::serialize;
@@ -857,6 +858,10 @@ impl rpc::server::ArkService for Server {
 		let unblinded_mailbox_id = req.unblinded_mailbox_id
 			.map(|b| MailboxIdentifier::deserialize(&b[..]))
 			.transpose().badarg("invalid unblinded mailbox id")?;
+		// its status could never be queried, so the wallet couldn't progress it
+		if self.config.round_status_attestation_required && unblinded_mailbox_id.is_none() {
+			macros::badarg!("delegated round participations need an unblinded mailbox id");
+		}
 
 		let mut outputs = Vec::with_capacity(req.vtxo_requests.len());
 		for r in req.vtxo_requests {
@@ -883,7 +888,17 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		let unlock_hash = UnlockHash::from_bytes(&req.unlock_hash)?;
+		let required = self.config.round_status_attestation_required;
+		let attestation = (required && !req.attestation.is_empty())
+			.then(|| RoundParticipationStatusAttestation::from_bytes(&req.attestation))
+			.transpose()?;
 		let part = self.db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.to_status()?
+			// unlock hashes are public, so when required only the owner
+			// learns that the participation exists
+			.filter(|p| !required || attestation.is_some_and(|a|
+				p.outputs.iter().filter_map(|o| o.unblinded_mailbox_id)
+					.any(|id| a.verify(unlock_hash, id).is_ok())
+			))
 			.not_found([unlock_hash], "round participation not found")?;
 		let input_vtxo_ids = part.inputs.iter().map(|i| i.vtxo_id.to_bytes().to_vec()).collect();
 

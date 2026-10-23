@@ -10,6 +10,7 @@ mod postgres;
 mod postgres_migrations;
 mod recovery;
 mod registration;
+mod round_status_privacy;
 mod settler;
 mod watchman;
 
