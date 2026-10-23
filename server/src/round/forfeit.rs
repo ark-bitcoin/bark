@@ -144,7 +144,7 @@ impl Server {
 			}
 		}
 		if !input_set.is_empty() {
-			return badarg!("missing input vtxos: {:?}", input_set);
+			return badarg!("missing input vtxos");
 		}
 
 		// an input that exited onchain can be taken by its owner through the
