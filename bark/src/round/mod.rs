@@ -27,7 +27,7 @@ use log::{debug, error, info, trace, warn};
 use ark::{ArkInfo, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoPolicy};
 use ark::attestations::{
-	DelegatedRoundParticipationAttestation, RoundAttemptAttestation, RoundParticipationStatusAttestation,
+	DelegatedRoundParticipationAttestation, ForfeitNoncesAttestation, RoundAttemptAttestation, RoundParticipationStatusAttestation,
 };
 use ark::fees::FeeValidationError;
 use ark::forfeit::HashLockedForfeitBundle;
@@ -1219,13 +1219,27 @@ async fn hark_vtxo_swap(
 
 	// then do the forfeit dance
 
+	let mut user_keys = Vec::with_capacity(participation.inputs.len());
+	for input in &participation.inputs {
+		let user_key = wallet.pubkey_keypair(&input.user_pubkey()).await
+			.ok().flatten().with_context(|| format!(
+				"failed to fetch keypair for vtxo user pubkey {}", input.user_pubkey(),
+			)).map_err(HarkForfeitError::Err)?.1;
+		user_keys.push(user_key);
+	}
+
 	// the server caps the number of vtxo ids per nonces request, so for
 	// large participations we request the nonces in chunks
 	let mut server_nonces = Vec::with_capacity(participation.inputs.len());
-	for inputs in participation.inputs.chunks(MAX_NB_FORFEIT_NONCE_IDS) {
+	let chunks = participation.inputs.chunks(MAX_NB_FORFEIT_NONCE_IDS)
+		.zip(user_keys.chunks(MAX_NB_FORFEIT_NONCE_IDS));
+	for (inputs, keys) in chunks {
 		let nonces = srv.client.request_forfeit_nonces(protos::ForfeitNoncesRequest {
 			unlock_hash: unlock_hash.to_byte_array().to_vec(),
 			vtxo_ids: inputs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+			attestations: inputs.iter().zip(keys)
+				.map(|(v, key)| ForfeitNoncesAttestation::new(unlock_hash, v.id(), key).serialize())
+				.collect(),
 		}).await
 			.context("request forfeits nonces call failed")
 			.map_err(HarkForfeitError::Err)?
@@ -1245,13 +1259,9 @@ async fn hark_vtxo_swap(
 	}
 
 	let mut forfeit_bundles = Vec::with_capacity(participation.inputs.len());
-	for (input, nonces) in participation.inputs.iter().zip(server_nonces.into_iter()) {
-		let user_key = wallet.pubkey_keypair(&input.user_pubkey()).await
-			.ok().flatten().with_context(|| format!(
-				"failed to fetch keypair for vtxo user pubkey {}", input.user_pubkey(),
-			)).map_err(HarkForfeitError::Err)?.1;
+	for ((input, nonces), user_key) in participation.inputs.iter().zip(server_nonces).zip(&user_keys) {
 		forfeit_bundles.push(HashLockedForfeitBundle::new(
-			input, unlock_hash, &user_key, &nonces,
+			input, unlock_hash, user_key, &nonces,
 		))
 	}
 

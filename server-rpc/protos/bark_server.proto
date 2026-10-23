@@ -657,6 +657,8 @@ message ForfeitNoncesRequest {
 	bytes unlock_hash = 1;
 	// the VTXO IDs of the VTXOs to be forfeited for the same unlock preimage
 	repeated bytes vtxo_ids = 2;
+	// a ForfeitNoncesAttestation for each VTXO, in the same order
+	repeated bytes attestations = 3;
 }
 
 message ForfeitNoncesResponse {
