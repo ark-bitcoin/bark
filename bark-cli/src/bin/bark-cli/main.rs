@@ -12,6 +12,7 @@ mod connect;
 mod daemon;
 mod exit;
 mod lightning;
+mod nwc;
 mod onchain;
 mod round;
 
@@ -430,6 +431,10 @@ enum Command {
 	#[command(subcommand)]
 	Round(round::RoundCommand),
 
+	/// Manage Nostr Wallet Connect connections and relays
+	#[command(subcommand)]
+	Nwc(nwc::NwcCommand),
+
 	/// Watch the wallet for updates
 	#[command()]
 	Watch,
@@ -692,6 +697,7 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 		Command::Exit(cmd) => exit::execute_exit_command(cmd, config).await?,
 		Command::Lightning(cmd) => lightning::execute_lightning_command(cmd, config).await?,
 		Command::Round(cmd) => round::execute_round_command(cmd, config).await?,
+		Command::Nwc(cmd) => nwc::execute_nwc_command(cmd, config).await?,
 		Command::Watch => {
 			// Only notifications from now on, like the in-process watch. The
 			// `since` bound is exclusive, so none is printed twice.
