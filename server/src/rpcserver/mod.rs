@@ -23,7 +23,7 @@ use tracing::{trace, warn};
 
 use server_rpc::{pver, RequestExt};
 
-use crate::error::{BadArgument, NotFound, UnusableInputs};
+use crate::error::{BadArgument, NotFound, Unavailable, UnusableInputs};
 
 
 /// The minimum protocol version supported by the server.
@@ -101,6 +101,8 @@ impl ToStatus for anyhow::Error {
 			let mut metadata = tonic::metadata::MetadataMap::new();
 			metadata.insert("identifiers", ids);
 			tonic::Status::with_metadata(tonic::Code::InvalidArgument, format!("{:#}", self), metadata)
+		} else if let Some(_) = self.downcast_ref::<Unavailable>() {
+			tonic::Status::unavailable(format!("{:#}", self))
 		} else if let Some(_) = self.downcast_ref::<BadArgument>() {
 			tonic::Status::invalid_argument(format!("{:#}", self))
 		} else {

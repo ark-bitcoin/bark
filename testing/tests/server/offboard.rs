@@ -164,8 +164,9 @@ async fn abandoned_offboards_lock_at_most_part_of_the_wallet() {
 	assert_eq!(status.rounds.confirmed_utxos.len(), 8);
 	assert_eq!(status.rounds.trusted_balance, btc(8));
 
+	let requests = Arc::new(Mutex::new(Vec::new()));
 	let proxy = srv.start_proxy_no_mailbox(AbandonOffboardProxy {
-		requests: Arc::new(Mutex::new(Vec::new())),
+		requests: requests.clone(),
 	}).await;
 	let attacker = ctx.bark_sdk("attacker", &proxy)
 		.boarded(sat(200_000))
@@ -186,8 +187,15 @@ async fn abandoned_offboards_lock_at_most_part_of_the_wallet() {
 	let err = attacker.offboard_vtxos([vtxo3.id()], address).await
 		.expect_err("a third session would lock more than the cap");
 	let err = format!("{err:#}");
-	assert!(err.contains("offboard is temporarily unavailable"), "unexpected error: {err}");
+	assert!(err.contains("too many pending offboards"), "unexpected error: {err}");
 	assert!(!err.contains(ABANDON_ERROR), "the error should come from the server: {err}");
+
+	// Being full is not the client's fault, so tell it to retry later.
+	let req = requests.lock().unwrap().last().cloned()
+		.expect("the third prepare_offboard request should have been recorded");
+	let status = srv.get_public_rpc().await.prepare_offboard(req).await
+		.expect_err("the cap should still refuse the third session");
+	assert_eq!(status.code(), tonic::Code::Unavailable, "unexpected status: {status}");
 }
 
 #[tokio::test]

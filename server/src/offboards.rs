@@ -314,7 +314,7 @@ impl Server {
 			&& locked_by_others + value(wallet_input_guard.utxos()) > max_locked
 		{
 			wallet.mark_output_keys_unused(&offboard_tx.unsigned_tx);
-			return badarg!("offboard is temporarily unavailable, try again later");
+			return unavailable!("too many pending offboards, try again later");
 		}
 
 		let (forfeit_sec_nonces, forfeit_pub_nonces) = (0..input_vtxos.len()).map(|_| {
