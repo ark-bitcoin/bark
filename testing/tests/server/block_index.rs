@@ -261,6 +261,7 @@ async fn test_block_index_reorg_retry() {
 pub struct RecordingListener {
 	blocks: Arc<parking_lot::Mutex<BTreeMap<BlockHeight, BlockHash>>>,
 	fail_rollback: Arc<AtomicBool>,
+	fail_block: Arc<AtomicBool>,
 }
 
 impl RecordingListener {
@@ -268,7 +269,13 @@ impl RecordingListener {
 		Self {
 			blocks: Arc::new(parking_lot::Mutex::new(BTreeMap::new())),
 			fail_rollback: Arc::new(AtomicBool::new(fail_first_rollback)),
+			fail_block: Arc::new(AtomicBool::new(false)),
 		}
+	}
+
+	/// Fails the next block delivered.
+	pub fn fail_next_block(&self) {
+		self.fail_block.store(true, Ordering::SeqCst);
 	}
 
 	/// Asserts the recorded blocks are exactly the chain above `start`.
@@ -289,7 +296,11 @@ impl ChainEventListener for RecordingListener {
 	}
 
 	async fn on_block_added(&self, block: &BlockData) -> anyhow::Result<()> {
-		self.blocks.lock().insert(block.block_ref.height, block.block_ref.hash);
+		if self.fail_block.swap(false, Ordering::SeqCst) {
+			bail!("simulated block failure");
+		}
+		let prev = self.blocks.lock().insert(block.block_ref.height, block.block_ref.hash);
+		assert!(prev.is_none_or(|h| h == block.block_ref.hash), "block replaced without a rollback");
 		Ok(())
 	}
 
@@ -544,4 +555,48 @@ async fn test_block_index_recovers_from_committed_block_row() {
 	block_index.sync().await.expect("sync resumes from the stored tip below the sync tip");
 	assert_eq!(block_index.sync_tip(), bitcoind.tip().expect("Got bitcoind tip"));
 	check_block_index_is_consistent(&db, BlockTable::Captaind, &bitcoind).await;
+}
+
+/// A listener applied a block that another listener failed. If that block is
+/// replaced before the retry, the listener must be rolled back to its parent.
+#[tokio::test]
+async fn test_block_index_failed_block_then_replaced() {
+	let mut ctx = TestContext::new_minimal("block_index/failed_block_replaced").await;
+
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	ctx.init_central_bitcoind().await;
+	let bitcoind = ctx.bitcoind().sync_client();
+	let bitcoind_async = ctx.bitcoind().async_client();
+
+	let ok = RecordingListener::new(false);
+	let failing = RecordingListener::new(false);
+	let listeners = vec![
+		Box::new(ok.clone()) as Box<dyn ChainEventListener>,
+		Box::new(failing.clone()) as Box<dyn ChainEventListener>,
+	];
+	let birthday = bitcoind.deep_tip().expect("deep tip");
+	let mut index = BlockIndex::new(bitcoind_async, db.clone(), listeners, birthday, BlockTable::Captaind).await.unwrap();
+	index.sync().await.expect("initial sync");
+
+	let addr_a = Address::<NetworkUnchecked>::from_str("bcrt1p28cpcjynxvz3pyvd99wu7f5uxxkflttec6t4sxndxdsgtxksnp7q90rfcv").unwrap().assume_checked();
+	let addr_b = Address::<NetworkUnchecked>::from_str("bcrt1pnvttf55269k90h8r4xcwewqr9nvlyngge06srk4gmddu6sjjk9gq82vrkf").unwrap().assume_checked();
+	let parent = bitcoind.tip().unwrap();
+	bitcoind.generate_to_address(1, &addr_a).unwrap();
+	let orphan = bitcoind.tip().unwrap();
+	failing.fail_next_block();
+	index.sync().await.expect_err("one listener fails the block");
+	assert_eq!(index.sync_tip(), parent);
+
+	bitcoind.invalidate_block(&orphan.hash).unwrap();
+	bitcoind.generate_to_address(2, &addr_b).unwrap();
+	index.sync().await.expect("retry converges");
+
+	assert_eq!(index.sync_tip(), bitcoind.tip().unwrap());
+	check_block_index_is_consistent(&db, BlockTable::Captaind, &bitcoind).await;
+	ok.assert_matches_chain(&bitcoind, birthday.height);
+	failing.assert_matches_chain(&bitcoind, birthday.height);
 }

@@ -255,13 +255,15 @@ impl BlockIndex {
 	/// remains unchanged and the same block will be retried on the next sync.
 	///
 	/// Listeners that need to persist data should use their own database
-	/// transactions.
+	/// transactions. Since some may have applied the block when this fails,
+	/// [Self::pending_reorg] rolls them back to the stored tip first.
 	///
 	/// # Idempotency
 	///
 	/// Listeners must handle receiving the same block multiple times due to
 	/// retries (listener failure or `store_block` failure).
-	async fn add_block(&self, block: BlockData) -> anyhow::Result<()> {
+	async fn add_block(&mut self, block: BlockData) -> anyhow::Result<()> {
+		self.pending_reorg = true;
 		let results = join_all(self.listeners.iter().map(|listener| {
 			listener.on_block_added(&block)
 		})).await;
@@ -274,6 +276,7 @@ impl BlockIndex {
 		}
 
 		self.db.write(async |t| t.store_block(self.block_table, &block.block_ref).await).await?;
+		self.pending_reorg = false;
 		self.update_sync_height(block.block_ref);
 		Ok(())
 	}
