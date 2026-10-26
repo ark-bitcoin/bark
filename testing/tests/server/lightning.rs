@@ -1316,6 +1316,7 @@ async fn check_lightning_receive_returns_on_canceled_subscription() {
 		min_cltv_delta: 6,
 		mailbox_id: None,
 		description: None,
+		expiry_secs: None,
 	}).await.unwrap();
 
 	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
@@ -1673,6 +1674,7 @@ async fn refuse_receive_claim_after_incoming_htlc_expiry() {
 			min_cltv_delta,
 			mailbox_id: None,
 			description: None,
+			expiry_secs: None,
 		})
 		.await
 		.expect("start receive failed")
@@ -1806,6 +1808,7 @@ async fn settled_hash_cannot_fund_new_receive() {
 			min_cltv_delta: 6,
 			mailbox_id: None,
 			description: None,
+			expiry_secs: None,
 		})
 		.await
 		.expect_err("receive for an already-settled hash must be refused");
@@ -1880,6 +1883,7 @@ async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
 		min_cltv_delta: 6,
 		mailbox_id: None,
 		description: None,
+		expiry_secs: None,
 	}).await.expect("receive should be allowed while H is unsettled").into_inner().bolt11;
 
 	let pay_receive = {
@@ -1983,6 +1987,7 @@ async fn intra_ark_payment_refused_while_same_hash_send_is_open() {
 		min_cltv_delta: 6,
 		mailbox_id: None,
 		description: None,
+		expiry_secs: None,
 	}).await.expect("receive should be allowed while H is unsettled").into_inner().bolt11;
 
 	let err = payer.try_pay_lightning(&receive_invoice, None, false).await
@@ -2549,7 +2554,7 @@ async fn check_lightning_receive_poll_interval_fallback() {
 
 	// Create a hold invoice on the server.
 	let resp = srv.start_lightning_receive(
-		payment_hash, btc(1), BlockDelta::new(18), None, None,
+		payment_hash, btc(1), BlockDelta::new(18), None, None, None,
 	).await.unwrap();
 
 	// Create a disconnected receiver: the sender is kept alive so
@@ -2602,7 +2607,7 @@ async fn check_lightning_receive_ignores_other_payment_updates() {
 	let preimage = ark::lightning::Preimage::from(rand::random::<[u8; 32]>());
 	let payment_hash = preimage.compute_payment_hash();
 	srv.start_lightning_receive(
-		payment_hash, btc(1), BlockDelta::new(18), None, None,
+		payment_hash, btc(1), BlockDelta::new(18), None, None, None,
 	).await.unwrap();
 
 	let (update_tx, mut update_rx) = tokio::sync::broadcast::channel::<PaymentHash>(16);
@@ -2669,9 +2674,60 @@ async fn refuse_receive_with_unlock_hash_as_payment_hash() {
 		min_cltv_delta: 8,
 		mailbox_id: None,
 		description: None,
+		expiry_secs: None,
 	}).await.expect_err("must refuse a payment hash that is an existing unlock hash");
 	assert_eq!(err.code(), tonic::Code::InvalidArgument);
 	assert!(err.message().contains("unlock hash"), "unexpected error: {err:?}");
+}
+
+/// An invoice expires after the expiry the client asks for, up to the
+/// server's `invoice_expiry`, which is also the default. Asking again for the
+/// same payment hash returns the existing invoice, unless the expiry differs.
+#[tokio::test]
+async fn invoice_expiry_is_chosen_by_the_client() {
+	let ctx = TestContext::new("server/invoice_expiry_is_chosen_by_the_client").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).cfg(|cfg| {
+		cfg.invoice_expiry = Duration::from_secs(3600);
+	}).create().await;
+
+	let mut rpc = srv.get_public_rpc().await;
+	let mut start_for = async |payment_hash: PaymentHash, expiry_secs: Option<u64>| {
+		rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
+			payment_hash: payment_hash.to_vec(),
+			amount_sat: 10_000,
+			min_cltv_delta: 8,
+			mailbox_id: None,
+			description: None,
+			expiry_secs,
+		}).await.map(|r| Bolt11Invoice::from_str(&r.into_inner().bolt11).unwrap())
+	};
+
+	let payment_hash = ark::lightning::Preimage::random().compute_payment_hash();
+	let invoice = start_for(payment_hash, Some(600)).await.unwrap();
+	assert_eq!(start_for(payment_hash, Some(600)).await.unwrap(), invoice);
+	assert_eq!(start_for(payment_hash, None).await.unwrap(), invoice);
+	let err = start_for(payment_hash, Some(300)).await
+		.expect_err("must refuse an expiry that differs from the existing invoice");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument);
+	assert!(err.message().contains("already exists"), "unexpected error: {err:?}");
+
+	let mut start = async |expiry_secs: Option<u64>| {
+		start_for(ark::lightning::Preimage::random().compute_payment_hash(), expiry_secs).await
+	};
+
+	let invoice = start(None).await.unwrap();
+	assert_eq!(invoice.expiry_time(), Duration::from_secs(3600));
+
+	let invoice = start(Some(600)).await.unwrap();
+	assert_eq!(invoice.expiry_time(), Duration::from_secs(600));
+
+	let err = start(Some(3601)).await.expect_err("must refuse an expiry above the maximum");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument);
+	assert!(err.message().contains("exceeds the maximum of 3600s"), "unexpected error: {err:?}");
+
+	let err = start(Some(0)).await.expect_err("must refuse an invoice that is born expired");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument);
 }
 
 /// A lightning send whose payment hash is an existing hArk unlock hash must
@@ -2901,6 +2957,7 @@ async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 			min_cltv_delta: 6,
 			mailbox_id: None,
 			description: None,
+			expiry_secs: None,
 		}).await.unwrap().into_inner().bolt11;
 
 	// 4. Pay invoice-2 from Eve's node. The HTLC is held by the server's
@@ -3016,6 +3073,7 @@ async fn self_payment_claim_rejected_after_sender_onchain_refund() {
 		min_cltv_delta: 18,
 		mailbox_id: None,
 		description: None,
+		expiry_secs: None,
 	}).await.unwrap().into_inner().bolt11;
 
 	let sender_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());

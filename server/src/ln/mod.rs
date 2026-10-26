@@ -609,6 +609,7 @@ impl Server {
 		min_cltv_delta: BlockDelta,
 		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
 		description: Option<String>,
+		expiry: Option<Duration>,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
@@ -641,6 +642,19 @@ impl Server {
 			}
 		}
 
+		if let Some(expiry) = expiry {
+			if expiry.is_zero() {
+				return badarg!("invoice expiry must be at least one second");
+			}
+			if expiry > self.config.invoice_expiry {
+				return badarg!("requested invoice expiry of {}s exceeds the maximum of {}s",
+					expiry.as_secs(), self.config.invoice_expiry.as_secs(),
+				);
+			}
+		}
+		let requested_expiry = expiry;
+		let expiry = expiry.unwrap_or(self.config.invoice_expiry);
+
 		if min_cltv_delta > self.config.max_user_invoice_cltv_delta {
 			bail!("Requested min HTLC CLTV delta is greater than max HTLC recv CLTV delta: requested: {}, max: {}",
 				min_cltv_delta, self.config.max_user_invoice_cltv_delta,
@@ -665,6 +679,15 @@ impl Server {
 		if let Some(subscription) = subscription {
 			match subscription.status {
 				LightningHtlcSubscriptionStatus::Created => {
+					let existing_expiry = subscription.invoice.expiry_time();
+					if let Some(requested) = requested_expiry {
+						if requested.as_secs() != existing_expiry.as_secs() {
+							return badarg!("an invoice for payment hash {} already exists \
+								with an expiry of {}s, not the requested {}s",
+								payment_hash, existing_expiry.as_secs(), requested.as_secs(),
+							);
+						}
+					}
 					trace!("Found existing created subscription, returning invoice: {}",
 						subscription.invoice.to_string(),
 					);
@@ -689,7 +712,7 @@ impl Server {
 		let ln_cltv_delta = min_cltv_delta + self.config.htlc_expiry_delta;
 
 		let invoice = self.lightning_manager.generate_invoice(
-			payment_hash, amount, ln_cltv_delta, description, mailbox_id,
+			payment_hash, amount, ln_cltv_delta, expiry, description, mailbox_id,
 		).await?;
 		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}",
 			payment_hash, amount, invoice.to_string(),

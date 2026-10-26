@@ -369,6 +369,7 @@ pub(crate) async fn start_lightning_receive(
 		min_cltv_delta: requested_min_cltv_delta.into(),
 		mailbox_id: Some(mailbox_id.serialize()),
 		description,
+		expiry_secs: None,
 	};
 
 	let resp = srv.client.start_lightning_receive(req).await?.into_inner();
