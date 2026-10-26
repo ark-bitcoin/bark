@@ -2,6 +2,7 @@
 use std::time::Duration;
 
 use ark_testing::{TestContext, btc, sat};
+use ark_testing::daemon::barkd::{Barkd, BarkdChainSource};
 use ark_testing::util::FutureExt;
 use bark_json::movements::PaymentMethod;
 use bark_json::notifications::WalletNotification;
@@ -150,4 +151,21 @@ async fn barkd_long_poll_rejects_unauthenticated() {
 
 	assert_eq!(resp.status().as_u16(), 401,
 		"expected 401 Unauthorized from unauthenticated long-poll, got {}", resp.status());
+}
+
+/// Without a wallet the handshake must fail over HTTP instead of upgrading
+/// and closing the websocket. The ticket is consumed either way.
+#[tokio::test]
+async fn barkd_websocket_handshake_without_wallet() {
+	let ctx = TestContext::new_minimal("barkd/barkd_websocket_handshake_without_wallet").await;
+	// No wallet is created, so neither endpoint is contacted.
+	let barkd = Barkd::new("barkd", ctx.datadir.join("barkd"), "http://127.0.0.1:1".into(),
+		BarkdChainSource::Esplora("http://127.0.0.1:1".into()), None);
+	barkd.start().await.unwrap();
+
+	let ticket = barkd.create_ws_ticket().await;
+	assert_eq!(barkd.notification_websocket_rejection(&ticket).await, Some(422));
+	assert_eq!(barkd.notification_websocket_rejection(&ticket).await, Some(401));
+
+	barkd.stop().await.unwrap();
 }

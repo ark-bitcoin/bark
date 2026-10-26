@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
 use bark_json::notifications::WalletNotification;
+use bark::Wallet;
 use bark::bip39::rand::{self, Rng};
 use futures::{SinkExt, StreamExt};
 
@@ -22,6 +23,14 @@ use crate::error::{HandlerResult, unauthorized};
 
 /// The expiration time for a websocket ticket in minutes
 const WEBSOCKET_TICKET_EXPIRATION_MINUTES: u64 = 10;
+
+/// Return the expiration bound for websocket tickets at `now`.
+///
+/// A ticket is valid only if it was created after this bound. The ticket purge
+/// and the handshake must both use this function so they cannot drift apart.
+fn websocket_ticket_expiration_bound(now: DateTime<Utc>) -> DateTime<Utc> {
+	now - Duration::from_secs(WEBSOCKET_TICKET_EXPIRATION_MINUTES * 60)
+}
 
 /// The timeout for the long-poll `wait` endpoint, in seconds
 #[cfg(not(test))]
@@ -65,7 +74,9 @@ pub fn router() -> Router<Arc<ServerState>> {
 	description = "Creates a single-use ticket that authenticates a websocket connection \
 		at `ws://<host>/api/v1/notifications/ws?ticket=<ticket>`. The ticket must be \
 		used within 10 minutes of creation; the resulting websocket connection is \
-		long-lived.",
+		long-lived. The handshake answers 401 for an unknown, already used or \
+		expired ticket, and 422 when no wallet is loaded. The ticket is consumed \
+		in all of these cases.",
 	responses(
 		(status = 200, description = "Returns the websocket ticket. Valid to open a websocket connection in the next 10 minutes.", body = String),
 		(status = 401, description = "Unauthorized", body = String)
@@ -83,12 +94,13 @@ pub async fn websocket_ticket(
 
 	let req_time = Utc::now();
 
-	// Remove all expired tickets
-	let expiration_bound = req_time - Duration::from_secs(WEBSOCKET_TICKET_EXPIRATION_MINUTES * 60);
-	write_lock.retain(|_, expiration| {
-		let keep = *expiration > expiration_bound;
+	// Remove all expired tickets. This is housekeeping only: the handshake
+	// checks the expiration of each ticket it consumes.
+	let expiration_bound = websocket_ticket_expiration_bound(req_time);
+	write_lock.retain(|_, created_at| {
+		let keep = *created_at > expiration_bound;
 		if !keep {
-			log::debug!("Purging expired ticket: {}", expiration);
+			log::debug!("Purging expired ticket created at {}", created_at);
 		}
 		keep
 	});
@@ -108,29 +120,43 @@ pub struct HandshakeParams {
 	ticket: String,
 }
 
+/// Take `ticket` out of the ticket map and check that it has not expired.
+///
+/// The ticket is removed in all cases, so a stale ticket is consumed even
+/// when the handshake rejects it.
+async fn consume_websocket_ticket(state: &ServerState, ticket: &str) -> HandlerResult<()> {
+	let created_at = match state.websocket_tickets.write().await.remove(ticket) {
+		Some(created_at) => created_at,
+		None => unauthorized!("Invalid websocket ticket"),
+	};
+
+	if created_at <= websocket_ticket_expiration_bound(Utc::now()) {
+		log::debug!("Rejecting expired websocket ticket created at {}", created_at);
+		unauthorized!("Expired websocket ticket");
+	}
+
+	Ok(())
+}
+
 async fn websocket_handshake(
 	ws: WebSocketUpgrade,
 	State(state): State<Arc<ServerState>>,
 	Query(params): Query<HandshakeParams>,
 ) -> HandlerResult<Response<Body>> {
-	if state.websocket_tickets.write().await.remove(&params.ticket).is_none() {
-		unauthorized!("Invalid websocket ticket");
-	}
+	consume_websocket_ticket(&state, &params.ticket).await?;
 
-	Ok(ws.on_upgrade(|socket| handle_socket(socket, state)))
+	// Check for a wallet before the upgrade, so the client gets an HTTP error
+	// instead of a websocket that closes right after it opens. The ticket is
+	// checked first so an unauthenticated caller cannot learn whether a wallet
+	// is loaded.
+	let wallet = state.require_wallet()?;
+
+	Ok(ws.on_upgrade(|socket| handle_socket(socket, wallet)))
 }
 
 /// Handle a websocket connection and forward notifications
-async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
+async fn handle_socket(socket: WebSocket, wallet: Wallet) {
 	let (mut sender, mut receiver) = socket.split();
-
-	let wallet = match state.require_wallet() {
-		Ok(w) => w,
-		Err(e) => {
-			error!("websocket handler: no wallet available: {:#}", e);
-			return;
-		}
-	};
 
 	// Create a new subscription to the notification channel
 	let mut notification_rx = wallet.subscribe_notifications();
@@ -255,5 +281,78 @@ pub async fn wait_notification(
 				return Err(anyhow!("Notification manager stopped").into());
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use tokio_util::sync::CancellationToken;
+
+	use super::*;
+	use crate::error::ErrorResponse;
+
+	fn make_state() -> ServerState {
+		ServerState::builder().build(CancellationToken::new())
+	}
+
+	async fn insert_ticket(state: &ServerState, ticket: &str, created_at: DateTime<Utc>) {
+		state.websocket_tickets.write().await.insert(ticket.to_string(), created_at);
+	}
+
+	#[tokio::test]
+	async fn websocket_ticket_is_single_use() {
+		let state = make_state();
+		insert_ticket(&state, "fresh", Utc::now()).await;
+
+		assert!(consume_websocket_ticket(&state, "fresh").await.is_ok(),
+			"a fresh ticket must be accepted");
+		assert!(matches!(
+			consume_websocket_ticket(&state, "fresh").await,
+			Err(ErrorResponse::Unauthorized(_)),
+		), "a consumed ticket must be rejected");
+	}
+
+	#[tokio::test]
+	async fn websocket_ticket_rejects_unknown() {
+		let state = make_state();
+
+		assert!(matches!(
+			consume_websocket_ticket(&state, "unknown").await,
+			Err(ErrorResponse::Unauthorized(_)),
+		), "an unknown ticket must be rejected");
+	}
+
+	#[test]
+	fn websocket_ticket_expires_after_ten_minutes() {
+		let now = Utc::now();
+		assert_eq!(websocket_ticket_expiration_bound(now), now - Duration::from_secs(600));
+	}
+
+	#[tokio::test]
+	async fn websocket_ticket_accepts_unexpired() {
+		let state = make_state();
+		let created_at = websocket_ticket_expiration_bound(Utc::now()) + Duration::from_secs(30);
+		insert_ticket(&state, "aging", created_at).await;
+
+		assert!(consume_websocket_ticket(&state, "aging").await.is_ok(),
+			"a ticket inside the expiration window must be accepted");
+		assert!(state.websocket_tickets.read().await.is_empty(),
+			"an accepted ticket must be consumed");
+	}
+
+	#[tokio::test]
+	async fn websocket_ticket_rejects_expired() {
+		let state = make_state();
+		// Back-dated one second past the bound, so the ticket stays expired
+		// even if the wall clock steps back before the handshake checks it.
+		let created_at = websocket_ticket_expiration_bound(Utc::now()) - Duration::from_secs(1);
+		insert_ticket(&state, "stale", created_at).await;
+
+		assert!(matches!(
+			consume_websocket_ticket(&state, "stale").await,
+			Err(ErrorResponse::Unauthorized(_)),
+		), "an expired ticket must be rejected even if no purge ran");
+		assert!(state.websocket_tickets.read().await.is_empty(),
+			"a rejected ticket must still be consumed");
 	}
 }
