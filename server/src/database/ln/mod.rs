@@ -466,6 +466,15 @@ impl<'t> Tx<'t> {
 		let payment_hash = invoice.payment_hash();
 		let mailbox_str = receiver_mailbox_id.map(|id| id.to_string());
 
+		// The hash can settle while the invoice is generated. Serialize with
+		// `store_htlc_settlement` so no receive opens for a known preimage.
+		self.execute(
+			&format!("SELECT pg_advisory_xact_lock({})",
+				super::AdvisoryLock::HtlcSettlementWrite as i64,
+			), &[],
+		).await?;
+		self.ensure_not_settled(PaymentHash::from(*payment_hash)).await?;
+
 		self.inner_store_lightning_htlc_subscription(
 			node_id, &payment_hash.to_string(), &invoice.to_string(),
 			Some(amount_msat), mailbox_str.as_deref(), user_agent,

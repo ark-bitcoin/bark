@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use bark::lightning_invoice::{Currency, InvoiceBuilder, PaymentSecret};
+use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 use futures::StreamExt;
 
 use ark::lightning::Preimage;
@@ -10,6 +12,66 @@ use server::system::RuntimeManager;
 
 use ark_testing::TestContext;
 use ark_testing::util::FutureExt;
+
+/// A preimage that commits while a receive is being stored must keep the
+/// receive from being created for that now-public hash.
+#[tokio::test]
+async fn receive_insert_serializes_with_settlement() {
+	let mut ctx = TestContext::new_minimal("server/receive_insert_serializes_with_settlement").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.unwrap();
+	let db = Db::connect(&postgres_cfg).await.unwrap();
+
+	let secp = Secp256k1::new();
+	let node_key = SecretKey::from_slice(&[7; 32]).unwrap();
+	let node_pubkey = PublicKey::from_secret_key(&secp, &node_key);
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&node_pubkey).await)
+		.await.unwrap();
+
+	let preimage = Preimage::from([9u8; 32]);
+	let payment_hash = preimage.compute_payment_hash();
+	let invoice = InvoiceBuilder::new(Currency::Regtest)
+		.description("settlement race".into())
+		.payment_hash(payment_hash.to_sha256_hash())
+		.payment_secret(PaymentSecret([42; 32]))
+		.duration_since_epoch(Duration::from_secs(1_700_000_000))
+		.min_final_cltv_expiry_delta(144)
+		.amount_milli_satoshis(1_000_000)
+		.build_signed(|hash| secp.sign_ecdsa_recoverable(hash, &node_key))
+		.unwrap();
+
+	// Keep the settlement transaction open after it inserted the preimage.
+	let (inserted_tx, inserted_rx) = tokio::sync::oneshot::channel();
+	let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+	let writer_db = db.clone();
+	let writer = tokio::spawn(async move {
+		writer_db.write(async move |t| {
+			t.store_htlc_settlement(preimage).await?.unwrap();
+			inserted_tx.send(()).unwrap();
+			release_rx.await.unwrap();
+			Ok(())
+		}).await
+	});
+	inserted_rx.await.unwrap();
+
+	let receiver_db = db.clone();
+	let mut receiver = tokio::spawn(async move {
+		receiver_db.write(async |t| t.store_generated_lightning_receive(
+			node_id, &invoice, 1_000_000, None, None,
+		).await).await
+	});
+
+	let early = tokio::time::timeout(Duration::from_millis(250), &mut receiver).await;
+	assert!(early.is_err(), "receive was stored without waiting for the settlement: {early:?}");
+
+	release_tx.send(()).unwrap();
+	writer.await.unwrap().unwrap();
+
+	let err = receiver.await.unwrap().expect_err("settled hash must not open a receive");
+	assert!(format!("{err:#}").contains("already been paid"), "{err:#}");
+}
 
 /// Settle 50 preimages, subscribe with batch_size=10, and verify all
 /// 50 arrive without relying on the background poller.

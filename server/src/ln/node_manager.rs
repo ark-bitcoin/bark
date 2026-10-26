@@ -554,12 +554,21 @@ impl LightningManager {
 		// Raw agent, not the bucketed label -- see start_payment.
 		let user_agent = telemetry::current_user_agent();
 
-		self.db.write(async |t|
+		let stored = self.db.write(async |t|
 			t.store_generated_lightning_receive(
 				node.id, &invoice, amount.to_msat(), receiver_mailbox_id.as_ref(),
 				user_agent.as_deref(),
 			).await
-		).await?;
+		).await;
+		if let Err(e) = stored {
+			// Without a subscription nothing would release HTLCs held on it.
+			if let Err(cancel_err) = hold_client.cancel(hold_plugin::CancelRequest {
+				payment_hash: payment_hash.to_vec(),
+			}).await {
+				warn!("Failed to cancel unstored hold invoice {payment_hash}: {cancel_err:#}");
+			}
+			return Err(e);
+		}
 
 		Ok(invoice)
 	}
