@@ -665,6 +665,9 @@ impl<'a> TryFrom<protos::ArkoorPackageCosignRequest> for ArkoorPackageCosignRequ
 	type Error = ConvertError;
 
 	fn try_from(v: protos::ArkoorPackageCosignRequest) -> Result<Self, Self::Error> {
+		if v.parts.len() > crate::MAX_NB_VTXO_IDS {
+			return Err("too many parts in cosign request".into());
+		}
 		Ok(Self {
 			requests: v.parts.into_iter().map(|p| p.try_into()).collect::<Result<Vec<_>, _>>()?,
 		})
@@ -675,6 +678,9 @@ impl<'a> TryFrom<protos::LightningPayHtlcCosignRequest> for ArkoorPackageCosignR
 	type Error = ConvertError;
 
 	fn try_from(v: protos::LightningPayHtlcCosignRequest) -> Result<Self, Self::Error> {
+		if v.parts.len() > crate::MAX_NB_VTXO_IDS {
+			return Err("too many parts in cosign request".into());
+		}
 		Ok(Self {
 			requests: v.parts.into_iter().map(|p| p.try_into()).collect::<Result<Vec<_>, _>>()?,
 		})

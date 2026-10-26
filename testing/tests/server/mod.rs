@@ -17,6 +17,7 @@ use std::iter;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use bitcoin::hashes::Hash;
 use bitcoin::hex::FromHex;
 use bitcoin::{
 	absolute, transaction, Address, Amount, Network, OutPoint, ScriptBuf, Sequence,
@@ -38,11 +39,13 @@ use ark::attestations::ArkoorCosignAttestation;
 use ark::attestations::VtxoStatusAttestation;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::rounds::{Challenge, RoundAttemptAttestation, RoundSeq};
+use ark::test_util::dummy::{DummyTestVtxoSpec, DUMMY_USER_KEY};
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, LeafVtxoCosignRequest, UnlockPreimage};
 use ark::vtxo::Full;
 use bark::Wallet;
 use bark_json::primitives::WalletVtxoInfo;
+use server::database::Db;
 use server::secret::Secret;
 use server_log::{FullRound, RoundError, RoundFinished, RoundStarted, RoundUserVtxoAlreadyRegistered};
 use server_rpc::protos::{self};
@@ -1059,6 +1062,47 @@ async fn full_round() {
 	// then we wait for the error to happen
 	let err = rx.recv().wait_millis(30_000).await.unwrap().to_alt_string();
 	assert!(err.contains("Message arrived late or round was full"), "err: {err}");
+}
+
+/// Oversized cosign packages are refused before the server reads any input.
+#[tokio::test]
+async fn arkoor_caps_inputs_before_loading_vtxos() {
+	let ctx = TestContext::new("server/arkoor_caps_inputs_before_loading_vtxos").await;
+	let srv = ctx.captaind("server").no_vtxo_pool().create().await;
+	let mut rpc = srv.get_public_rpc().await;
+
+	let (_, input) = DummyTestVtxoSpec::default().build();
+	let client = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		[input], VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
+	).unwrap().generate_user_nonces(&[*DUMMY_USER_KEY]).unwrap();
+	let mut sample: protos::ArkoorPackageCosignRequest = client.cosign_request().into();
+	let part = sample.parts.remove(0);
+	let parts = (0..=server_rpc::MAX_NB_VTXO_IDS).map(|i| {
+		let mut p = part.clone();
+		let id = VtxoId::from(OutPoint::new(Txid::all_zeros(), i as u32));
+		p.input_vtxo_id = id.to_bytes().to_vec();
+		p
+	}).collect::<Vec<_>>();
+
+	// with the vtxo table locked, any lookup of the inputs would hang
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let mut conn = db.raw_conn().await.unwrap();
+	let tx = conn.transaction().await.unwrap();
+	tx.batch_execute("LOCK TABLE vtxo IN ACCESS EXCLUSIVE MODE").await.unwrap();
+
+	let arkoor = tokio::time::timeout(secs(3), rpc.request_arkoor_cosign(
+		protos::ArkoorPackageCosignRequest { parts: parts.clone() },
+	)).await;
+	let ln_send = tokio::time::timeout(secs(3), rpc.request_lightning_pay_htlc_cosign(
+		protos::LightningPayHtlcCosignRequest { parts },
+	)).await;
+	tx.rollback().await.unwrap();
+
+	for res in [arkoor, ln_send] {
+		let err = res.expect("refused before reading any vtxo").unwrap_err();
+		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+		assert!(err.message().contains("too many parts"), "{err}");
+	}
 }
 
 #[tokio::test]
