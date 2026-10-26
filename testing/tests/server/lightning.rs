@@ -2590,6 +2590,50 @@ async fn check_lightning_receive_poll_interval_fallback() {
 	assert_vtxopool_consistency_db(srv.database()).await;
 }
 
+/// A waiting `check_lightning_receive` must only re-read its receive for an
+/// update on its own payment hash. Updates for other hashes would otherwise
+/// make every waiter hit the database.
+#[tokio::test]
+async fn check_lightning_receive_ignores_other_payment_updates() {
+	let ctx = TestContext::new("server/check_lightning_receive_ignores_other_payment_updates").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.new_server_with_cfg("server", Some(&lightning.internal), |_| {}).await;
+
+	let preimage = ark::lightning::Preimage::from(rand::random::<[u8; 32]>());
+	let payment_hash = preimage.compute_payment_hash();
+	srv.start_lightning_receive(
+		payment_hash, btc(1), BlockDelta::new(18), None, None,
+	).await.unwrap();
+
+	let (update_tx, mut update_rx) = tokio::sync::broadcast::channel::<PaymentHash>(16);
+	let srv_clone = srv.clone();
+	let wait = tokio::spawn(async move {
+		srv_clone.check_lightning_receive_with_rx(payment_hash, true, &mut update_rx).await.unwrap()
+	});
+	tokio::time::sleep(Duration::from_secs(1)).await;
+	assert!(!wait.is_finished(), "an unpaid receive must keep waiting");
+
+	// Change the status without notifying, so only a re-read can see it.
+	srv.database().write(async |t| {
+		t.execute(
+			"UPDATE lightning_htlc_subscription \
+			SET status = 'canceled'::lightning_htlc_subscription_status, updated_at = NOW() \
+			WHERE payment_hash = $1",
+			&[&payment_hash.to_string()],
+		).await?;
+		Ok(())
+	}).await.unwrap();
+
+	let other = ark::lightning::Preimage::from(rand::random::<[u8; 32]>()).compute_payment_hash();
+	update_tx.send(other).unwrap();
+	tokio::time::sleep(Duration::from_secs(1)).await;
+	assert!(!wait.is_finished(), "an update for another payment hash re-read the receive");
+
+	update_tx.send(payment_hash).unwrap();
+	let sub = tokio::time::timeout(Duration::from_secs(10), wait).await.unwrap().unwrap();
+	assert_eq!(sub.status, server::database::ln::LightningHtlcSubscriptionStatus::Canceled);
+}
+
 /// Plant an hArk unlock hash in `round_participation`, returning its preimage.
 async fn plant_unlock_preimage(db: &Db, preimage: ark::lightning::Preimage) {
 	db.write(async |t| {
