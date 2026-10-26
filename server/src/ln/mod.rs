@@ -555,12 +555,18 @@ impl Server {
 			// the sender AND pay the payee for one payment.
 			// A canceled receive only refuses the cooperative claim, so granted
 			// HTLC-recv vtxos commit it until [htlc_recvs_expired].
+			// HTLCs that never funded a payment attempt can't have paid the
+			// receive, so they must not cancel it.
+			let funded = t.htlc_vtxos_funded_payment_attempt(&htlc_vtxo_ids).await?;
 			let htlc_vtxos = htlc_vtxo::get_htlc_vtxo_states_by_payment_hash(&t, payment_hash).await?;
 			let watchman_tip = t.get_highest_block(BlockTable::Watchmand).await?.map(|b| b.height);
 			let htlc_recvs_expired = htlc_recvs_expired(&htlc_vtxos, tip, watchman_tip);
-			if let Some((status, htlc_recvs_granted)) =
+			let canceled = if funded {
 				t.cancel_revocable_htlc_subscription(payment_hash, htlc_recvs_expired).await?
-			{
+			} else {
+				None
+			};
+			if let Some((status, htlc_recvs_granted)) = canceled {
 				// Stays committed even once the grants expired: the sender then
 				// refunds on-chain, where our preimage clause stays an alternative
 				// only until the sender spends the timeout branch.

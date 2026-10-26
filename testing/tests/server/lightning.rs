@@ -915,6 +915,54 @@ async fn cosign_htlc_send_to_pubkey(
 	builder.user_cosign(&keypairs, cosign_responses).unwrap().build_signed_vtxos()
 }
 
+/// Refunding HTLCs that never funded a payment must not cancel the receive
+/// that shares their payment hash.
+///
+/// Anyone can copy the payment hash from a published invoice, lock their own
+/// vtxos in HTLCs to it and revoke them right away.
+#[tokio::test]
+async fn unfunded_htlc_revocation_keeps_receive() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/unfunded_htlc_revocation_keeps_receive").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
+
+	let attacker = ctx.bark("attacker", &srv).funded(sat(200_000)).create().await;
+	let input_ids = attacker.board_and_confirm_and_register(&ctx, sat(100_000)).await;
+	let attacker_client = attacker.client().await;
+
+	let receiver = ctx.bark("receiver", &srv).create().await;
+	let invoice_info = receiver.bolt11_invoice(sat(50_000)).await;
+	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	let payment_hash = PaymentHash::from(&invoice);
+
+	let refund_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let htlcs = cosign_htlc_send_to_pubkey(
+		&ctx, &srv, &attacker_client, &input_ids, refund_key.public_key(), payment_hash,
+	).await;
+	attacker_client.register_vtxo_transactions_with_server(&htlcs).await.unwrap();
+
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let before = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
+		.await.unwrap().unwrap();
+
+	let keys = vec![refund_key; htlcs.len()];
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		htlcs.iter().cloned(),
+		ark::VtxoPolicy::new_pubkey(refund_key.public_key()),
+	).unwrap().generate_user_nonces(&keys).unwrap();
+	let mut rpc = srv.get_public_rpc().await;
+	rpc.request_lightning_pay_htlc_revocation(
+		protos::ArkoorPackageCosignRequest::from(builder.cosign_request()),
+	).await.expect("the attacker may refund their own uninitiated HTLCs");
+
+	let after = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
+		.await.unwrap().unwrap();
+	assert_eq!(after.id, before.id);
+	assert_eq!(after.status, before.status, "unfunded refund canceled the receive");
+}
+
 /// A malicious sender must not be able to hand a victim a `ServerHtlcSend` vtxo
 /// dressed up as an arkoor payment.
 ///

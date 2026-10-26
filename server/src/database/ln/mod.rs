@@ -581,6 +581,21 @@ impl<'t> Tx<'t> {
 		Ok(rows_affected == 1)
 	}
 
+	/// Whether any of the given HTLC-send vtxos funded a lightning payment attempt.
+	pub async fn htlc_vtxos_funded_payment_attempt(
+		&self,
+		vtxo_ids: &[VtxoId],
+	) -> anyhow::Result<bool> {
+		let stmt = self.prepare("
+			SELECT EXISTS(
+				SELECT 1 FROM lightning_payment_attempt_htlc_vtxo WHERE vtxo_id = ANY($1)
+			) AS funded;
+		").await?;
+		let ids = vtxo_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+		let row = self.query_one(&stmt, &[&ids]).await?;
+		Ok(row.get("funded"))
+	}
+
 	/// Cancel the latest receive subscription for `payment_hash` as part of
 	/// revoking the matching HTLC-send vtxos of an intra-Ark payment.
 	///
