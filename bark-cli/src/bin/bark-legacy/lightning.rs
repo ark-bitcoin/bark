@@ -33,6 +33,10 @@ pub enum LightningCommand {
 		/// Optional description to embed in the invoice as its memo
 		#[arg(long)]
 		description: Option<String>,
+		/// How many seconds the invoice can be paid for, at most the server's
+		/// invoice expiry. Defaults to the server's invoice expiry.
+		#[arg(long = "expiry", value_name = "SECONDS")]
+		expiry_secs: Option<u64>,
 		/// Wait for the incoming payment to settle
 		#[arg(long)]
 		wait: bool,
@@ -51,6 +55,10 @@ pub enum LightningCommand {
 		/// Optional description to embed in the invoice as its memo
 		#[arg(long)]
 		description: Option<String>,
+		/// How many seconds the invoice can be paid for, at most the server's
+		/// invoice expiry. Defaults to the server's invoice expiry.
+		#[arg(long = "expiry", value_name = "SECONDS")]
+		expiry_secs: Option<u64>,
 		/// Wait for the incoming payment to settle and be delivered
 		#[arg(long)]
 		wait: bool,
@@ -161,15 +169,26 @@ pub async fn execute_lightning_command(
 		LightningCommand::Receive(receive_cmd) => {
 			execute_receive_command(receive_cmd, wallet).await?;
 		},
-		LightningCommand::Invoice { amount, description, wait, token } => {
-			let invoice = wallet.bolt11_invoice(amount, description, token).await?;
+		LightningCommand::Invoice { amount, description, expiry_secs, wait, token } => {
+			let invoice = wallet.bolt11_invoice_builder()
+				.amount(amount)
+				.description(description)
+				.expiry(expiry_secs.map(Duration::from_secs))
+				.token(token)
+				.build().await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 			if wait {
 				wallet.try_claim_lightning_receive(invoice.into(), true).await?;
 			}
 		},
-		LightningCommand::InvoiceForAddress { address, amount, description, wait, token } => {
-			let invoice = wallet.bolt11_invoice_for_address(amount, address, description, token).await?;
+		LightningCommand::InvoiceForAddress { address, amount, description, expiry_secs, wait, token } => {
+			let invoice = wallet.bolt11_invoice_builder()
+				.amount(amount)
+				.claim_destination(address)
+				.description(description)
+				.expiry(expiry_secs.map(Duration::from_secs))
+				.token(token)
+				.build().await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 			if wait {
 				wallet.try_claim_lightning_receive(invoice.into(), true).await?;

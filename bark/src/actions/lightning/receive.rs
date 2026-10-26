@@ -320,6 +320,7 @@ pub(crate) async fn start_lightning_receive(
 	wallet: &Wallet,
 	amount: Amount,
 	description: Option<String>,
+	expiry: Option<Duration>,
 	token: Option<String>,
 	claim_destination: Option<ark::Address>,
 ) -> anyhow::Result<LightningReceive> {
@@ -369,7 +370,7 @@ pub(crate) async fn start_lightning_receive(
 		min_cltv_delta: requested_min_cltv_delta.into(),
 		mailbox_id: Some(mailbox_id.serialize()),
 		description,
-		expiry_secs: None,
+		expiry_secs: expiry.map(|e| e.as_secs()),
 	};
 
 	let resp = srv.client.start_lightning_receive(req).await?.into_inner();
@@ -378,6 +379,15 @@ pub(crate) async fn start_lightning_receive(
 	let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 		.context("invalid bolt11 invoice returned by Ark server")?;
 	validate_bolt11_payment_hash(&invoice, payment_hash)?;
+	if let Some(expiry) = expiry {
+		// Servers that predate custom expiries ignore the requested one.
+		if invoice.expiry_time().as_secs() != expiry.as_secs() {
+			bail!("Ark server returned an invoice expiring after {}s instead of the requested {}s, \
+				it may not support custom invoice expiries",
+				invoice.expiry_time().as_secs(), expiry.as_secs(),
+			);
+		}
+	}
 
 	let (_, key_index) = wallet.derive_store_next_keypair().await?;
 

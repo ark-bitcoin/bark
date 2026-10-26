@@ -62,7 +62,8 @@ pub fn router() -> Router<Arc<ServerState>> {
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Generates a new BOLT11 invoice for the specified amount via the Ark server, \
-		creating a pending Lightning receive.",
+		creating a pending Lightning receive. The invoice expires after `expiry_secs` if given, \
+		otherwise after the Ark server's invoice expiry, which is also the longest it accepts.",
 	tag = "lightning"
 )]
 #[debug_handler]
@@ -73,7 +74,12 @@ pub async fn generate_invoice(
 	let wallet = state.require_wallet()?;
 
 	let amount = Amount::from_sat(body.amount_sat);
-	let invoice = wallet.bolt11_invoice(amount, body.description, body.token).await
+	let invoice = wallet.bolt11_invoice_builder()
+		.amount(amount)
+		.description(body.description)
+		.expiry(body.expiry_secs.map(Duration::from_secs))
+		.token(body.token)
+		.build().await
 		.context("Failed to create invoice")?;
 
 	Ok(axum::Json(bark_json::cli::InvoiceInfo {
@@ -92,7 +98,9 @@ pub async fn generate_invoice(
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning \
-		receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox.",
+		receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox. \
+		The invoice expires after `expiry_secs` if given, otherwise after the Ark server's \
+		invoice expiry, which is also the longest it accepts.",
 	tag = "lightning"
 )]
 #[debug_handler]
@@ -107,7 +115,12 @@ pub async fn generate_invoice_for_address(
 		.badarg("address is not a valid Ark address")?;
 	wallet.validate_arkoor_address(&address).await
 		.badarg("invalid arkoor address")?;
-	let invoice = wallet.bolt11_invoice_for_address(amount, address, body.description, None).await
+	let invoice = wallet.bolt11_invoice_builder()
+		.amount(amount)
+		.claim_destination(address)
+		.description(body.description)
+		.expiry(body.expiry_secs.map(Duration::from_secs))
+		.build().await
 		.context("Failed to create invoice for address")?;
 
 	Ok(axum::Json(bark_json::cli::InvoiceInfo {

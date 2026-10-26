@@ -607,6 +607,27 @@ async fn bark_can_receive_lightning(
 }
 lightning_test!(bark_can_receive_lightning);
 
+#[tokio::test]
+async fn bark_invoice_expires_when_asked() {
+	require_bark_version!(> "0.8.0");
+
+	let ctx = TestContext::new("lightningd/bark_invoice_expires_when_asked").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
+		cfg.invoice_expiry = Duration::from_secs(3600);
+	}).create().await;
+	let bark = ctx.bark("bark", &srv).create().await;
+
+	let invoice_info = bark.try_bolt11_invoice_with_expiry(sat(10_000), Duration::from_secs(600))
+		.await.unwrap();
+	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	assert_eq!(invoice.expiry_time(), Duration::from_secs(600));
+
+	let err = bark.try_bolt11_invoice_with_expiry(sat(10_000), Duration::from_secs(3601))
+		.await.unwrap_err().to_alt_string();
+	assert!(err.contains("exceeds the maximum of 3600s"), "err: {err}");
+}
+
 /// Reproduces the vtxo pool "More than one change output" bug.
 ///
 /// The pool only holds 10_000 sat vtxos, so an ordinary (non-dust) 10_200 sat

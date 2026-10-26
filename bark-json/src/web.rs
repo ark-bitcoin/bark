@@ -585,6 +585,11 @@ pub struct LightningInvoiceRequest {
 	/// Optional description embedded in the invoice as its memo.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub description: Option<String>,
+	/// Optional number of seconds the invoice can be paid for. Defaults to,
+	/// and cannot exceed, the Ark server's invoice expiry.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[cfg_attr(feature = "utoipa", schema(minimum = 1))]
+	pub expiry_secs: Option<u64>,
 	/// Optional lightning receive token for authentication of the claim, if
 	/// the server requires one and there are no existing spendable VTXOs to
 	/// prove ownership of.
@@ -602,6 +607,11 @@ pub struct LightningInvoiceForAddressRequest {
 	/// Optional description embedded in the invoice as its memo.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub description: Option<String>,
+	/// Optional number of seconds the invoice can be paid for. Defaults to,
+	/// and cannot exceed, the Ark server's invoice expiry.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[cfg_attr(feature = "utoipa", schema(minimum = 1))]
+	pub expiry_secs: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]

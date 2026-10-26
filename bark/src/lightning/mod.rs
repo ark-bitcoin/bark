@@ -3,6 +3,7 @@ mod pay;
 mod receive;
 
 pub use self::pay::LightningSendOptions;
+pub use self::receive::Bolt11InvoiceBuilder;
 
 use anyhow::Context;
 use bitcoin::Amount;
