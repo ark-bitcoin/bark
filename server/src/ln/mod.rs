@@ -760,21 +760,22 @@ impl Server {
 
 			// Wait for a status change on our payment hash, with a
 			// periodic fallback in case a notification was missed.
-			tokio::select! {
-				_ = poll_interval.tick() => {},
-				rcv = update_rx.recv() => match rcv {
-					Ok(hash) => {
-						if hash != payment_hash {
-							continue;
-						}
+			// Updates for other hashes don't touch the database.
+			loop {
+				tokio::select! {
+					_ = poll_interval.tick() => break,
+					rcv = update_rx.recv() => match rcv {
+						Ok(hash) if hash == payment_hash => break,
+						Ok(_) => {},
+						Err(broadcast::error::RecvError::Lagged(n)) => {
+							warn!("payment update receiver lagged by {n} messages");
+							break;
+						},
+						Err(broadcast::error::RecvError::Closed) => {
+							bail!("payment update channel closed, probably shutting down");
+						},
 					},
-					Err(broadcast::error::RecvError::Lagged(n)) => {
-						warn!("payment update receiver lagged by {n} messages");
-					},
-					Err(broadcast::error::RecvError::Closed) => {
-						bail!("payment update channel closed, probably shutting down");
-					},
-				},
+				}
 			}
 		};
 
