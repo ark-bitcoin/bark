@@ -1,0 +1,5 @@
+- The lightning invoice endpoints accept an optional `expiry_secs`
+  `POST /api/v1/lightning/receives/invoice` and
+  `POST /api/v1/lightning/receives/invoice/for-address` use it to set how
+  long the invoice stays payable, up to the server's maximum.
+  [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)

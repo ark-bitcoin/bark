@@ -1,0 +1,2 @@
+- Add `expiry_secs` to `LightningInvoiceRequest` and `LightningInvoiceForAddressRequest`
+  [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)

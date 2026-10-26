@@ -1,0 +1,3 @@
+- Add `--expiry <SECONDS>` to `lightning invoice` and `lightning invoice-for-address`
+  It sets how long the invoice stays payable, up to the server's maximum.
+  [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)

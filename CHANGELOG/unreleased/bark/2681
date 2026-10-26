@@ -1,0 +1,6 @@
+- Add `Wallet::bolt11_invoice_builder` to create lightning receive invoices
+  Besides the description, token and claim destination, it can set the
+  invoice expiry, at most the server's `invoice_expiry`. If the server
+  ignores it, building the invoice fails. `bolt11_invoice` and
+  `bolt11_invoice_for_address` are unchanged.
+  [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)
