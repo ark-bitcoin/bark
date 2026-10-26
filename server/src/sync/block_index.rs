@@ -24,6 +24,9 @@ pub struct BlockIndex {
 	pub(super) listeners: Vec<Box<dyn ChainEventListener>>,
 	/// Which block table this index uses for persistence
 	block_table: BlockTable,
+	/// Whether the listeners may hold blocks above the highest stored block,
+	/// and must be rolled back to it before the sync goes on.
+	pending_reorg: bool,
 }
 
 impl BlockIndex {
@@ -62,7 +65,10 @@ impl BlockIndex {
 
 		let (chain_tip_tx, _) = watch::channel(chain_tip);
 		let (sync_height_tx, _ ) = watch::channel(sync_tip);
-		Ok(Self { chain_tip_tx, sync_height_tx, bitcoind, db, listeners, block_table })
+		// Roll listeners back to the stored tip once, in case a previous run
+		// stopped between removing blocks and notifying them.
+		let pending_reorg = true;
+		Ok(Self { chain_tip_tx, sync_height_tx, bitcoind, db, listeners, block_table, pending_reorg })
 	}
 
 	/// Get the latest observed tip of bitcoind
@@ -125,6 +131,10 @@ impl BlockIndex {
 		let mut stored_tip = self.db.read(async |t| t.get_highest_block(self.block_table).await).await
 			.context("failed to read the highest stored block")?
 			.context("block index holds no blocks")?;
+
+		if self.pending_reorg {
+			self.notify_reorg(stored_tip).await?;
+		}
 
 		if stored_tip == bitcoind_tip {
 			// Only republish here, a stored tip below the chain tip may be orphaned.
@@ -196,20 +206,27 @@ impl BlockIndex {
 	///
 	/// # Ordering
 	///
-	/// Listeners are notified *before* the database is updated. This ensures we
-	/// don't commit to the new tip until all listeners have successfully processed
-	/// the reorg. If any listener fails, the database remains unchanged and the
-	/// same reorg will be retried on the next sync cycle.
+	/// The published sync height is lowered to the fork point and the orphaned
+	/// blocks are removed from the database *before* listeners are notified. A
+	/// listener may commit its rollback while another fails, so
+	/// [Self::pending_reorg] retries it on the next sync before anything else.
+	/// Should the chain switch back meanwhile, the blocks above the fork point
+	/// are replayed, since the index no longer holds them.
 	///
 	/// # Idempotency
 	///
 	/// Listeners must handle being called multiple times for the same reorg due to
-	/// retries. Orphaned blocks are not provided directly - listeners can look them
-	/// up by height if needed before the database is updated.
-	async fn org_out_blocks_above(&self, block: BlockRef) -> anyhow::Result<()> {
+	/// retries. Orphaned blocks are not provided directly.
+	async fn org_out_blocks_above(&mut self, block: BlockRef) -> anyhow::Result<()> {
 		// Lower the published tip first, it must never point above the stored tip.
 		self.update_sync_height(block);
+		self.pending_reorg = true;
+		self.db.write(async |t| t.remove_blocks_above(self.block_table, block.height).await).await?;
+		self.notify_reorg(block).await
+	}
 
+	/// Rolls all listeners back to `block` and clears [Self::pending_reorg].
+	async fn notify_reorg(&mut self, block: BlockRef) -> anyhow::Result<()> {
 		let results = join_all(self.listeners.iter().map(|listener| {
 			listener.on_reorg(block)
 		})).await;
@@ -221,7 +238,7 @@ impl BlockIndex {
 			}
 		}
 
-		self.db.write(async |t| t.remove_blocks_above(self.block_table, block.height).await).await?;
+		self.pending_reorg = false;
 		Ok(())
 	}
 
