@@ -106,10 +106,13 @@ pub struct FeeEstimator {
 
 impl FeeEstimator {
 	fn new(
-		initial: OnchainFeeRates,
+		mut initial: OnchainFeeRates,
 		history_duration: Duration,
 		max_fee_rate: Option<FeeRate>,
 	) -> Self {
+		if let Some(max) = max_fee_rate {
+			initial.clamp(max);
+		}
 		Self {
 			fee_rates: parking_lot::RwLock::new([(initial, Instant::now())].into()),
 			history_duration, max_fee_rate,
@@ -388,5 +391,20 @@ mod test {
 		assert_eq!(est.check_offboard_fee_rate(rate(3), d), Err(OffboardFeeRateError::TooLow));
 		// 4 meets the new floor and stays within a regular rate in history.
 		assert_eq!(est.check_offboard_fee_rate(rate(4), d), Ok(()));
+	}
+
+	#[test]
+	fn initial_rates_obey_max_fee_rate() {
+		let fallback = OnchainFeeRates { fast: rate(25), regular: rate(10), slow: rate(4) };
+		let est = FeeEstimator::new(fallback, Duration::from_secs(3600), Some(rate(5)));
+		assert_eq!(est.get_current_rates(), OnchainFeeRates {
+			fast: rate(5), regular: rate(5), slow: rate(4),
+		});
+
+		// The startup sample must not authorize offboards above the ceiling.
+		est.update(fallback);
+		let d = Duration::from_secs(900);
+		assert_eq!(est.check_offboard_fee_rate(rate(10), d), Err(OffboardFeeRateError::TooHigh));
+		assert_eq!(est.check_offboard_fee_rate(rate(5), d), Ok(()));
 	}
 }
