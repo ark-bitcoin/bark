@@ -226,8 +226,11 @@ impl<I: Copy + Eq + Hash + fmt::Debug> Ledger<I> {
 				Direction::Incoming => incoming += htlc.amount,
 				Direction::Outgoing => outgoing += htlc.amount,
 			}
+			// Coverage ending at the maximum height never drops.
 			if let Some(end) = htlc.coverage_end(self.expiry_delta) {
-				drops.push((end + BlockDelta::new(1), htlc.direction, htlc.amount));
+				if let Some(height) = end.checked_add(BlockDelta::new(1)) {
+					drops.push((height, htlc.direction, htlc.amount));
+				}
 			}
 		}
 		if incoming < outgoing {
@@ -316,6 +319,16 @@ mod tests {
 	use super::*;
 
 	const DELTA: BlockDelta = BlockDelta::new(10);
+
+	#[test]
+	fn max_expiry_keeps_settlement_gap() {
+		let mut ledger = Ledger::new(BlockDelta::new(1));
+		let amount = Amount::from_sat(1000);
+		ledger.add_incoming("in", amount, BlockHeight::MAX).unwrap();
+		let err = ledger.add_outgoing("out", amount, BlockHeight::MAX).unwrap_err();
+		assert!(matches!(err, Error::CoverageInvariant { height: BlockHeight::MAX, .. }));
+		assert!(ledger.get("out").is_none());
+	}
 
 	#[test]
 	fn empty_ledger_is_valid() {
