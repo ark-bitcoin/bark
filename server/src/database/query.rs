@@ -177,6 +177,10 @@ pub async fn get_vtxos_by_id(
 ///
 /// The page holds at most `limit` VTXOs ordered by id, starting after the
 /// VTXO `after` when given.
+///
+/// The pagination doesn't take into account new VTXOs sent to the policy
+/// between 2 requests. We assume it is unlikely to happen in the context
+/// of a recovery.
 pub async fn get_vtxos_by_policy_page(
 	tx: &PgTransaction<'_>,
 	policy: &VtxoPolicy,

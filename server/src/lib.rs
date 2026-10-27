@@ -473,9 +473,7 @@ impl Server {
 			forfeit_nonces: parking_lot::Mutex::new(TimedEntryMap::new()),
 			vtxos_in_flux: VtxosInFlux::new(),
 			payment_guards,
-			xpub_recovery_queue: tokio::sync::Semaphore::new(
-				cfg.max_concurrent_xpub_recoveries.saturating_add(recovery::XPUB_RECOVERY_QUEUE_SIZE),
-			),
+			xpub_recovery_queue: tokio::sync::Semaphore::new(recovery::XPUB_RECOVERY_QUEUE_SIZE),
 			xpub_recovery_permits: tokio::sync::Semaphore::new(cfg.max_concurrent_xpub_recoveries),
 			config: cfg.clone(),
 			db,
