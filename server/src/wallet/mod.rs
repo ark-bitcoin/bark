@@ -115,6 +115,7 @@ impl PersistedWallet {
 		let fresh = init.is_none();
 
 		let desc = format!("tr({}/0/*)", xpriv);
+		#[allow(deprecated)]
 		let mut wallet = if let Some(changeset) = init {
 			bdk_wallet::Wallet::load()
 				.descriptor(KEYCHAIN, Some(desc))
@@ -205,6 +206,7 @@ impl PersistedWallet {
 			..Default::default()
 		};
 		let fee = psbt.fee().context("error calculating fee")?;
+		#[allow(deprecated)]
 		let finalized = self.sign(&mut psbt, opts).context("error signing psbt")?;
 		ensure!(finalized, "tx not finalized after signing, psbt: {}", psbt.serialize().as_hex());
 		let ret = psbt.extract_tx().context("error extracting finalized tx from psbt")?;
@@ -672,6 +674,7 @@ mod builder_test {
 		(wallet, coins)
 	}
 
+	#[allow(deprecated)]
 	fn sign(wallet: &mut Wallet, mut psbt: Psbt) -> Transaction {
 		#[allow(deprecated)]
 		let opts = bdk_wallet::SignOptions { trust_witness_utxo: true, ..Default::default() };
