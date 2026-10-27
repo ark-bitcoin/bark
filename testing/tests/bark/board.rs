@@ -96,6 +96,7 @@ async fn board_all_bark() {
 /// never confirm: the board action must fail the board (vtxo dropped, movement
 /// failed) instead of re-broadcasting and retrying forever.
 #[tokio::test]
+#[allow(deprecated)]
 async fn board_fails_when_funding_tx_double_spent() {
 	require_bark_version!(> "0.5.0");
 
@@ -624,6 +625,7 @@ async fn board_psbt_unfinalized_fails_when_input_double_spent() {
 /// can only fail: classifying before broadcasting is what turns that into a
 /// teardown rather than an error retried forever.
 #[tokio::test]
+#[allow(deprecated)]
 async fn board_fails_when_input_double_spent_before_broadcast() {
 	require_bark_version!(> "0.6.2");
 
