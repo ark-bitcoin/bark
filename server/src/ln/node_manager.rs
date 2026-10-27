@@ -391,9 +391,9 @@ impl LightningManager {
 			// it: `initiate_lightning_payment` checks the same thing, but a
 			// receive registered after that check would otherwise land here
 			// unvalidated and be paid out of our vtxopool.
-			// `refused` is whether the receive was left unpromoted. Once this
-			// payment promoted it, a later failure must keep the link: revoking
-			// then has to see the receive and refuse while HTLC-recvs are granted.
+			// `refused` is whether the receive was left unpromoted. Any other
+			// error may have promoted it and must keep the link: revoking then
+			// has to see the receive and refuse while HTLC-recvs are granted.
 			let res = match validate_intra_ark_payment(&sub, &invoice, amount) {
 				Ok(()) => self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await
 					.map_err(|e| {
@@ -503,12 +503,22 @@ impl LightningManager {
 		// payment settles off-CLN, so we don't want the HTLCs locked.
 		// NB: we only issue the RPC here, not the full cancel_invoice
 		// flow - we just set the subscription to Accepted, not Canceled.
-		let mut hold_client = self.node_by_id(subscription.lightning_node_id)
-			.context("invoice cannot be canceled: node is now offline")?
-			.hold_rpc.context("node doesn't support hold anymore")?;
-		hold_client.cancel(hold_plugin::CancelRequest {
-			payment_hash: payment_hash.to_vec(),
-		}).await?;
+		// The payment is committed to the receive from here on, so a failed
+		// cancel must not fail it: the receive would no longer be claimable
+		// as a self-payment, and the sender couldn't revoke while HTLC-recvs
+		// are granted.
+		let cancel = async {
+			let mut hold_client = self.node_by_id(subscription.lightning_node_id)
+				.context("node is now offline")?
+				.hold_rpc.context("node doesn't support hold anymore")?;
+			hold_client.cancel(hold_plugin::CancelRequest {
+				payment_hash: payment_hash.to_vec(),
+			}).await?;
+			anyhow::Ok(())
+		};
+		if let Err(e) = cancel.await {
+			warn!("Could not cancel the hold invoice of intra-Ark payment {payment_hash}: {e:#}");
+		}
 
 		// The plugin no longer serves the invoice; the sender's htlc-send
 		// vtxos are what covers this receive from here on.
