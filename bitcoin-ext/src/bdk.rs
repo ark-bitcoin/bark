@@ -430,6 +430,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 				trust_witness_utxo: true,
 				..Default::default()
 			};
+			#[allow(deprecated)]
 			let finalized = wallet.sign(&mut psbt, opts)
 				.map_err(|e| CpfpInternalError::Signer(e))?;
 			if !finalized {
