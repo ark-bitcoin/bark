@@ -20,7 +20,10 @@ use bitcoind_async_client::Client as BitcoindClient;
 use tracing::{error, warn};
 
 use bitcoin_ext::BlockRef;
-use bitcoin_ext::bdk::{TrustedBalance, TrustedCanonicalization, WalletExt, KEYCHAIN};
+use bitcoin_ext::bdk::{
+	CpfpInternalError, TrustedBalance, TrustedCanonicalization, WalletExt, KEYCHAIN,
+};
+use bitcoin_ext::cpfp::MakeCpfpFees;
 
 use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::bitcoind as bcd;
@@ -195,6 +198,15 @@ impl PersistedWallet {
 			confirmed_utxos: confirmed.into_iter().map(|u| u.outpoint).collect(),
 			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint).collect(),
 		}
+	}
+
+	/// Create and sign a CPFP child spending the fee anchor of `tx`.
+	pub fn make_signed_p2a_cpfp(
+		&mut self,
+		tx: &Transaction,
+		fees: MakeCpfpFees,
+	) -> Result<Transaction, CpfpInternalError> {
+		self.wallet.make_signed_p2a_cpfp(tx, fees, &self.signers)
 	}
 
 	/// Finish the PSBT by signing it and committing it to the wallet.

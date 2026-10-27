@@ -133,7 +133,7 @@ async fn is_trusted() {
 	let parent_tx = build_zero_fee_tx_with_p2a_output(&client);
 
 	let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
-	let child_tx = wallet.make_signed_p2a_cpfp(&parent_tx, fees).unwrap();
+	let child_tx = wallet.make_signed_p2a_cpfp(&parent_tx, fees, &signers).unwrap();
 	let child_txid = child_tx.compute_txid();
 	client.submit_package(&[&parent_tx, &child_tx]).unwrap();
 	sync_wallet(&mut wallet, &client);

@@ -426,6 +426,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		&mut self,
 		tx: &Transaction,
 		fees: MakeCpfpFees,
+		signers: &SignersContainer,
 	) -> Result<Transaction, CpfpInternalError> {
 		let wallet = self.borrow_mut();
 		let (fee_anchor_point, fee_anchor_txout) = tx.fee_anchor()
@@ -465,8 +466,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 				trust_witness_utxo: true,
 				..Default::default()
 			};
-			#[allow(deprecated)]
-			let finalized = wallet.sign(&mut psbt, opts)
+			let finalized = wallet.sign_with_signers(&mut psbt, &[signers], opts)
 				.map_err(|e| CpfpInternalError::Signer(e))?;
 			if !finalized {
 				return Err(CpfpInternalError::FinalizeError("finalization failed".into()));

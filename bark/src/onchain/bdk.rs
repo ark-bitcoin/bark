@@ -263,7 +263,7 @@ impl OnchainWalletTrait for OnchainWallet {
 		tx: &Transaction,
 		fees: MakeCpfpFees,
 	) -> Result<Transaction, CpfpError> {
-		WalletExt::make_signed_p2a_cpfp(&mut self.inner, tx, fees)
+		WalletExt::make_signed_p2a_cpfp(&mut self.inner, tx, fees, &self.signers)
 			.inspect_err(|e| error!("Error creating signed P2A CPFP: {}", e))
 			.map_err(cpfp_internal_to_error)
 	}
