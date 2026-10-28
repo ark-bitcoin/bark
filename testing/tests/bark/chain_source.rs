@@ -164,6 +164,7 @@ async fn chain_source_block() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn chain_source_txs_spending_inputs() {
 	let (ctx, chain_source) = setup_chain_source("chain_source/txs_spending_inputs").await;
 	let h = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);

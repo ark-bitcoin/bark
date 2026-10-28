@@ -163,6 +163,7 @@ impl OnchainWallet {
 		let desc = bdk_wallet::template::Bip86(xpriv, KeychainKind::External);
 
 		let changeset = db.initialize_bdk_wallet().await.context("error reading bdk wallet state")?;
+		#[allow(deprecated)]
 		let wallet_opt = bdk_wallet::Wallet::load()
 			.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
 			.extract_keys()
@@ -247,6 +248,7 @@ impl OnchainWalletTrait for OnchainWallet {
 			trust_witness_utxo: true,
 			..Default::default()
 		};
+		#[allow(deprecated)]
 		let finalized = self.inner.sign(&mut psbt, opts).context("signing error")?;
 		ensure!(finalized, "failed to succesfully sign the tx");
 		let tx = psbt.clone().extract_tx()?;
@@ -412,6 +414,7 @@ impl OnchainWallet {
 			trust_witness_utxo: true,
 			..Default::default()
 		};
+		#[allow(deprecated)]
 		let finalized = self.inner.sign(&mut psbt, opts).context("signing error")?;
 		ensure!(finalized, "failed to succesfully sign the tx");
 		Ok(psbt)

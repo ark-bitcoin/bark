@@ -54,6 +54,7 @@ fn sync_wallet(wallet: &mut Wallet, bitcoind: &impl RpcApi) {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn is_trusted() {
 	let ctx = TestContext::new("bitcoin_ext/is_trusted").await;
 	let bitcoind = ctx.bitcoind();
@@ -159,6 +160,7 @@ async fn is_trusted() {
 /// the wallet's canonical view, which is what BDK's `list_unspent`
 /// reads from.
 #[tokio::test]
+#[allow(deprecated)]
 async fn balance_perf_deep_unconfirmed_fanout() {
 	let ctx = TestContext::new("bitcoin_ext/balance_perf").await;
 	let bitcoind = ctx.bitcoind();
@@ -225,6 +227,7 @@ async fn balance_perf_deep_unconfirmed_fanout() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn deep_reorg_wallet_sync() {
 	let ctx = TestContext::new("bitcoin_ext/deep_reorg").await;
 	let bitcoind = ctx.bitcoind();
