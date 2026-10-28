@@ -1,0 +1,10 @@
+- Fix a panic and make the `pop` scheme check stricter
+  The parser no longer panics when a multi-byte character crosses the end
+  of `bitcoin:` or `req-`. `PopConfig::safe` now reads the scheme before
+  the first `:`. A scheme that is missing, invalid, one letter long, starts
+  with `web+`, or opens a web browser is not safe. Before, values such as
+  `" https:"` were safe, but a browser opens them as `https:`. The
+  `PopConfig` doc no longer tells wallets to percent-decode the prefix a
+  second time.
+  [#2686](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2686)
+  - A `req-pop` value without a valid scheme now makes the URI fail to parse
