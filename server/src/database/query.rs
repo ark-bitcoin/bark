@@ -325,7 +325,10 @@ pub async fn delete_pending_participations_for_inputs(
 			WHERE rp.round_id IS NULL AND rpi.vtxo_id = ANY($1)
 		),
 		deleted AS (
-			DELETE FROM round_participation WHERE id IN (SELECT id FROM stale) RETURNING id
+			-- recheck: a concurrent finish_round may have assigned it meanwhile
+			DELETE FROM round_participation
+			WHERE id IN (SELECT id FROM stale) AND round_id IS NULL
+			RETURNING id
 		),
 		_inputs AS (
 			DELETE FROM round_part_input WHERE participation_id IN (SELECT id FROM deleted)
