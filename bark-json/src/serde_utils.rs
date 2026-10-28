@@ -59,3 +59,26 @@ pub mod fee_rate_sat_per_kvb {
 	}
 }
 
+#[cfg(test)]
+mod test {
+	use bitcoin::FeeRate;
+	use serde::{Deserialize, Serialize};
+
+	#[derive(Debug, PartialEq, Serialize, Deserialize)]
+	struct Rates {
+		#[serde(with = "super::fee_rate_sat_per_kvb")]
+		rate: FeeRate,
+		#[serde(with = "super::fee_rate_sat_per_kvb::opt")]
+		opt: Option<FeeRate>,
+	}
+
+	#[test]
+	fn fee_rate_round_trips_at_the_top() {
+		for kvb in u64::MAX - 3..=u64::MAX {
+			let json = format!(r#"{{"rate":{0},"opt":{0}}}"#, kvb);
+			let rates = serde_json::from_str::<Rates>(&json).unwrap();
+			let again = serde_json::to_string(&rates).unwrap();
+			assert_eq!(serde_json::from_str::<Rates>(&again).unwrap(), rates);
+		}
+	}
+}
