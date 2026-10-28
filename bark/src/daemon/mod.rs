@@ -311,6 +311,10 @@ impl DaemonProcess {
 					if let Err(e) = wallet.sync_pending_offboards().await {
 						warn!("An error occured while syncing pending offboards: {e:#}");
 					}
+
+					if let Err(e) = wallet.sync_pending_lightning_send_vtxos().await {
+						warn!("An error occurred while syncing pending lightning sends: {e:#}");
+					}
 				}
 
 				if let Err(e) = wallet.sync_onchain().await {
