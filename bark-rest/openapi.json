@@ -1438,7 +1438,7 @@
           "lightning"
         ],
         "summary": "Create a BOLT11 invoice",
-        "description": "Generates a new BOLT11 invoice for the specified amount via the Ark server, creating a pending Lightning receive.",
+        "description": "Generates a new BOLT11 invoice for the specified amount via the Ark server, creating a pending Lightning receive. The invoice expires after `expiry_secs` if given, otherwise after the Ark server's invoice expiry, which is also the longest it accepts.",
         "operationId": "generate_invoice",
         "requestBody": {
           "content": {
@@ -1480,7 +1480,7 @@
           "lightning"
         ],
         "summary": "Create a BOLT11 invoice for an Ark address",
-        "description": "Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox.",
+        "description": "Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox. The invoice expires after `expiry_secs` if given, otherwise after the Ark server's invoice expiry, which is also the longest it accepts.",
         "operationId": "generate_invoice_for_address",
         "requestBody": {
           "content": {
@@ -5921,6 +5921,15 @@
               "null"
             ],
             "description": "Optional description embedded in the invoice as its memo."
+          },
+          "expiry_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Optional number of seconds the invoice can be paid for. Defaults to,\nand cannot exceed, the Ark server's invoice expiry.",
+            "minimum": 1
           }
         }
       },
@@ -5942,6 +5951,15 @@
               "null"
             ],
             "description": "Optional description embedded in the invoice as its memo."
+          },
+          "expiry_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Optional number of seconds the invoice can be paid for. Defaults to,\nand cannot exceed, the Ark server's invoice expiry.",
+            "minimum": 1
           },
           "token": {
             "type": [

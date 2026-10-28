@@ -49,7 +49,7 @@ Name | Type | Description  | Required | Notes
 > models::InvoiceInfo generate_invoice(lightning_invoice_request)
 Create a BOLT11 invoice
 
-Generates a new BOLT11 invoice for the specified amount via the Ark server, creating a pending Lightning receive.
+Generates a new BOLT11 invoice for the specified amount via the Ark server, creating a pending Lightning receive. The invoice expires after `expiry_secs` if given, otherwise after the Ark server's invoice expiry, which is also the longest it accepts.
 
 ### Parameters
 
@@ -79,7 +79,7 @@ Name | Type | Description  | Required | Notes
 > models::InvoiceInfo generate_invoice_for_address(lightning_invoice_for_address_request)
 Create a BOLT11 invoice for an Ark address
 
-Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox.
+Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox. The invoice expires after `expiry_secs` if given, otherwise after the Ark server's invoice expiry, which is also the longest it accepts.
 
 ### Parameters
 

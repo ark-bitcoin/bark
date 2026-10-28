@@ -67,7 +67,7 @@ rate limits, a caller can fill the disk:
 
 - `StartLightningReceive` creates a hold invoice on the Lightning node and
   an HTLC subscription row in the database for every unique payment hash.
-  The invoice expires after `invoice_expiry` (default 48 hours), but the
+  The invoice expires after at most `invoice_expiry` (default 48 hours), but the
   caller can submit new payment hashes as fast as the proxy allows. Give
   this method a strict rate limit. Set `max_ln_receive_amount = 0` to
   disable it if you do not offer lightning receives.

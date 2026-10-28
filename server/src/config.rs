@@ -385,7 +385,8 @@ pub struct Config {
 	///
 	/// Default is 250
 	pub max_user_invoice_cltv_delta: BlockDelta,
-	/// The duration after which a generated invoice will expire.
+	/// The duration after which a generated invoice will expire, unless the
+	/// client asks for a shorter one. It is also the longest a client can ask for.
 	#[serde(with = "utils::serde::duration")]
 	pub invoice_expiry: Duration,
 	/// The duration for which the server will hold inbound HTLC(s) while

@@ -1,0 +1,5 @@
+- Clients can choose how long a lightning receive invoice stays payable
+  `StartLightningReceive` accepts an optional `expiry_secs`.
+  `invoice_expiry` stays the default and is now also the maximum: a longer
+  expiry, or zero, is rejected.
+  [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)

@@ -407,6 +407,9 @@ message StartLightningReceiveRequest {
 	uint32 min_cltv_delta = 3;
 	optional bytes mailbox_id = 4;
 	optional string description = 5;
+	// Seconds until the invoice expires. Defaults to the server's invoice
+	// expiry, which is also the longest it accepts.
+	optional uint64 expiry_secs = 6;
 }
 
 message StartLightningReceiveResponse {

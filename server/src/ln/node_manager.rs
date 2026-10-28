@@ -88,7 +88,6 @@ pub struct LightningManager {
 	db: database::Db,
 	settler: Arc<HtlcSettler>,
 	invoice_poll_interval: Duration,
-	invoice_expiry: Duration,
 	htlc_expiry_delta: BlockDelta,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 
@@ -176,7 +175,6 @@ impl LightningManager {
 			payment_update_tx,
 			payment_update_rx,
 			invoice_poll_interval: config.invoice_poll_interval,
-			invoice_expiry: config.invoice_expiry,
 			htlc_expiry_delta: config.htlc_expiry_delta,
 		})
 	}
@@ -534,6 +532,7 @@ impl LightningManager {
 		payment_hash: PaymentHash,
 		amount: Amount,
 		cltv_delta: BlockDelta,
+		expiry: Duration,
 		description: Option<String>,
 		receiver_mailbox_id: Option<MailboxIdentifier>,
 	) -> anyhow::Result<Bolt11Invoice> {
@@ -544,7 +543,7 @@ impl LightningManager {
 			payment_hash: payment_hash.to_vec(),
 			amount_msat: amount.to_msat(),
 			min_final_cltv_expiry: Some(cltv_delta.into()),
-			expiry: Some(self.invoice_expiry.as_secs()),
+			expiry: Some(expiry.as_secs()),
 			routing_hints: vec![],
 			description: description.map(hold_plugin::invoice_request::Description::Memo),
 		}).await?.into_inner();

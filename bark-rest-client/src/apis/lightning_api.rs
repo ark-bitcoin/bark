@@ -108,7 +108,7 @@ pub async fn cancel_receive(configuration: &configuration::Configuration, identi
     }
 }
 
-/// Generates a new BOLT11 invoice for the specified amount via the Ark server, creating a pending Lightning receive.
+/// Generates a new BOLT11 invoice for the specified amount via the Ark server, creating a pending Lightning receive. The invoice expires after `expiry_secs` if given, otherwise after the Ark server's invoice expiry, which is also the longest it accepts.
 pub async fn generate_invoice(configuration: &configuration::Configuration, lightning_invoice_request: models::LightningInvoiceRequest) -> Result<models::InvoiceInfo, Error<GenerateInvoiceError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_lightning_invoice_request = lightning_invoice_request;
@@ -149,7 +149,7 @@ pub async fn generate_invoice(configuration: &configuration::Configuration, ligh
     }
 }
 
-/// Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox.
+/// Generates a new BOLT11 invoice. When paid, the wallet claims the Lightning receive and forwards the resulting Ark VTXO to the supplied Ark address mailbox. The invoice expires after `expiry_secs` if given, otherwise after the Ark server's invoice expiry, which is also the longest it accepts.
 pub async fn generate_invoice_for_address(configuration: &configuration::Configuration, lightning_invoice_for_address_request: models::LightningInvoiceForAddressRequest) -> Result<models::InvoiceInfo, Error<GenerateInvoiceForAddressError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_lightning_invoice_for_address_request = lightning_invoice_for_address_request;

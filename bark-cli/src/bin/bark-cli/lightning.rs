@@ -39,6 +39,10 @@ pub enum LightningCommand {
 		/// Optional description to embed in the invoice as its memo
 		#[arg(long)]
 		description: Option<String>,
+		/// How many seconds the invoice can be paid for, at most the server's
+		/// invoice expiry. Defaults to the server's invoice expiry.
+		#[arg(long = "expiry", value_name = "SECONDS")]
+		expiry_secs: Option<u64>,
 		/// Wait for the incoming payment to settle
 		#[arg(long)]
 		wait: bool,
@@ -57,6 +61,10 @@ pub enum LightningCommand {
 		/// Optional description to embed in the invoice as its memo
 		#[arg(long)]
 		description: Option<String>,
+		/// How many seconds the invoice can be paid for, at most the server's
+		/// invoice expiry. Defaults to the server's invoice expiry.
+		#[arg(long = "expiry", value_name = "SECONDS")]
+		expiry_secs: Option<u64>,
 		/// Wait for the incoming payment to settle and be delivered
 		#[arg(long)]
 		wait: bool,
@@ -142,10 +150,11 @@ pub async fn execute_lightning_command(
 		LightningCommand::Receive(receive_cmd) => {
 			execute_receive_command(receive_cmd, config).await?;
 		},
-		LightningCommand::Invoice { amount, description, wait, token } => {
+		LightningCommand::Invoice { amount, description, expiry_secs, wait, token } => {
 			let req = models::LightningInvoiceRequest {
 				amount_sat: amount.to_sat(),
 				description,
+				expiry_secs,
 				token,
 			};
 			let resp = lightning_api::generate_invoice(config, req).await.rest()?;
@@ -155,11 +164,12 @@ pub async fn execute_lightning_command(
 				wait_for_lightning_receive(config, &invoice).await?;
 			}
 		},
-		LightningCommand::InvoiceForAddress { address, amount, description, wait } => {
+		LightningCommand::InvoiceForAddress { address, amount, description, expiry_secs, wait } => {
 			let req = models::LightningInvoiceForAddressRequest {
 				amount_sat: amount.to_sat(),
 				address: address.to_string(),
 				description,
+				expiry_secs,
 			};
 			let resp = lightning_api::generate_invoice_for_address(config, req).await.rest()?;
 			let invoice = resp.invoice.clone();
