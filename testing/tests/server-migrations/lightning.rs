@@ -19,6 +19,7 @@ use ark_testing::util::{FutureExt, poll_interval};
 use bark::actions::lightning::pay::LightningSendState;
 use bark::actions::lightning::receive::LightningReceiveState;
 use cln_rpc::plugins::hold;
+use server::database::Db;
 use server_rpc::protos::mailbox_server::mailbox_message::Message as MailboxMsg;
 
 /// Run `<exec> --version` and return its stdout.
@@ -180,6 +181,18 @@ async fn external_send_settles_after_upgrade() {
 		},
 		other => panic!("payment should be paid after settle, got {:?}", other),
 	}
+
+	// The attempt the old server stored was ported into cln_xpay as pending,
+	// and the upgraded server ended it along with the attempt.
+	let db = Db::connect(&srv.config().postgres.clone()).await.expect("connect to db");
+	let xpay_status = db.read(async |t| {
+		Ok(t.query_opt(
+			"SELECT status::text FROM cln_xpay WHERE payment_hash = $1",
+			&[&payment_hash.to_string()],
+		).await?.map(|r| r.get::<_, String>(0)))
+	}).await.expect("query cln_xpay");
+	assert_eq!(xpay_status.as_deref(), Some("success"),
+		"the ported xpay call must end with the attempt");
 
 	let balance = wallet.balance().await.expect("balance");
 	assert_eq!(balance.spendable, board_amount - invoice_amount);

@@ -102,6 +102,7 @@ impl ClnXpayClient {
 		max_routing_fee: Amount,
 		max_cltv_expiry_delta: BlockDelta,
 		retry_for: Duration,
+		label: Option<String>,
 	) {
 		let mut rpc = self.rpc.clone();
 		let payment_hash = invoice.payment_hash();
@@ -110,6 +111,7 @@ impl ClnXpayClient {
 		// dropping this loses the reason entirely.
 		let pay_error = match call_xpay(
 			&mut rpc, &invoice, payment_amount, max_routing_fee, max_cltv_expiry_delta, retry_for,
+			label,
 		).await {
 			Ok(_preimage) => {
 				// NB we don't do db stuff when it's succesful, because
@@ -542,6 +544,7 @@ async fn call_xpay(
 	max_routing_fee: Amount,
 	max_cltv_expiry_delta: BlockDelta,
 	retry_for: Duration,
+	label: Option<String>,
 ) -> anyhow::Result<Preimage> {
 	let payment_hash = invoice.payment_hash();
 
@@ -565,7 +568,7 @@ async fn call_xpay(
 		partial_msat: None,
 		layers: vec![],
 		payer_note: None,
-		label: None,
+		label,
 		localinvreqid: None,
 		dev_use_shadow: None,
 	}).await;

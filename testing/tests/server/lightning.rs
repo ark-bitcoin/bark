@@ -834,6 +834,10 @@ async fn refuse_generic_spends_of_htlc_send_vtxo_while_payment_in_flight() {
 		WHERE payment_hash = $1 AND status NOT IN ('failed', 'succeeded')
 	", &[&payment_hash.to_string()]).await?)).await.unwrap();
 	assert_eq!(open_attempts.len(), 1, "the payment should still be in flight");
+	assert_eq!(cln_xpay_status(&db, payment_hash).await, None,
+		"an intra-Ark payment makes no xpay call");
+	assert_eq!(cln_hold_status(&db, payment_hash).await.as_deref(), Some("cancelled"),
+		"accepting an intra-Ark payment cancels the hold invoice on the node");
 
 	// 1. Offboard: the server would co-sign a forfeit and pay out on-chain.
 	force_unlock_htlc_vtxos(&client, &htlc_vtxo_ids).await;
@@ -1141,7 +1145,13 @@ async fn revoked_htlc_send_vtxo_can_be_offboarded() {
 	let invoice = lightning.external.invoice(
 		Some(btc(1)), "test_payment", "A test payment",
 	).await;
+	let payment_hash: ark::lightning::PaymentHash =
+		Bolt11Invoice::from_str(&invoice).unwrap().into();
 	bark_1.pay_lightning_wait(invoice, None).await;
+
+	// The xpay call failed along with the attempt.
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	assert_eq!(cln_xpay_status(&db, payment_hash).await.as_deref(), Some("fail"));
 
 	// The revocation gave the funds back as a plain pubkey vtxo.
 	let vtxos = bark_1.vtxos().await;
@@ -1234,6 +1244,12 @@ async fn server_should_release_hold_invoice_when_subscription_is_canceled() {
 	// The payment should fail because the subscription was canceled (receiver didn't claim)
 	let err = payment_result.await.unwrap().unwrap_err().to_alt_string();
 	assert!(err.contains("incorrect_or_unknown_payment_details"), "err: {err}");
+
+	// The hold invoice was canceled along with the subscription.
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	let payment_hash: ark::lightning::PaymentHash =
+		Bolt11Invoice::from_str(&invoice_info.invoice).unwrap().into();
+	wait_for_cln_hold_status(&db, payment_hash, "cancelled").await;
 
 	// Verify the hold invoice was released by trying to pay again - should also fail
 	let err = sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err().to_alt_string();
@@ -1897,6 +1913,7 @@ async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
 		payment_preimage: preimage.as_ref().to_vec(),
 	}).await.unwrap();
 	wait_for_attempt_status(&db, payment_hash, "succeeded").await;
+	wait_for_cln_xpay_status(&db, payment_hash, "success").await;
 	wait_for_preimage_recorded(&db, payment_hash).await;
 
 	let sub = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
@@ -1928,6 +1945,8 @@ async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
 		lightning_subscription_status(&db, payment_hash).await.as_deref(),
 		Some("canceled"),
 	);
+	assert_eq!(cln_hold_status(&db, payment_hash).await.as_deref(), Some("cancelled"),
+		"the hold invoice is canceled along with the receive");
 	pay_receive.await.unwrap().expect_err("inbound payment for the receive must be refunded");
 
 	assert_vtxopool_consistency(&srv).await;
@@ -2372,6 +2391,10 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 
 	assert_eq!(balance, pay_amount + board_amount);
 
+	// The claim settled the hold invoice, and its row says so.
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	wait_for_cln_hold_status(&db, ark::lightning::PaymentHash::from(&invoice), "paid").await;
+
 	assert_vtxopool_consistency(&srv).await;
 }
 
@@ -2787,6 +2810,32 @@ async fn lightning_attempt_status(
 	}).await.unwrap()
 }
 
+/// The `status` of the `cln_xpay` row for `payment_hash`.
+async fn cln_xpay_status(
+	db: &Db,
+	payment_hash: ark::lightning::PaymentHash,
+) -> Option<String> {
+	db.read(async |t| {
+		Ok(t.query_opt(
+			"SELECT status::text FROM cln_xpay WHERE payment_hash = $1",
+			&[&payment_hash.to_string()],
+		).await?.map(|r| r.get(0)))
+	}).await.unwrap()
+}
+
+/// The `status` of the open or most recent `cln_hold` row for `payment_hash`.
+async fn cln_hold_status(
+	db: &Db,
+	payment_hash: ark::lightning::PaymentHash,
+) -> Option<String> {
+	db.read(async |t| {
+		Ok(t.query_opt(
+			"SELECT status::text FROM cln_hold WHERE payment_hash = $1 ORDER BY id DESC LIMIT 1",
+			&[&payment_hash.to_string()],
+		).await?.map(|r| r.get(0)))
+	}).await.unwrap()
+}
+
 /// Whether a settlement (preimage) for `payment_hash` was recorded.
 async fn is_preimage_recorded(
 	db: &Db,
@@ -2842,6 +2891,34 @@ async fn wait_for_attempt_status(
 		tokio::time::sleep(Duration::from_millis(200)).await;
 	}
 	panic!("payment attempt never reached {status}");
+}
+
+async fn wait_for_cln_xpay_status(
+	db: &Db,
+	payment_hash: ark::lightning::PaymentHash,
+	status: &str,
+) {
+	for _ in 0..50 {
+		if cln_xpay_status(db, payment_hash).await.as_deref() == Some(status) {
+			return;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+	panic!("cln_xpay row never reached {status}");
+}
+
+async fn wait_for_cln_hold_status(
+	db: &Db,
+	payment_hash: ark::lightning::PaymentHash,
+	status: &str,
+) {
+	for _ in 0..50 {
+		if cln_hold_status(db, payment_hash).await.as_deref() == Some(status) {
+			return;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+	panic!("cln_hold row never reached {status}");
 }
 
 /// Wait until Eve's hold plugin holds the payment's HTLCs. The invoice turns
@@ -2983,6 +3060,11 @@ async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 		Some("failed"),
 		"canceling the receive must not fail the unrelated outgoing payment",
 	);
+	assert_ne!(
+		cln_xpay_status(&db, payment_hash).await.as_deref(),
+		Some("fail"),
+		"the xpay call of the outgoing payment must still be pending",
+	);
 
 	// 6. bark syncs; the payment is still in flight, so no revocation.
 	bark.sync().await;
@@ -2998,6 +3080,7 @@ async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 	}).await.unwrap();
 
 	wait_for_attempt_status(&db, payment_hash, "succeeded").await;
+	wait_for_cln_xpay_status(&db, payment_hash, "success").await;
 	assert!(
 		is_preimage_recorded(&db, payment_hash).await,
 		"server should record the preimage once xpay succeeds",

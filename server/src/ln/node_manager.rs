@@ -40,6 +40,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
+use chrono::{DateTime, Local, TimeDelta};
 use cln_rpc::plugins::hold as hold_plugin;
 use lightning_invoice::Bolt11Invoice;
 use futures::Stream;
@@ -50,6 +51,7 @@ use tracing::{debug, error, info, trace, warn};
 use ark::VtxoId;
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use ark::mailbox::MailboxIdentifier;
+use uuid::Uuid;
 
 use crate::Server;
 use crate::error::ContextExt;
@@ -63,6 +65,8 @@ use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
 use crate::config::Config;
 use crate::database;
+use crate::database::hold::{self as hold_db, HoldTransition, NewClnHold};
+use crate::database::xpay::{self, NewClnXpay};
 use crate::database::ln::{
 	LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
@@ -323,7 +327,43 @@ impl LightningManager {
 		// label: the column has no cardinality budget.
 		let user_agent = telemetry::current_user_agent();
 
-		self.db.write(async |t|
+		// An outgoing payment is an xpay call, and the call is recorded in
+		// cln_xpay next to the attempt. An intra-Ark payment never calls xpay
+		// and gets no row. The deadlines are computed here, before anything is
+		// stored, so a payment we cannot make leaves nothing behind.
+		let new_xpay = if sub.is_none() {
+			// NB: we don't want a lightning payment to take more time than the
+			// htlc-send expiry leaves us with.
+			let max_cltv_expiry_delta = htlc_send_expiry_height
+				.checked_blocks_since(BlockHeight::new(tip) + self.htlc_expiry_delta)
+				.context("HTLC expiry height is too soon to perform a lightning payment")?;
+			let max_cltv_expiry_delta = BlockDelta::try_from(max_cltv_expiry_delta)
+				.unwrap_or(BlockDelta::MAX);
+
+			// The absolute form of the relative deadlines the xpay call takes.
+			let attempt_expiry = Local::now() + TimeDelta::from_std(retry_for)
+				.context("retry_for does not fit in a timestamp")?;
+			let htlc_expiry = BlockHeight::new(tip) + max_cltv_expiry_delta;
+
+			// A unique label ties this call to CLN's own record of it.
+			let label = Uuid::new_v4().to_string();
+			Some((max_cltv_expiry_delta, NewClnXpay {
+				lightning_node_id: node.id,
+				payment_amount_msat: amount.to_msat(),
+				max_routing_fee_msat: Some(max_routing_fee.to_msat()),
+				attempt_expiry,
+				partial_msat: None,
+				htlc_expiry: Some(htlc_expiry),
+				label: Some(label),
+				payment_hash,
+				user_fee_msat: Some(user_fee.to_msat()),
+				user_agent: user_agent.as_deref().map(str::to_string),
+			}))
+		} else {
+			None
+		};
+
+		self.db.write(async |t| {
 			t.store_lightning_payment_start(
 				node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids,
 				lightning_htlc_subscription_id,
@@ -331,8 +371,15 @@ impl LightningManager {
 				// An intra-Ark payment short-circuits before xpay, so no
 				// routing budget is ever authorised for it.
 				lightning_htlc_subscription_id.is_none().then_some(max_routing_fee),
-			).await
-		).await?;
+			).await?;
+			// Same transaction as the attempt: the attempt check above is what
+			// keeps one payment per hash in flight, and the cln_xpay row must
+			// not outlive an attempt that was never stored.
+			if let Some((_, new)) = &new_xpay {
+				xpay::create_xpay(&**t, new).await.context("failed to store the xpay call")?;
+			}
+			Ok(())
+		}).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
 		// payment so we can directly mark it as accepted, then skip cln payment.
@@ -361,13 +408,8 @@ impl LightningManager {
 			return Ok(());
 		}
 
-		// NB: we don't want a lightning payment to take more time than the
-		// htlc-send expiry leaves us with.
-		let max_cltv_expiry_delta = htlc_send_expiry_height
-			.checked_blocks_since(BlockHeight::new(tip) + self.htlc_expiry_delta)
-			.context("HTLC expiry height is too soon to perform a lightning payment")?;
-		let max_cltv_expiry_delta = BlockDelta::try_from(max_cltv_expiry_delta)
-			.unwrap_or(BlockDelta::MAX);
+		let (max_cltv_expiry_delta, new_xpay) = new_xpay
+			.expect("an outgoing payment has its xpay call prepared above");
 
 		// Fire-and-forget: ClnXpayClient::pay issues the gRPC and reconciles
 		// the DB on completion, same as the old ClnXpay::pay wrapper. If the
@@ -382,6 +424,7 @@ impl LightningManager {
 				max_routing_fee,
 				max_cltv_expiry_delta,
 				retry_for,
+				new_xpay.label,
 			).await;
 		});
 		slog!(LightningPaymentInitiated, payment_hash, amount, fee: user_fee,
@@ -452,6 +495,28 @@ impl LightningManager {
 		hold_client.cancel(hold_plugin::CancelRequest {
 			payment_hash: payment_hash.to_vec(),
 		}).await?;
+
+		// The plugin no longer serves the invoice; the sender's htlc-send
+		// vtxos are what covers this receive from here on.
+		//
+		// This cannot share a transaction with the promotion, as the cancel
+		// RPC sits between them. The payment has gone ahead by now, so a
+		// failure to record the cancel must not fail it.
+		let node_id = subscription.lightning_node_id;
+		let mirrored = self.db.write(async |t| hold_db::transition_open_hold(
+			&**t, node_id, payment_hash, HoldTransition::Cancelled,
+		).await).await;
+		match mirrored {
+			Ok(Some(_)) => {},
+			Ok(None) => {
+				debug!("No open cln_hold row to cancel for intra-Ark payment {}", payment_hash);
+			},
+			Err(e) => {
+				error!("Failed to record the cancelled hold invoice of intra-Ark payment {} \
+					(subscription {}): {:#}", payment_hash, subscription.id, e,
+				);
+			},
+		}
 
 		Ok(())
 	}
@@ -553,12 +618,31 @@ impl LightningManager {
 		// Raw agent, not the bucketed label -- see start_payment.
 		let user_agent = telemetry::current_user_agent();
 
-		let stored = self.db.write(async |t|
+		// The plugin's record of the invoice, next to our subscription. The
+		// invoice carries its own expiry; the one we asked for is the fallback.
+		let expires_at = invoice.expires_at()
+			.and_then(|d| i64::try_from(d.as_secs()).ok())
+			.and_then(|secs| DateTime::from_timestamp(secs, 0))
+			.map(|dt| dt.with_timezone(&Local))
+			.unwrap_or_else(|| Local::now() + expiry);
+		let new_hold = NewClnHold {
+			lightning_node_id: node.id,
+			invoice: invoice.to_string(),
+			payment_hash,
+			requested_amount_msat: amount.to_msat(),
+			min_final_cltv_delta: cltv_delta,
+			expires_at,
+		};
+
+		let stored = self.db.write(async |t| {
 			t.store_generated_lightning_receive(
 				node.id, &invoice, amount.to_msat(), receiver_mailbox_id.as_ref(),
 				user_agent.as_deref(),
-			).await
-		).await;
+			).await?;
+			hold_db::create_hold(&**t, &new_hold).await
+				.context("failed to store the hold invoice")?;
+			Ok(())
+		}).await;
 		if let Err(e) = stored {
 			// Without a subscription nothing would release HTLCs held on it.
 			if let Err(cancel_err) = hold_client.cancel(hold_plugin::CancelRequest {
@@ -632,12 +716,29 @@ impl LightningManager {
 		// Update the subscription status to settled and notify waiters.
 		// This covers both intra-ark (no CLN hook fires) and regular
 		// hold-invoice paths.
-		let newly_settled = self.db.write(async |t| t.store_lightning_htlc_subscription_status(
-			subscription_id,
-			LightningHtlcSubscriptionStatus::Settled,
-			None,
-			None,
-		).await).await?;
+		let node_id = htlc_subscription.lightning_node_id;
+		let invoice_amount_msat = htlc_subscription.amount().to_msat();
+		let newly_settled = self.db.write(async |t| {
+			let newly_settled = t.store_lightning_htlc_subscription_status(
+				subscription_id,
+				LightningHtlcSubscriptionStatus::Settled,
+				None,
+				None,
+			).await?;
+			// The hold invoice was paid along with it. An intra-Ark payment
+			// has no open hold invoice: it was canceled when the receive was
+			// accepted, so there is nothing to move.
+			if newly_settled && !is_self_payment {
+				let mirrored = hold_db::transition_open_hold(
+					&**t, node_id, payment_hash,
+					HoldTransition::Settled { invoice_amount_msat },
+				).await?;
+				if mirrored.is_none() {
+					debug!("No open cln_hold row to settle for payment hash {}", payment_hash);
+				}
+			}
+			Ok(newly_settled)
+		}).await?;
 		let _ = self.payment_update_tx.send(payment_hash);
 
 		// Only meter on the caller that actually flipped the row; retries

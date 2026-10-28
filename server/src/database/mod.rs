@@ -11,6 +11,7 @@ mod embedded {
 mod ban;
 pub mod block;
 pub mod data_migrations;
+pub mod hold;
 pub mod htlc_vtxo;
 pub mod watchman;
 pub mod intman;
@@ -19,6 +20,7 @@ pub mod nursery;
 pub mod rounds;
 pub mod tree;
 pub mod vtxopool;
+pub mod xpay;
 
 mod model;
 mod query;

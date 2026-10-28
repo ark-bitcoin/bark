@@ -1,0 +1,11 @@
+- Record the lightning side of every payment in two new tables
+  `cln_xpay` has one row per call to CLN's `xpay` command and `cln_hold` one
+  row per hold invoice, each written alongside the payment attempt or
+  subscription it belongs to. Together with `htlc_vtxo` they describe every HTLC the server is party to, so operators
+  can check that each outgoing HTLC is covered by incoming ones on the same
+  payment hash. Nothing reads them yet; `lightning_payment_attempt` and
+  `lightning_htlc_subscription` keep driving the server.
+  Existing attempts are ported into `cln_xpay` by the migration. Hold
+  invoices need their bolt11 decoded, so port them with
+  `captaind data backfill-cln-hold` after upgrading.
+  [#2576](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2576)
