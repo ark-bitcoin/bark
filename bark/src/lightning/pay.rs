@@ -149,11 +149,8 @@ impl Wallet {
 	pub async fn check_lightning_payment(&self, hash: PaymentHash, wait: bool)
 		-> anyhow::Result<LightningSendState>
 	{
-		let state = self.lightning_send_state(hash).await?;
-		if !matches!(state, LightningSendState::InProgress(_)) {
-			return Ok(state);
-		}
-
+		// Drive a checkpoint even if the invoice is recorded as paid: that is
+		// a settlement that stopped half-way, and the drive finishes it.
 		let mode = if wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
 		self.drive_action::<LightningSend>(&ln_pay_action_id(hash), mode).await?;
 		self.lightning_send_state(hash).await
@@ -613,11 +610,16 @@ mod test {
 
 	#[derive(Debug, Clone, Copy)]
 	enum Driver {
+		CheckPayment,
 		Sync,
 	}
 
-	async fn drive(wallet: &Wallet, driver: Driver) {
+	async fn drive(wallet: &Wallet, send: &PendingSend, driver: Driver) {
 		match driver {
+			Driver::CheckPayment => {
+				let state = wallet.check_lightning_payment(send.hash(), false).await.unwrap();
+				assert!(matches!(state, LightningSendState::Paid(_)), "{:?}", state);
+			},
 			Driver::Sync => wallet.sync_pending_lightning_send_vtxos().await.unwrap(),
 		}
 	}
@@ -626,7 +628,7 @@ mod test {
 	/// must then finish it, without the server, and exactly once.
 	#[tokio::test]
 	async fn every_driver_finishes_an_interrupted_settlement_once() {
-		for driver in [Driver::Sync] {
+		for driver in [Driver::CheckPayment, Driver::Sync] {
 			for writes in 1..=SETTLEMENT_WRITES {
 				let case = format!("{:?} after {} write(s)", driver, writes);
 				let (wallet, _conn) = Wallet::offline_for_test().await;
@@ -636,9 +638,9 @@ mod test {
 				settle_partially(&wallet, &send, writes).await;
 				let paid = wallet.inner.db.get_paid_invoice(send.hash()).await.unwrap().unwrap();
 
-				drive(&wallet, driver).await;
+				drive(&wallet, &send, driver).await;
 				// A finished send gives the next drive nothing to do.
-				drive(&wallet, driver).await;
+				drive(&wallet, &send, driver).await;
 
 				assert_eq!(checkpoint(&wallet, &send).await, None, "{}", case);
 				assert!(wallet.pending_lightning_sends().await.unwrap().is_empty(), "{}", case);
