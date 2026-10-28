@@ -31,6 +31,7 @@ use bitcoind_async_client::traits::Reader;
 use crate::daemon::bitcoind::BitcoindRpcHandle;
 use crate::daemon::bitcoind::snapshot;
 use crate::daemon::captaind::proxy::ArkRpcProxyServer;
+use crate::ports::pick_port;
 use crate::postgres::{self, PostgresDatabaseManager};
 use crate::util::{
 	get_bark_chain_source_from_env, get_cargo_workspace, get_tx_propagation_timeout_millis,
@@ -601,6 +602,9 @@ impl TestContext {
 	) -> Arc<Server> {
 		// using context bitcoind because we don't have a place to store the bitcoind
 		let mut cfg = self.captaind_default_cfg(name.as_ref(), self.bitcoind(), lightningd).await;
+		// The default address is a placeholder that only captaind overwrites.
+		// Tests running in parallel would all bind it.
+		cfg.rpc.public_address = SocketAddr::from(([127, 0, 0, 1], pick_port()));
 		mod_cfg(&mut cfg);
 
 		Server::create(cfg.clone()).await.expect("error creating server");
