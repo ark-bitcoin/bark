@@ -388,6 +388,7 @@ impl Wallet {
 #[cfg(all(test, feature = "sqlite"))]
 mod test {
 	use bitcoin::secp256k1::{Message, Secp256k1, SecretKey};
+	use futures::{FutureExt, StreamExt};
 	use lightning_invoice::{Currency, InvoiceBuilder, PaymentSecret};
 	use server_rpc::protos::mailbox_server::{LightningSendFinishedMessage, MailboxMessage};
 	use server_rpc::protos::mailbox_server::mailbox_message::Message as MailboxMessageKind;
@@ -396,8 +397,9 @@ mod test {
 	use ark::test_util::VTXO_VECTORS;
 	use bitcoin_ext::BlockHeight;
 
+	use crate::{NotificationStream, WalletNotification};
 	use crate::actions::lightning::pay::Progress;
-	use crate::movement::MovementStatus;
+	use crate::movement::{MovementId, MovementStatus};
 	use crate::movement::update::MovementUpdate;
 	use crate::subsystem::{LightningSendMovement, Subsystem};
 	use crate::vtxo::{VtxoLockHolder, VtxoState};
@@ -565,5 +567,122 @@ mod test {
 		assert_eq!(vtxo_state(&wallet, send.htlcs.vtxo_ids[0]).await, VtxoState::Spent);
 		let movement = wallet.inner.db.get_movement_by_id(send.htlcs.movement_id).await.unwrap();
 		assert_eq!(movement.status, MovementStatus::Successful);
+	}
+
+	/// The writes of a settlement before its checkpoint is removed, in the
+	/// order that [settle_lightning_send_payment] and the executor make them.
+	const SETTLEMENT_WRITES: usize = 4;
+
+	/// Make the first `writes` writes of a settlement, then stop, as a crash
+	/// would.
+	async fn settle_partially(wallet: &Wallet, send: &PendingSend, writes: usize) {
+		if writes >= 1 {
+			wallet.inner.db.record_paid_invoice(send.hash(), send.preimage).await.unwrap();
+		}
+		if writes >= 2 {
+			wallet.mark_vtxos_as_spent(&send.htlcs.vtxo_ids).await.unwrap();
+		}
+		if writes >= 3 {
+			wallet.inner.movements.finish_movement_with_update(
+				send.htlcs.movement_id,
+				MovementStatus::Successful,
+				MovementUpdate::new().metadata([(
+					"payment_preimage".into(),
+					serde_json::to_value(send.preimage).unwrap(),
+				)]),
+			).await.unwrap();
+		}
+		if writes >= 4 {
+			wallet.release_action_locks(&send.send.id()).await.unwrap();
+		}
+	}
+
+	/// How often the notifications received so far finished the movement as
+	/// successful.
+	fn successful_finishes(notifications: &mut NotificationStream, id: MovementId) -> usize {
+		let mut finishes = 0;
+		while let Some(Some(notification)) = notifications.next().now_or_never() {
+			if let WalletNotification::MovementUpdated { movement } = notification
+				&& movement.id == id && movement.status == MovementStatus::Successful
+			{
+				finishes += 1;
+			}
+		}
+		finishes
+	}
+
+	#[derive(Debug, Clone, Copy)]
+	enum Driver {
+		Sync,
+	}
+
+	async fn drive(wallet: &Wallet, driver: Driver) {
+		match driver {
+			Driver::Sync => wallet.sync_pending_lightning_send_vtxos().await.unwrap(),
+		}
+	}
+
+	/// A crash can stop a settlement after any of its writes. Every driver
+	/// must then finish it, without the server, and exactly once.
+	#[tokio::test]
+	async fn every_driver_finishes_an_interrupted_settlement_once() {
+		for driver in [Driver::Sync] {
+			for writes in 1..=SETTLEMENT_WRITES {
+				let case = format!("{:?} after {} write(s)", driver, writes);
+				let (wallet, _conn) = Wallet::offline_for_test().await;
+				let mut notifications = wallet.subscribe_notifications();
+				let send = pending_send(&wallet).await;
+
+				settle_partially(&wallet, &send, writes).await;
+				let paid = wallet.inner.db.get_paid_invoice(send.hash()).await.unwrap().unwrap();
+
+				drive(&wallet, driver).await;
+				// A finished send gives the next drive nothing to do.
+				drive(&wallet, driver).await;
+
+				assert_eq!(checkpoint(&wallet, &send).await, None, "{}", case);
+				assert!(wallet.pending_lightning_sends().await.unwrap().is_empty(), "{}", case);
+
+				let movement = wallet.inner.db.get_movement_by_id(send.htlcs.movement_id).await.unwrap();
+				assert_eq!(movement.status, MovementStatus::Successful, "{}", case);
+				assert_eq!(successful_finishes(&mut notifications, movement.id), 1, "{}", case);
+
+				let htlc = wallet.inner.db.get_wallet_vtxo(send.htlcs.vtxo_ids[0]).await.unwrap().unwrap();
+				assert_eq!(htlc.state, VtxoState::Spent, "{}", case);
+
+				let paid_after = wallet.inner.db.get_paid_invoice(send.hash()).await.unwrap().unwrap();
+				assert_eq!(paid_after, paid, "{}", case);
+			}
+		}
+	}
+
+	/// A send that has no HTLCs yet, for an invoice the wallet already paid,
+	/// is a second attempt to pay it. It must not reach the server, and the
+	/// movement of the send that paid must stay as it is.
+	#[tokio::test]
+	async fn second_attempt_to_pay_a_paid_invoice_is_dropped() {
+		let (wallet, _conn) = Wallet::offline_for_test().await;
+		let send = pending_send(&wallet).await;
+		settle_partially(&wallet, &send, SETTLEMENT_WRITES).await;
+		finish(&wallet, &send).await;
+		let movement = wallet.inner.db.get_movement_by_id(send.htlcs.movement_id).await.unwrap();
+
+		let input = &VTXO_VECTORS.board_vtxo;
+		let locked = VtxoState::Locked { holder: Some(VtxoLockHolder::Action { id: send.send.id() }) };
+		wallet.inner.db.store_vtxos(&[(input, &locked)]).await.unwrap();
+		let second = LightningSend {
+			input_vtxo_ids: vec![input.id()],
+			progress: Progress::InputsLocked { movement_id: send.htlcs.movement_id },
+			..send.send.clone()
+		};
+		wallet.inner.db.upsert_wallet_action_checkpoint(&second.id(), &second.into()).await.unwrap();
+
+		wallet.sync_pending_lightning_send_vtxos().await.unwrap();
+
+		assert_eq!(checkpoint(&wallet, &send).await, None);
+		let input = wallet.inner.db.get_wallet_vtxo(input.id()).await.unwrap().unwrap();
+		assert_eq!(input.state, VtxoState::Spendable);
+		let movement_after = wallet.inner.db.get_movement_by_id(send.htlcs.movement_id).await.unwrap();
+		assert_eq!(movement_after, movement);
 	}
 }
