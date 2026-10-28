@@ -654,14 +654,20 @@ pub(crate) async fn settle_lightning_send_payment(
 
 	wallet.inner.db.record_paid_invoice(payment_hash, preimage).await.retry()?;
 	wallet.mark_vtxos_as_spent(&htlcs.vtxo_ids).await.retry()?;
-	wallet.inner.movements.finish_movement_with_update(
-		htlcs.movement_id,
-		MovementStatus::Successful,
-		MovementUpdate::new().metadata([(
-			"payment_preimage".into(),
-			serde_json::to_value(preimage).expect("payment preimage can serde"),
-		)]),
-	).await.retry()?;
+
+	// Finishing the movement again would write its update and completion
+	// times again and send another notification.
+	let movement = wallet.inner.db.get_movement_by_id(htlcs.movement_id).await.retry()?;
+	if movement.status != MovementStatus::Successful {
+		wallet.inner.movements.finish_movement_with_update(
+			htlcs.movement_id,
+			MovementStatus::Successful,
+			MovementUpdate::new().metadata([(
+				"payment_preimage".into(),
+				serde_json::to_value(preimage).expect("payment preimage can serde"),
+			)]),
+		).await.retry()?;
+	}
 
 	Ok(())
 }
