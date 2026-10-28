@@ -2732,10 +2732,10 @@ CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS N
 
 
 --
--- Name: vtxo_txid_ix; Type: INDEX; Schema: public; Owner: -
+-- Name: vtxo_txid_walk_ix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX vtxo_txid_ix ON public.vtxo USING btree (vtxo_txid);
+CREATE INDEX vtxo_txid_walk_ix ON public.vtxo USING btree (vtxo_txid) INCLUDE (vtxo_id, oor_spent_txid, spend_state, amount, onchain_spent_txid);
 
 
 --
