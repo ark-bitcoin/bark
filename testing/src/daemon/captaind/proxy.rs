@@ -4,7 +4,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 
 use tokio_stream::Stream;
-use tonic::codec::CompressionEncoding;
 use server_rpc::{self as rpc, protos};
 
 use crate::daemon::captaind::{ArkClient, MailboxClient};
@@ -211,23 +210,15 @@ impl ArkRpcProxyServer {
 
 			let port = pick_port();
 			let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-			// Match the production server's zstd support:
-			//  - send_compressed compresses responses to clients that advertise zstd
-			//  - accept_compressed keeps the proxy transparent to any client that
-			// compresses its requests.
 			let ark_server = rpc::server::ArkServiceServer::new(ArkRpcProxyWrapper {
 				proxy: ark.0.clone(),
 				upstream: ark_upstream.clone(),
-			})
-				.accept_compressed(CompressionEncoding::Zstd)
-				.send_compressed(CompressionEncoding::Zstd);
+			});
 
 			let mailbox_server = rpc::server::MailboxServiceServer::new(MailboxRpcProxyWrapper {
 				proxy: mailbox.0.clone(),
 				upstream: mailbox_upstream.clone(),
-			})
-				.accept_compressed(CompressionEncoding::Zstd)
-				.send_compressed(CompressionEncoding::Zstd);
+			});
 
 			// The serve_with_shutdown call stays running if the port number
 			// is accepted, but returns immediatelly if it's not.

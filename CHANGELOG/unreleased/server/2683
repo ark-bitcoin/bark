@@ -1,0 +1,2 @@
+- Stop compressing gRPC responses with zstd
+  [#2683](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2683)

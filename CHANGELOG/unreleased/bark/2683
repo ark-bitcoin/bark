@@ -1,0 +1,2 @@
+- Stop advertising zstd compression to the server
+  [#2683](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2683)
