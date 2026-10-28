@@ -612,6 +612,7 @@ mod test {
 	enum Driver {
 		CheckPayment,
 		Sync,
+		Mailbox,
 	}
 
 	async fn drive(wallet: &Wallet, send: &PendingSend, driver: Driver) {
@@ -621,6 +622,7 @@ mod test {
 				assert!(matches!(state, LightningSendState::Paid(_)), "{:?}", state);
 			},
 			Driver::Sync => wallet.sync_pending_lightning_send_vtxos().await.unwrap(),
+			Driver::Mailbox => notify_paid(wallet, send).await,
 		}
 	}
 
@@ -628,7 +630,7 @@ mod test {
 	/// must then finish it, without the server, and exactly once.
 	#[tokio::test]
 	async fn every_driver_finishes_an_interrupted_settlement_once() {
-		for driver in [Driver::CheckPayment, Driver::Sync] {
+		for driver in [Driver::CheckPayment, Driver::Sync, Driver::Mailbox] {
 			for writes in 1..=SETTLEMENT_WRITES {
 				let case = format!("{:?} after {} write(s)", driver, writes);
 				let (wallet, _conn) = Wallet::offline_for_test().await;

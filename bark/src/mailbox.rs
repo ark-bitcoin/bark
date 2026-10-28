@@ -648,15 +648,15 @@ impl Wallet {
 			},
 		};
 
-		let progress = match (
+		let (progress, paid) = match (
 			checkpoint.get().map(|send| send.progress.clone()),
 			self.is_invoice_paid(payment_hash).await,
 		) {
-			(_, Ok(true)) => {
+			(Some(progress), Ok(paid)) => (progress, paid),
+			(None, Ok(true)) => {
 				debug!("Lightning send {} already settled; ignoring notification", payment_hash);
 				return Ok(());
 			},
-			(Some(progress), Ok(false)) => progress,
 			(None, Ok(false)) => {
 				warn!("Lightning send finished notification for unknown payment hash {}", payment_hash);
 				return Ok(());
@@ -668,6 +668,11 @@ impl Wallet {
 		};
 
 		let result = match (progress, known_preimage) {
+			// A settlement stopped half-way. The drive finishes it from the
+			// stored preimage.
+			_ if paid => {
+				self.drive_checkpoint(checkpoint, DriveMode::UntilParkOrDone).await
+			},
 			(Progress::PaymentInitiated(htlcs), Some(preimage)) => {
 				self.settle_lightning_send_with_preimage(checkpoint, htlcs, preimage).await
 			},
