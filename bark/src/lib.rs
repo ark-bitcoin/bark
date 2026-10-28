@@ -1423,6 +1423,42 @@ impl Wallet {
 		Ok(ret)
 	}
 
+	/// Builds a wallet on an in-memory database, with a chain source and an
+	/// Ark server that cannot be reached, for tests of paths that must not
+	/// reach either: a call that does reach them fails. The connection is
+	/// returned because dropping it drops the database.
+	#[cfg(all(test, feature = "sqlite"))]
+	pub(crate) async fn offline_for_test() -> (Wallet, rusqlite::Connection) {
+		let network = Network::Regtest;
+		let seed = WalletSeed::new_from_seed(network, &[1; 64]);
+		let mut config = Config::network_default(network);
+		config.server_address = "http://127.0.0.1:1".to_owned();
+
+		let (path, conn) = crate::persist::sqlite::helpers::in_memory_db();
+		let db: Arc<dyn BarkPersister> = Arc::new(crate::persist::sqlite::SqliteClient::open(path).unwrap());
+		db.init_wallet(&WalletProperties {
+			network,
+			fingerprint: seed.fingerprint(),
+			server_pubkey: None,
+			server_mailbox_pubkey: None,
+		}).await.unwrap();
+
+		let chain = Arc::new(ChainSource::offline_for_test(network));
+		let notifications = NotificationDispatch::new();
+		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
+		let exit = Exit::new(db.clone(), chain.clone(), movements.clone()).await.unwrap();
+		let wallet = Wallet { inner: Arc::new(WalletInner {
+			config, db, seed, exit, movements, notifications, chain,
+			lock_manager: Box::new(crate::lock_manager::memory::MemoryLockManager::new()),
+			server: tokio::sync::OnceCell::new(),
+			onchain: None,
+			daemon: parking_lot::Mutex::new(None),
+			last_force_exit_scan_tip: tokio::sync::Mutex::new(None),
+			round_secret_nonces: RoundSecretNonces::new(),
+		})};
+		(wallet, conn)
+	}
+
 	/// Returns the config used to create/load the bark [Wallet].
 	pub fn config(&self) -> &Config {
 		&self.inner.config
