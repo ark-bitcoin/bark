@@ -30,7 +30,7 @@ use server_rpc::protos::{self, lightning_payment_status};
 use crate::Wallet;
 use crate::actions::{
 	abort, or_retry, Advance, AdvanceError, IntoAdvanceResult,
-	RetryUnlessRejected, WalletAction, WalletActionId,
+	RetryUnlessRejected, WalletAction, WalletActionCheckpoint, WalletActionId,
 };
 use crate::arkoor::{resolve_change_pieces, split_change_amount};
 use crate::movement::update::MovementUpdate;
@@ -128,6 +128,10 @@ impl LightningSend {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl WalletAction for LightningSend {
 	fn id(&self) -> WalletActionId { LightningSend::id(self) }
+
+	fn from_checkpoint(checkpoint: WalletActionCheckpoint) -> Option<Self> {
+		checkpoint.into_lightning_send()
+	}
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		let new_progress = match &self.progress {

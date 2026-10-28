@@ -29,7 +29,7 @@ use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiv
 use crate::{Config, Wallet};
 use crate::actions::{
 	abort, or_retry, Advance, AdvanceError, IntoAdvanceResult, IntoAnyhow,
-	RetryUnlessRejected, WalletAction, WalletActionId, BASE_RETRY_BACKOFF,
+	RetryUnlessRejected, WalletAction, WalletActionCheckpoint, WalletActionId, BASE_RETRY_BACKOFF,
 };
 use crate::arkoor::{DeliveryOutcome, post_arkoor_to_mailboxes};
 use crate::movement::update::MovementUpdate;
@@ -105,6 +105,10 @@ impl LightningReceive {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl WalletAction for LightningReceive {
 	fn id(&self) -> WalletActionId { LightningReceive::id(self) }
+
+	fn from_checkpoint(checkpoint: WalletActionCheckpoint) -> Option<Self> {
+		checkpoint.into_lightning_receive()
+	}
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		let new_progress = match &self.progress {

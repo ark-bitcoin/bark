@@ -440,6 +440,10 @@ pub trait WalletAction: Sized + Send + Sync {
 	/// action (different states of the same action share an id).
 	fn id(&self) -> WalletActionId;
 
+	/// Get the action back from its stored checkpoint, `None` if the
+	/// checkpoint holds another kind of action.
+	fn from_checkpoint(checkpoint: WalletActionCheckpoint) -> Option<Self>;
+
 	/// The IDs of VTXOs which are currently in-use, either being spent or being
 	/// created, by the action and should be included in the wallet's balance.
 	/// The VTXOs should not be stored as spendable in the wallet, but they should
