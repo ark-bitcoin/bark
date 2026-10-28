@@ -1,8 +1,8 @@
-# captaind deployment: network exposure and DoS protection
+# captaind deployment: network exposure, DoS protection, and logs
 
 This document is for operators who run captaind. It explains which network
-interfaces captaind exposes, what protection captaind itself provides, and
-what protection your deployment must provide.
+interfaces captaind exposes, what protection captaind itself provides, what
+protection your deployment must provide, and how to handle the captaind logs.
 
 ## Design: captaind does not rate-limit
 
@@ -129,14 +129,66 @@ cannot see. These limits live in the captaind config:
 These limits protect protocol and database resources. They do not replace
 the edge proxy.
 
+## Logs
+
+We recommend that you keep the captaind logs private.
+
+### What the logs contain
+
+captaind logs the activity of its users. The logs contain:
+
+- VTXO ids and the state of the VTXOs
+- unlock hashes of round participations
+- payment hashes and Lightning invoices
+- public keys of users
+- the `user_agent` and the protocol version of each client
+
+The captaind logger adds a timestamp to every line. A reader of the logs
+can see when a VTXO was registered, locked, or spent. A reader can also
+link a VTXO to a round and to a payment.
+
+The default log level is `trace`. This level produces the most VTXO and
+unlock hash lines. Set the `CAPTAIND_LOG` environment variable to a less
+verbose level, for example `info`, if you do not need the detail.
+
+### Recommendations for the logs
+
+- Do not publish the logs. Do not post them in public issue trackers or
+  chat channels. Remove VTXO ids, unlock hashes, payment hashes, Lightning
+  invoices, and public keys before you share an excerpt.
+- Restrict read access to the logs to the operators who need it.
+- Apply the same recommendations to every copy of the logs. This includes
+  log shippers, log aggregators, and backups.
+- If you set `otel_collector_endpoint`, captaind also sends span attributes
+  and span events to the collector. They include payment hashes, invoices,
+  and public keys. Protect the collector in the same way.
+
+### What the logs never contain
+
+captaind must never log a secret that can cause a loss of bitcoin for the
+operator. These secrets are:
+
+- private keys
+- secret nonces
+- the seed phrase
+
+A log line that contains one of these secrets is a vulnerability. See
+[SECURITY.md](../../SECURITY.md).
+
+Signatures and public nonces are not secret. They can appear in the logs.
+
 ## For security researchers
 
 Reports that state that captaind lacks rate limiting, or that the admin API
 lacks authentication, describe the documented design decisions above. They
-are not vulnerabilities in captaind. See the scope section in
+are not vulnerabilities in captaind. Reports that state that the logs
+contain VTXO ids, VTXO states, VTXO policies, unlock hashes, transaction
+ids, or UTXOs also describe a documented design decision. See the scope section in
 [SECURITY.md](../../SECURITY.md) before you report.
 
 A resource-exhaustion issue can still be in scope: for example, a single
 request that costs the server disproportionate resources, or an attack that
-works through a correctly configured proxy. Such reports are welcome at
+works through a correctly configured proxy. A log line that contains a
+private key, a secret nonce, or the seed phrase is also in scope. Such
+reports are welcome at
 [`security@second.tech`](mailto:security@second.tech).

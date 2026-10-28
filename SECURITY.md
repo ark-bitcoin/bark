@@ -9,6 +9,9 @@ infrastructure. The following are documented design decisions.
   front of captaind must implement rate limiting.
 - The admin and integration gRPC APIs have no authentication, by design.
   The deployment must keep them reachable only on a trusted network.
+- The captaind logs contain VTXO ids, VTXO states, VTXO policies, unlock
+  hashes, transaction ids, and UTXOs. With the timestamps, they can show
+  when a VTXO was spent. We recommend that operators keep the logs private.
 
 See [the captaind deployment guide](contrib/docs/captaind-deployment.md)
 for the rationale and for operator guidance.
@@ -16,6 +19,9 @@ for the rationale and for operator guidance.
 A resource-exhaustion issue can still be in scope: for example, a single
 request that costs the server disproportionate resources, or an attack that
 works through a correctly configured proxy.
+
+A log line that contains a private key, a secret nonce, or the seed phrase is
+in scope. Signatures and public nonces in the logs are not.
 
 ## Reporting a Vulnerability
 
