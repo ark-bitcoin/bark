@@ -746,6 +746,15 @@ impl Server {
 			user_pub_nonce,
 		);
 
+		// Fees and the exit delta can change, so bind the output to one exit
+		// before signing, or two signed exits could spend it.
+		let spk = builder.funding_script_pubkey();
+		let exit_txid = builder.exit_txid();
+		let bound = self.db.write(async |t| t.bind_board_exit(utxo, &spk, exit_txid).await).await?;
+		if bound != exit_txid {
+			return badarg!("board utxo {} is already cosigned for another exit tx", utxo);
+		}
+
 		info!("Cosigning board request for utxo {}", utxo);
 		let resp = builder.server_cosign(self.server_key.leak_ref());
 
@@ -831,7 +840,16 @@ impl Server {
 			.upsert_unsigned_tx([builder.exit_txid()])
 			.insert_spendable_vtxos(builder.build_server_vtxos())
 			.mark_vtxos_oor_spent(builder.spend_info());
+		let spk = builder.funding_script_pubkey();
+		let exit_txid = builder.exit_txid();
 		let inserted = self.db.write(async |t| {
+			// also binds boards cosigned before outputs were bound on cosign
+			let bound = t.bind_board_exit(vtxo.chain_anchor(), &spk, exit_txid).await?;
+			if bound != exit_txid {
+				return badarg!("board utxo {} is already registered with another exit tx",
+					vtxo.chain_anchor(),
+				);
+			}
 			let inserted = t.execute_vtxo_tree_update(update).await?;
 			t.add_funding_vtxos_to_frontier(funding_txid, Some(confirmed_height)).await
 				.context("failed to add board vtxos to frontier")?;
