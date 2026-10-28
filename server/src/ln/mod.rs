@@ -952,6 +952,11 @@ impl Server {
 						if !matches!(token.token_type, TokenType::SingleUseBoard) {
 							return badarg!("token type is not permitted for lightning receive anti-DoS");
 						}
+						let integration = t.get_integration_by_id(token.integration_id).await?
+							.context("token's integration not found")?;
+						if integration.deleted_at.is_some() {
+							return badarg!("token's integration was removed");
+						}
 						token.filters.check_client(client_address).await?;
 						let filters = token.filters.clone();
 						t.update_integration_token(
