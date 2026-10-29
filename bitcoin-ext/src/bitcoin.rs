@@ -197,8 +197,7 @@ pub trait FeeRateExt: Borrow<FeeRate> {
 	}
 
 	fn from_sat_per_kvb_ceil(sat_kvb: u64) -> FeeRate {
-		// Adding 3 to sat_kvb ensures we always round up when performing integer division.
-		FeeRate::from_sat_per_kwu((sat_kvb + 3) / 4)
+		FeeRate::from_sat_per_kwu(sat_kvb.div_ceil(4))
 	}
 
 	fn from_sat_per_vb_decimal_checked_ceil(sat_vb: f64) -> Option<FeeRate> {
@@ -214,8 +213,10 @@ pub trait FeeRateExt: Borrow<FeeRate> {
 		Amount::from_sat(self.to_sat_per_kvb()).to_string_in(Denomination::Bitcoin)
 	}
 
+	/// Saturates at `u64::MAX`, which [Self::from_sat_per_kvb_ceil] maps
+	/// back to the same fee rate.
 	fn to_sat_per_kvb(&self) -> u64 {
-		self.borrow().to_sat_per_kwu() * 4
+		self.borrow().to_sat_per_kwu().saturating_mul(4)
 	}
 }
 impl FeeRateExt for FeeRate {}
@@ -233,6 +234,26 @@ mod test {
 		bytes.push(0x20); // OP_PUSHBYTES_32
 		bytes.extend_from_slice(&[0u8; 32]);
 		ScriptBuf::from(bytes)
+	}
+
+	#[test]
+	fn from_sat_per_kvb_ceil_rounds_up_without_overflow() {
+		for (kvb, kwu) in [(0, 0), (1, 1), (4, 1), (5, 2)] {
+			assert_eq!(FeeRate::from_sat_per_kvb_ceil(kvb), FeeRate::from_sat_per_kwu(kwu));
+		}
+		assert_eq!(
+			FeeRate::from_sat_per_kvb_ceil(u64::MAX),
+			FeeRate::from_sat_per_kwu(u64::MAX / 4 + 1),
+		);
+	}
+
+	#[test]
+	fn sat_per_kvb_round_trips_at_the_top() {
+		for kvb in u64::MAX - 3..=u64::MAX {
+			let rate = FeeRate::from_sat_per_kvb_ceil(kvb);
+			assert_eq!(FeeRate::from_sat_per_kvb_ceil(rate.to_sat_per_kvb()), rate);
+		}
+		assert_eq!(FeeRate::from_sat_per_kvb_ceil(u64::MAX).to_sat_per_kvb(), u64::MAX);
 	}
 
 	#[test]
