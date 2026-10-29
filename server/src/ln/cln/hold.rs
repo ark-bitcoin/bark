@@ -434,15 +434,21 @@ impl ClnHoldProcess {
 			.map(|h| h.msat)
 			.sum();
 
-		let (status, expiry) = if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
-			debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
-			(LightningHtlcSubscriptionStatus::Accepted, Some(lowest_incoming_htlc_expiry))
-		} else {
-			debug!("Incoming HTLC expiry height ({}) for subscription doesn't fit. required {}, actual {}",
+		if lowest_incoming_htlc_expiry < required_min_htlc_expiry {
+			debug!("Incoming HTLC expiry height for subscription ({}) doesn't fit. required {}, actual {}",
 				htlc_subscription.id, required_min_htlc_expiry, lowest_incoming_htlc_expiry
 			);
-			(LightningHtlcSubscriptionStatus::Canceled, None)
-		};
+			// Fail the held HTLCs too, or they block the channel until they expire.
+			self.cancel_invoice_and_htlc_subscription(
+				&mut hold_client,
+				htlc_subscription.invoice.payment_hash(),
+				htlc_subscription,
+				"incoming HTLC expiry too close",
+			).await?;
+			return Ok(false);
+		}
+		debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
+		let (status, expiry) = (LightningHtlcSubscriptionStatus::Accepted, Some(lowest_incoming_htlc_expiry));
 
 		// The `Created` check at the top of this function ran before the hold
 		// RPCs above, so guard the transition on it here too: a subscription
@@ -455,11 +461,7 @@ impl ClnHoldProcess {
 				Some(LightningHtlcSubscriptionStatus::Created),
 			).await?;
 			// The hold invoice row copies what the plugin reports, in the same
-			// transaction: the node is holding these HTLCs. That is so even
-			// when the subscription is canceled for an expiry that does not
-			// fit: nothing cancels the invoice on the node then, and the HTLCs
-			// stay held until the payer times them out, which the plugin
-			// reports as unpaid.
+			// transaction: the node is holding these HTLCs.
 			if applied {
 				let hold_transition = HoldTransition::Accepted {
 					amount_msat: accepted_amount_msat,
@@ -646,6 +648,9 @@ impl ClnHoldProcess {
 			);
 			return Ok(());
 		}
+
+		// Wake check_lightning_receive so the client sees the cancel.
+		let _ = self.payment_update_tx.send(hash);
 
 		// Fail the intra-Ark self-payment initiated against this
 		// subscription, if any. An unrelated outgoing payment that merely

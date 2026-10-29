@@ -1536,6 +1536,59 @@ async fn server_should_release_hold_invoice_when_subscription_is_canceled() {
 	assert_vtxopool_consistency(&srv).await;
 }
 
+/// An accepted HTLC whose expiry turns out too close for the invoice is failed
+/// back on the node, not only marked canceled, or it would block the channel
+/// until it expires.
+#[tokio::test]
+async fn rejected_accepted_invoice_releases_held_htlcs() {
+	let ctx = TestContext::new("server/rejected_accepted_invoice_releases_held_htlcs").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
+
+	let payment_hash = ark::lightning::Preimage::random().compute_payment_hash();
+	let mut rpc = srv.get_public_rpc().await;
+	let bolt11 = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
+		payment_hash: payment_hash.as_ref().to_vec(),
+		amount_sat: 100_000,
+		min_cltv_delta: 6,
+		mailbox_id: None,
+		description: None,
+		expiry_secs: None,
+		claim_pubkey: None,
+	}).await.unwrap().into_inner().bolt11;
+	let invoice_delta = Bolt11Invoice::from_str(&bolt11).unwrap().min_final_cltv_expiry_delta();
+
+	// The node accepts the payment while captaind isn't watching.
+	srv.stop().await.unwrap();
+	let mut hold_client = lightning.internal.hold_client().await;
+	let payer = Arc::new(lightning.external);
+	let pay = tokio::spawn({
+		let payer = payer.clone();
+		async move { payer.try_pay_bolt11(bolt11).await }
+	});
+	wait_for_hold_invoice_accepted(&mut hold_client, payment_hash).await;
+	let list = hold::ListRequest {
+		constraint: Some(hold::list_request::Constraint::PaymentHash(payment_hash.as_ref().to_vec())),
+	};
+	let lowest_expiry = hold_client.list(list.clone()).await.unwrap().into_inner().invoices[0]
+		.htlcs.iter().filter_map(|h| h.cltv_expiry).min().unwrap();
+
+	// Mine until the HTLC no longer leaves the invoice's delta, well before it expires.
+	let tip = ctx.bitcoind().get_block_count().await;
+	let rejection_tip = lowest_expiry - invoice_delta + 2;
+	assert!(tip < rejection_tip && rejection_tip < lowest_expiry);
+	ctx.generate_blocks((rejection_tip - tip) as u32).await;
+	lightning.internal.wait_for_block_sync().await;
+
+	srv.start().await.unwrap();
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	wait_for_subscription_status(&db, payment_hash, "canceled").await;
+
+	let state = hold_client.list(list).await.unwrap().into_inner().invoices[0].state();
+	assert_eq!(state, hold::InvoiceState::Cancelled, "the held HTLCs must be failed back");
+	pay.await.unwrap().expect_err("the payment fails once the HTLCs are failed back");
+}
+
 #[tokio::test]
 async fn server_generated_invoice_has_configured_expiry() {
 	require_bark_version!(> "0.5.0");
