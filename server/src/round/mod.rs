@@ -1176,8 +1176,11 @@ impl SigningVtxoTree {
 		Ok(())
 	}
 
-	fn restart(self) -> CollectingPayments {
+	/// Also returns the inputs of the cosigners that didn't sign.
+	fn restart(self) -> (CollectingPayments, HashSet<VtxoId>) {
 		let mut allowed_inputs = self.all_inputs.keys().copied().collect::<HashSet<_>>();
+		// A participation lists its inputs under each of its cosigners.
+		let mut withheld = HashSet::new();
 		for (pk, vtxos) in self.inputs_per_cosigner.iter() {
 			if !self.cosign_part_sigs.contains_key(pk) {
 				// Disallow all inputs by this cosigner.
@@ -1187,16 +1190,18 @@ impl SigningVtxoTree {
 				for id in vtxos {
 					allowed_inputs.remove(id);
 				}
+				withheld.extend(vtxos.iter().copied());
 			}
 		}
-		CollectingPayments::new(
+		let next = CollectingPayments::new(
 			self.round_step.round_seq(),
 			self.round_step.attempt_seq() + 1,
 			self.round_data,
 			self.locked_inputs,
 			Some(allowed_inputs),
 			Some(self.funding_tx.into_pinned_input()),
-		)
+		);
+		(next, withheld)
 	}
 
 	#[tracing::instrument(
@@ -1729,6 +1734,23 @@ async fn receive_payments(
 	ReceivePaymentsResult::Proceed
 }
 
+/// Ban the inputs of cosigners that withheld their vtxo signatures.
+async fn ban_withheld_inputs(srv: &Server, inputs: &HashSet<VtxoId>) {
+	if inputs.is_empty() {
+		return;
+	}
+	let until = srv.sync_manager.chain_tip().height + srv.config.round_withheld_signatures_ban;
+	let res = srv.db.write(async |t| {
+		for id in inputs {
+			t.ban_vtxo(*id, until).await?;
+		}
+		Ok(())
+	}).await;
+	if let Err(e) = res {
+		error!("Failed to ban vtxos {:?} that withheld round signatures: {:#}", inputs, e);
+	}
+}
+
 #[tracing::instrument(
 	skip(srv, round_input_rx, round_state),
 	name = "ReceiveVtxoSignatures",
@@ -1755,7 +1777,8 @@ async fn receive_vtxo_signatures(
 				warn!("Timed out receiving vtxo partial signatures.");
 				server_rslog!(RestartMissingVtxoSigs, round_step);
 				let old_state = std::mem::replace(round_state, RoundState::Finished(RoundResult::Empty));
-				let new = old_state.into_signing_vtxo_tree().restart();
+				let (new, withheld) = old_state.into_signing_vtxo_tree().restart();
+				ban_withheld_inputs(srv, &withheld).await;
 				let need_new_round = new.need_new_round();
 				*round_state = RoundState::CollectingPayments(new);
 

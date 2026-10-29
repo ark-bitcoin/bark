@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bitcoin::Amount;
+use bitcoin_ext::BlockHeight;
 use futures::future::join_all;
 use log::{debug, info, trace};
 use tokio_stream::StreamExt;
@@ -192,6 +193,13 @@ async fn second_round_attempt() {
 	res1.expect("bark1 should have refreshed successfully");
 	// check that bark2 was kicked with the correct log message
 	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
+
+	// and that its vtxo can't stall the next round either
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let vtxo = db.read(async |t| t.get_user_vtxos_by_id(&[bark2_vtxo]).await).await.unwrap()
+		.pop().unwrap();
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+	vtxo.check_not_banned(tip).expect_err("a vtxo that withheld its signatures must be banned");
 }
 
 #[tokio::test]

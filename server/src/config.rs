@@ -212,6 +212,12 @@ mod defaults {
 
 	/// A round participation may have at most this many outputs.
 	pub fn max_round_participation_outputs() -> usize { 4 }
+
+	/// About an hour and a half, so a slow hour of blocks still keeps them
+	/// out of the round that replaces the abandoned one.
+	pub fn round_withheld_signatures_ban() -> bitcoin_ext::BlockDelta {
+		bitcoin_ext::BlockDelta::new(9)
+	}
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -294,6 +300,12 @@ pub struct Config {
 	/// The duration after which to drop forfeit nonces
 	#[serde(with = "utils::serde::duration")]
 	pub round_forfeit_nonces_timeout: Duration,
+	/// The number of blocks the inputs of a cosigner that withheld its vtxo
+	/// signatures can't be spent, so they can't stall the next round too.
+	///
+	/// Default value: 9
+	#[serde(default = "defaults::round_withheld_signatures_ban")]
+	pub round_withheld_signatures_ban: BlockDelta,
 
 	/// Whether or not to add full error information to RPC internal errors.
 	pub rpc_rich_errors: bool,
