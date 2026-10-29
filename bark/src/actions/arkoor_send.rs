@@ -15,7 +15,8 @@ use ark::vtxo::{Full, VtxoId, Vtxo};
 
 use crate::Wallet;
 use crate::actions::{
-	Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected, WalletAction, WalletActionId,
+	Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected, WalletAction,
+	WalletActionCheckpoint, WalletActionId,
 };
 use crate::arkoor::{post_arkoor_to_mailboxes, split_change_amount, DeliveryOutcome};
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
@@ -98,6 +99,10 @@ pub enum Progress {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl WalletAction for ArkoorSend {
 	fn id(&self) -> WalletActionId { ArkoorSend::id(self) }
+
+	fn from_checkpoint(checkpoint: WalletActionCheckpoint) -> Option<Self> {
+		checkpoint.into_arkoor_send()
+	}
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		let new_progress = match self.progress {

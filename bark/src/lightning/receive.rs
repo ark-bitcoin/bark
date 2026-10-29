@@ -111,8 +111,11 @@ impl<'a> Bolt11InvoiceBuilder<'a> {
 			self.wallet, amount, self.description, self.expiry, self.token,
 			self.claim_destination,
 		).await?;
-		self.wallet.inner.db.upsert_wallet_action_checkpoint(&start.id(), &start.clone().into()).await?;
-		Ok(start.invoice.clone())
+		let invoice = start.invoice.clone();
+		let mut checkpoint = self.wallet.try_lock_action::<LightningReceive>(&start.id()).await?
+			.context("receive operation already in progress for this payment")?;
+		checkpoint.create(self.wallet, start).await?;
+		Ok(invoice)
 	}
 }
 
@@ -159,7 +162,7 @@ impl Wallet {
 		info!("Syncing {} pending lightning receives", pending.len());
 		for recv in pending {
 			let id = recv.id();
-			if let Err(e) = self.drive_action(recv, DriveMode::UntilParkOrDone).await {
+			if let Err(e) = self.drive_action::<LightningReceive>(&id, DriveMode::UntilParkOrDone).await {
 				warn!("Failed to sync lightning receive {}: {:#}", id, e);
 			}
 		}
@@ -276,12 +279,11 @@ impl Wallet {
 	/// are granted the server has committed, so we refuse — the receive must
 	/// complete or be abandoned on its own near expiry.
 	pub async fn cancel_lightning_receive(&self, hash: PaymentHash) -> anyhow::Result<()> {
-		let key = ln_recv_action_id(hash);
 		// Don't fight a live drive of the same action.
-		let _guard = self.inner.lock_manager.try_lock(&key).await
+		let checkpoint = self.try_lock_action::<LightningReceive>(&ln_recv_action_id(hash)).await?
 			.context("receive operation already in progress for this payment")?;
 
-		let recv = self.lightning_receive_checkpoint(hash).await?
+		let recv = checkpoint.get()
 			.context("no pending lightning receive found for this payment hash")?;
 
 		match recv.progress {
@@ -295,8 +297,7 @@ impl Wallet {
 						warn!("server did not cancel lightning receive {}: {}", hash, e);
 					}
 				}
-				self.stop_wallet_action(&key).await?;
-				Ok(())
+				checkpoint.finish(self).await
 			},
 			Progress::HtlcsReady(_) => {
 				bail!("cannot cancel: HTLCs already granted; the receive will complete \
@@ -324,12 +325,11 @@ impl Wallet {
 		payment: impl Into<PaymentHash>,
 	) -> anyhow::Result<()> {
 		let hash = payment.into();
-		let key = ln_recv_action_id(hash);
 		// Don't fight a live drive of the same action.
-		let _guard = self.inner.lock_manager.try_lock(&key).await
+		let checkpoint = self.try_lock_action::<LightningReceive>(&ln_recv_action_id(hash)).await?
 			.context("receive operation already in progress for this payment")?;
 
-		let recv = self.lightning_receive_checkpoint(hash).await?
+		let recv = checkpoint.get()
 			.context("no pending lightning receive found for this payment hash")?;
 
 		let htlcs = match &recv.progress {
@@ -337,12 +337,11 @@ impl Wallet {
 			_ => bail!("preimage must be revealed before attempting to exit"),
 		};
 
-		self.exit_lightning_receive_htlcs(&recv, htlcs).await?;
+		self.exit_lightning_receive_htlcs(recv, htlcs).await?;
 
 		// The receive is now terminal: release any locks and drop the
 		// checkpoint row.
-		self.stop_wallet_action(&key).await?;
-		Ok(())
+		checkpoint.finish(self).await
 	}
 
 	/// Escalation: when the preimage has been revealed but the claim cannot
@@ -387,10 +386,8 @@ impl Wallet {
 	pub async fn try_claim_lightning_receive(&self, hash: PaymentHash, wait: bool)
 		-> anyhow::Result<LightningReceiveState>
 	{
-		if let Some(recv) = self.lightning_receive_checkpoint(hash).await? {
-			let mode = if wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
-			self.drive_action(recv, mode).await?;
-		}
+		let mode = if wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
+		self.drive_action::<LightningReceive>(&ln_recv_action_id(hash), mode).await?;
 		self.lightning_receive_state(hash).await
 	}
 

@@ -20,7 +20,9 @@ use bitcoin_ext::{BlockDelta, TxStatus};
 use server_rpc::protos;
 
 use crate::Wallet;
-use crate::actions::{Advance, AdvanceError, IntoAdvanceResult, WalletAction, WalletActionId};
+use crate::actions::{
+	Advance, AdvanceError, IntoAdvanceResult, WalletAction, WalletActionCheckpoint, WalletActionId,
+};
 use crate::chain::BroadcastError;
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
@@ -141,6 +143,10 @@ pub(crate) fn board_action_id(utxo: OutPoint) -> WalletActionId {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl WalletAction for Board {
 	fn id(&self) -> WalletActionId { Board::id(self) }
+
+	fn from_checkpoint(checkpoint: WalletActionCheckpoint) -> Option<Self> {
+		checkpoint.into_board()
+	}
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		match self.progress {

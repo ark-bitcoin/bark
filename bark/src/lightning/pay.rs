@@ -15,7 +15,7 @@ use ark::lightning::{
 
 use crate::Wallet;
 use crate::WalletVtxo;
-use crate::actions::{AdvanceResultExt, DriveMode, WalletAction};
+use crate::actions::{AdvanceResultExt, DriveMode, GuardedCheckpoint, WalletAction};
 use crate::actions::lightning::pay::{
 	Htlcs, LightningSend, LightningSendState, settle_lightning_send_payment,
 	start_lightning_send, ln_pay_action_id,
@@ -80,15 +80,12 @@ impl Wallet {
 	/// [`Self::check_lightning_payment`]) picks it up and exits when
 	/// HTLCs are near expiry. See [`LightningSend::has_failed_revocation`].
 	pub async fn allow_lightning_send_to_exit(&self, hash: PaymentHash) -> anyhow::Result<()> {
-		let key = ln_pay_action_id(hash);
-		let _guard = self.inner.lock_manager.try_lock(&key).await
+		let mut checkpoint = self.try_lock_action::<LightningSend>(&ln_pay_action_id(hash)).await?
 			.context("Payment operation already in progress for this invoice")?;
-
-		let mut send = self.lightning_send_checkpoint(hash).await?
-			.with_context(|| format!("no in-progress lightning send for payment hash {hash}"))?;
-		send.allow_exit_of_htlcs = true;
-		self.inner.db.upsert_wallet_action_checkpoint(&send.id(), &send.into()).await?;
-		Ok(())
+		if checkpoint.get().is_none() {
+			bail!("no in-progress lightning send for payment hash {hash}");
+		}
+		checkpoint.update(self, |send| send.allow_exit_of_htlcs = true).await
 	}
 
 	/// Returns the VTXOs currently held by any in-progress lightning send.
@@ -113,7 +110,7 @@ impl Wallet {
 		info!("Syncing {} pending lightning sends", pending.len());
 		for send in pending {
 			let id = send.id();
-			if let Err(e) = self.drive_action(send, DriveMode::UntilParkOrDone).await {
+			if let Err(e) = self.drive_action::<LightningSend>(&id, DriveMode::UntilParkOrDone).await {
 				warn!("Failed to sync lightning send {}: {:#}", id, e);
 			}
 		}
@@ -152,13 +149,13 @@ impl Wallet {
 	pub async fn check_lightning_payment(&self, hash: PaymentHash, wait: bool)
 		-> anyhow::Result<LightningSendState>
 	{
-		let send = match self.lightning_send_state(hash).await? {
-			LightningSendState::InProgress(s) => s,
-			s => return Ok(s),
-		};
+		let state = self.lightning_send_state(hash).await?;
+		if !matches!(state, LightningSendState::InProgress(_)) {
+			return Ok(state);
+		}
 
 		let mode = if wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
-		self.drive_action(send, mode).await?;
+		self.drive_action::<LightningSend>(&ln_pay_action_id(hash), mode).await?;
 		self.lightning_send_state(hash).await
 	}
 
@@ -166,19 +163,19 @@ impl Wallet {
 	/// mailbox notification), skipping the server poll.
 	pub(crate) async fn settle_lightning_send_with_preimage(
 		&self,
-		send: LightningSend,
+		checkpoint: GuardedCheckpoint<LightningSend>,
 		htlcs: Htlcs,
 		preimage: Preimage,
 	) -> anyhow::Result<()> {
+		let send = checkpoint.get().context("lightning send has no checkpoint")?;
 		let payment_hash = send.invoice.payment_hash();
 		if preimage.compute_payment_hash() != payment_hash {
 			bail!("preimage mismatch for payment hash {}", payment_hash);
 		}
-		settle_lightning_send_payment(self, &send, &htlcs, preimage).await.into_anyhow()?;
+		settle_lightning_send_payment(self, send, &htlcs, preimage).await.into_anyhow()?;
 		// Remove the in-progress row now that the paid_invoice record
 		// is the source of truth.
-		self.inner.db.remove_wallet_action_checkpoint(&ln_pay_action_id(payment_hash)).await?;
-		Ok(())
+		checkpoint.remove(self).await
 	}
 
 	/// Pays a Lightning [Invoice] using Ark VTXOs.
@@ -369,27 +366,19 @@ impl Wallet {
 			bail!("Invoice has already been paid");
 		}
 
-		let key = ln_pay_action_id(payment_hash);
-		let guard = self.inner.lock_manager.try_lock(&key).await
+		let mut checkpoint = self.try_lock_action::<LightningSend>(&ln_pay_action_id(payment_hash))
+			.await?
 			.context("Payment operation already in progress for this invoice")?;
 
 		// Resume an existing checkpoint, or build a fresh send. A resumed
 		// send keeps the retry time it was started with.
-		let action = match self.lightning_send_checkpoint(payment_hash).await? {
-			Some(existing) => existing,
-			None => {
-				let start = start_lightning_send(
-					self, invoice.clone(), user_amount, original_payment_method, opts.retry_for,
-				).await?;
+		if checkpoint.get().is_none() {
+			let start = start_lightning_send(
+				self, invoice.clone(), user_amount, original_payment_method, opts.retry_for,
+			).await?;
+			checkpoint.create(self, start).await?;
+		}
 
-				self.inner.db.upsert_wallet_action_checkpoint(
-					&start.id(), &start.clone().into()
-				).await?;
-
-				start
-			},
-		};
-
-		self.drive_action_with_guard(action, mode, guard).await
+		self.drive_checkpoint(checkpoint, mode).await
 	}
 }

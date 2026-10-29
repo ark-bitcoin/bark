@@ -48,7 +48,7 @@ use server_rpc::{protos, TryFromBytes};
 use crate::{Wallet, WalletVtxo};
 use crate::actions::{
 	abort, or_retry, retry, Advance, AdvanceError, IntoAdvanceResult, RetryUnlessRejected,
-	WalletAction, WalletActionId,
+	WalletAction, WalletActionCheckpoint, WalletActionId,
 };
 use crate::arkoor::split_change_amount;
 use crate::movement::update::MovementUpdate;
@@ -226,6 +226,10 @@ pub enum StartOffboardSpec {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl WalletAction for Offboard {
 	fn id(&self) -> WalletActionId { Offboard::id(self) }
+
+	fn from_checkpoint(checkpoint: WalletActionCheckpoint) -> Option<Self> {
+		checkpoint.into_offboard()
+	}
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		let new_progress = match self.progress {
