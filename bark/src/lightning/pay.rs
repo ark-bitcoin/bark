@@ -173,9 +173,9 @@ impl Wallet {
 			bail!("preimage mismatch for payment hash {}", payment_hash);
 		}
 		settle_lightning_send_payment(self, send, &htlcs, preimage).await.into_anyhow()?;
-		// Remove the in-progress row now that the paid_invoice record
-		// is the source of truth.
-		checkpoint.remove(self).await
+		// Clean up like the executor does when an action is done. The
+		// paid_invoice record is the source of truth from here on.
+		checkpoint.finish(self).await
 	}
 
 	/// Pays a Lightning [Invoice] using Ark VTXOs.
