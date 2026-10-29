@@ -390,10 +390,12 @@ mod test {
 	use server_rpc::protos::mailbox_server::{LightningSendFinishedMessage, MailboxMessage};
 	use server_rpc::protos::mailbox_server::mailbox_message::Message as MailboxMessageKind;
 
+	use ark::VtxoId;
 	use ark::test_util::VTXO_VECTORS;
 	use bitcoin_ext::BlockHeight;
 
 	use crate::actions::lightning::pay::Progress;
+	use crate::movement::MovementStatus;
 	use crate::movement::update::MovementUpdate;
 	use crate::subsystem::{LightningSendMovement, Subsystem};
 	use crate::vtxo::{VtxoLockHolder, VtxoState};
@@ -404,6 +406,7 @@ mod test {
 	/// movement is pending.
 	struct PendingSend {
 		send: LightningSend,
+		htlcs: Htlcs,
 		preimage: Preimage,
 	}
 
@@ -461,12 +464,12 @@ mod test {
 			movement_id: None,
 			revocation_key: key,
 			retry_for: None,
-			progress: Progress::PaymentInitiated(htlcs),
+			progress: Progress::PaymentInitiated(htlcs.clone()),
 			allow_exit_of_htlcs: false,
 		};
 		wallet.inner.db.upsert_wallet_action_checkpoint(&send.id(), &send.clone().into()).await.unwrap();
 
-		PendingSend { send, preimage }
+		PendingSend { send, htlcs, preimage }
 	}
 
 	/// Hand the mailbox the notification that the server paid the invoice.
@@ -484,6 +487,10 @@ mod test {
 
 	async fn checkpoint(wallet: &Wallet, send: &PendingSend) -> Option<LightningSend> {
 		wallet.lightning_send_checkpoint(send.hash()).await.unwrap()
+	}
+
+	async fn vtxo_state(wallet: &Wallet, id: VtxoId) -> VtxoState {
+		wallet.inner.db.get_wallet_vtxo(id).await.unwrap().unwrap().state
 	}
 
 	/// Finish the send, like a driver that revoked its HTLCs.
@@ -530,5 +537,31 @@ mod test {
 		assert!(wallet.pending_lightning_sends().await.unwrap().is_empty());
 		let state = wallet.lightning_send_state(send.hash()).await.unwrap();
 		assert!(matches!(state, LightningSendState::Paid(_)), "{:?}", state);
+	}
+
+	/// The notification that the server paid the invoice can arrive while a
+	/// drive holds the lock of the send: its status poll still saw the
+	/// payment pending, and it is about to park the send. The mailbox gets
+	/// the notification once, so that single notification must settle the
+	/// send after the drive parks.
+	#[tokio::test]
+	async fn notification_during_a_drive_settles_the_send_after_the_drive_parks() {
+		let (wallet, _conn) = Wallet::offline_for_test().await;
+		let send = pending_send(&wallet).await;
+
+		let drive_guard = wallet.inner.lock_manager.try_lock(&send.send.id()).await.unwrap();
+		let drive_parks = async {
+			tokio::time::sleep(Duration::from_millis(100)).await;
+			wallet.inner.db.upsert_wallet_action_checkpoint(&send.send.id(), &send.send.clone().into())
+				.await.unwrap();
+			drop(drive_guard);
+		};
+		futures::join!(notify_paid(&wallet, &send), drive_parks);
+
+		assert!(wallet.is_invoice_paid(send.hash()).await.unwrap());
+		assert_eq!(checkpoint(&wallet, &send).await, None);
+		assert_eq!(vtxo_state(&wallet, send.htlcs.vtxo_ids[0]).await, VtxoState::Spent);
+		let movement = wallet.inner.db.get_movement_by_id(send.htlcs.movement_id).await.unwrap();
+		assert_eq!(movement.status, MovementStatus::Successful);
 	}
 }
