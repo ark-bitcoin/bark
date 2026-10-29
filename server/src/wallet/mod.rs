@@ -488,7 +488,7 @@ impl ops::DerefMut for PersistedWallet {
 pub fn read_mnemonic_from_datadir(data_dir: &Path) -> anyhow::Result<Mnemonic> {
 	let path = data_dir.join(MNEMONIC_FILE);
 	fs_perms::warn_if_loose(data_dir, 0o700);
-	fs_perms::warn_if_loose(&path, 0o600);
+	fs_perms::refuse_if_loose(&path, 0o600)?;
 	let mnemonic = std::fs::read_to_string(&path)
 		.context("failed to read mnemonic")?;
 	Ok(Mnemonic::from_str(&mnemonic)?)
@@ -621,6 +621,29 @@ mod test {
 		};
 		assert_eq!(watchman, BIP32_IDX_WATCHMAN);
 		assert_eq!(watchman, WalletKind::Watchman.child_number());
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn read_mnemonic_refuses_loose_permissions() {
+		use std::os::unix::fs::PermissionsExt;
+
+		let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+		let datadir = std::env::temp_dir()
+			.join(format!("server-mnemonic-perms-{}-{}", std::process::id(), nanos));
+		std::fs::create_dir(&datadir).unwrap();
+		let path = datadir.join(MNEMONIC_FILE);
+		std::fs::write(&path, Mnemonic::generate(12).unwrap().to_string()).unwrap();
+
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+		let loose = read_mnemonic_from_datadir(&datadir);
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+		let tight = read_mnemonic_from_datadir(&datadir);
+		std::fs::remove_dir_all(&datadir).unwrap();
+
+		let err = loose.expect_err("a mnemonic readable by other users must be refused");
+		assert!(err.to_string().contains("accessible by other users"), "{err:#}");
+		tight.expect("an owner-only mnemonic must load");
 	}
 
 	#[test]
