@@ -4,6 +4,8 @@ use clap::Args;
 use ipnet::IpNet;
 use tracing::trace;
 use hickory_resolver::TokioResolver;
+use hickory_resolver::config::ResolverConfig;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Args)]
 pub struct Filters {
@@ -37,6 +39,25 @@ impl Filters {
 
 	pub fn is_empty(&self) -> bool {
 		self.ip.is_empty() && self.dns.is_empty()
+	}
+
+	/// Refuses `client` unless it passes these filters. Empty filters allow
+	/// any client, also one whose address is unknown.
+	pub async fn check_client(&self, client: Option<SocketAddr>) -> anyhow::Result<()> {
+		if self.is_empty() {
+			return Ok(());
+		}
+		let Some(client) = client else {
+			return badarg!("client's address cannot be found");
+		};
+		let resolver = TokioResolver::builder_with_config(
+			ResolverConfig::default(),
+			TokioRuntimeProvider::default(),
+		).build()?;
+		if !self.allowed(&resolver, &client).await {
+			return badarg!("client's address is not allowed");
+		}
+		Ok(())
 	}
 
 	pub async fn allowed(
