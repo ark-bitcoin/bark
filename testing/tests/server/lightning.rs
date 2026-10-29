@@ -32,7 +32,7 @@ use ark_testing::{Bark, Captaind, TestContext, btc, lightning_test, require_bark
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::context::LightningPaymentSetup;
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::{poll_interval, FutureExt, ToAltString};
+use ark_testing::util::{poll_interval, wait_timeout, FutureExt, ToAltString};
 use ark_testing::exit::complete_exit;
 use bitcoin_ext::AmountExt;
 
@@ -3541,4 +3541,82 @@ async fn self_payment_claim_rejected_after_sender_onchain_refund() {
 
 	let err = result.expect_err("claim must be refused after the sender refunded on-chain");
 	assert!(err.message().contains("too close to the current chaintip"), "unexpected error: {err:?}");
+}
+
+/// When xpay answers late, after its attempt was closed and the invoice
+/// retried, its result must not be applied to the retry.
+#[tokio::test]
+async fn late_xpay_result_does_not_finalize_a_retry() {
+	let ctx = TestContext::new("server/late_xpay_result_does_not_finalize_a_retry").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let ark_ln = lightning.internal;
+	let eve_ln = lightning.external;
+
+	let srv = ctx.captaind("server").lightningd(&ark_ln).funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	ark_ln.wait_for_block_sync().await;
+	eve_ln.wait_for_block_sync().await;
+
+	// Eve holds the payment, so the server's xpay call doesn't return yet.
+	let payment_hash = ark::lightning::Preimage::random().compute_payment_hash();
+	let mut eve_hold = eve_ln.hold_client().await;
+	let bolt11 = eve_hold.invoice(hold::InvoiceRequest {
+		payment_hash: payment_hash.to_byte_array().to_vec(),
+		amount_msat: sat(10_000).to_msat(),
+		description: Some(hold::invoice_request::Description::Memo("late".to_string())),
+		min_final_cltv_expiry: Some(18),
+		expiry: Some(3600),
+		routing_hints: vec![],
+	}).await.unwrap().into_inner().bolt11;
+	bark.try_pay_lightning(&bolt11, None, false).await.unwrap();
+	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
+
+	// The first attempt is closed and the invoice retried while xpay is
+	// still running.
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let first = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await)
+		.await.unwrap().expect("open attempt");
+	db.write(async |t| t.update_lightning_payment_attempt_status(
+		&first, server::database::ln::LightningPaymentStatus::Failed, Some("closed for the test"),
+	).await).await.unwrap().expect("first attempt unchanged");
+	let invoice = ark::lightning::Invoice::from_str(&bolt11).unwrap();
+	let retry_id = db.write(async |t| t.store_lightning_payment_start(
+		first.lightning_node_id, &invoice, sat(10_000), None, &[], None,
+		first.block_height.unwrap(), sat(0), None, Duration::from_secs(3600), Some(sat(1_000)),
+	).await).await.unwrap();
+
+	// Releasing the hold makes the first xpay call fail.
+	eve_hold.cancel(hold::CancelRequest {
+		payment_hash: payment_hash.to_byte_array().to_vec(),
+	}).await.unwrap();
+	let mut ark_rpc = ark_ln.grpc_client().await;
+	async {
+		loop {
+			let pays = ark_rpc.list_pays(cln_rpc::ListpaysRequest {
+				bolt11: None,
+				payment_hash: Some(payment_hash.to_vec()),
+				status: None, index: None, limit: None, start: None,
+			}).await.unwrap().into_inner().pays;
+			if pays.iter().any(|p| p.status() == cln_rpc::listpays_pays::ListpaysPaysStatus::Failed) {
+				break;
+			}
+			tokio::time::sleep(poll_interval()).await;
+		}
+	}.wait(wait_timeout()).await;
+
+	// Give the first xpay result time to reach the db.
+	let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+	while tokio::time::Instant::now() < deadline {
+		let retry = db.read(async |t| t.get_latest_payment_attempt_by_payment_hash(payment_hash).await)
+			.await.unwrap().expect("retry attempt");
+		assert_eq!(retry.id, retry_id);
+		assert_eq!(retry.status, server::database::ln::LightningPaymentStatus::Requested,
+			"the first xpay result finalized the retry: {:?}", retry.error,
+		);
+		assert_eq!(retry.error, None);
+		tokio::time::sleep(poll_interval()).await;
+	}
 }

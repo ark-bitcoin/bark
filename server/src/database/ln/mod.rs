@@ -243,7 +243,7 @@ impl<'t> Tx<'t> {
 		retry_for: Duration,
 		// `None` for intra-Ark self-payments, which never reach CLN.
 		max_routing_fee: Option<Amount>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<i64> {
 		let payment_hash = invoice.payment_hash();
 
 		let check_stmt = self.prepare("
@@ -321,7 +321,7 @@ impl<'t> Tx<'t> {
 			updated_at,
 		);
 
-		Ok(())
+		Ok(payment_attempt_id)
 	}
 
 	/// Returns `None` when the optimistic-lock predicate missed.

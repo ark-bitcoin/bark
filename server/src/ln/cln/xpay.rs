@@ -97,6 +97,7 @@ impl ClnXpayClient {
 	))]
 	pub async fn pay(
 		&self,
+		attempt_id: i64,
 		invoice: Box<Invoice>,
 		payment_amount: Amount,
 		max_routing_fee: Amount,
@@ -133,8 +134,11 @@ impl ClnXpayClient {
 			},
 		};
 
+		// A later attempt for this hash, maybe on another node, is not ours to
+		// reconcile with this node's xpay result.
 		let attempt_res = self.db
-			.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await;
+			.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await
+			.map(|a| a.filter(|a| a.id == attempt_id));
 
 		let attempt_res = match (attempt_res, pay_error.as_deref()) {
 			// Store the error before reconciling, so the reason survives if
@@ -152,7 +156,9 @@ impl ClnXpayClient {
 				}
 			},
 			Ok(None) => {
-				error!("Attempt not found for payment hash after calling xpay: {}", payment_hash);
+				error!("Attempt {} for payment hash {} was closed before xpay returned",
+					attempt_id, payment_hash,
+				);
 			},
 			Err(e) => {
 				error!("Error getting open payment attempt by payment hash: {e:#}");

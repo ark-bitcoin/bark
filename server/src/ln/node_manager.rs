@@ -363,8 +363,8 @@ impl LightningManager {
 			None
 		};
 
-		self.db.write(async |t| {
-			t.store_lightning_payment_start(
+		let attempt_id = self.db.write(async |t| {
+			let attempt_id = t.store_lightning_payment_start(
 				node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids,
 				lightning_htlc_subscription_id,
 				attempt_block_height, user_fee, user_agent.as_deref(), retry_for,
@@ -378,7 +378,7 @@ impl LightningManager {
 			if let Some((_, new)) = &new_xpay {
 				xpay::create_xpay(&**t, new).await.context("failed to store the xpay call")?;
 			}
-			Ok(())
+			Ok(attempt_id)
 		}).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
@@ -433,6 +433,7 @@ impl LightningManager {
 		let xpay_client = node.xpay.clone();
 		tokio::spawn(async move {
 			xpay_client.pay(
+				attempt_id,
 				invoice,
 				amount,
 				max_routing_fee,
