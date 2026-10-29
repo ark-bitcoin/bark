@@ -114,9 +114,15 @@ impl ClnXpayClient {
 			&mut rpc, &invoice, payment_amount, max_routing_fee, max_cltv_expiry_delta, retry_for,
 			label,
 		).await {
-			Ok(_preimage) => {
-				// NB we don't do db stuff when it's succesful, because
-				// it will happen in the sendpay stream of the monitor process
+			Ok(preimage) => {
+				// Record the settlement now: the attempt is finished by the
+				// reconciliation below or the monitor, which can both fail,
+				// and a revocation is refused only once the preimage is known.
+				if preimage.compute_payment_hash() != payment_hash {
+					error!("xpay returned a preimage that doesn't match payment hash {}", payment_hash);
+				} else if let Err(e) = self.settler.settle(preimage).await {
+					error!("Error storing the xpay preimage for payment hash {}: {:#}", payment_hash, e);
+				}
 				trace!("Payment successful for payment hash {}", payment_hash.as_hex());
 				None
 			},

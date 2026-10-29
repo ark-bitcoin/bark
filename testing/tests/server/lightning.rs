@@ -3170,6 +3170,64 @@ async fn wait_for_cln_hold_status(
 /// Wait until Eve's hold plugin holds the payment's HTLCs. The invoice turns
 /// ACCEPTED only once every HTLC is irrevocably committed and handed to the
 /// plugin; a settle before that fails with "no HTLCs to settle".
+/// A successful xpay records its preimage at once, also when the payment
+/// attempt was closed meanwhile and nothing else would record it.
+#[tokio::test]
+async fn successful_xpay_records_the_preimage() {
+	let ctx = TestContext::new("server/successful_xpay_records_the_preimage").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let ark_ln = lightning.internal;
+	let eve_ln = lightning.external;
+
+	let srv = ctx.captaind("server").lightningd(&ark_ln).funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	ark_ln.wait_for_block_sync().await;
+	eve_ln.wait_for_block_sync().await;
+
+	// Eve holds the payment, so the server's xpay call doesn't return yet.
+	let preimage = ark::lightning::Preimage::random();
+	let payment_hash = preimage.compute_payment_hash();
+	let mut eve_hold = eve_ln.hold_client().await;
+	let bolt11 = eve_hold.invoice(hold::InvoiceRequest {
+		payment_hash: payment_hash.to_byte_array().to_vec(),
+		amount_msat: sat(10_000).to_msat(),
+		description: Some(hold::invoice_request::Description::Memo("held".to_string())),
+		min_final_cltv_expiry: Some(18),
+		expiry: Some(3600),
+		routing_hints: vec![],
+	}).await.unwrap().into_inner().bolt11;
+	bark.try_pay_lightning(&bolt11, None, false).await.unwrap();
+	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
+
+	// Close the attempt, so neither the reconciliation after xpay nor the
+	// monitor finishes it.
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await)
+		.await.unwrap().expect("open attempt");
+	db.write(async |t| t.update_lightning_payment_attempt_status(
+		&attempt, server::database::ln::LightningPaymentStatus::Failed, Some("closed for the test"),
+	).await).await.unwrap().expect("attempt unchanged");
+
+	// Eve settles, so xpay returns the preimage.
+	eve_hold.settle(hold::SettleRequest {
+		payment_preimage: preimage.as_ref().to_vec(),
+	}).await.unwrap();
+
+	async {
+		loop {
+			let settled = db.read(async |t| t.get_htlc_settlement_by_payment_hash(payment_hash).await)
+				.await.unwrap();
+			if settled == Some(preimage) {
+				break;
+			}
+			tokio::time::sleep(poll_interval()).await;
+		}
+	}.wait(wait_timeout()).await;
+}
+
 async fn wait_for_hold_invoice_accepted(
 	hold_client: &mut hold::hold_client::HoldClient<tonic::transport::Channel>,
 	payment_hash: ark::lightning::PaymentHash,
