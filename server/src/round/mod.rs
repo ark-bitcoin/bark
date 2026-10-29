@@ -1996,13 +1996,15 @@ pub async fn run_round_coordinator(
 				trace!("Round {} was empty, broadcasting failure", round_seq);
 				srv.rounds.broadcast_event(RoundEvent::Failed(RoundFailed { round_seq }));
 			},
-			// Round got abandoned, immediatelly start a new one.
+			// Round got abandoned, immediately start a new one.
 			RoundResult::Abandoned => {
 				trace!("Round {} was abandoned, broadcasting failure", round_seq);
 				srv.rounds.broadcast_event(RoundEvent::Failed(RoundFailed { round_seq }));
+				*srv.rounds.next_round_time.write() = SystemTime::now();
 				continue;
 			},
-			// Internal error, retry immediatelly.
+			// Internal error, retry at the next round time so a persistent
+			// error doesn't make us spin.
 			RoundResult::Err(RoundError::Recoverable(e)) => {
 				srv.rounds.broadcast_event(RoundEvent::Failed(RoundFailed { round_seq }));
 				error!("Full round error stack trace: {:?}", e);
