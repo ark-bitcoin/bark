@@ -30,7 +30,7 @@ use server_rpc::protos::mailbox_server::MailboxMessage;
 
 use crate::{Wallet, WalletInner, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::actions::DriveMode;
-use crate::actions::lightning::pay::Progress;
+use crate::actions::lightning::pay::{ln_pay_action_id, LightningSend, Progress};
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
@@ -66,6 +66,12 @@ const MAILBOX_PROCESSING_LOCK_KEY: &str = "mailbox.processing";
 /// waiters acquire the lock and dedup as usual.
 const MAILBOX_PROCESSING_LOCK_TIMEOUT: std::time::Duration =
 	std::time::Duration::from_secs(30);
+
+/// How long the handler of a lightning send notification waits for a drive
+/// of the send to release the lock of the send. Other mailbox messages wait
+/// meanwhile, so keep it short.
+const LIGHTNING_SEND_LOCK_TIMEOUT: std::time::Duration =
+	std::time::Duration::from_secs(10);
 
 /// Whether a structurally-valid arkoor vtxo is safe to store as a spendable
 /// received payment.
@@ -632,29 +638,31 @@ impl Wallet {
 				debug!("Lightning send {} already settled; ignoring notification", payment_hash);
 			},
 			Ok(false) => {
-				let lookup = self.lightning_send_checkpoint(payment_hash).await;
+				let action_id = ln_pay_action_id(payment_hash);
+				let lookup = self.lock_action::<LightningSend>(&action_id, LIGHTNING_SEND_LOCK_TIMEOUT).await;
 				match lookup {
-					Ok(Some(send)) => {
-						let result = match (&send.progress, known_preimage) {
-							(Progress::PaymentInitiated(htlcs), Some(preimage)) => {
-								let htlcs = htlcs.clone();
-								self.settle_lightning_send_with_preimage(send, htlcs, preimage).await
-							},
-							(Progress::PaymentInitiated(_), None) => {
-								self.drive_action(send, DriveMode::UntilParkOrDone).await
-							},
-							_ => {
-								debug!("Lightning send finished notification for {} but checkpoint is not PaymentInitiated; ignoring", payment_hash);
-								Ok(())
-							},
-						};
-						match result {
-							Ok(()) => info!("Processed lightning send finished for {}", payment_hash),
-							Err(e) => error!("Failed to process lightning send finished for {}: {:#}", payment_hash, e),
-						}
-					},
-					Ok(None) => {
-						warn!("Lightning send finished notification for unknown payment hash {}", payment_hash);
+					Ok(checkpoint) => match checkpoint.get().map(|send| send.progress.clone()) {
+						Some(progress) => {
+							let result = match (progress, known_preimage) {
+								(Progress::PaymentInitiated(htlcs), Some(preimage)) => {
+									self.settle_lightning_send_with_preimage(checkpoint, htlcs, preimage).await
+								},
+								(Progress::PaymentInitiated(_), None) => {
+									self.drive_checkpoint(checkpoint, DriveMode::UntilParkOrDone).await
+								},
+								_ => {
+									debug!("Lightning send finished notification for {} but checkpoint is not PaymentInitiated; ignoring", payment_hash);
+									Ok(())
+								},
+							};
+							match result {
+								Ok(()) => info!("Processed lightning send finished for {}", payment_hash),
+								Err(e) => error!("Failed to process lightning send finished for {}: {:#}", payment_hash, e),
+							}
+						},
+						None => {
+							warn!("Lightning send finished notification for unknown payment hash {}", payment_hash);
+						},
 					},
 					Err(e) => {
 						error!("Failed to look up lightning send checkpoint for {}: {:#}", payment_hash, e);

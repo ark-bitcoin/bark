@@ -43,7 +43,7 @@ impl Wallet {
 		info!("Syncing {} pending offboard(s)", pending.len());
 		for action in pending {
 			let id = action.id();
-			if let Err(e) = self.drive_action(action, DriveMode::UntilParkOrDone).await {
+			if let Err(e) = self.drive_action::<Offboard>(&id, DriveMode::UntilParkOrDone).await {
 				warn!("Failed to sync offboard {}: {:#}", id, e);
 			}
 		}
@@ -106,15 +106,15 @@ impl Wallet {
 
 	async fn run_offboard(&self, action: Offboard) -> anyhow::Result<OffboardResult> {
 		let offboard_id = action.id();
-		let guard = self.inner.lock_manager.try_lock(&offboard_id).await
+		let mut checkpoint = self.try_lock_action::<Offboard>(&offboard_id).await?
 			.context("offboard action already in progress")?;
 
-		self.inner.db.upsert_wallet_action_checkpoint(&offboard_id, &action.clone().into()).await
+		checkpoint.create(self, action).await
 			.context("failed to persist initial offboard checkpoint")?;
 
 		// Drive once synchronously to get past the server interaction; the
 		// rest (confirmation polling) is left to sync_pending_offboards.
-		self.drive_action_with_guard(action, DriveMode::UntilParkOrDone, guard).await?;
+		self.drive_checkpoint(checkpoint, DriveMode::UntilParkOrDone).await?;
 
 		match self.offboard_checkpoint(&offboard_id).await? {
 			Some(o) => match o.progress {
