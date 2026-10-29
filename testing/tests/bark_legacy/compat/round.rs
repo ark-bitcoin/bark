@@ -649,6 +649,32 @@ async fn delegated_refresh_dropped_when_input_spent_before_round() {
 		.expect("round must sit out: the spent input's delegated participation should be dropped");
 }
 
+/// A banned input only delays a delegated refresh, its participation stays.
+#[tokio::test]
+async fn delegated_refresh_waits_out_a_ban() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("bark/delegated_refresh_waits_out_a_ban").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+	let vtxo = bark.vtxo_ids().await[0];
+
+	bark.refresh_all_delegated_no_sync().await;
+	srv.ban_vtxo(vtxo, 100).await;
+
+	let mut log_no_payments = srv.subscribe_log::<NoRoundPayments>();
+	srv.trigger_round().await;
+	log_no_payments.recv().wait(wait_timeout()).await
+		.expect("the round sits out while the input is banned");
+
+	srv.unban_vtxo(vtxo).await;
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	log_round_finished.recv().wait(wait_timeout()).await
+		.expect("the participation is still there once the ban is lifted");
+}
+
 #[tokio::test]
 async fn delegated_refresh_then_unsynced_spend_is_rejected() {
 	require_bark_version!(> "0.5.0");

@@ -854,9 +854,23 @@ impl CollectingPayments {
 				return;
 			},
 		};
+		let banned = match srv.db.read(async |t| t.list_banned_vtxos(tip).await).await {
+			Ok(b) => b.into_iter().map(|b| b.vtxo_id).collect::<HashSet<_>>(),
+			Err(e) => {
+				error!("Error loading banned vtxos: {:#}", e);
+				return;
+			},
+		};
 
 		for part in parts {
 			let unlock_hash = part.unlock_hash;
+			// A ban is temporary, so keep the participation for a later round.
+			if let Some(input) = part.inputs.iter().find(|i| banned.contains(&i.vtxo_id)) {
+				debug!("Deferring hArk participation {}: input {} is banned",
+					unlock_hash, input.vtxo_id,
+				);
+				continue;
+			}
 			if self.interactive_participants.contains_key(&unlock_hash) {
 				error!(unlock_hash = unlock_hash.to_string(),
 					"A hark participation for an unlock hash we just created, \
