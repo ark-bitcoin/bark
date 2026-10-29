@@ -332,6 +332,8 @@ pub struct CollectingPayments {
 	round_step: TimedRoundStep,
 
 	proceed: bool,
+	/// Whether a participation didn't fit in this round.
+	turned_away: bool,
 }
 
 impl CollectingPayments {
@@ -361,7 +363,13 @@ impl CollectingPayments {
 			common_round_tx_input,
 			round_step: RoundStep::AttemptInitiation.with_instant(round_seq, attempt_seq),
 			proceed: false,
+			turned_away: false,
 		}
+	}
+
+	/// Whether this round has no room left for participations.
+	fn is_full(&self) -> bool {
+		self.turned_away || self.all_outputs.len() == self.round_data.max_output_vtxos
 	}
 
 	fn first_attempt(&self) -> bool {
@@ -454,15 +462,6 @@ impl CollectingPayments {
 			return badarg!("too many outputs, maximum is {}", self.round_data.max_participation_outputs);
 		}
 
-		if self.all_outputs.len() + nb_outputs > self.round_data.max_output_vtxos {
-			warn!("Got payment we don't have space for, dropping");
-			server_rslog!(FullRound, self.round_step,
-				nb_outputs: self.all_outputs.len(),
-				max_output_vtxos: self.round_data.max_output_vtxos,
-			);
-			bail!("not enough outputs left in this round, try next round");
-		}
-
 		let mut unique_inputs = HashSet::with_capacity(inputs.len());
 		for input in inputs {
 			if !unique_inputs.insert(*input) {
@@ -483,6 +482,20 @@ impl CollectingPayments {
 			}
 		}
 
+		Ok(())
+	}
+
+	/// Fails if this round has no room left for `nb_outputs` more outputs.
+	fn check_room_for_outputs(&mut self, nb_outputs: usize) -> anyhow::Result<()> {
+		if self.all_outputs.len() + nb_outputs > self.round_data.max_output_vtxos {
+			warn!("Got payment we don't have space for, dropping");
+			server_rslog!(FullRound, self.round_step,
+				nb_outputs: self.all_outputs.len(),
+				max_output_vtxos: self.round_data.max_output_vtxos,
+			);
+			self.turned_away = true;
+			bail!("not enough outputs left in this round, try next round");
+		}
 		Ok(())
 	}
 
@@ -644,6 +657,7 @@ impl CollectingPayments {
 		}
 
 		self.validate_payment_data(challenge, &input_ids, &vtxo_requests)?;
+		self.check_room_for_outputs(vtxo_requests.len())?;
 
 		let flux_guard = srv.vtxos_in_flux.try_lock(&input_ids)
 			.map_err(|e| { client_rslog!(RoundUserVtxoInFlux, self.round_step, vtxo: e.id); e })
@@ -750,6 +764,7 @@ impl CollectingPayments {
 				nb_outputs: self.all_outputs.len(),
 				max_output_vtxos: self.round_data.max_output_vtxos,
 			);
+			self.turned_away = true;
 			return Err(ProcessHarkParticipationError::RoundFull);
 		}
 
@@ -1745,6 +1760,11 @@ async fn receive_payments(
 		output_count,
 	);
 
+	// Whoever didn't fit gets the next round right after this one.
+	if state.is_full() {
+		*srv.rounds.next_round_time.write() = SystemTime::now();
+	}
+
 	ReceivePaymentsResult::Proceed
 }
 
@@ -2538,20 +2558,12 @@ mod tests {
 
 	#[test]
 	fn test_register_payment_exceeds_max_outputs() {
-		let state = create_collecting_payments(1);
+		let mut state = create_collecting_payments(1);
 
-		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone(), VTXO_VECTORS.round1_vtxo.clone()];
-		let input_ids = inputs
-			.iter()
-			.map(|v| v.id())
-			.collect::<Vec<_>>();
-
-		let outputs = vec![
-			create_signed_req(100, &state.round_data),
-			create_signed_req(100, &state.round_data),
-		];
-
-		state.validate_payment_data(state.round_attempt_challenge, &input_ids, &outputs).unwrap_err();
+		state.check_room_for_outputs(1).unwrap();
+		assert!(!state.is_full());
+		state.check_room_for_outputs(2).unwrap_err();
+		assert!(state.is_full());
 	}
 
 	#[test]

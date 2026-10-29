@@ -55,7 +55,7 @@ use ark_testing::{btc, is_bark_version, require_bark_version, sat, secs, Captain
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::{FutureExt, ToAltString};
+use ark_testing::util::{wait_timeout, FutureExt, ToAltString};
 
 use ark_testing::exit::complete_exit;
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
@@ -1063,6 +1063,7 @@ async fn full_round() {
 	futures::future::join_all(barks.iter().map(|bark| bark.set_ark_url(&proxy))).await;
 
 	let mut log_full = srv.subscribe_log::<FullRound>();
+	let mut log_started = srv.subscribe_log::<RoundStarted>();
 	let subs = subscriptions.clone();
 	tokio::spawn(async move {
 		futures::future::join_all(barks.iter().map(|bark| async {
@@ -1087,6 +1088,11 @@ async fn full_round() {
 	// then we wait for the error to happen
 	let err = rx.recv().wait_millis(30_000).await.unwrap().to_alt_string();
 	assert!(err.contains("Message arrived late or round was full"), "err: {err}");
+
+	// the bark that didn't fit doesn't have to wait for the round interval
+	log_started.recv().wait(wait_timeout()).await.expect("the full round started");
+	log_started.recv().wait(wait_timeout()).await
+		.expect("the next round starts right after a full one");
 }
 
 /// Oversized cosign packages are refused before the server reads any input.
