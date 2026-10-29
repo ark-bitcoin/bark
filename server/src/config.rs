@@ -400,6 +400,11 @@ pub struct Config {
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
 
+	/// Indicates whether the Ark server requires clients to sign with the
+	/// participation's mailbox key when querying a round participation status.
+	#[serde(default)]
+	pub round_status_attestation_required: bool,
+
 	/// The fraction of the fee we charge that we allow CLN to claim at most
 	///
 	/// E.g. if a user wants to pay 1000 sat, we charge him 0.4%, so 4 sats,
@@ -848,6 +853,22 @@ mod test {
 		let cfg = load(Path::new(DEFAULT_CAPTAIND_CONFIG_PATH), "10m");
 		assert_eq!(cfg.cln_xpay_max_retry_for, Duration::from_secs(5 * 60));
 		cfg.validate().expect_err("explicit maximum below the timeout");
+	}
+
+	#[test]
+	fn round_status_attestation_required_defaults_to_off() {
+		let dir = std::env::temp_dir().join("captaind-config-test");
+		std::fs::create_dir_all(&dir).unwrap();
+
+		let default = std::fs::read_to_string(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+		let without = default.lines()
+			.filter(|l| !l.starts_with("round_status_attestation_required"))
+			.collect::<Vec<_>>().join("\n");
+		let path = dir.join("without-round-status-attestation-required.toml");
+		std::fs::write(&path, without).unwrap();
+
+		let cfg = Config::load(&path).expect("a config without the setting still loads");
+		assert!(!cfg.round_status_attestation_required);
 	}
 
 	#[test]

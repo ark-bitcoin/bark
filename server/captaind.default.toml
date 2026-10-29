@@ -203,6 +203,13 @@ receive_htlc_forward_timeout = "3min"
 # when preparing a lightning claim.
 ln_receive_anti_dos_required = false
 
+# Indicates whether the Ark server requires clients to sign with the
+# participation's mailbox key when querying a round participation status.
+# Clients that don't send this attestation can then no longer query their
+# participations, and a participation stored without a mailbox id answers
+# not found, like an unknown unlock hash.
+round_status_attestation_required = false
+
 # Maximum amount for which the server will issue lightning receive
 # invoices.
 # Unset means no limit. Zero disables lightning receives.

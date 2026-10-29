@@ -26,7 +26,9 @@ use log::{debug, error, info, trace, warn};
 
 use ark::{ArkInfo, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoPolicy};
-use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
+use ark::attestations::{
+	DelegatedRoundParticipationAttestation, RoundAttemptAttestation, RoundParticipationStatusAttestation,
+};
 use ark::fees::FeeValidationError;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, PublicNonce, SecretNonce};
@@ -1475,6 +1477,9 @@ async fn progress_delegated(
 
 	let resp = match srv.client.round_participation_status(protos::RoundParticipationStatusRequest {
 		unlock_hash: unlock_hash.to_byte_array().to_vec(),
+		attestation: RoundParticipationStatusAttestation::new(
+			unlock_hash, &wallet.mailbox_keypair(),
+		).serialize(),
 	}).await {
 		Ok(resp) => resp.into_inner(),
 		Err(err) if err.code() == tonic::Code::NotFound => {
@@ -2193,6 +2198,9 @@ impl Wallet {
 		let resp = match srv.client.round_participation_status(
 			protos::RoundParticipationStatusRequest {
 				unlock_hash: unlock_hash.to_byte_array().to_vec(),
+				attestation: RoundParticipationStatusAttestation::new(
+					unlock_hash, &self.mailbox_keypair(),
+				).serialize(),
 			},
 		).await {
 			Ok(resp) => resp.into_inner(),

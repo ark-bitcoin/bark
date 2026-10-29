@@ -9,7 +9,9 @@ use crate::{SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest, SECP};
 use crate::arkoor::ArkoorDestination;
 use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
 use crate::lightning::PaymentHash;
+use crate::mailbox::MailboxIdentifier;
 use crate::offboard::OffboardRequest;
+use crate::tree::signed::UnlockHash;
 
 /// Random 32-byte challenge for challenge-response protocols
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,6 +412,53 @@ impl ProtocolEncoding for ArkoorCosignAttestation {
 	}
 }
 
+/// Attestation for querying the status of a delegated round participation
+///
+/// Signed with the mailbox key the participation was registered with, which
+/// a wallet restored from seed still has, unlike the keys of its inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct RoundParticipationStatusAttestation {
+	signature: schnorr::Signature,
+}
+
+impl RoundParticipationStatusAttestation {
+	const CHALLENGE_MESSAGE_PREFIX: &'static [u8; 32] = b"round participation status att. ";
+
+	pub fn new(unlock_hash: UnlockHash, mailbox_keypair: &Keypair) -> Self {
+		let msg = Self::compute_message(unlock_hash);
+		let signature = SECP.sign_schnorr_with_aux_rand(&msg, mailbox_keypair, &rand::random());
+		Self { signature }
+	}
+
+	/// Verify the attestation against the participation's mailbox
+	pub fn verify(
+		&self,
+		unlock_hash: UnlockHash,
+		mailbox_id: MailboxIdentifier,
+	) -> Result<(), secp256k1::Error> {
+		let msg = Self::compute_message(unlock_hash);
+		SECP.verify_schnorr(&self.signature, &msg, &mailbox_id.as_pubkey().x_only_public_key().0)
+	}
+
+	fn compute_message(unlock_hash: UnlockHash) -> Message {
+		let mut eng = sha256::Hash::engine();
+		eng.input(Self::CHALLENGE_MESSAGE_PREFIX);
+		eng.input(&unlock_hash.to_byte_array());
+		Message::from_digest(sha256::Hash::from_engine(eng).to_byte_array())
+	}
+}
+
+impl ProtocolEncoding for RoundParticipationStatusAttestation {
+	fn encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<(), io::Error> {
+		self.signature.encode(writer)
+	}
+
+	fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let signature = schnorr::Signature::decode(reader)?;
+		Ok(Self { signature })
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -597,5 +646,24 @@ mod tests {
 		let hardcoded = OffboardRequestAttestation::deserialize_hex(&vector)
 			.expect("valid attestation");
 		hardcoded.verify(&offboard_req, &inputs, &vtxo).expect("hardcoded verification failed");
+	}
+
+	#[test]
+	fn test_round_participation_status_attestation() {
+		let unlock_hash = UnlockHash::hash(&[0x42; 32]);
+		let mailbox_id = MailboxIdentifier::from_pubkey(DUMMY_USER_KEY.public_key());
+		let attestation = RoundParticipationStatusAttestation::new(unlock_hash, &DUMMY_USER_KEY);
+		println!("RoundParticipationStatusAttestation hex: {}", attestation.serialize().as_hex());
+		encoding_roundtrip(&attestation);
+		attestation.verify(unlock_hash, mailbox_id).expect("verification failed");
+
+		let other_hash = UnlockHash::hash(&[0x43; 32]);
+		attestation.verify(other_hash, mailbox_id).expect_err("bound to the unlock hash");
+
+		// Hard-coded attestation test
+		let vector = "4378c88a6bed1984b99d7c14312d3b8a41b77e3519536bce3976f153e66e7be2f811fb0267d2ca1ed756793088ed871751a6b07791e29741bec34046c6fddb59";
+		let hardcoded = RoundParticipationStatusAttestation::deserialize_hex(&vector)
+			.expect("valid attestation");
+		hardcoded.verify(unlock_hash, mailbox_id).expect("hardcoded verification failed");
 	}
 }

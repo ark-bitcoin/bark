@@ -12,7 +12,7 @@ use ark::vtxo::policy::check_block_delta;
 use ark::arkoor::{ArkoorCosignRequest, ArkoorCosignResponse, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::attestations::{
-	ArkoorCosignAttestation, DelegatedRoundParticipationAttestation, LightningReceiveAttestation, OffboardRequestAttestation, RoundAttemptAttestation, VtxoStatusAttestation
+	ArkoorCosignAttestation, DelegatedRoundParticipationAttestation, LightningReceiveAttestation, OffboardRequestAttestation, RoundAttemptAttestation, RoundParticipationStatusAttestation, VtxoStatusAttestation
 };
 use ark::board::BoardCosignResponse;
 use ark::fees::PpmFeeRate;
@@ -130,6 +130,9 @@ impl_try_from_bytes_protocol!(DelegatedRoundParticipationAttestation,
 impl_try_from_bytes_protocol!(LightningReceiveAttestation, "lightning receive attestation");
 impl_try_from_bytes_protocol!(VtxoStatusAttestation, "VTXO status attestation");
 impl_try_from_bytes_protocol!(OffboardRequestAttestation, "offboard request attestation");
+impl_try_from_bytes_protocol!(RoundParticipationStatusAttestation,
+	"round participation status attestation"
+);
 
 macro_rules! impl_try_from_bytes_bitcoin {
 	($ty:path, $exp:expr) => {
