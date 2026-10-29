@@ -359,12 +359,19 @@ impl Wallet {
 		let payment_hash = invoice.payment_hash();
 		let mode = if opts.wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
 
+		// An invoice paid earlier gets this error even while a drive holds
+		// the lock of its send.
+		if self.is_invoice_paid(payment_hash).await? {
+			bail!("Invoice has already been paid");
+		}
+
 		let mut checkpoint = self.try_lock_action::<LightningSend>(&ln_pay_action_id(payment_hash))
 			.await?
 			.context("Payment operation already in progress for this invoice")?;
 
-		// Check under the lock: every settlement holds it, so the invoice
-		// cannot be paid between this check and the start of a new send.
+		// Check again under the lock: every settlement holds it, so the
+		// invoice cannot be paid between this check and the start of a new
+		// send.
 		if self.is_invoice_paid(payment_hash).await? {
 			bail!("Invoice has already been paid");
 		}
