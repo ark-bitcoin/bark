@@ -13,7 +13,7 @@ use ark::attestations::OffboardRequestAttestation;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use bitcoin_ext::P2TR_DUST;
-use bitcoin_ext::bdk::WithGuaranteedChange;
+use bitcoin_ext::bdk::{WalletExt, WithGuaranteedChange};
 
 use crate::{check_max_amount, Server, SECP};
 use crate::bitcoind as bcd;
@@ -279,8 +279,9 @@ impl Server {
 
 		let script_pubkey = request.script_pubkey.clone();
 		let fee_rate = request.fee_rate;
-		// The `_` releases the wallet lock here: nothing below needs it.
-		let (_, (offboard_tx, wallet_input_guard)) = self.rounds_wallet.build_blocking(
+		// Keep the wallet lock until the session holds its inputs, so the
+		// locked value below also counts concurrent prepares.
+		let (mut wallet, (offboard_tx, wallet_input_guard)) = self.rounds_wallet.build_blocking(
 			move |wallet| {
 				let selection = WithGuaranteedChange(SingleRandomDraw);
 				let psbt = wallet.build_tx_at_chunk_feerate(selection, fee_rate, |b| {
@@ -298,6 +299,23 @@ impl Server {
 				Ok((psbt, inputs))
 			},
 		).await.context("failed to build offboard tx")?;
+
+		// Abandoned sessions lock their inputs until they expire, so cap what
+		// they lock together to keep funds for rounds and other users. One
+		// session may always lock what it needs, however few coins we have.
+		let value = |utxos: &[OutPoint]| utxos.iter()
+			.filter_map(|utxo| wallet.get_utxo(*utxo))
+			.map(|utxo| utxo.txout.value)
+			.sum::<Amount>();
+		let locked_by_others = value(&self.pending_offboard_utxos());
+		let max_locked = wallet.balance().trusted
+			* u64::from(self.config.offboard_max_locked_percent) / 100;
+		if locked_by_others > Amount::ZERO
+			&& locked_by_others + value(wallet_input_guard.utxos()) > max_locked
+		{
+			wallet.mark_output_keys_unused(&offboard_tx.unsigned_tx);
+			return unavailable!("too many pending offboards, try again later");
+		}
 
 		let (forfeit_sec_nonces, forfeit_pub_nonces) = (0..input_vtxos.len()).map(|_| {
 			musig::nonce_pair(self.server_key.leak_ref())
@@ -336,6 +354,7 @@ impl Server {
 		assert!(matches!(old, None | Some(OffboardSession::Failed)),
 			"txid collision with a live offboard session",
 		);
+		drop(wallet);
 
 		Ok(ret)
 	}

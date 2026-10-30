@@ -1,5 +1,7 @@
 use ark::{vtxo::Bare, vtxo::Full, ProtocolEncoding, Vtxo, VtxoPolicy};
-use bitcoin::OutPoint;
+use ark::board::BoardBuilder;
+use bitcoin::{Address, Amount, Network, OutPoint};
+use bitcoin::secp256k1::{Keypair, rand::thread_rng};
 use bitcoin_ext::BlockHeight;
 use bitcoin_ext::rpc::RpcApi;
 use server::database::Db;
@@ -250,4 +252,73 @@ async fn reanchoring_cannot_make_watchman_sweep_offboard_connector_early() {
 		Ok(row.get::<_, i32>(0))
 	}).await.unwrap();
 	assert_eq!(connector_expiry as u32, max_expiry.to_u32() + 144);
+}
+
+/// A board output is cosigned and registered for one exit tx only, even
+/// when a fee change makes the server build a different one.
+#[tokio::test]
+async fn board_output_is_bound_to_one_exit_tx() {
+	let ctx = TestContext::new("server/board_output_is_bound_to_one_exit_tx").await;
+	let srv = ctx.captaind("server").create().await;
+	let info = srv.ark_info().await;
+	let height = ctx.generate_blocks(1).await;
+	srv.wait_for_sync_height(height).await;
+
+	let user = Keypair::new(&ark::SECP, &mut thread_rng());
+	let expiry = height + info.vtxo_lifetime;
+	let amount = sat(100_000);
+	let script = BoardBuilder::new(
+		user.public_key(), expiry, info.server_pubkey, info.vtxo_exit_delta,
+	).funding_script_pubkey();
+	let address = Address::from_script(&script, Network::Regtest).unwrap();
+	let txid = ctx.bitcoind().fund_addr(&address, amount).await;
+	let funding = ctx.bitcoind().await_transaction(txid).await;
+	srv.bitcoind().await_transaction(txid).await;
+	let vout = funding.output.iter().position(|o| o.script_pubkey == script).unwrap();
+	let utxo = OutPoint::new(txid, vout as u32);
+
+	let cosign = async |fee: Amount| {
+		let builder = BoardBuilder::new(
+			user.public_key(), expiry, info.server_pubkey, info.vtxo_exit_delta,
+		).set_funding_details(amount, fee, utxo).unwrap().generate_user_nonces();
+		let resp = srv.get_public_rpc().await.request_board_cosign(protos::BoardCosignRequest {
+			amount: amount.to_sat(),
+			utxo: utxo.serialize(),
+			expiry_height: expiry.to_u32(),
+			user_pubkey: user.public_key().serialize().to_vec(),
+			pub_nonce: builder.user_pub_nonce().serialize().to_vec(),
+			funding_tx: bitcoin::consensus::serialize(&funding),
+		}).await?.into_inner().try_into().unwrap();
+		Ok::<_, tonic::Status>(builder.build_vtxo(&resp, &user).unwrap())
+	};
+	let first = cosign(Amount::ZERO).await.unwrap();
+
+	srv.stop().await.unwrap();
+	srv.config_mut().fees.board.base_fee = sat(1_000);
+	srv.start().await.unwrap();
+
+	let err = cosign(sat(1_000)).await.expect_err("a second exit tx for the same output");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+	assert!(err.message().contains("already cosigned"), "{err}");
+
+	// An output cosigned before the binding existed can still be registered
+	// with only one of its exits.
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let unbind = async || {
+		db.write(async |t| Ok(t.execute("DELETE FROM board_exit", &[]).await?)).await.unwrap();
+	};
+	unbind().await;
+	let second = cosign(sat(1_000)).await.unwrap();
+	assert_ne!(first.id(), second.id());
+	unbind().await;
+
+	let height = ctx.generate_blocks(srv.config().required_board_confirmations as u32).await;
+	srv.wait_for_sync_height(height).await;
+	let mut rpc = srv.get_public_rpc().await;
+	rpc.register_board_vtxo(protos::BoardVtxoRequest { board_vtxo: first.serialize() })
+		.await.unwrap();
+	let err = rpc.register_board_vtxo(protos::BoardVtxoRequest { board_vtxo: second.serialize() })
+		.await.expect_err("a second exit tx for the same output");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+	assert!(err.message().contains("already registered"), "{err}");
 }

@@ -206,6 +206,9 @@ mod defaults {
 
 	/// Seed recovery runs at most this many xpub scans at once.
 	pub fn max_concurrent_xpub_recoveries() -> usize { 1 }
+
+	/// Pending offboard sessions may lock a quarter of the rounds wallet.
+	pub fn offboard_max_locked_percent() -> u8 { 25 }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -418,6 +421,11 @@ pub struct Config {
 	#[serde(with = "utils::serde::duration")]
 	pub offboard_session_timeout: Duration,
 
+	/// The most of the rounds wallet's trusted balance that pending offboard
+	/// sessions may lock together, in percent.
+	#[serde(default = "defaults::offboard_max_locked_percent")]
+	pub offboard_max_locked_percent: u8,
+
 	/// How often we check pending offboards: expiring sessions that reached
 	/// [Config::offboard_session_timeout] and retrying the commit and
 	/// broadcast of signed offboard txs.
@@ -576,6 +584,12 @@ impl Config {
 				exceed offboard_session_timeout ({:?}), otherwise sessions linger \
 				past their timeout between checks.",
 				self.offboard_check_interval, self.offboard_session_timeout,
+			);
+		}
+
+		if self.offboard_max_locked_percent > 100 {
+			bail!("Invalid configuration: offboard_max_locked_percent ({}) may not exceed 100",
+				self.offboard_max_locked_percent,
 			);
 		}
 

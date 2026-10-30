@@ -72,6 +72,34 @@ impl fmt::Display for NotFound {
 
 impl StdError for NotFound {}
 
+/// An error type to add context to anyhow to indicate that the server
+/// can't serve the request right now, but might later.
+pub struct Unavailable {
+	context: Box<dyn fmt::Display + Send + Sync + 'static>,
+}
+
+impl Unavailable {
+	pub fn new(context: impl fmt::Display + Send + Sync + 'static) -> Unavailable {
+		Unavailable {
+			context: Box::new(context),
+		}
+	}
+}
+
+impl fmt::Debug for Unavailable {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
+
+impl fmt::Display for Unavailable {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "unavailable: {}", self.context)
+	}
+}
+
+impl StdError for Unavailable {}
+
 /// An error indicating that one or more specific input VTXOs cannot be used,
 /// for instance because they have already been spent or exited. It carries the
 /// offending identifiers so that a client can drop exactly those inputs and
@@ -137,6 +165,14 @@ macro_rules! not_found {
 	};
 }
 pub(crate) use not_found;
+
+/// Return an [mod@anyhow] error tagged with [Unavailable].
+macro_rules! unavailable {
+	($($arg:tt)*) => {
+		Err($crate::anyhow::Error::from($crate::error::Unavailable::new(format!($($arg)*))))
+	};
+}
+pub(crate) use unavailable;
 
 
 /// Extension trait for adding bark-server-specific error info.
@@ -297,6 +333,15 @@ mod test {
 	fn macros() {
 		let _: anyhow::Result<()> = badarg!("bla: {}", 15);
 		let _: anyhow::Result<()> = not_found!([12], "bla: {}", 15);
+		let _: anyhow::Result<()> = unavailable!("bla: {}", 15);
+	}
+
+	#[test]
+	fn unavailable_maps_to_unavailable_status() {
+		let result: anyhow::Result<()> = unavailable!("busy");
+		let status = result.to_status().unwrap_err();
+		assert_eq!(status.code(), tonic::Code::Unavailable);
+		assert_eq!(status.message(), "unavailable: busy");
 	}
 
 	#[test]

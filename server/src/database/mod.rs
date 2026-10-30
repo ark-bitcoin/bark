@@ -44,7 +44,7 @@ use ark::vtxo::{Bare, Full};
 use bb8::{ManageConnection, Pool, PooledConnection};
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
-use bitcoin::{Amount, Transaction, Txid};
+use bitcoin::{Amount, OutPoint, Script, Transaction, Txid};
 use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
@@ -980,6 +980,32 @@ impl<'t> Tx<'t> {
 		self.add_funding_vtxos_to_frontier(offboard_txid, None).await?;
 
 		Ok(())
+	}
+
+	/// Bind a board funding output to `exit_txid`, unless it is bound
+	/// already. Returns the exit txid the output is bound to.
+	pub async fn bind_board_exit(
+		&self,
+		funding_outpoint: OutPoint,
+		funding_spk: &Script,
+		exit_txid: Txid,
+	) -> anyhow::Result<Txid> {
+		let insert = self.prepare_typed(
+			"INSERT INTO board_exit (funding_outpoint, funding_spk, exit_txid)
+			VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;",
+			&[Type::TEXT, Type::BYTEA, Type::TEXT],
+		).await?;
+		let outpoint = funding_outpoint.to_string();
+		let spk = funding_spk.as_bytes();
+		self.execute(&insert, &[&outpoint, &spk, &exit_txid.to_string()]).await?;
+
+		// a separate statement, so it sees a row a concurrent insert committed
+		let select = self.prepare_typed(
+			"SELECT exit_txid FROM board_exit WHERE funding_outpoint = $1 AND funding_spk = $2;",
+			&[Type::TEXT, Type::BYTEA],
+		).await?;
+		let row = self.query_one(&select, &[&outpoint, &spk]).await?;
+		Ok(Txid::from_str(row.get("exit_txid"))?)
 	}
 
 	/// Flip `wallet_commit` from FALSE to TRUE for the given offboard.

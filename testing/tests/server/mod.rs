@@ -39,7 +39,7 @@ use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::attestations::ArkoorCosignAttestation;
 use ark::attestations::VtxoStatusAttestation;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
-use ark::rounds::{Challenge, RoundAttemptAttestation, RoundSeq};
+use ark::rounds::{Challenge, RoundAttemptAttestation, RoundEvent, RoundSeq};
 use ark::test_util::dummy::{DummyTestVtxoSpec, DUMMY_USER_KEY};
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, LeafVtxoCosignRequest, UnlockPreimage};
@@ -2772,3 +2772,146 @@ async fn board_exit_tx_prevents_registration() {
 	assert_eq!(balance, Amount::ZERO, "spendable balance should be zero since board was not registered");
 }
 
+#[tokio::test]
+async fn scheduled_height_must_not_poison_round_loading() {
+	let ctx = TestContext::new("server/scheduled_height_round_loading").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		// Run the coordinator's database read in this test, not the daemon.
+		cfg.round_interval = Duration::from_secs(10_000_000);
+		cfg.fees.refresh.base_fee = Amount::ZERO;
+	}).create().await;
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+
+	// No vtxo or signature is needed: with no inputs and outputs nothing is checked,
+	// and u32::MAX would be stored as -1 in the INTEGER column.
+	let err = srv.get_public_rpc().await.submit_round_participation(
+		protos::RoundParticipationRequest {
+			input_vtxos: vec![],
+			vtxo_requests: vec![],
+			unblinded_mailbox_id: None,
+			scheduled_height: Some(u32::MAX),
+		},
+	).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err.message());
+
+	// The same read the round coordinator does at the start of each round.
+	let pending = db.read(async |t| {
+		t.get_all_pending_round_participations(BlockHeight::ZERO).await
+	}).await.expect("a public request must not poison round loading");
+	assert!(pending.is_empty());
+}
+
+#[tokio::test]
+async fn confirmed_exit_during_signing_does_not_stop_round_coordinator() {
+	let ctx = TestContext::new("server/confirmed_exit_during_round_signing").await;
+	let srv = ctx.captaind("server").watchmand().cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+		cfg.round_submit_time = Duration::from_secs(2);
+		cfg.round_sign_time = Duration::from_secs(60);
+		cfg.nb_round_nonces = 1;
+	}).funded(btc(1)).create().await;
+	let bark = ctx.bark("participant", &srv).funded(sat(200_000)).create().await;
+	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
+	let input_id = bark.vtxo_ids().await[0];
+	let input = bark.raw_vtxo(input_id).await;
+	let wallet = bark.client().await;
+	let (_, input_key) = wallet.pubkey_keypair(&input.user_pubkey()).await
+		.unwrap().expect("participant owns the input");
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+
+	let mut rpc = srv.get_public_rpc().await;
+	let mut admin = srv.get_round_rpc().await;
+	let mut events = rpc.subscribe_rounds(protos::Empty {}).await.unwrap().into_inner();
+	srv.trigger_round().await;
+	let challenge = tokio::time::timeout(Duration::from_secs(10), async {
+		loop {
+			let event = RoundEvent::try_from(events.next().await.unwrap().unwrap()).unwrap();
+			if let RoundEvent::Attempt(attempt) = event {
+				break attempt.challenge;
+			}
+		}
+	}).await.expect("round starts");
+
+	let cosign_key = Keypair::new(&SECP, &mut thread_rng());
+	let (secret_nonce, public_nonce) = musig::nonce_pair(&cosign_key);
+	let request = SignedVtxoRequest {
+		vtxo: VtxoRequest {
+			policy: VtxoPolicy::new_pubkey(input.user_pubkey()),
+			amount: sat(90_000),
+		},
+		cosign_pubkey: cosign_key.public_key(),
+		nonces: vec![public_nonce],
+	};
+	let attestation = RoundAttemptAttestation::new(
+		challenge, input_id, &[request.clone()], &input_key,
+	);
+	rpc.submit_payment(protos::SubmitPaymentRequest {
+		input_vtxos: vec![protos::InputVtxo {
+			vtxo_id: input_id.to_bytes().to_vec(),
+			attestation: attestation.serialize(),
+		}],
+		vtxo_requests: vec![request.into()],
+		#[allow(deprecated)]
+		offboard_requests: vec![],
+		unblinded_mailbox_id: None,
+	}).await.expect("unexited input is accepted");
+
+	let proposal = tokio::time::timeout(Duration::from_secs(10), async {
+		loop {
+			let event = RoundEvent::try_from(events.next().await.unwrap().unwrap()).unwrap();
+			if let RoundEvent::VtxoProposal(proposal) = event {
+				break proposal;
+			}
+		}
+	}).await.expect("participant reaches the signing phase");
+	let leaf_idx = proposal.vtxos_spec.vtxos.iter()
+		.position(|v| v.cosign_pubkey == Some(cosign_key.public_key())).unwrap();
+	let tree_point = OutPoint::new(
+		proposal.unsigned_round_tx.compute_txid(),
+		ark::rounds::ROUND_TX_VTXO_TREE_VOUT,
+	);
+	let tree = proposal.vtxos_spec.into_unsigned_tree(tree_point);
+	let signatures = tree.cosign_branch(
+		&proposal.cosign_agg_nonces, leaf_idx, &cosign_key, vec![secret_nonce],
+	).unwrap();
+
+	// The owner can publish its signed exit without the server, so confirm it
+	// before handing over the round signatures.
+	let exit_tx = input.transactions().next().expect("board exit").tx;
+	let child_txid = ctx.broadcast_cpfp(&exit_tx).await;
+	srv.bitcoind().await_transaction(child_txid).await;
+	let height = ctx.generate_blocks(1).await;
+	srv.watchmand().wait_for_sync_height(height).await;
+	let state = db.read(async |t| t.get_user_vtxo_by_id(input_id).await).await.unwrap();
+	assert_eq!(state.confirmed_height, Some(height));
+
+	rpc.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
+		pubkey: cosign_key.public_key().serialize().to_vec(),
+		signatures: signatures.iter().map(|s| s.serialize().to_vec()).collect(),
+	}).await.expect("valid signatures are accepted");
+
+	tokio::time::timeout(Duration::from_secs(10), async {
+		loop {
+			let event = events.next().await.expect("round failure event").unwrap();
+			match RoundEvent::try_from(event).unwrap() {
+				RoundEvent::Failed(_) => break,
+				RoundEvent::Finished(_) => panic!("exited input must not fund a round"),
+				_ => {},
+			}
+		}
+	}).await.expect("invalidated round is rejected");
+	let state = db.read(async |t| t.get_user_vtxo_by_id(input_id).await).await.unwrap();
+	assert!(state.spent_in_round.is_none(), "failed round must roll back");
+
+	// The coordinator must still be able to start another round.
+	let _ = admin.trigger_round(protos::Empty {}).await;
+	let next_attempt = tokio::time::timeout(Duration::from_secs(5), async {
+		while let Some(Ok(event)) = events.next().await {
+			if matches!(RoundEvent::try_from(event), Ok(RoundEvent::Attempt(_))) {
+				return true;
+			}
+		}
+		false
+	}).await.unwrap_or(false);
+	assert!(next_attempt, "a participant's exit must not terminate the round coordinator");
+}

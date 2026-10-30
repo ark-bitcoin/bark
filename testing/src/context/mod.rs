@@ -464,6 +464,7 @@ impl TestContext {
 				max_vtxo_exit_depth: 6,
 			},
 			offboard_session_timeout: Duration::from_secs(30),
+			offboard_max_locked_percent: 25,
 			offboard_check_interval: Duration::from_secs(1),
 			offboard_acceptable_fee_rate_duration: Duration::from_secs(60 * 10),
 			fee_estimator: server::fee_estimator::Config {

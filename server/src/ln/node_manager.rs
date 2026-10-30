@@ -363,8 +363,8 @@ impl LightningManager {
 			None
 		};
 
-		self.db.write(async |t| {
-			t.store_lightning_payment_start(
+		let attempt_id = self.db.write(async |t| {
+			let attempt_id = t.store_lightning_payment_start(
 				node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids,
 				lightning_htlc_subscription_id,
 				attempt_block_height, user_fee, user_agent.as_deref(), retry_for,
@@ -378,7 +378,7 @@ impl LightningManager {
 			if let Some((_, new)) = &new_xpay {
 				xpay::create_xpay(&**t, new).await.context("failed to store the xpay call")?;
 			}
-			Ok(())
+			Ok(attempt_id)
 		}).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
@@ -391,17 +391,31 @@ impl LightningManager {
 			// it: `initiate_lightning_payment` checks the same thing, but a
 			// receive registered after that check would otherwise land here
 			// unvalidated and be paid out of our vtxopool.
+			// `refused` is whether the receive was left unpromoted. Any other
+			// error may have promoted it and must keep the link: revoking then
+			// has to see the receive and refuse while HTLC-recvs are granted.
 			let res = match validate_intra_ark_payment(&sub, &invoice, amount) {
-				Ok(()) => self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await,
-				Err(e) => Err(e),
+				Ok(()) => self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await
+					.map_err(|e| {
+						let refused = e.downcast_ref::<PayInvoiceRace>().is_some();
+						(e, refused)
+					}),
+				Err(e) => Err((e, true)),
 			};
-			if let Err(e) = res {
+			if let Err((e, refused)) = res {
 				trace!("Failed to update subscription status: {e:#}");
 				let payment_attempt = self.db
 					.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
 					.expect("we inserted a payment attempt");
 
-				self.payment_handler().fail_payment_attempt(&payment_attempt, Some(&e.to_string())).await?;
+				// A refused payment never funded the receive, so revoking it must
+				// not cancel the receive.
+				let payment_handler = self.payment_handler();
+				if refused {
+					payment_handler.fail_refused_payment_attempt(&payment_attempt, Some(&e.to_string())).await?;
+				} else {
+					payment_handler.fail_payment_attempt(&payment_attempt, Some(&e.to_string())).await?;
+				}
 				return Err(e);
 			}
 
@@ -419,6 +433,7 @@ impl LightningManager {
 		let xpay_client = node.xpay.clone();
 		tokio::spawn(async move {
 			xpay_client.pay(
+				attempt_id,
 				invoice,
 				amount,
 				max_routing_fee,
@@ -489,12 +504,22 @@ impl LightningManager {
 		// payment settles off-CLN, so we don't want the HTLCs locked.
 		// NB: we only issue the RPC here, not the full cancel_invoice
 		// flow - we just set the subscription to Accepted, not Canceled.
-		let mut hold_client = self.node_by_id(subscription.lightning_node_id)
-			.context("invoice cannot be canceled: node is now offline")?
-			.hold_rpc.context("node doesn't support hold anymore")?;
-		hold_client.cancel(hold_plugin::CancelRequest {
-			payment_hash: payment_hash.to_vec(),
-		}).await?;
+		// The payment is committed to the receive from here on, so a failed
+		// cancel must not fail it: the receive would no longer be claimable
+		// as a self-payment, and the sender couldn't revoke while HTLC-recvs
+		// are granted.
+		let cancel = async {
+			let mut hold_client = self.node_by_id(subscription.lightning_node_id)
+				.context("node is now offline")?
+				.hold_rpc.context("node doesn't support hold anymore")?;
+			hold_client.cancel(hold_plugin::CancelRequest {
+				payment_hash: payment_hash.to_vec(),
+			}).await?;
+			anyhow::Ok(())
+		};
+		if let Err(e) = cancel.await {
+			warn!("Could not cancel the hold invoice of intra-Ark payment {payment_hash}: {e:#}");
+		}
 
 		// The plugin no longer serves the invoice; the sender's htlc-send
 		// vtxos are what covers this receive from here on.

@@ -635,6 +635,18 @@ ALTER SEQUENCE public.arkoor_mailbox_id_seq OWNED BY public.arkoor_mailbox.id;
 
 
 --
+-- Name: board_exit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.board_exit (
+    funding_outpoint text NOT NULL,
+    funding_spk bytea NOT NULL,
+    exit_txid text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: captaind_block; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2290,6 +2302,14 @@ ALTER TABLE ONLY public.wallet_changeset ALTER COLUMN id SET DEFAULT nextval('pu
 
 ALTER TABLE ONLY public.arkoor_mailbox
     ADD CONSTRAINT arkoor_mailbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: board_exit board_exit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.board_exit
+    ADD CONSTRAINT board_exit_pkey PRIMARY KEY (funding_outpoint, funding_spk);
 
 
 --

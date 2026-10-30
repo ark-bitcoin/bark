@@ -146,6 +146,58 @@ async fn utxos_unlock_after_pending_offboard_expiry() {
 	}
 }
 
+/// Abandoned offboard sessions keep their wallet UTXOs locked until they
+/// expire. Together they may lock only part of the rounds wallet, so tiny
+/// abandoned offboards cannot take the coins rounds and other users need.
+#[tokio::test]
+async fn abandoned_offboards_lock_at_most_part_of_the_wallet() {
+	let ctx = TestContext::new("server/abandoned_offboards_lock_at_most_part_of_the_wallet").await;
+	let srv = ctx.captaind("server")
+		.no_vtxo_pool()
+		.funded(btc(1))
+		.cfg(|c| c.offboard_max_locked_percent = 25)
+		.create().await;
+	for _ in 0..7 {
+		ctx.fund_captaind(&srv, btc(1)).await;
+	}
+	let status = srv.wallet_status().await;
+	assert_eq!(status.rounds.confirmed_utxos.len(), 8);
+	assert_eq!(status.rounds.trusted_balance, btc(8));
+
+	let requests = Arc::new(Mutex::new(Vec::new()));
+	let proxy = srv.start_proxy_no_mailbox(AbandonOffboardProxy {
+		requests: requests.clone(),
+	}).await;
+	let attacker = ctx.bark_sdk("attacker", &proxy)
+		.boarded(sat(200_000))
+		.boarded(sat(200_000))
+		.boarded(sat(200_000))
+		.create().await;
+	let [vtxo1, vtxo2, vtxo3] = attacker.spendable_vtxos().await.expect("list vtxos")
+		.try_into().expect("should have three boarded vtxos");
+
+	// Each tiny offboard locks a whole 1btc coin. Two of them reach the 2btc cap.
+	let address = ctx.bitcoind().get_new_address();
+	for vtxo in [vtxo1, vtxo2] {
+		let err = attacker.offboard_vtxos([vtxo.id()], address.clone()).await
+			.expect_err("the proxy abandons the session");
+		assert!(format!("{err:#}").contains(ABANDON_ERROR), "unexpected error: {err:#}");
+	}
+
+	let err = attacker.offboard_vtxos([vtxo3.id()], address).await
+		.expect_err("a third session would lock more than the cap");
+	let err = format!("{err:#}");
+	assert!(err.contains("too many pending offboards"), "unexpected error: {err}");
+	assert!(!err.contains(ABANDON_ERROR), "the error should come from the server: {err}");
+
+	// Being full is not the client's fault, so tell it to retry later.
+	let req = requests.lock().unwrap().last().cloned()
+		.expect("the third prepare_offboard request should have been recorded");
+	let status = srv.get_public_rpc().await.prepare_offboard(req).await
+		.expect_err("the cap should still refuse the third session");
+	assert_eq!(status.code(), tonic::Code::Unavailable, "unexpected status: {status}");
+}
+
 #[tokio::test]
 async fn finish_offboard_replays_for_identical_retry() {
 	let ctx = TestContext::new("server/finish_offboard_replays_for_identical_retry").await;
