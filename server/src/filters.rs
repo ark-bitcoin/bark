@@ -1,11 +1,23 @@
 use std::net::{IpAddr, SocketAddr};
+use std::sync::OnceLock;
 
 use clap::Args;
 use ipnet::IpNet;
 use tracing::trace;
 use hickory_resolver::TokioResolver;
-use hickory_resolver::config::ResolverConfig;
-use hickory_resolver::net::runtime::TokioRuntimeProvider;
+
+/// A resolver using the system's DNS configuration, for the DNS filters.
+///
+/// Shared so its cache of lookups, which honours their TTLs, outlives a
+/// request. A failure to build it is retried on the next call.
+pub fn system_resolver() -> anyhow::Result<&'static TokioResolver> {
+	static RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
+	if let Some(resolver) = RESOLVER.get() {
+		return Ok(resolver);
+	}
+	let resolver = TokioResolver::builder_tokio()?.build()?;
+	Ok(RESOLVER.get_or_init(|| resolver))
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Args)]
 pub struct Filters {
@@ -50,11 +62,7 @@ impl Filters {
 		let Some(client) = client else {
 			return badarg!("client's address cannot be found");
 		};
-		let resolver = TokioResolver::builder_with_config(
-			ResolverConfig::default(),
-			TokioRuntimeProvider::default(),
-		).build()?;
-		if !self.allowed(&resolver, &client).await {
+		if !self.allowed(system_resolver()?, &client).await {
 			return badarg!("client's address is not allowed");
 		}
 		Ok(())
@@ -98,3 +106,4 @@ impl Filters {
 		false
 	}
 }
+
