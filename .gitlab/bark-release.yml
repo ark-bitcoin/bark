@@ -31,18 +31,32 @@ build-bark:
     - bash contrib/ci-env/ci.sh bash -c "just nix-build-bark-all"
     - cp ./build/bark-x86_64-unknown-linux-gnu         bark-linux-x86_64
     - cp ./build/barkd-x86_64-unknown-linux-gnu        barkd-linux-x86_64
+    - cp ./build/bark-cli-x86_64-unknown-linux-gnu     bark-cli-linux-x86_64
+    - cp ./build/bark-legacy-x86_64-unknown-linux-gnu  bark-legacy-linux-x86_64
     - cp ./build/bark-x86_64-unknown-linux-musl        bark-linux-x86_64-musl
     - cp ./build/barkd-x86_64-unknown-linux-musl       barkd-linux-x86_64-musl
+    - cp ./build/bark-cli-x86_64-unknown-linux-musl    bark-cli-linux-x86_64-musl
+    - cp ./build/bark-legacy-x86_64-unknown-linux-musl bark-legacy-linux-x86_64-musl
     - cp ./build/bark-aarch64-unknown-linux-musl       bark-linux-aarch64
     - cp ./build/barkd-aarch64-unknown-linux-musl      barkd-linux-aarch64
+    - cp ./build/bark-cli-aarch64-unknown-linux-musl   bark-cli-linux-aarch64
+    - cp ./build/bark-legacy-aarch64-unknown-linux-musl bark-legacy-linux-aarch64
     - cp ./build/bark-armv7-unknown-linux-musleabihf   bark-linux-armv7
     - cp ./build/barkd-armv7-unknown-linux-musleabihf  barkd-linux-armv7
+    - cp ./build/bark-cli-armv7-unknown-linux-musleabihf bark-cli-linux-armv7
+    - cp ./build/bark-legacy-armv7-unknown-linux-musleabihf bark-legacy-linux-armv7
     - cp ./build/bark-x86_64-pc-windows-gnu.exe        bark-windows-x86_64.exe
     - cp ./build/barkd-x86_64-pc-windows-gnu.exe       barkd-windows-x86_64.exe
+    - cp ./build/bark-cli-x86_64-pc-windows-gnu.exe    bark-cli-windows-x86_64.exe
+    - cp ./build/bark-legacy-x86_64-pc-windows-gnu.exe bark-legacy-windows-x86_64.exe
     - cp ./build/bark-x86_64-apple-darwin              bark-apple-x86_64
     - cp ./build/barkd-x86_64-apple-darwin             barkd-apple-x86_64
+    - cp ./build/bark-cli-x86_64-apple-darwin          bark-cli-apple-x86_64
+    - cp ./build/bark-legacy-x86_64-apple-darwin       bark-legacy-apple-x86_64
     - cp ./build/bark-aarch64-apple-darwin             bark-apple-aarch64
     - cp ./build/barkd-aarch64-apple-darwin            barkd-apple-aarch64
+    - cp ./build/bark-cli-aarch64-apple-darwin         bark-cli-apple-aarch64
+    - cp ./build/bark-legacy-aarch64-apple-darwin      bark-legacy-apple-aarch64
   artifacts:
     paths:
       - bark-*
@@ -151,32 +165,60 @@ release-bark:
     - cat VERSION
     - cp bark-linux-x86_64        "bark-$(cat VERSION)-linux-x86_64"
     - cp barkd-linux-x86_64       "barkd-$(cat VERSION)-linux-x86_64"
+    - cp bark-cli-linux-x86_64    "bark-cli-$(cat VERSION)-linux-x86_64"
+    - cp bark-legacy-linux-x86_64 "bark-legacy-$(cat VERSION)-linux-x86_64"
     - cp bark-linux-x86_64-musl   "bark-$(cat VERSION)-linux-x86_64-musl"
     - cp barkd-linux-x86_64-musl  "barkd-$(cat VERSION)-linux-x86_64-musl"
+    - cp bark-cli-linux-x86_64-musl "bark-cli-$(cat VERSION)-linux-x86_64-musl"
+    - cp bark-legacy-linux-x86_64-musl "bark-legacy-$(cat VERSION)-linux-x86_64-musl"
     - cp bark-linux-aarch64       "bark-$(cat VERSION)-linux-arm64"
     - cp barkd-linux-aarch64      "barkd-$(cat VERSION)-linux-arm64"
+    - cp bark-cli-linux-aarch64   "bark-cli-$(cat VERSION)-linux-arm64"
+    - cp bark-legacy-linux-aarch64 "bark-legacy-$(cat VERSION)-linux-arm64"
     - cp bark-linux-armv7         "bark-$(cat VERSION)-linux-armv7"
     - cp barkd-linux-armv7        "barkd-$(cat VERSION)-linux-armv7"
+    - cp bark-cli-linux-armv7     "bark-cli-$(cat VERSION)-linux-armv7"
+    - cp bark-legacy-linux-armv7  "bark-legacy-$(cat VERSION)-linux-armv7"
     - cp bark-windows-x86_64.exe  "bark-$(cat VERSION)-windows-x86_64.exe"
     - cp barkd-windows-x86_64.exe "barkd-$(cat VERSION)-windows-x86_64.exe"
+    - cp bark-cli-windows-x86_64.exe "bark-cli-$(cat VERSION)-windows-x86_64.exe"
+    - cp bark-legacy-windows-x86_64.exe "bark-legacy-$(cat VERSION)-windows-x86_64.exe"
     - cp bark-apple-x86_64        "bark-$(cat VERSION)-apple-x86_64"
     - cp barkd-apple-x86_64       "barkd-$(cat VERSION)-apple-x86_64"
+    - cp bark-cli-apple-x86_64    "bark-cli-$(cat VERSION)-apple-x86_64"
+    - cp bark-legacy-apple-x86_64 "bark-legacy-$(cat VERSION)-apple-x86_64"
     - cp bark-apple-aarch64       "bark-$(cat VERSION)-apple-aarch64"
     - cp barkd-apple-aarch64      "barkd-$(cat VERSION)-apple-aarch64"
+    - cp bark-cli-apple-aarch64   "bark-cli-$(cat VERSION)-apple-aarch64"
+    - cp bark-legacy-apple-aarch64 "bark-legacy-$(cat VERSION)-apple-aarch64"
     - sha256sum "bark-$(cat VERSION)-linux-x86_64"        > SHA256SUMS
     - sha256sum "barkd-$(cat VERSION)-linux-x86_64"       >> SHA256SUMS
+    - sha256sum "bark-cli-$(cat VERSION)-linux-x86_64"       >> SHA256SUMS
+    - sha256sum "bark-legacy-$(cat VERSION)-linux-x86_64"       >> SHA256SUMS
     - sha256sum "bark-$(cat VERSION)-linux-x86_64-musl"   >> SHA256SUMS
     - sha256sum "barkd-$(cat VERSION)-linux-x86_64-musl"  >> SHA256SUMS
+    - sha256sum "bark-cli-$(cat VERSION)-linux-x86_64-musl"  >> SHA256SUMS
+    - sha256sum "bark-legacy-$(cat VERSION)-linux-x86_64-musl"  >> SHA256SUMS
     - sha256sum "bark-$(cat VERSION)-linux-arm64"         >> SHA256SUMS
     - sha256sum "barkd-$(cat VERSION)-linux-arm64"        >> SHA256SUMS
+    - sha256sum "bark-cli-$(cat VERSION)-linux-arm64"        >> SHA256SUMS
+    - sha256sum "bark-legacy-$(cat VERSION)-linux-arm64"        >> SHA256SUMS
     - sha256sum "bark-$(cat VERSION)-linux-armv7"         >> SHA256SUMS
     - sha256sum "barkd-$(cat VERSION)-linux-armv7"        >> SHA256SUMS
+    - sha256sum "bark-cli-$(cat VERSION)-linux-armv7"        >> SHA256SUMS
+    - sha256sum "bark-legacy-$(cat VERSION)-linux-armv7"        >> SHA256SUMS
     - sha256sum "bark-$(cat VERSION)-windows-x86_64.exe"  >> SHA256SUMS
     - sha256sum "barkd-$(cat VERSION)-windows-x86_64.exe" >> SHA256SUMS
+    - sha256sum "bark-cli-$(cat VERSION)-windows-x86_64.exe" >> SHA256SUMS
+    - sha256sum "bark-legacy-$(cat VERSION)-windows-x86_64.exe" >> SHA256SUMS
     - sha256sum "bark-$(cat VERSION)-apple-x86_64"        >> SHA256SUMS
     - sha256sum "barkd-$(cat VERSION)-apple-x86_64"       >> SHA256SUMS
+    - sha256sum "bark-cli-$(cat VERSION)-apple-x86_64"       >> SHA256SUMS
+    - sha256sum "bark-legacy-$(cat VERSION)-apple-x86_64"       >> SHA256SUMS
     - sha256sum "bark-$(cat VERSION)-apple-aarch64"       >> SHA256SUMS
     - sha256sum "barkd-$(cat VERSION)-apple-aarch64"      >> SHA256SUMS
+    - sha256sum "bark-cli-$(cat VERSION)-apple-aarch64"      >> SHA256SUMS
+    - sha256sum "bark-legacy-$(cat VERSION)-apple-aarch64"      >> SHA256SUMS
   artifacts:
     paths:
       - bark-*

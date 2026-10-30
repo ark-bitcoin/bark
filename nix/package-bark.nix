@@ -175,11 +175,9 @@ let
 				'';
 				# tls-webpki-roots + sqlite-bundled avoid linking against host
 				# system libraries, which is required when cross-compiling.
-				# Only bark and barkd ship; bark-legacy (bark's own source under
-				# another name) and bark-cli are not released yet.
 				buildPhaseCargoCommand = ''
 					cargoBuildLog=$(mktemp cargoBuildLogXXXX.json)
-					cargo zigbuild --release --locked -p bark-cli --bin bark --bin barkd \
+					cargo zigbuild --release --locked -p bark-cli --bin bark --bin bark-cli --bin bark-legacy --bin barkd \
 						--no-default-features \
 						--features tls-webpki-roots,sqlite-bundled,barkd-swagger-ui,barkd-web-ui \
 						--target ${zigbuildTarget target} \

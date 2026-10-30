@@ -42,10 +42,16 @@ build-nightly:
     - bash contrib/ci-env/ci.sh bash -c "just nix-build-bark-linux"
     - cp ./build/bark-x86_64-unknown-linux-gnu         bark-linux-x86_64
     - cp ./build/barkd-x86_64-unknown-linux-gnu        barkd-linux-x86_64
+    - cp ./build/bark-cli-x86_64-unknown-linux-gnu     bark-cli-linux-x86_64
+    - cp ./build/bark-legacy-x86_64-unknown-linux-gnu  bark-legacy-linux-x86_64
     - cp ./build/bark-aarch64-unknown-linux-musl       bark-linux-aarch64
     - cp ./build/barkd-aarch64-unknown-linux-musl      barkd-linux-aarch64
+    - cp ./build/bark-cli-aarch64-unknown-linux-musl   bark-cli-linux-aarch64
+    - cp ./build/bark-legacy-aarch64-unknown-linux-musl bark-legacy-linux-aarch64
     - cp ./build/bark-armv7-unknown-linux-musleabihf   bark-linux-armv7
     - cp ./build/barkd-armv7-unknown-linux-musleabihf  barkd-linux-armv7
+    - cp ./build/bark-cli-armv7-unknown-linux-musleabihf bark-cli-linux-armv7
+    - cp ./build/bark-legacy-armv7-unknown-linux-musleabihf bark-legacy-linux-armv7
     - bash contrib/ci-env/ci.sh bash -c "just _nix-build-collect bark-server x86_64-unknown-linux-gnu"
     - cp ./build/captaind-x86_64-unknown-linux-gnu     captaind-linux-x86_64
     - cp ./build/watchmand-x86_64-unknown-linux-gnu    watchmand-linux-x86_64
