@@ -142,6 +142,49 @@ impl fmt::Display for UnusableInputs {
 	}
 }
 
+/// An error indicating that one or more input VTXOs are in flight in another
+/// operation, typically a round attempt that already picked up an earlier
+/// participation over them. Unlike [UnusableInputs], the inputs are not gone:
+/// the client should wait for the other operation to settle rather than drop
+/// them.
+pub struct InFlightInputs {
+	ids: Vec<VtxoId>,
+}
+
+impl InFlightInputs {
+	pub fn new(
+		ids: impl IntoIterator<Item = impl Borrow<VtxoId>>,
+	) -> InFlightInputs {
+		InFlightInputs {
+			ids: ids.into_iter().map(|i| *i.borrow()).collect(),
+		}
+	}
+
+	pub fn identifiers(&self) -> &Vec<VtxoId> {
+		&self.ids
+	}
+}
+
+impl fmt::Debug for InFlightInputs {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
+
+impl fmt::Display for InFlightInputs {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		f.write_str("in-flight inputs: [")?;
+		for (i, vtxo) in self.ids.iter().enumerate() {
+			if i > 0 {
+				f.write_str(",")?;
+			}
+			write!(f, "{}", vtxo)?;
+		}
+		f.write_str("]")?;
+		Ok(())
+	}
+}
+
 
 /// Return an [mod@anyhow] error tagged with [BadArgument].
 macro_rules! badarg_err {
@@ -209,6 +252,12 @@ pub trait ContextExt<T, E>: Context<T, E> {
 	where
 		V: IntoIterator<Item = I>,
 		I: Borrow<VtxoId>;
+
+	/// Tag an error with [InFlightInputs].
+	fn in_flight_inputs<I, V>(self, ids: V) -> anyhow::Result<T>
+	where
+		V: IntoIterator<Item = I>,
+		I: Borrow<VtxoId>;
 }
 
 impl<R, T, E> ContextExt<T, E> for R
@@ -256,6 +305,15 @@ where
 		I: Borrow<VtxoId>,
 	{
 		self.context(UnusableInputs::new(ids))
+	}
+
+	/// Tag an error with [InFlightInputs].
+	fn in_flight_inputs<I, V>(self, ids: V) -> anyhow::Result<T>
+	where
+		V: IntoIterator<Item = I>,
+		I: Borrow<VtxoId>,
+	{
+		self.context(InFlightInputs::new(ids))
 	}
 }
 

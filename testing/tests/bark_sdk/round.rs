@@ -13,7 +13,7 @@ use bark::subsystem::RoundMovement;
 use bark::vtxo::{VtxoLockHolder, VtxoState};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_log::{NoRoundPayments, RoundFinished, RoundParticipationRejected};
-use server_rpc::protos;
+use server_rpc::{protos, StatusExt};
 
 use ark_testing::{btc, sat, secs, TestContext};
 use ark_testing::constants::ROUND_CONFIRMATIONS;
@@ -328,10 +328,10 @@ async fn finished_round_supersedes_pending_delegated_participation() {
 
 /// A new delegated submission replaces the pending participation over the same
 /// inputs, but once a round attempt has picked that participation up it must be
-/// refused instead: the attempt builds on the old participation's leaf, and
-/// replacing it would spend the inputs for vtxos nobody holds the preimage of.
-/// The rejection leaves the old participation alone, so the round finishes with
-/// it and its status stays retrievable.
+/// refused instead, naming the inputs as in flight: the attempt builds on the
+/// old participation's leaf, and replacing it would spend the inputs for vtxos
+/// nobody holds the preimage of. The rejection leaves the old participation
+/// alone, so the round finishes with it and its status stays retrievable.
 #[tokio::test]
 async fn resubmission_over_in_flight_delegated_inputs_is_rejected() {
 	let ctx = TestContext::new("bark_sdk/resubmission_over_in_flight_delegated_inputs_is_rejected").await;
@@ -384,6 +384,12 @@ async fn resubmission_over_in_flight_delegated_inputs_is_rejected() {
 			let status = err.chain().find_map(|c| c.downcast_ref::<tonic::Status>())
 				.unwrap_or_else(|| panic!("the rejection must come from the server: {err:#}"));
 			assert_eq!(status.code(), tonic::Code::InvalidArgument, "status: {status:?}");
+			assert_eq!(status.in_flight_vtxos(), vec![id],
+				"the rejection must name the in-flight input: {status:?}",
+			);
+			assert!(status.rejected_vtxos().is_empty(),
+				"an in-flight input must not read as unusable: {status:?}",
+			);
 			assert_eq!(
 				participation_status(&srv, unlock_hash.clone()).await,
 				protos::RoundParticipationStatus::RoundPartPending as i32,

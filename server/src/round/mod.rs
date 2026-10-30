@@ -2022,9 +2022,20 @@ impl Server {
 		// store runs under the same lock: either the round has the inputs and
 		// this is refused, or the store completes first and the round finds
 		// the old row gone before registering it (see
-		// process_delegated_participation).
-		let _flux_guard = self.vtxos_in_flux.try_lock(&input_ids)
-			.badarg("input vtxo in flight in another operation")?;
+		// process_delegated_participation). In-flight inputs are the client's
+		// to wait on, not to drop, so they come back under their own key.
+		let _flux_guard = match self.vtxos_in_flux.try_lock(&input_ids) {
+			Ok(guard) => guard,
+			Err(e) => {
+				let mut in_flight = self.vtxos_in_flux.in_flux(&input_ids);
+				if !in_flight.contains(&e.id) {
+					in_flight.push(e.id);
+				}
+				debug!("delegated round inputs {:?} are in flight", in_flight);
+				return badarg!("input vtxo(s) in flight in another operation")
+					.in_flight_inputs(in_flight);
+			},
+		};
 
 		self.db.write(async |t| {
 			t.try_store_round_participation(
