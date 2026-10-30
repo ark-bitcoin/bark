@@ -8,6 +8,7 @@ use std::sync::atomic;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use ark::attestations::DelegatedRoundParticipationAttestation;
+use ark::attestations::ForfeitNoncesAttestation;
 use ark::attestations::OffboardRequestAttestation;
 use ark::attestations::RoundParticipationStatusAttestation;
 use ark::attestations::VtxoStatusAttestation;
@@ -999,8 +1000,12 @@ impl rpc::server::ArkService for Server {
 		let unlock_hash = UnlockHash::from_bytes(req.unlock_hash)?;
 		let vtxos = req.vtxo_ids.iter().map(|v| VtxoId::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
+		let attestations = req.attestations.iter()
+			.map(|a| ForfeitNoncesAttestation::from_bytes(a))
+			.collect::<Result<Vec<_>, _>>()?;
 
-		let res = self.generate_forfeit_nonces(unlock_hash, &vtxos).await.to_status()?;
+		let res = self.generate_forfeit_nonces(unlock_hash, &vtxos, &attestations).await
+			.to_status()?;
 		Ok(tonic::Response::new(protos::ForfeitNoncesResponse {
 			public_nonces: res.into_iter().map(|n| n.serialize().to_vec()).collect(),
 		}))

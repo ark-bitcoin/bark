@@ -508,6 +508,7 @@ impl TestContext {
 			min_board_amount: Amount::from_sat(20_000),
 			ln_receive_anti_dos_required: false,
 			round_status_attestation_required: false,
+			forfeit_attestation_required: false,
 			ln_max_fee_ppm: 900_000,
 			max_read_mailbox_items: 100,
 			recovery_xpub_nb_keys: 100_000,

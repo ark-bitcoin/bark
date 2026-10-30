@@ -408,6 +408,11 @@ pub struct Config {
 	#[serde(default)]
 	pub round_status_attestation_required: bool,
 
+	/// Indicates whether the Ark server requires clients to prove ownership
+	/// of their round inputs when requesting forfeit nonces.
+	#[serde(default)]
+	pub forfeit_attestation_required: bool,
+
 	/// The fraction of the fee we charge that we allow CLN to claim at most
 	///
 	/// E.g. if a user wants to pay 1000 sat, we charge him 0.4%, so 4 sats,
@@ -883,6 +888,22 @@ mod test {
 
 		let cfg = Config::load(&path).expect("a config without the setting still loads");
 		assert!(!cfg.round_status_attestation_required);
+	}
+
+	#[test]
+	fn forfeit_attestation_required_defaults_to_off() {
+		let dir = std::env::temp_dir().join("captaind-config-test");
+		std::fs::create_dir_all(&dir).unwrap();
+
+		let default = std::fs::read_to_string(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+		let without = default.lines()
+			.filter(|l| !l.starts_with("forfeit_attestation_required"))
+			.collect::<Vec<_>>().join("\n");
+		let path = dir.join("without-forfeit-attestation-required.toml");
+		std::fs::write(&path, without).unwrap();
+
+		let cfg = Config::load(&path).expect("a config without the setting still loads");
+		assert!(!cfg.forfeit_attestation_required);
 	}
 
 	#[test]

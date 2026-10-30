@@ -5,6 +5,7 @@ use anyhow::Context;
 use bitcoin::secp256k1::Keypair;
 
 use ark::{musig, VtxoId};
+use ark::attestations::ForfeitNoncesAttestation;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
@@ -43,7 +44,26 @@ impl Server {
 		&self,
 		unlock_hash: UnlockHash,
 		vtxos: &[VtxoId],
+		attestations: &[ForfeitNoncesAttestation],
 	) -> anyhow::Result<Vec<musig::PublicNonce>> {
+		// check ownership before anything that depends on the participation,
+		// so only the owner learns whether the inputs belong to this hash
+		if attestations.is_empty() {
+			if self.config.forfeit_attestation_required {
+				return badarg!("forfeit nonce requests need an attestation for each vtxo");
+			}
+		} else {
+			if attestations.len() != vtxos.len() {
+				return badarg!("expected {} attestations, got {}", vtxos.len(), attestations.len());
+			}
+			let states = self.db.read(async |t| t.get_user_vtxos_by_id(vtxos).await).await?;
+			for (state, attestation) in states.iter().zip(attestations) {
+				if attestation.verify(unlock_hash, &state.vtxo).is_err() {
+					return badarg!("invalid attestation for vtxo {}", state.vtxo_id);
+				}
+			}
+		}
+
 		// only generate nonces for the inputs of the round participation with
 		// the given unlock hash, so that this endpoint can't be used to burn
 		// CPU on unbounded nonce generation
@@ -120,6 +140,19 @@ impl Server {
 		}
 
 		let unlock_hash = unlock_hash.badarg("zero forfeit bundles provided")?;
+
+		// nonces are only handed out against the participation, so without
+		// them nothing below may tell the caller anything about it
+		{
+			let nonces = self.forfeit_nonces.lock();
+			for id in &vtxo_ids {
+				let generated = nonces.get(id).and_then(|n| n.as_ref())
+					.is_some_and(|n| n.unlock_hash == unlock_hash);
+				if !generated {
+					return badarg!("no forfeit nonces generated for vtxo {}", id);
+				}
+			}
+		}
 
 		// fetch all input vtxos and round participation in a single transaction
 		let (vtxos, part) = self.db.read(async |t| {
