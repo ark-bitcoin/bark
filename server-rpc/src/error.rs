@@ -22,6 +22,36 @@ pub trait StatusExt: Borrow<tonic::Status> {
 	fn rejected_vtxos(&self) -> Vec<VtxoId>;
 }
 
+/// Parse the comma-separated vtxo ids under `key` of a rejection status.
+fn vtxo_ids_metadata(status: &tonic::Status, key: &str) -> Vec<VtxoId> {
+	if !status.is_rejection() {
+		return vec![];
+	}
+
+	let ids = match status.metadata().get(key) {
+		Some(v) => v,
+		None => return vec![],
+	};
+	let ids_str = match ids.to_str() {
+		Ok(v) => v,
+		Err(e) => {
+			debug!("Invalid (non-ASCII) value in {} metadata: {:#}", key, e);
+			return vec![];
+		},
+	};
+
+	ids_str.split(',')
+		.filter(|s| !s.is_empty())
+		.filter_map(|s| match VtxoId::from_str(s) {
+			Ok(id) => Some(id),
+			Err(e) => {
+				debug!("Server {} entry could not be parsed as a vtxo id: {:#}", key, e);
+				None
+			},
+		})
+		.collect()
+}
+
 impl StatusExt for tonic::Status {
 	fn is_rejection(&self) -> bool {
 	    match self.code() {
@@ -62,32 +92,7 @@ impl StatusExt for tonic::Status {
 	}
 
 	fn rejected_vtxos(&self) -> Vec<VtxoId> {
-		if !self.is_rejection() {
-			return vec![];
-		}
-
-		let ids = match self.metadata().get("identifiers") {
-			Some(v) => v,
-			None => return vec![],
-		};
-		let ids_str = match ids.to_str() {
-			Ok(v) => v,
-			Err(e) => {
-				debug!("Invalid (non-ASCII) value in identifiers metadata: {:#}", e);
-				return vec![];
-			},
-		};
-
-		ids_str.split(',')
-			.filter(|s| !s.is_empty())
-			.filter_map(|s| match VtxoId::from_str(s) {
-				Ok(id) => Some(id),
-				Err(e) => {
-					debug!("Server identifier could not be parsed as a vtxo id: {:#}", e);
-					None
-				},
-			})
-			.collect()
+		vtxo_ids_metadata(self, "identifiers")
 	}
 }
 
