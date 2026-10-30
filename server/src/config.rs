@@ -649,6 +649,11 @@ impl Config {
 			bail!("Cannot turn on round_legacy_hashlock_clauses on mainnet");
 		}
 
+		// at zero the user's preimage path opens with the server's reclaim
+		if self.network == bitcoin::Network::Bitcoin && self.htlc_expiry_delta == BlockDelta::ZERO {
+			bail!("Cannot set htlc_expiry_delta to zero on mainnet");
+		}
+
 		Ok(())
 	}
 
@@ -789,6 +794,21 @@ mod test {
 		cfg.bitcoind.cookie = Some(".cookie".into());
 
 		cfg.validate().expect("error validating default config");
+	}
+
+	#[test]
+	fn mainnet_refuses_zero_htlc_expiry_delta() {
+		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
+		cfg.bitcoind.cookie = Some(".cookie".into());
+		cfg.network = bitcoin::Network::Bitcoin;
+		cfg.require_board_funding_tx = true;
+		cfg.validate().expect("default config on mainnet");
+
+		cfg.htlc_expiry_delta = BlockDelta::ZERO;
+		cfg.validate().expect_err("zero htlc_expiry_delta on mainnet");
+
+		cfg.network = bitcoin::Network::Signet;
+		cfg.validate().expect("zero htlc_expiry_delta off mainnet");
 	}
 
 	#[test]
