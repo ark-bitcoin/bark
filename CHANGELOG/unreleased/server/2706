@@ -1,9 +1,0 @@
-- Refuse a delegated round participation over inputs a round attempt already holds
-  Submitting a new participation replaces the pending one over the same inputs.
-  When a round attempt had already picked the old one up, the replacement deleted
-  the row the round was building on, so the round spent the inputs for vtxos
-  whose unlock preimage was gone. `SubmitRoundParticipation` now rejects such a
-  submission with `InvalidArgument` and lists the inputs under the
-  `in-flight-inputs` metadata key, so the client can wait for the round instead
-  of dropping them. `StatusExt::in_flight_vtxos` parses that list.
-  [#2706](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2706)

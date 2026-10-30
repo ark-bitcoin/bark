@@ -6,6 +6,202 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.8.1
+
+- `bark`
+  - Presign the CPFP children of emergency (unilateral) exit chains
+    `Exit::presign_emergency_exit` and `Wallet::presign_emergency_exit` sign,
+    without broadcasting or reserving funds, a CPFP child for every exit
+    transaction that still needs broadcasting, for as long as confirmed onchain
+    funds last. The returned `PresignedExits` is a wave-by-wave broadcast
+    plan: all of a wave's `(exit, child)` packages broadcast together and
+    confirm before the next wave, so independent exits advance concurrently.
+    Exit transactions already in the mempool are listed in the first wave's
+    `in_mempool`, and whatever spends them waits for the next wave.
+    The plan is self-contained and can be executed later, e.g. from cold
+    storage or by a third party. The onchain wallet reveals the change
+    addresses the children pay to, so a single wallet sync recognizes the
+    whole chain once it is broadcast.
+    [#2293](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2293)
+  - Presigning support on the onchain wallet trait
+    `OnchainWalletTrait::presign_p2a_cpfp_walk` signs the CPFP broadcast walk
+    grouped into waves, revealing the change addresses the children pay to.
+    Its default implementation returns an error, so a wallet without
+    presigning support isn't mistaken for one without funds.
+    [#2293](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2293)
+  - Add a read-only remaining exit transactions API
+    `Exit::remaining_exit_transactions` and `Wallet::remaining_exit_transactions`
+    list every exit transaction of the given VTXOs not yet confirmed onchain: per
+    VTXO, the transaction ids it needs confirmed in broadcast order, plus each
+    transaction exactly once with parents before children. Nothing is signed and
+    the onchain wallet is never touched; `presign_emergency_exit` signs children
+    for the same transactions.
+    [#2512](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2512)
+  - Fix lightning sends that stay pending after they are paid
+    The wallet now finishes these sends from the stored preimage.
+    [#2663](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2663)
+  - Add `Wallet::bolt11_invoice_builder` to create lightning receive invoices
+    Besides the description, token and claim destination, it can set the
+    invoice expiry, at most the server's `invoice_expiry`. If the server
+    ignores it, building the invoice fails. `bolt11_invoice` and
+    `bolt11_invoice_for_address` are unchanged.
+    [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)
+  - Stop advertising zstd compression to the server
+    [#2683](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2683)
+  - Update `bdk_wallet` to 3.2.0
+    `bdk_wallet` 3.2.0 deprecates signing with the keys stored in the
+    `Wallet`. `OnchainWallet` now keeps its own signers and signs with
+    `Wallet::sign_with_signers`.
+    [#2685](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2685)
+    - **BREAKING:** The re-exported `bdk_wallet` is pinned to `=3.2.0`
+    - **BREAKING:** After a reload, `OnchainWallet::inner` holds no private
+      keys. `inner.sign` returns an unsigned PSBT. Sign through
+      `OnchainWalletTrait` instead.
+  - Do not panic on a BOLT12 offer with an amount in a fiat currency
+    The payment request parser now treats the offer amount as unknown.
+    [#2686](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2686)
+
+- `bark-cli`
+  - Add `bark-cli`, a thin client that drives a running barkd over its REST API
+    The command tree and printed JSON match the in-process CLI, so a wallet
+    can move to the daemon model without new commands. `bark-cli` reaches
+    the barkd on its datadir through the recorded listen address or an
+    explicit `--url`. It authenticates with the bearer token in the datadir.
+    Release builds do not ship `bark-cli` yet. Build it from source.
+    [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+
+  - Add `bark-legacy`, an alias of the in-process `bark` CLI
+    `bark` does not change. The integration tests run the in-process CLI as
+    `bark-legacy`, so `bark` can later become the thin client.
+    [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+
+  - barkd records its listen address in the datadir
+    Clients that share the datadir connect to the correct barkd, also when
+    it runs on a non-default port. A wildcard bind is recorded as its
+    loopback equivalent.
+    [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+  - Add `--expiry <SECONDS>` to `lightning invoice` and `lightning invoice-for-address`
+    It sets how long the invoice stays payable, up to the server's maximum.
+    [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)
+  - remove `barkd-swagger-ui` from default features for `bark-cli` crate
+    [#2739](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2739)
+
+- `bark-json`
+  - Add presigned exit types
+    `PresignedExits` (a wave-by-wave broadcast plan), `PresignedWave`,
+    `PresignedExit`, `PresignedExitPackage`, `PresignedExitChildInfo` and
+    `PresignedExitStatus` mirror the `bark` presign API, with transactions
+    hex-encoded.
+    [#2293](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2293)
+  - Type the lightning send and receive states
+    `LightningSendInfo::state` and `LightningReceiveInfo::state` are now the
+    `LightningSendStateKind` and `LightningReceiveStateKind` enums. The JSON
+    is unchanged. A state that this version does not know parses as `other`.
+    [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+    - **BREAKING:** `LightningSendInfo::state` and `LightningReceiveInfo::state` are no longer a `String`
+  - Add remaining exit transaction type
+    `RemainingExitTransactions` mirrors the read-only `bark` API listing the exit
+    transactions not yet confirmed onchain.
+    [#2512](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2512)
+  - Add `expiry_secs` to `LightningInvoiceRequest` and `LightningInvoiceForAddressRequest`
+    [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)
+
+- `bark-rest`
+  - Add `POST /v1/exits/presign` to presign emergency exit chains
+    Signs, without broadcasting, the CPFP child of every transaction still
+    needed to unilaterally exit the given VTXOs (or the whole wallet), for as
+    long as confirmed on-chain funds last, and returns a self-contained
+    wave-by-wave broadcast plan for later execution by any independent party.
+    [#2293](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2293)
+  - Add `GET /api/v1/wallet/debug-info`
+    It returns the network, the mailbox ID and the VTXO xpub of the wallet,
+    which you can share in support requests.
+    [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+
+  - `POST /api/v1/wallet/send` accepts BIP 321 URIs and bitcoin addresses
+    The new `method` field (`ark`, `lightning` or `onchain`) selects the kind
+    of payment method when the destination offers several. Without it, the
+    wallet uses Ark, then Lightning, then on-chain. A bitcoin address is paid
+    on-chain, as `send-onchain` does.
+    [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+
+  - `GET /api/v1/lightning/receives/{identifier}` returns 404 for an unknown receive
+    This includes a receive that ended without settling, for example a
+    canceled one. It used to return 500.
+    [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+  - Add `GET /v1/exits/remaining` to list remaining exit transactions
+    Read-only twin of the presign endpoint: per VTXO, the transaction ids it
+    needs confirmed in broadcast order, plus each pending exit transaction
+    exactly once with parents before children.
+    [#2512](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2512)
+  - Fixed a bug where barkd accepted expired websocket tickets
+    barkd now rejects expired websocket tickets
+    [#2631](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2631)
+  - The lightning invoice endpoints accept an optional `expiry_secs`
+    `POST /api/v1/lightning/receives/invoice` and
+    `POST /api/v1/lightning/receives/invoice/for-address` use it to set how
+    long the invoice stays payable, up to the server's maximum.
+    [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)
+
+- `bip321`
+  - Fix a panic and make the `pop` scheme check stricter
+    The parser no longer panics when a multi-byte character crosses the end
+    of `bitcoin:` or `req-`. `PopConfig::safe` now reads the scheme before
+    the first `:`. A scheme that is missing, invalid, one letter long, starts
+    with `web+`, or opens a web browser is not safe. Before, values such as
+    `" https:"` were safe, but a browser opens them as `https:`. The
+    `PopConfig` doc no longer tells wallets to percent-decode the prefix a
+    second time.
+    [#2686](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2686)
+    - A `req-pop` value without a valid scheme now makes the URI fail to parse
+
+- `bitcoin-ext`
+  - Sign with caller-owned signers in `WalletExt`
+    `bdk_wallet` 3.2.0 deprecates signing with the keys stored in the
+    `Wallet`. `WalletExt::build_signers` builds a `SignersContainer` from a
+    descriptor with private keys. It returns a `BuildSignersError` if the
+    descriptor is not the wallet descriptor or does not hold all private
+    keys.
+    [#2685](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2685)
+    - **BREAKING:** `WalletExt::make_signed_p2a_cpfp` takes a
+      `&SignersContainer` argument
+    - **BREAKING:** `bdk_wallet` is pinned to `=3.2.0`
+
+- `server`
+  - Record the lightning side of every payment in two new tables
+    `cln_xpay` has one row per call to CLN's `xpay` command and `cln_hold` one
+    row per hold invoice, each written alongside the payment attempt or
+    subscription it belongs to. Together with `htlc_vtxo` they describe every HTLC the server is party to, so operators
+    can check that each outgoing HTLC is covered by incoming ones on the same
+    payment hash. Nothing reads them yet; `lightning_payment_attempt` and
+    `lightning_htlc_subscription` keep driving the server.
+    Existing attempts are ported into `cln_xpay` by the migration. Hold
+    invoices need their bolt11 decoded, so port them with
+    `captaind data backfill-cln-hold` after upgrading.
+    [#2576](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2576)
+  - Don't write history records for updates that change nothing
+    [#2660](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2660)
+  - Require mailbox authorization to post recovery VTXO IDs
+    The authorization was optional for backward compat; all bark clients
+    have sent it since the field was introduced.
+    [#2667](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2667)
+  - Clients can choose how long a lightning receive invoice stays payable
+    `StartLightningReceive` accepts an optional `expiry_secs`.
+    `invoice_expiry` stays the default and is now also the maximum: a longer
+    expiry, or zero, is rejected.
+    [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)
+  - Stop compressing gRPC responses with zstd
+    [#2683](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2683)
+  - Refuse a delegated round participation over inputs a round attempt already holds
+    Submitting a new participation replaces the pending one over the same inputs.
+    When a round attempt had already picked the old one up, the replacement deleted
+    the row the round was building on, so the round spent the inputs for vtxos
+    whose unlock preimage was gone. `SubmitRoundParticipation` now rejects such a
+    submission with `InvalidArgument` and lists the inputs under the
+    `in-flight-inputs` metadata key, so the client can wait for the round instead
+    of dropping them. `StatusExt::in_flight_vtxos` parses that list.
+    [#2706](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2706)
+
 # v0.8.0
 
 - `ark-lib`

@@ -1,6 +1,0 @@
-- Add `POST /v1/exits/presign` to presign emergency exit chains
-  Signs, without broadcasting, the CPFP child of every transaction still
-  needed to unilaterally exit the given VTXOs (or the whole wallet), for as
-  long as confirmed on-chain funds last, and returns a self-contained
-  wave-by-wave broadcast plan for later execution by any independent party.
-  [#2293](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2293)

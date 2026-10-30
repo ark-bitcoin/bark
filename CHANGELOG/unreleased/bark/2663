@@ -1,3 +1,0 @@
-- Fix lightning sends that stay pending after they are paid
-  The wallet now finishes these sends from the stored preimage.
-  [#2663](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2663)
