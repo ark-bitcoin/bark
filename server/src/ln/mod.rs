@@ -12,6 +12,7 @@ pub use self::failure::LightningFailureKind;
 
 use std::cmp;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
@@ -819,6 +820,7 @@ impl Server {
 		user_pubkey: PublicKey,
 		htlc_recv_expiry: BlockHeight,
 		anti_dos: Option<protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos>,
+		client_address: Option<SocketAddr>,
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo<Full>>)> {
 		// Held for the whole call. The status only becomes `htlcs-ready` after
 		// the arkoor is persisted, so without this lock concurrent calls each
@@ -866,7 +868,7 @@ impl Server {
 			return badarg!("invoice has already been paid");
 		}
 
-		self.verify_ln_receive_anti_dos(anti_dos, payment_hash).await?;
+		self.verify_ln_receive_anti_dos(anti_dos, payment_hash, client_address).await?;
 
 		// Deduct the fees from the HTLC VTXOs.
 		let received_amount = sub.amount();
@@ -916,6 +918,7 @@ impl Server {
 		&self,
 		anti_dos: Option<LightningReceiveAntiDos>,
 		payment_hash: PaymentHash,
+		client_address: Option<SocketAddr>,
 	) -> anyhow::Result<()> {
 		if let Some(anti_dos) = anti_dos {
 			// Always verify anti-DoS proof or token if provided
@@ -949,6 +952,7 @@ impl Server {
 						if !matches!(token.token_type, TokenType::SingleUseBoard) {
 							return badarg!("token type is not permitted for lightning receive anti-DoS");
 						}
+						token.filters.check_client(client_address).await?;
 						let filters = token.filters.clone();
 						t.update_integration_token(
 							token, api_key.id, TokenStatus::Used, &filters,

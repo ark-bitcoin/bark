@@ -1848,6 +1848,29 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 	assert!(res.is_ok());
 	assert_eq!(bark.spendable_balance_no_sync().await, btc(1));
 
+	// A token's address filter is checked: one allowing localhost works,
+	// one restricted to another address is refused
+	let receive_with_token = async |filter: &str| {
+		let stdout = srv.integration_cmd(&[
+			"generate-token", "captaind", "single-use-board", "--ip", filter,
+		]).await;
+		let token = stdout.strip_prefix("Token: ").unwrap().trim().to_string();
+		let invoice_info = bark.bolt11_invoice_with_token(sat(100_000), &token).await;
+		let invoice = invoice_info.invoice.clone();
+		let ln = lightning.clone();
+		tokio::spawn(async move { ln.external.pay_bolt11(invoice).await });
+		let payment_hash = PaymentHash::from(
+			&Bolt11Invoice::from_str(&invoice_info.invoice).expect("valid bolt11 invoice"),
+		);
+		srv.wait_for_lightning_receive_accepted(payment_hash).await;
+		bark.try_lightning_receive(&invoice_info.invoice).await
+	};
+	receive_with_token("127.0.0.0/8").await.expect("localhost is allowed");
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(1) + sat(100_000));
+	let err = receive_with_token("203.0.113.1").await.expect_err("only 203.0.113.1 is allowed");
+	assert!(format!("{err:?}").contains("client's address is not allowed"), "{err:?}");
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(1) + sat(100_000));
+
 	// Claiming with token that has already been used should fail
 	let invoice_info_3 = bark.bolt11_invoice_with_token(btc(1), &token).await;
 
@@ -1858,7 +1881,7 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 
 	let res = bark.try_lightning_receive(&invoice_info_3.invoice).await;
 	assert!(res.is_err());
-	assert_eq!(bark.spendable_balance_no_sync().await, btc(1));
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(1) + sat(100_000));
 }
 
 /// Stress test for the TrackAll stream subscription.

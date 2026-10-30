@@ -1,5 +1,6 @@
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -639,6 +640,10 @@ impl rpc::server::ArkService for Server {
 		req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>
 	) -> Result<tonic::Response<protos::PrepareLightningReceiveClaimResponse>, tonic::Status> {
 		let pver = req.pver()?;
+		// For token filters. Like the integration API, this trusts the
+		// proxy chain to set `X-Forwarded-For`, see `RemoteAddrService`.
+		let client_address = req.extensions().get::<SocketAddr>().cloned()
+			.or_else(|| req.remote_addr());
 		let req = req.into_inner();
 
 		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
@@ -653,6 +658,7 @@ impl rpc::server::ArkService for Server {
 
 		let (sub, htlcs) = self.prepare_lightning_claim(
 			payment_hash, user_pubkey, htlc_recv_expiry, req.lightning_receive_anti_dos,
+			client_address,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::PrepareLightningReceiveClaimResponse {
@@ -1114,6 +1120,7 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.layer(tonic_web::GrpcWebLayer::new())
 		.layer(OtelGrpcLayer::default())
 		.layer(middleware::TelemetryMetricsLayer)
+		.layer(middleware::RemoteAddrLayer)
 		.add_routes(routes)
 		.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
 

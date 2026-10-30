@@ -40,7 +40,7 @@ postgres-types.workspace = true
 refinery = { version = "0.8.14", default-features = false, features = ["tokio-postgres"] }
 uuid = { version = "1.17.0", features = ["v4"] }
 ipnet = "2.11.0"
-hickory-resolver = { version = "0.26", default-features = false, features = ["tokio"] }
+hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
 smallvec = "1.13"
 indexmap = "2.12.1"
 
