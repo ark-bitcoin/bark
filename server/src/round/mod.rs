@@ -716,6 +716,19 @@ impl CollectingPayments {
 			},
 		};
 
+		// A resubmission over these inputs takes the same flux lock while it
+		// replaces the stored participation, so now that we hold the lock the
+		// row is either still there or gone for good. Using a row that is gone
+		// would spend its inputs for a leaf nobody holds the preimage of.
+		let exists = srv.db.read(async |t| t.unlock_hash_exists(participation.unlock_hash).await).await;
+		match exists {
+			Ok(true) => {},
+			Ok(false) => return Err(ProcessHarkParticipationError::Superseded),
+			Err(e) => return Err(ProcessHarkParticipationError::CheckFailed(
+				e.context("failed to check the participation still exists")
+			)),
+		}
+
 		for input in &participation.inputs {
 			if self.all_inputs.contains_key(&input.vtxo_id) {
 				client_rslog!(RoundUserVtxoAlreadyRegistered, self.round_step,
@@ -800,6 +813,18 @@ impl CollectingPayments {
 				Ok(()) => {},
 				// NB we already slog this when producing an error
 				Err(ProcessHarkParticipationError::RoundFull) => continue,
+				Err(ProcessHarkParticipationError::Superseded) => {
+					debug!("Skipping hArk round participation for unlock hash {}: \
+						superseded by a newer submission", unlock_hash,
+					);
+					continue;
+				},
+				Err(ProcessHarkParticipationError::CheckFailed(e)) => {
+					warn!("Skipping hArk round participation for unlock hash {} \
+						this round: {:#}", unlock_hash, e,
+					);
+					continue;
+				},
 				Err(ProcessHarkParticipationError::BadParticipation(e)) => {
 					slog!(RoundParticipationRejected, unlock_hash, reason: format!("{:#}", e));
 
@@ -993,6 +1018,12 @@ impl CollectingPayments {
 enum ProcessHarkParticipationError {
 	RoundFull,
 	BadParticipation(anyhow::Error),
+	/// The participation was replaced by a newer submission over its inputs
+	/// between the round reading it and locking its inputs.
+	Superseded,
+	/// The round could not verify the participation; it stays stored for a
+	/// later round.
+	CheckFailed(anyhow::Error),
 }
 
 pub struct SigningVtxoTree {
@@ -1984,6 +2015,16 @@ impl Server {
 			return badarg!("input vtxo(s) unusable")
 				.unusable_inputs(unusable);
 		}
+
+		// Storing replaces any pending participation over these inputs. A
+		// round attempt that already picked one up holds them in flux until
+		// it finishes or restarts and builds its leaf from that row, so the
+		// store runs under the same lock: either the round has the inputs and
+		// this is refused, or the store completes first and the round finds
+		// the old row gone before registering it (see
+		// process_delegated_participation).
+		let _flux_guard = self.vtxos_in_flux.try_lock(&input_ids)
+			.badarg("input vtxo in flight in another operation")?;
 
 		self.db.write(async |t| {
 			t.try_store_round_participation(
