@@ -1871,6 +1871,28 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 	assert!(format!("{err:?}").contains("client's address is not allowed"), "{err:?}");
 	assert_eq!(bark.spendable_balance_no_sync().await, btc(1) + sat(100_000));
 
+	// Unused tokens of a removed integration no longer admit receives
+	srv.integration_cmd(&["add", "removed"]).await;
+	srv.integration_cmd(&["configure-token-type", "removed", "single-use-board", "1", "100"]).await;
+	let stdout = srv.integration_cmd(&["generate-token", "removed", "single-use-board"]).await;
+	let removed_token = stdout.strip_prefix("Token: ").unwrap().trim().to_string();
+	srv.integration_cmd(&["remove", "removed"]).await;
+
+	let invoice_info_removed = bark.bolt11_invoice_with_token(sat(100_000), &removed_token).await;
+	let invoice_removed = invoice_info_removed.invoice.clone();
+	let cloned_ln = lightning.clone();
+	let _res = tokio::spawn(async move {
+		cloned_ln.external.pay_bolt11(invoice_removed).await
+	});
+	let payment_hash = PaymentHash::from(
+		&Bolt11Invoice::from_str(&invoice_info_removed.invoice).expect("valid bolt11 invoice"),
+	);
+	srv.wait_for_lightning_receive_accepted(payment_hash).await;
+	let err = bark.try_lightning_receive(&invoice_info_removed.invoice).await
+		.expect_err("a token of a removed integration must be refused");
+	assert!(format!("{err:?}").contains("token's integration was removed"), "{err:?}");
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(1) + sat(100_000));
+
 	// Claiming with token that has already been used should fail
 	let invoice_info_3 = bark.bolt11_invoice_with_token(btc(1), &token).await;
 
