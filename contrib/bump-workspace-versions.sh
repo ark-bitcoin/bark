@@ -48,7 +48,6 @@ packages="
 # their pins are swept.
 dependents="
 	bark-nwc/Cargo.toml
-	bip321/Cargo.toml
 	cln-rpc/Cargo.toml
 "
 

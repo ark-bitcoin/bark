@@ -49,8 +49,7 @@ use std::fmt::{self, Write};
 use std::str::FromStr;
 
 use bitcoin::address::{NetworkChecked, NetworkUnchecked};
-use bitcoin::{Address, Amount, Denomination, Network, NetworkKind};
-use bitcoin_ext::AddressExt;
+use bitcoin::{Address, AddressType, Amount, Denomination, Network, NetworkKind};
 #[cfg(feature = "lightning")]
 use lightning::offers::offer::Offer;
 #[cfg(feature = "lightning")]
@@ -665,6 +664,14 @@ fn write_query_param(f: &mut String, key: &str, value: &str, required: bool) -> 
 #[error("uri is not fully uppercasable")]
 pub struct NotUppercasable;
 
+/// Whether the address uses a case-insensitive bech32(m) encoding.
+fn is_uppercasable(address: &Address) -> bool {
+	matches!(
+		address.address_type(),
+		Some(AddressType::P2wpkh | AddressType::P2wsh | AddressType::P2tr),
+	)
+}
+
 impl<E: ExtensionHandler> Bip321Uri<E> {
 	/// Whether every component of the URI is case-insensitive, so the whole
 	/// string can be upper-cased without changing its meaning. This is false
@@ -680,9 +687,9 @@ impl<E: ExtensionHandler> Bip321Uri<E> {
 			&& self.custom.values().all(|v| v.iter().all(|s| {
 				!s.inner().chars().any(|c| c.is_lowercase())
 			}))
-			&& self.address.as_ref().map_or(true, |a| a.is_uppercasable())
-			&& self.bc.iter().all(|f| f.inner().is_uppercasable())
-			&& self.tb.iter().all(|f| f.inner().is_uppercasable())
+			&& self.address.as_ref().map_or(true, is_uppercasable)
+			&& self.bc.iter().all(|f| is_uppercasable(f.inner()))
+			&& self.tb.iter().all(|f| is_uppercasable(f.inner()))
 	}
 
 	/// Serializes the URI as an all-uppercase `bitcoin:` URI string.
