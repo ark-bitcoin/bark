@@ -55,6 +55,28 @@ pub fn warn_if_loose(path: &Path, recommended: u32) {
 #[cfg(not(unix))]
 pub fn warn_if_loose(_path: &Path, _recommended: u32) {}
 
+/// Fail if `path` is accessible by group or other users.
+///
+/// For secrets that must not be used once exposed, such as a server seed.
+#[cfg(unix)]
+pub fn refuse_if_loose(path: &Path, recommended: u32) -> anyhow::Result<()> {
+	let mode = std::fs::metadata(path)
+		.with_context(|| format!("failed to inspect {}", path.display()))?
+		.permissions().mode() & 0o777;
+	if is_loose(mode) {
+		anyhow::bail!(
+			"refusing to use {}: it is accessible by other users (mode {:03o}); \
+			run `chmod {:o} {}`, and rotate it if others may have read it",
+			path.display(), mode, recommended, path.display(),
+		);
+	}
+	Ok(())
+}
+#[cfg(not(unix))]
+pub fn refuse_if_loose(_path: &Path, _recommended: u32) -> anyhow::Result<()> {
+	Ok(())
+}
+
 /// Atomically create a brand-new owner-only (`0o600`) file and write `contents`.
 ///
 /// `create_new` refuses to follow or overwrite an existing path, so this never
