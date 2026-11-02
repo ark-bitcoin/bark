@@ -39,6 +39,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
+use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use chrono::{DateTime, Local, TimeDelta};
 use cln_rpc::plugins::hold as hold_plugin;
@@ -622,6 +623,7 @@ impl LightningManager {
 		expiry: Duration,
 		description: Option<String>,
 		receiver_mailbox_id: Option<MailboxIdentifier>,
+		claim_pubkey: Option<PublicKey>,
 	) -> anyhow::Result<Bolt11Invoice> {
 		let node = self.hold_active_node().context("no active hold-compatible cln node")?;
 		let mut hold_client = node.hold_rpc.clone().expect("hold-active node has hold_rpc");
@@ -659,7 +661,7 @@ impl LightningManager {
 		let stored = self.db.write(async |t| {
 			t.store_generated_lightning_receive(
 				node.id, &invoice, amount.to_msat(), receiver_mailbox_id.as_ref(),
-				user_agent.as_deref(),
+				claim_pubkey, user_agent.as_deref(),
 			).await?;
 			hold_db::create_hold(&**t, &new_hold).await
 				.context("failed to store the hold invoice")?;

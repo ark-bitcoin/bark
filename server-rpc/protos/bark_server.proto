@@ -410,6 +410,9 @@ message StartLightningReceiveRequest {
 	// Seconds until the invoice expires. Defaults to the server's invoice
 	// expiry, which is also the longest it accepts.
 	optional uint64 expiry_secs = 6;
+	// The key the HTLC-recv VTXOs will be locked to. When set, the claim can
+	// only be prepared with this key and a claim_attestation signed by it.
+	optional bytes claim_pubkey = 7;
 }
 
 message StartLightningReceiveResponse {
@@ -429,6 +432,9 @@ message PrepareLightningReceiveClaimRequest {
 		InputVtxo input_vtxo = 4;
 		string token = 5;
 	};
+	// Signature by user_pubkey over the payment hash and htlc_recv_expiry,
+	// required when the receive was started with a claim_pubkey.
+	optional bytes claim_attestation = 6;
 }
 
 message PrepareLightningReceiveClaimResponse {

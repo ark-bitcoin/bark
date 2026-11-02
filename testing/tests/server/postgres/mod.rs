@@ -2389,7 +2389,7 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 
 	// Store as generated (receive-side) subscription
-	db.write(async |t| t.store_generated_lightning_receive(node_id, &bolt11, 3000, None, Some("bark")).await).await.unwrap();
+	db.write(async |t| t.store_generated_lightning_receive(node_id, &bolt11, 3000, None, None, Some("bark")).await).await.unwrap();
 
 	// Find the htlc subscription (should be in Created state)
 	let payment_hash: ark::lightning::PaymentHash = (&bolt11).into();

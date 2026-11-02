@@ -3,7 +3,8 @@ use std::io::{self, Write as _};
 use bitcoin::consensus::WriteExt;
 use bitcoin::hashes::{sha256, Hash, HashEngine};
 use bitcoin::key::Keypair;
-use bitcoin::secp256k1::{self, schnorr, Message};
+use bitcoin::secp256k1::{self, schnorr, Message, PublicKey};
+use bitcoin_ext::BlockHeight;
 
 use crate::{SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest, SECP};
 use crate::arkoor::ArkoorDestination;
@@ -225,6 +226,64 @@ impl LightningReceiveAttestation {
 }
 
 impl ProtocolEncoding for LightningReceiveAttestation {
+	fn encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<(), io::Error> {
+		self.signature.encode(writer)
+	}
+
+	fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let signature = schnorr::Signature::decode(reader)?;
+		Ok(Self { signature })
+	}
+}
+
+/// Attestation by the receiver of a Lightning payment that it asks the server
+/// to prepare the claim of that payment.
+///
+/// It is signed with the key the receiver committed to when starting the
+/// receive, and commits to the HTLC-recv expiry, so nobody else can trigger
+/// or shape the grant of HTLC-recv VTXOs for the payment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct LightningReceiveClaimAttestation {
+	signature: schnorr::Signature,
+}
+
+impl LightningReceiveClaimAttestation {
+	const MESSAGE_PREFIX: &'static [u8; 32] = b"Lightning receive claim key auth";
+
+	/// Create a new attestation by signing with the claim keypair
+	pub fn new(
+		payment_hash: PaymentHash,
+		htlc_recv_expiry: BlockHeight,
+		claim_keypair: &Keypair,
+	) -> Self {
+		let msg = Self::compute_message(payment_hash, htlc_recv_expiry);
+		let signature = SECP.sign_schnorr_with_aux_rand(&msg, claim_keypair, &rand::random());
+		Self { signature }
+	}
+
+	/// Verify the attestation against the claim key
+	pub fn verify(
+		&self,
+		payment_hash: PaymentHash,
+		htlc_recv_expiry: BlockHeight,
+		claim_pubkey: PublicKey,
+	) -> Result<(), secp256k1::Error> {
+		let msg = Self::compute_message(payment_hash, htlc_recv_expiry);
+		SECP.verify_schnorr(&self.signature, &msg, &claim_pubkey.x_only_public_key().0)
+	}
+
+	fn compute_message(payment_hash: PaymentHash, htlc_recv_expiry: BlockHeight) -> Message {
+		let mut engine = sha256::Hash::engine();
+		engine.write_all(Self::MESSAGE_PREFIX).unwrap();
+		engine.write_all(&payment_hash.to_byte_array()).unwrap();
+		engine.write_all(&htlc_recv_expiry.to_u32().to_be_bytes()).unwrap();
+
+		let hash = sha256::Hash::from_engine(engine).to_byte_array();
+		Message::from_digest(hash)
+	}
+}
+
+impl ProtocolEncoding for LightningReceiveClaimAttestation {
 	fn encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<(), io::Error> {
 		self.signature.encode(writer)
 	}
@@ -589,6 +648,26 @@ mod tests {
 		let hardcoded = DelegatedRoundParticipationAttestation::deserialize_hex(&vector)
 			.expect("valid attestation");
 		hardcoded.verify(&vtxo, &vtxo_reqs).expect("hardcoded verification failed");
+	}
+
+	#[test]
+	fn test_lightning_receive_claim_attestation() {
+		let payment_hash = PaymentHash::from(sha256::Hash::hash(&[0x42; 32]));
+		let expiry = BlockHeight::new(1_000);
+		let attestation = LightningReceiveClaimAttestation::new(payment_hash, expiry, &DUMMY_USER_KEY);
+		encoding_roundtrip(&attestation);
+		attestation.verify(payment_hash, expiry, DUMMY_USER_KEY.public_key())
+			.expect("verification failed");
+
+		// it binds the expiry, the payment and the key
+		attestation.verify(payment_hash, BlockHeight::new(1_001), DUMMY_USER_KEY.public_key())
+			.expect_err("other expiry");
+		let other_hash = PaymentHash::from(sha256::Hash::hash(&[0x43; 32]));
+		attestation.verify(other_hash, expiry, DUMMY_USER_KEY.public_key())
+			.expect_err("other payment");
+		let other_key = Keypair::from_secret_key(&SECP, &secp256k1::SecretKey::from_slice(&[7; 32]).unwrap());
+		attestation.verify(payment_hash, expiry, other_key.public_key())
+			.expect_err("other key");
 	}
 
 	#[test]

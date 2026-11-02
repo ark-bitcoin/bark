@@ -59,7 +59,7 @@ async fn receive_insert_serializes_with_settlement() {
 	let receiver_db = db.clone();
 	let mut receiver = tokio::spawn(async move {
 		receiver_db.write(async |t| t.store_generated_lightning_receive(
-			node_id, &invoice, 1_000_000, None, None,
+			node_id, &invoice, 1_000_000, None, None, None,
 		).await).await
 	});
 

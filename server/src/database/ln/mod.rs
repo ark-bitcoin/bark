@@ -452,10 +452,12 @@ impl<'t> Tx<'t> {
 		invoice: &Bolt11Invoice,
 		amount_msat: u64,
 		receiver_mailbox_id: Option<&MailboxIdentifier>,
+		claim_pubkey: Option<PublicKey>,
 		user_agent: Option<&str>,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 		let mailbox_str = receiver_mailbox_id.map(|id| id.to_string());
+		let claim_pubkey_str = claim_pubkey.map(|k| k.to_string());
 
 		// The hash can settle while the invoice is generated. Serialize with
 		// `store_htlc_settlement` so no receive opens for a known preimage.
@@ -468,10 +470,24 @@ impl<'t> Tx<'t> {
 
 		self.inner_store_lightning_htlc_subscription(
 			node_id, &payment_hash.to_string(), &invoice.to_string(),
-			Some(amount_msat), mailbox_str.as_deref(), user_agent,
+			Some(amount_msat), mailbox_str.as_deref(), claim_pubkey_str.as_deref(), user_agent,
 		).await?;
 
 		Ok(())
+	}
+
+	/// The key the receiver committed to when starting the receive, if any.
+	pub async fn get_htlc_subscription_claim_pubkey(
+		&self,
+		subscription_id: i64,
+	) -> anyhow::Result<Option<PublicKey>> {
+		let row = self.query_one(
+			"SELECT claim_pubkey FROM lightning_htlc_subscription WHERE id = $1",
+			&[&subscription_id],
+		).await?;
+		row.get::<_, Option<String>>("claim_pubkey")
+			.map(|s| PublicKey::from_str(&s).context("corrupt claim_pubkey in lightning_htlc_subscription"))
+			.transpose()
 	}
 
 	/// Store a new HTLC subscription for a given invoice.
@@ -484,6 +500,7 @@ impl<'t> Tx<'t> {
 		invoice: &str,
 		final_amount_msat: Option<u64>,
 		receiver_mailbox_id: Option<&str>,
+		claim_pubkey: Option<&str>,
 		user_agent: Option<&str>,
 	) -> anyhow::Result<(i64, DateTime<Local>)> {
 		let requested_status = LightningHtlcSubscriptionStatus::Created;
@@ -495,11 +512,12 @@ impl<'t> Tx<'t> {
 				invoice,
 				final_amount_msat,
 				receiver_mailbox_id,
+				claim_pubkey,
 				status,
 				user_agent,
 				created_at,
 				updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 			RETURNING id, updated_at;
 		").await?;
 
@@ -508,7 +526,7 @@ impl<'t> Tx<'t> {
 			&stmt,
 			&[
 				&node_id, &payment_hash, &invoice, &final_amount, &receiver_mailbox_id,
-				&requested_status, &user_agent,
+				&claim_pubkey, &requested_status, &user_agent,
 			],
 		).await?;
 

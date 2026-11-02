@@ -375,6 +375,7 @@ pub(crate) async fn start_lightning_receive(
 		mailbox_id: Some(mailbox_id.serialize()),
 		description,
 		expiry_secs: expiry.map(|e| e.as_secs()),
+		claim_pubkey: None,
 	};
 
 	let resp = srv.client.start_lightning_receive(req).await?.into_inner();
@@ -536,6 +537,7 @@ async fn prepare_lightning_receive_htlcs(
 		user_pubkey: keypair.public_key().serialize().to_vec(),
 		htlc_recv_expiry: htlc_recv_expiry.into(),
 		lightning_receive_anti_dos,
+		claim_attestation: None,
 	};
 	let res = srv.client.prepare_lightning_receive_claim(req).await
 		.retry_unless_rejected()?.into_inner();
