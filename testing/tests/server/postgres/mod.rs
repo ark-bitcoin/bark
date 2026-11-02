@@ -2,6 +2,7 @@ mod pool;
 mod tree;
 
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bitcoin::secp256k1::PublicKey;
@@ -33,8 +34,12 @@ use server::database::xpay::{self, ClnXpayOutcome, ClnXpayStatus, NewClnXpay};
 use server::filters;
 use server::filters::Filters;
 use server::ln::LightningFailureKind;
+use server::ln::settler::HtlcSettler;
 use server::nursery::NurseryTxKind;
 use server::secret::Secret;
+use server::sync::{BlockData, ChainEventListener};
+use server::system::RuntimeManager;
+use server::watchman::FrontierChainListener;
 use server::wallet::WalletKind;
 
 use ark_testing::{sat, TestContext};
@@ -1071,6 +1076,42 @@ async fn watchman_frontier() {
 	// Spent vtxos do not appear in frontier
 	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
 	assert!(frontier.is_empty(), "spent vtxo should not appear in frontier");
+}
+
+#[tokio::test]
+async fn watchman_frontier_spend_of_late_row() {
+	let mut ctx = TestContext::new_minimal("postgresd/watchman_frontier_spend_of_late_row").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let settler = Arc::new(HtlcSettler::start(db.clone(), RuntimeManager::new(), Duration::from_secs(60)));
+	let listener = FrontierChainListener::new(db.clone(), settler);
+
+	// a row whose transaction started 5 minutes before it committed
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
+	db.write(async |t| t.add_vtxo_to_frontier(vtxo.id()).await).await.unwrap();
+	let db_client = ctx.postgres_manager().database_client(Some(&ctx.test_name)).await;
+	db_client.execute(
+		"UPDATE vtxo SET frontier_at = NOW() - INTERVAL '5 minutes', updated_at = NOW() WHERE vtxo_id = $1",
+		&[&vtxo.id().to_string()],
+	).await.unwrap();
+
+	let mut block = bitcoin::constants::genesis_block(bitcoin::Network::Regtest);
+	block.txdata.push(Transaction {
+		version: bitcoin::transaction::Version::TWO,
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![bitcoin::TxIn { previous_output: vtxo.point(), ..Default::default() }],
+		output: vec![],
+	});
+	let block_ref = BlockRef { height: BlockHeight::new(1), hash: block.block_hash() };
+	listener.on_block_added(&BlockData { block_ref, block }).await.unwrap();
+
+	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
+	assert!(frontier.is_empty(), "the spend leaves the frontier");
 }
 
 #[tokio::test]
