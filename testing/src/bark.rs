@@ -1306,11 +1306,11 @@ impl Bark {
 		assert!(output.status.success(),
 			"cp -r failed: {}", String::from_utf8_lossy(&output.stderr));
 
-		let bitcoind = self.bitcoind.clone().expect("can only clone bark with bitcoind");
+		let bitcoind = self.bitcoind.clone();
 		let cfg = self.config.clone();
 
 		Bark {
-			bitcoind: Some(bitcoind),
+			bitcoind,
 			config: cfg,
 			name: new_name.to_string(),
 			counter: AtomicUsize::new(0),
