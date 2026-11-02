@@ -82,7 +82,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 			let failure = LightningFailureKind::classify(error.or(attempt.error.as_deref()));
 
 			self.post_lightning_send_finished(
-				attempt.payment_hash, None, Some(failure),
+				attempt.id, attempt.payment_hash, None, Some(failure),
 			).await;
 
 			// Attempted amount (not final_amount_msat) so failed/succeeded
@@ -186,7 +186,7 @@ impl<'a> PaymentAttemptHandler<'a> {
 
 			if status.is_final() {
 				self.post_lightning_send_finished(
-					attempt.payment_hash, preimage, failure,
+					attempt.id, attempt.payment_hash, preimage, failure,
 				).await;
 			}
 
@@ -229,12 +229,13 @@ impl<'a> PaymentAttemptHandler<'a> {
 	/// Post a lightning send finished notification to the sender's mailbox.
 	async fn post_lightning_send_finished(
 		&self,
+		payment_attempt_id: i64,
 		payment_hash: PaymentHash,
 		preimage: Option<Preimage>,
 		failure: Option<LightningFailureKind>,
 	) {
 		let mailbox_id = match self.db.read(async |t|
-			t.get_lightning_sender_mailbox_id(payment_hash).await
+			t.get_lightning_sender_mailbox_id(payment_attempt_id).await
 		).await {
 			Ok(Some(id)) => id,
 			Ok(None) => return,

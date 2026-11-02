@@ -848,18 +848,15 @@ impl<'t> Tx<'t> {
 		}
 	}
 
-	/// Retrieve the sender's mailbox ID for a lightning payment.
+	/// Retrieve the sender's mailbox ID of a lightning payment attempt.
 	pub async fn get_lightning_sender_mailbox_id(
 		&self,
-		payment_hash: PaymentHash,
+		payment_attempt_id: i64,
 	) -> anyhow::Result<Option<ark::mailbox::MailboxIdentifier>> {
 		let stmt = self.prepare(
-			"SELECT sender_mailbox_id FROM lightning_payment_attempt
-			WHERE payment_hash = $1
-			ORDER BY created_at DESC
-			LIMIT 1"
+			"SELECT sender_mailbox_id FROM lightning_payment_attempt WHERE id = $1"
 		).await?;
-		let row = self.query_opt(&stmt, &[&payment_hash.to_string()]).await?;
+		let row = self.query_opt(&stmt, &[&payment_attempt_id]).await?;
 
 		match row {
 			Some(row) => {

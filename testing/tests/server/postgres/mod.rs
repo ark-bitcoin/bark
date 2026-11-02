@@ -1706,9 +1706,10 @@ async fn lightning_payment_attempt_result_update() {
 
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11.clone());
+	let sender_mailbox = MailboxIdentifier::from_pubkey(pubkey);
 
 	db.write(async |t| t.store_lightning_payment_start(
-		node_id, &invoice, sat(1000), None, &[], None, BlockHeight::new(1), sat(1), Some("bark"), Duration::from_secs(60), None,
+		node_id, &invoice, sat(1000), Some(&sender_mailbox), &[], None, BlockHeight::new(1), sat(1), Some("bark"), Duration::from_secs(60), None,
 	).await).await.unwrap();
 
 	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
@@ -1726,6 +1727,18 @@ async fn lightning_payment_attempt_result_update() {
 		(&bolt11).into()
 	).await).await.unwrap().expect("attempt still present");
 	assert_eq!(attempt2.final_amount_msat, Some(9999));
+
+	// A later attempt for the same invoice doesn't take over the finished
+	// attempt's notification.
+	let other_mailbox = MailboxIdentifier::from_pubkey(PublicKey::from_str(
+		"02c7ef7d49b365974cd219f7036753e1544a3cdd2120eb7247dd8a94ef91cf1e49",
+	).unwrap());
+	db.write(async |t| t.store_lightning_payment_start(
+		node_id, &invoice, sat(1000), Some(&other_mailbox), &[], None, BlockHeight::new(1), sat(1), Some("bark"), Duration::from_secs(60), None,
+	).await).await.unwrap();
+	let mailbox = db.read(async |t| t.get_lightning_sender_mailbox_id(attempt.id).await)
+		.await.unwrap();
+	assert_eq!(mailbox, Some(sender_mailbox));
 }
 
 /// xpay can give up while parts are still pending. Its error is stored then,
