@@ -19,8 +19,8 @@ use crate::persist::BarkPersister;
 /// How deep a spend of an exit input must be buried before it ends the exit.
 ///
 /// Ending an exit is irreversible, so a spend that a reorg could still undo must not do it. It
-/// also bounds the block scan in [ExitTransactionManager::find_conflicting_spend]: a spend the
-/// scan doesn't find within this many blocks of the tip is older than the window, and therefore
+/// also bounds the block scan in [ExitTransactionManager::find_conflicting_spend]: a spend
+/// confirmed more than this many blocks below the tip is older than the window, and therefore
 /// deep enough to act on.
 const SPEND_CONFIRMATIONS: BlockDelta = BlockDelta::new(6);
 
@@ -389,15 +389,23 @@ impl ExitTransactionManager {
 
 		// Reading the scan the other way round: every input here is spent, so finding its spender
 		// in the window means the spend is recent and a reorg could still undo it, while not
-		// finding one means the spend predates the window and is settled.
+		// finding one means the spend predates the window and is settled. The bitcoind backend
+		// only walks the window, so a spend it reports is recent by construction. Esplora answers
+		// from its index and reports the spender wherever it confirmed, so for a confirmed spend
+		// the block it confirmed in decides, the same way the window does.
 		let mut deeply_spent = Vec::with_capacity(to_scan.len());
 		for input in to_scan {
+			let too_recent = |txid: &Txid| {
+				warn!("Exit tx {} has a spend of input {} by {} within the last {} blocks, \
+					too recent to end the exit on", exit_txid, input, txid, SPEND_CONFIRMATIONS,
+				);
+			};
 			match spends.get(&input) {
-				Some((txid, TxStatus::Confirmed(_) | TxStatus::Mempool)) => {
-					warn!("Exit tx {} has a spend of input {} by {} within the last {} blocks, \
-						too recent to end the exit on", exit_txid, input, txid, SPEND_CONFIRMATIONS,
-					);
+				Some((txid, TxStatus::Mempool)) => too_recent(txid),
+				Some((txid, TxStatus::Confirmed(block))) if block.height >= scan_start => {
+					too_recent(txid);
 				},
+				Some((_, TxStatus::Confirmed(_))) => deeply_spent.push(input),
 				// The scan only records spends it found, so it never reports this. Spelled out
 				// rather than folded into a catch-all so that changing that is a compile error
 				// here: a status we can't interpret must not end an exit.
