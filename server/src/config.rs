@@ -654,6 +654,11 @@ impl Config {
 			bail!("Cannot set htlc_expiry_delta to zero on mainnet");
 		}
 
+		// at zero the watchman has no block to answer a stale exit in
+		if self.network == bitcoin::Network::Bitcoin && self.vtxo_exit_delta == BlockDelta::ZERO {
+			bail!("Cannot set vtxo_exit_delta to zero on mainnet");
+		}
+
 		Ok(())
 	}
 
