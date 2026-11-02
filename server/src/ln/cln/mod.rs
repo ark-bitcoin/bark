@@ -18,6 +18,7 @@ pub(crate) mod xpay;
 
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::secp256k1::PublicKey;
@@ -42,6 +43,9 @@ use self::hold::{ClnHold, ClnHoldConfig};
 use self::xpay::{ClnXpay, ClnXpayClient, ClnXpayConfig};
 
 type ClnGrpcClient = NodeClient<Channel>;
+
+/// How long connecting to a node and asking its info may take.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Cheap, cloneable command handle to a running node.
 ///
@@ -121,12 +125,16 @@ impl ClnNodeInfo {
 		settler: &Arc<HtlcSettler>,
 		payment_guards: &PaymentGuards,
 	) -> anyhow::Result<LightningNodeId> {
-		let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
-		let hold_rpc = self.config.build_hold_client().await.context("failed to connect hold rpc")?;
-
-		let info = rpc.getinfo(cln_rpc::GetinfoRequest {}).await
-			.context("failed to get info from rpc")?
-			.into_inner();
+		// A node that accepts the connection but never answers would otherwise
+		// hold up the manager, which checks the nodes one by one.
+		let (rpc, hold_rpc, info) = tokio::time::timeout(CONNECT_TIMEOUT, async {
+			let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
+			let hold_rpc = self.config.build_hold_client().await.context("failed to connect hold rpc")?;
+			let info = rpc.getinfo(cln_rpc::GetinfoRequest {}).await
+				.context("failed to get info from rpc")?
+				.into_inner();
+			anyhow::Ok((rpc, hold_rpc, info))
+		}).await.context("timed out connecting to the node")??;
 
 		let network = bitcoin::Network::from_str(info.network.as_str())
 			.context(NodeState::invalid("network invalid"))?;
