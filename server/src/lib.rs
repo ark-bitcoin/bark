@@ -354,6 +354,11 @@ impl Server {
 			server_key.public_key(),
 		);
 		info!("Running with config: {:#?}", cfg);
+		if cfg.ln_max_fee_ppm > 1_000_000 {
+			warn!("ln_max_fee_ppm is {}, above 100%: lightning sends may pay more routing \
+				fee than the user's fee covers", cfg.ln_max_fee_ppm,
+			);
+		}
 
 		info!("Starting server at {}", cfg.data_dir.display());
 
