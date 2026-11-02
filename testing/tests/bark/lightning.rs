@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicI8, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bitcoin::Amount;
+use futures::StreamExt;
 
 use ark::VtxoId;
 use ark::lightning::{Invoice, Offer, OfferAmountExt, PaymentHash};
@@ -2295,6 +2296,70 @@ async fn bark_cannot_cancel_lightning_receive_after_preimage_revealed() {
 	let err = bark.try_cancel_lightning_receive(&invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("cannot cancel: preimage has already been revealed"),
 		"expected preimage-revealed error, got: {err}");
+}
+
+// Multi-threaded on purpose: the sqlite persister runs synchronously inside
+// the wallet's async calls, so on a single-threaded runtime the notification
+// consumer could never run while the claim is between its two writes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn bark_lightning_receive_is_settled_when_movement_notification_arrives() {
+	require_bark_version!(== "DIRTY");
+
+	let ctx = TestContext::new("lightningd/bark_lightning_receive_settled_on_notification").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("srv").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
+	bark.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Open a wallet client and subscribe before the receive starts.
+	// NB: only use `wallet` from now since we can't have 2 wallets on same persistence yet
+	let wallet = bark.client().await;
+	let notifications = wallet.subscribe_notifications();
+
+	let invoice = wallet.bolt11_invoice(btc(1), None, None).await.unwrap();
+	let payment_hash = PaymentHash::from(&invoice);
+
+	let cloned_invoice = invoice.to_string();
+	tokio::spawn(async move {
+		lightning.external.pay_bolt11(cloned_invoice).await;
+	});
+
+	// A consumer of the successful lightning receive movement must be able to
+	// look up the settled receive the moment the notification arrives, not a
+	// bit later: the settled record is written before the movement finishes.
+	// The consumer runs on its own task so it races the claim like an
+	// external notification handler would.
+	let consumer_wallet = wallet.clone();
+	let lookup_on_notification = tokio::spawn(async move {
+		let mut movements = notifications.movements();
+		loop {
+			let movement = movements.next().await.expect("notification stream ended");
+			if movement.subsystem.name != "bark.lightning_receive" {
+				continue;
+			}
+			if movement.status != bark::movement::MovementStatus::Successful {
+				continue;
+			}
+			break consumer_wallet.lightning_receive_state(payment_hash).await;
+		}
+	});
+
+	let claimed = wallet.try_claim_lightning_receive(payment_hash, true).wait_millis(60_000).await;
+	assert!(matches!(claimed.unwrap(), LightningReceiveState::Settled(_)));
+
+	let looked_up = lookup_on_notification.wait_millis(60_000).await.unwrap();
+	let settled = match looked_up.expect("lookup on notification failed") {
+		LightningReceiveState::Settled(settled) => settled,
+		LightningReceiveState::InProgress(recv) => {
+			panic!("receive still in progress when the movement was reported successful: {:?}", recv.progress);
+		},
+	};
+	assert_eq!(settled.preimage.compute_payment_hash(), payment_hash);
+	assert_eq!(settled.amount, btc(1));
 }
 
 /// Test bolt11 receive over a 5-hop lightning route.
