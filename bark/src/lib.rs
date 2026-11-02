@@ -520,6 +520,10 @@ fn check_ark_info_safe(ark_info: &ArkInfo, vtxo_exit_margin: BlockDelta) -> anyh
 	ensure!(ark_info.nb_round_nonces > 0,
 		"server-advertised nb_round_nonces is 0; refusing to connect",
 	);
+	ensure!(ark_info.nb_round_nonces <= MAX_NB_ROUND_NONCES,
+		"server-advertised nb_round_nonces {} exceeds cap {}; refusing to connect",
+		ark_info.nb_round_nonces, MAX_NB_ROUND_NONCES,
+	);
 	if ark_info.network == Network::Bitcoin {
 		// No upper bound: a long lifetime is safe because unilateral exit is
 		// always available before the server-only timeout leaf activates.
@@ -532,10 +536,6 @@ fn check_ark_info_safe(ark_info: &ArkInfo, vtxo_exit_margin: BlockDelta) -> anyh
 			"server-advertised vtxo_exit_delta {} is below the mainnet minimum of {} \
 			 blocks; refusing to connect",
 			ark_info.vtxo_exit_delta, MIN_MAINNET_VTXO_EXIT_DELTA,
-		);
-		ensure!(ark_info.nb_round_nonces <= MAX_NB_ROUND_NONCES,
-			"server-advertised nb_round_nonces {} exceeds cap {}; refusing to connect",
-			ark_info.nb_round_nonces, MAX_NB_ROUND_NONCES,
 		);
 	}
 	Ok(())
@@ -2737,10 +2737,14 @@ mod tests {
 
 	#[test]
 	fn ark_info_over_nb_round_nonces_cap_is_rejected() {
+		// the cap holds on every network, not only on mainnet
 		let mut ai = ark_info_with_lifetime(4032, 6);
+		ai.nb_round_nonces = MAX_NB_ROUND_NONCES + 1;
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
+		assert!(err.contains("nb_round_nonces"), "unexpected error: {err}");
+
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
-		ai.nb_round_nonces = MAX_NB_ROUND_NONCES + 1;
 		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
 		assert!(err.contains("nb_round_nonces"), "unexpected error: {err}");
 	}
