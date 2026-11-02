@@ -114,7 +114,9 @@ pub async fn tx_status(client: &Client, txid: Txid) -> Result<TxStatus, ClientEr
 						hash: block.hash,
 					}))
 				} else {
-					Ok(TxStatus::Mempool)
+					// only txindex still knows it, from a stale block; a tx back
+					// in the mempool comes without a block hash
+					Ok(TxStatus::NotFound)
 				}
 			}
 			None => Ok(TxStatus::Mempool),
