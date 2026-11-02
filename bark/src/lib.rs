@@ -2715,6 +2715,7 @@ mod tests {
 			vtxo_expiry_delta: BlockDelta::new(vtxo_lifetime),
 			offboard_feerate: FeeRate::ZERO,
 			max_offboard_inputs: 1,
+			max_round_participation_outputs: 4,
 			ln_receive_anti_dos_required: false,
 			fees: Default::default(),
 			max_vtxo_exit_depth: 10,

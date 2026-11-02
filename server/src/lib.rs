@@ -309,6 +309,7 @@ impl Server {
 			min_board_amount: self.config.min_board_amount,
 			offboard_feerate: self.offboard_feerate(),
 			max_offboard_inputs: 100,
+			max_round_participation_outputs: self.config.max_round_participation_outputs,
 			ln_receive_anti_dos_required: self.config.ln_receive_anti_dos_required,
 			fees: self.config.fees.clone(),
 			max_vtxo_exit_depth: self.config.max_vtxo_exit_depth,

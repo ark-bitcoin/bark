@@ -430,6 +430,7 @@ impl TestContext {
 			// this one can be long cuz in most tests all users are ready and we don't wait
 			round_sign_time: Duration::from_millis(5000),
 			nb_round_nonces: 8,
+			max_round_participation_outputs: 4,
 			round_forfeit_nonces_timeout: Duration::from_secs(30),
 			required_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
 			min_trusted_confs: 1,

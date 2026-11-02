@@ -88,6 +88,8 @@ pub struct ArkInfo {
 	pub tos_link: Option<String>,
 	/// The maximum number of inputs for an offboard
 	pub max_offboard_inputs: usize,
+	/// The maximum number of outputs of a single round participation
+	pub max_round_participation_outputs: usize,
 
 	/// The number of blocks a VTXO lives before it expires.
 	///
@@ -128,6 +130,8 @@ impl<'de> serde::Deserialize<'de> for ArkInfo {
 			tos_link: Option<String>,
 			max_offboard_inputs: usize,
 			#[serde(default)]
+			max_round_participation_outputs: usize,
+			#[serde(default)]
 			vtxo_expiry_delta: BlockDelta,
 		}
 
@@ -163,6 +167,11 @@ impl<'de> serde::Deserialize<'de> for ArkInfo {
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth,
 			tos_link: v.tos_link,
 			max_offboard_inputs: v.max_offboard_inputs,
+			// Older daemons don't report it; their server allowed a whole round.
+			max_round_participation_outputs: match v.max_round_participation_outputs {
+				0 => 4_usize.saturating_pow(v.nb_round_nonces as u32),
+				n => n,
+			},
 		})
 	}
 }
@@ -200,6 +209,7 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			fees: v.fees.clone().into(),
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth,
 			max_offboard_inputs: v.max_offboard_inputs,
+			max_round_participation_outputs: v.max_round_participation_outputs,
 			tos_link: v.tos_link.clone(),
 		}
 	}
@@ -894,6 +904,7 @@ mod test {
 			max_vtxo_exit_depth: 10,
 			tos_link: None,
 			max_offboard_inputs: 4,
+			max_round_participation_outputs: 4,
 		}
 	}
 
@@ -963,6 +974,7 @@ mod test {
 				fees: j.fees.into(),
 				max_vtxo_exit_depth: j.max_vtxo_exit_depth,
 				max_offboard_inputs: j.max_offboard_inputs,
+				max_round_participation_outputs: j.max_round_participation_outputs,
 				tos_link: j.tos_link,
 			}
 		}

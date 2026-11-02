@@ -170,6 +170,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			min_board_amount: v.min_board_amount.to_sat(),
 			offboard_feerate_sat_vkb: v.offboard_feerate.to_sat_per_kwu() * 4,
 			max_offboard_inputs: v.max_offboard_inputs as u32,
+			max_round_participation_outputs: v.max_round_participation_outputs as u32,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: Some(v.fees.into()),
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth as u32,
@@ -212,6 +213,11 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 			min_board_amount: Amount::from_sat(v.min_board_amount),
 			offboard_feerate: FeeRate::from_sat_per_kwu(v.offboard_feerate_sat_vkb / 4),
 			max_offboard_inputs: v.max_offboard_inputs as usize,
+			// Servers from before this field allowed a whole round.
+			max_round_participation_outputs: match v.max_round_participation_outputs {
+				0 => 4_usize.saturating_pow(v.nb_round_nonces),
+				n => n as usize,
+			},
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: v.fees.ok_or("missing fees")?.try_into()?,
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth.try_into()
@@ -828,8 +834,19 @@ mod test {
 			fees: None,
 			max_vtxo_exit_depth: 5,
 			max_offboard_inputs: 10,
+			max_round_participation_outputs: 0,
 			tos_link: None,
 		}
+	}
+
+	#[test]
+	fn ark_info_without_participation_limit_allows_a_whole_round() {
+		let mut proto = baseline_ark_info_proto();
+		proto.fees = Some(ark::fees::FeeSchedule::default().into());
+		assert_eq!(ark::ArkInfo::try_from(proto.clone()).unwrap().max_round_participation_outputs, 4);
+
+		proto.max_round_participation_outputs = 3;
+		assert_eq!(ark::ArkInfo::try_from(proto).unwrap().max_round_participation_outputs, 3);
 	}
 
 	#[test]

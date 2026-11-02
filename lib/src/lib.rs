@@ -101,6 +101,9 @@ pub struct ArkInfo {
 	/// The maximum number of inputs for an offboard
 	pub max_offboard_inputs: usize,
 
+	/// The maximum number of outputs of a single round participation
+	pub max_round_participation_outputs: usize,
+
 	/// Indicates whether the Ark server requires clients to either
 	/// provide a VTXO ownership proof, or a lightning receive token
 	/// when preparing a lightning claim.

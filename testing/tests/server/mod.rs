@@ -970,6 +970,7 @@ async fn full_round() {
 		cfg.round_submit_time = Duration::from_millis(15_000);
 		cfg.round_sign_time = Duration::from_millis(10_000);
 		cfg.nb_round_nonces = 2;
+		cfg.max_round_participation_outputs = 16;
 		cfg.min_board_amount = sat(0);
 	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
@@ -2824,8 +2825,7 @@ async fn scheduled_height_must_not_poison_round_loading() {
 		// Run the coordinator's database read in this test, not the daemon.
 		cfg.round_interval = Duration::from_secs(10_000_000);
 		cfg.fees.refresh.base_fee = Amount::ZERO;
-		// a round holds at most four outputs
-		cfg.nb_round_nonces = 1;
+		cfg.max_round_participation_outputs = 4;
 	}).create().await;
 	let db = Db::connect(&srv.config().postgres).await.unwrap();
 
@@ -2847,7 +2847,7 @@ async fn scheduled_height_must_not_poison_round_loading() {
 	}).await.expect("a public request must not poison round loading");
 	assert!(pending.is_empty());
 
-	// A participation that no round can hold is refused before it is stored.
+	// A participation over the limit is refused before it is stored.
 	let outputs = (0..5).map(|_| VtxoRequest {
 		policy: VtxoPolicy::new_pubkey(Keypair::new(&SECP, &mut thread_rng()).public_key()),
 		amount: sat(1_000),
