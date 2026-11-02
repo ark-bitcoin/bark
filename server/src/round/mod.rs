@@ -709,6 +709,13 @@ impl CollectingPayments {
 		}
 
 		let nb_outputs = participation.outputs.len();
+		// Never fits, not even in an empty round, so drop it instead of retrying.
+		if nb_outputs > self.round_data.max_output_vtxos {
+			return Err(ProcessHarkParticipationError::BadParticipation(anyhow!(
+				"participation has {} outputs, a round holds at most {}",
+				nb_outputs, self.round_data.max_output_vtxos,
+			)));
+		}
 		if self.all_outputs.len() + nb_outputs > self.round_data.max_output_vtxos {
 			warn!("Got payment we don't have space for, dropping");
 			server_rslog!(FullRound, self.round_step,
@@ -1981,6 +1988,10 @@ impl Server {
 		}
 		if outputs.is_empty() {
 			return badarg!("invalid request: no outputs");
+		}
+		let max_output_vtxos = 4_usize.saturating_pow(self.config.nb_round_nonces as u32);
+		if outputs.len() > max_output_vtxos {
+			return badarg!("too many outputs, maximum is {}", max_output_vtxos);
 		}
 
 		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
