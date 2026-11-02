@@ -1010,6 +1010,11 @@ async fn vtxo_pool() {
 	let pool: Vec<_> = db.load_vtxopool().await.unwrap().try_collect().await.unwrap();
 	assert_eq!(pool.len(), 1);
 	assert_eq!(pool[0].id(), vtxo2.id());
+
+	// Get by ids skips spent vtxos
+	let got = db.read(async |t| t.get_pool_vtxos_by_ids(&[vtxo1.id(), vtxo2.id()]).await).await.unwrap();
+	assert_eq!(got.len(), 1);
+	assert_eq!(got[0].id(), vtxo2.id());
 }
 
 #[tokio::test]

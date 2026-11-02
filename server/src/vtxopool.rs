@@ -105,6 +105,8 @@ struct Data {
 	/// A quick manual index into the vtxo pool.
 	/// We first order by expiry height and then by amount.
 	pool: BTreeMap<BlockHeight, BTreeMap<Amount, Vec<VtxoId>>>,
+	/// The highest threshold passed to [Self::prune_expiring].
+	prune_threshold: Option<BlockHeight>,
 }
 
 impl Data {
@@ -127,7 +129,7 @@ impl Data {
 		let stream = db.load_vtxopool().await?;
 		tokio::pin!(stream);
 
-		let mut ret = Data { pool: BTreeMap::new() };
+		let mut ret = Data { pool: BTreeMap::new(), prune_threshold: None };
 		while let Some(v) = stream.try_next().await? {
 			if v.exit_depth() > max_exit_depth {
 				debug!("Not serving vtxo pool vtxo {}: exit depth {} exceeds \
@@ -178,10 +180,17 @@ impl Data {
 		debug_assert_eq!(before, self.len());
 	}
 
+	/// Whether vtxos expiring at `expiry` were pruned by [Self::prune_expiring].
+	fn is_pruned(&self, expiry: BlockHeight) -> bool {
+		self.prune_threshold.is_some_and(|t| expiry <= t)
+	}
+
 	/// Prune all vtxos expiring before or on the threshold.
 	///
 	/// Caller is responsible for updating telemetry afterwards.
 	pub fn prune_expiring(&mut self, threshold: BlockHeight) {
+		// Keep the highest, a reorg can lower the threshold but not unprune buckets.
+		self.prune_threshold = Some(self.prune_threshold.map_or(threshold, |t| t.max(threshold)));
 		self.pool.retain(|expiration_height, _vtxo_map| {
 			let prune = *expiration_height > threshold;
 			if prune {
@@ -195,11 +204,11 @@ impl Data {
 	///
 	/// Will always prioritize VTXOs that are closer to expiry.
 	///
-	/// Returns empty vector on failure.
+	/// Returns `None` if the pool can't cover the amount.
 	pub fn take_inputs(
 		&mut self,
 		required_amount: Amount,
-	) -> Vec<(VtxoId, BlockHeight, Amount)> {
+	) -> Option<Vec<(VtxoId, BlockHeight, Amount)>> {
 		// The strategy here is to always prioritize expiry.
 		// For each expiry "bucket", pick the highest amount if the
 		// required amount exceeds it, otherwise pick the smallest amount
@@ -230,16 +239,16 @@ impl Data {
 		}
 
 		if remaining != Amount::ZERO {
-			// required amount too high, put everything back and return empty
+			// required amount too high, put everything back
 			for (v, h, a) in ret {
 				self.insert(v, h, a);
 			}
-			return vec![];
+			return None;
 		}
 
 		self.prune();
 
-		ret
+		Some(ret)
 	}
 }
 
@@ -247,6 +256,52 @@ impl Data {
 fn update_all_bucket_metrics(data: &parking_lot::Mutex<Data>) {
 	let data = data.lock();
 	telemetry::set_vtxo_pool_metrics(&data.pool);
+}
+
+/// Inputs taken from the pool, put back on drop unless [Self::spent] was called.
+///
+/// Survives errors, panics and cancellation of the spending future.
+struct TakenInputs {
+	data: Arc<parking_lot::Mutex<Data>>,
+	inputs: Vec<(VtxoId, BlockHeight, Amount)>,
+}
+
+impl TakenInputs {
+	/// Returns `None` if the pool can't cover the amount.
+	fn take(data: &Arc<parking_lot::Mutex<Data>>, amount: Amount) -> Option<Self> {
+		let inputs = data.lock().take_inputs(amount).filter(|i| !i.is_empty())?;
+		Some(TakenInputs { data: data.clone(), inputs })
+	}
+
+	fn ids(&self) -> Vec<VtxoId> {
+		self.inputs.iter().map(|v| v.0).collect()
+	}
+
+	/// Don't put back inputs that are no longer spendable pool vtxos.
+	fn forget_except(&mut self, keep: &[VtxoId]) {
+		self.inputs.retain(|v| keep.contains(&v.0));
+	}
+
+	/// Call once the spend is committed, so the inputs are never put back.
+	fn spent(mut self) -> Vec<(VtxoId, BlockHeight, Amount)> {
+		std::mem::take(&mut self.inputs)
+	}
+}
+
+impl Drop for TakenInputs {
+	fn drop(&mut self) {
+		if self.inputs.is_empty() {
+			return;
+		}
+		let mut data = self.data.lock();
+		for (v, h, a) in self.inputs.drain(..) {
+			// Don't revive a vtxo whose bucket was pruned while it was taken.
+			if data.is_pruned(h) {
+				continue;
+			}
+			data.insert(v, h, a);
+		}
+	}
 }
 
 /// Checks that change outputs contains at most one non-dust and one dust output
@@ -285,19 +340,26 @@ impl VtxoPool {
 	/// with correct destination: [`VtxoPolicy::ServerHtlcRecv`]
 	///
 	/// See [Self::send_arkoor] for `commit`.
-	#[tracing::instrument(skip(self, srv, commit))]
+	#[tracing::instrument(skip(self, srv, inputs, commit))]
 	async fn prepare_arkoor<F>(
 		&self,
 		srv: &Server,
 		dest: ArkoorDestination,
-		inputs: &[(VtxoId, BlockHeight, Amount)],
+		mut inputs: TakenInputs,
 		commit: F,
 	) -> anyhow::Result<Vec<Vtxo<Full>>>
 	where
 		F: AsyncFnOnce(&database::Tx<'_>, &[Vtxo<Full>]) -> anyhow::Result<()>,
 	{
-		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
+		let input_ids = inputs.ids();
 		let mut input_vtxos = srv.db.read(async |t| t.get_pool_vtxos_by_ids(&input_ids).await).await?;
+		if input_vtxos.len() != input_ids.len() {
+			let found = input_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+			let missing = input_ids.iter().filter(|id| !found.contains(id)).collect::<Vec<_>>();
+			error!("Vtxo pool held vtxos that are not spendable pool vtxos: {:?}", missing);
+			inputs.forget_except(&found);
+			bail!("some vtxo pool inputs are no longer spendable");
+		}
 
 		// We sort the vtxos in order of increasing amounts
 		// This ensures we spend the smallest vtxos first and
@@ -385,13 +447,50 @@ impl VtxoPool {
 			})
 			.collect::<Vec<_>>();
 
+		// We stored all change output VTXOs, but in the pool we only keep the
+		// first one (nondust) to avoid later serving one whose ephemeral key was deleted.
+		// Change past the arkoor depth cap or already pruned for expiry is not
+		// kept either; like dust change, it is swept after expiry.
+		let pool_change = match change.first() {
+			Some(change) if change.exit_depth() > self.config.max_vtxo_exit_depth => {
+				info!("Dropping vtxo pool change {} from the pool: exit depth {} \
+					exceeds the maximum of {}",
+					change.id(), change.exit_depth(), self.config.max_vtxo_exit_depth,
+				);
+				None
+			},
+			Some(change) if self.data.lock().is_pruned(change.expiry_height()) => {
+				info!("Dropping vtxo pool change {} from the pool: expiry {} \
+					is within the pre-expiry margin",
+					change.id(), change.expiry_height(),
+				);
+				None
+			},
+			Some(change) => Some(PoolVtxo::new(change.clone())),
+			None => None,
+		};
+
 		srv.db.write(async |t| {
 			t.execute_vtxo_tree_update(update).await?;
 			htlc_vtxo::create_htlc_vtxos(&t, &htlc_recvs, HtlcDirection::Outgoing).await?;
-			t.mark_vtxopool_vtxos_spent(inputs.iter().map(|v| v.0)).await
+			t.mark_vtxopool_vtxos_spent(input_ids.iter().copied()).await
 				.context("failed to mark vtxopool vtxos as spent")?;
+			if let Some(change) = &pool_change {
+				t.store_vtxopool_vtxo(change).await
+					.context("failed to store vtxopool change")?;
+			}
 			commit(&t, &sent).await
 		}).await?;
+		let inputs = inputs.spent();
+
+		// Insert before any await, so cancellation can't leave the change out.
+		if let Some(change) = pool_change {
+			let mut data = self.data.lock();
+			if !data.is_pruned(change.expiry_height()) {
+				data.insert_vtxos(&[change.clone()]);
+				slog!(ChangePoolVtxo, vtxo: change.id(), amount: change.amount());
+			}
+		}
 
 		for input in inputs {
 			slog!(SpentPoolVtxo, vtxo: input.0, amount: input.2, destination: dest.clone());
@@ -402,28 +501,6 @@ impl VtxoPool {
 			if let Err(e) = srv.drop_ephemeral_cosign_key(key.public_key()).await {
 				warn!("Failed to drop ephemeral cosign key {} for arkoored pool vtxo: {:#}",
 					key.public_key(), e);
-			}
-		}
-
-		// We stored all change output VTXOs, but in the pool we only keep the
-		// first one (nondust) to avoid later serving one whose ephemeral key was deleted.
-		// Change past the arkoor depth cap is not kept either; like dust
-		// change, it is swept after expiry.
-		if let Some(change) = change.first() {
-			if change.exit_depth() > self.config.max_vtxo_exit_depth {
-				info!("Dropping vtxo pool change {} from the pool: exit depth {} \
-					exceeds the maximum of {}",
-					change.id(), change.exit_depth(), self.config.max_vtxo_exit_depth,
-				);
-			} else {
-				let new = PoolVtxo::new(change.clone());
-				if let Err(e) = srv.db.write(async |t| t.store_vtxopool_vtxo(&new).await).await {
-					// don't abort for this
-					warn!("Failed to store change from a vtxopool spend: {:#}", e);
-				} else {
-					self.data.lock().insert_vtxos(&[new.clone()]);
-					slog!(ChangePoolVtxo, vtxo: new.id(), amount: new.amount());
-				}
 			}
 		}
 
@@ -446,25 +523,13 @@ impl VtxoPool {
 	where
 		F: AsyncFnOnce(&database::Tx<'_>, &[Vtxo<Full>]) -> anyhow::Result<()>,
 	{
-		let inputs = self.data.lock().take_inputs(dest.total_amount);
-		if inputs.is_empty() {
+		let Some(inputs) = TakenInputs::take(&self.data, dest.total_amount) else {
 			bail!("vtxo pool is empty");
-		}
+		};
 
-		// we try, but if we fail, we place back the inputs
-		match self.prepare_arkoor(srv, dest, &inputs, commit).await {
-			Ok(v) => {
-				update_all_bucket_metrics(&self.data);
-				Ok(v)
-			},
-			Err(e) => {
-				let mut guard = self.data.lock();
-				for (v, h, a) in inputs {
-					guard.insert(v, h, a);
-				}
-				Err(e)
-			},
-		}
+		let sent = self.prepare_arkoor(srv, dest, inputs, commit).await?;
+		update_all_bucket_metrics(&self.data);
+		Ok(sent)
 	}
 
 	pub async fn new(config: Config, db: &database::Db) -> anyhow::Result<VtxoPool> {
@@ -756,6 +821,7 @@ impl Process {
 mod test {
 	use bitcoin::Txid;
 	use bitcoin::hashes::Hash;
+	use futures::FutureExt;
 
 	use super::*;
 
@@ -812,33 +878,86 @@ mod test {
 		];
 		let len = vtxos.len();
 
-		let mut data = Data { pool: BTreeMap::new() };
+		let mut data = Data { pool: BTreeMap::new(), prune_threshold: None };
 		for (v, h, a) in vtxos {
 			data.insert(v, h, a);
 		}
 		assert_eq!(data.len(), len);
 
-		let sel = data.take_inputs(sat(500));
+		let sel = data.take_inputs(sat(500)).unwrap();
 		assert_sel(&sel, &[(h(100), sat(1000))]);
 
-		let sel = data.take_inputs(sat(2500));
+		let sel = data.take_inputs(sat(2500)).unwrap();
 		assert_sel(&sel, &[(h(100), sat(3000))]);
 
-		let sel = data.take_inputs(sat(1000));
+		let sel = data.take_inputs(sat(1000)).unwrap();
 		assert_sel(&sel, &[(h(100), sat(1000))]);
 
 		// the 2x 1000 at height 100 are already used
-		let sel = data.take_inputs(sat(900));
+		let sel = data.take_inputs(sat(900)).unwrap();
 		assert_sel(&sel, &[(h(100), sat(2000))]);
 
 		// left at 100: 3000, 2000
-		let sel = data.take_inputs(sat(5500));
+		let sel = data.take_inputs(sat(5500)).unwrap();
 		assert_sel(&sel, &[(h(100), sat(2000)), (h(100), sat(3000)), (h(110), sat(1000))]);
 
 		let len = data.len();
-		let sel = data.take_inputs(Amount::MAX_MONEY);
-		assert!(sel.is_empty());
+		assert!(data.take_inputs(Amount::MAX_MONEY).is_none());
 		assert_eq!(data.len(), len);
 	}
 
+	#[test]
+	fn test_taken_inputs_put_back() {
+		let mut data = Data { pool: BTreeMap::new(), prune_threshold: None };
+		data.insert(id(1), h(100), sat(1000));
+		data.insert(id(2), h(100), sat(1000));
+		data.insert(id(3), h(100), sat(1000));
+		let data = Arc::new(parking_lot::Mutex::new(data));
+
+		// nothing to take is not a spend
+		assert!(TakenInputs::take(&data, Amount::ZERO).is_none());
+		assert!(TakenInputs::take(&data, Amount::MAX_MONEY).is_none());
+		assert_eq!(data.lock().len(), 3);
+
+		// a cancelled spend puts its inputs back
+		let inputs = TakenInputs::take(&data, sat(1000)).unwrap();
+		assert_eq!(data.lock().len(), 2);
+		let spend = async move {
+			let _inputs = inputs;
+			std::future::pending::<()>().await
+		};
+		assert!(spend.now_or_never().is_none());
+		assert_eq!(data.lock().len(), 3);
+
+		// a committed spend does not
+		let inputs = TakenInputs::take(&data, sat(1000)).unwrap();
+		assert_eq!(inputs.spent().len(), 1);
+		assert_eq!(data.lock().len(), 2);
+
+		// inputs that are no longer spendable are not put back
+		let mut inputs = TakenInputs::take(&data, sat(2000)).unwrap();
+		assert_eq!(data.lock().len(), 0);
+		let keep = inputs.ids()[..1].to_vec();
+		inputs.forget_except(&keep);
+		drop(inputs);
+		assert_eq!(data.lock().len(), 1);
+
+		// inputs whose bucket was pruned meanwhile are not put back
+		data.lock().insert(id(4), h(200), sat(1000));
+		let inputs = TakenInputs::take(&data, sat(2000)).unwrap();
+		assert_eq!(data.lock().len(), 0);
+		data.lock().prune_expiring(h(100));
+		drop(inputs);
+		assert_eq!(data.lock().len(), 1);
+		assert!(data.lock().take_inputs(sat(2000)).is_none());
+		assert_sel(&data.lock().take_inputs(sat(1000)).unwrap(), &[(h(200), sat(1000))]);
+
+		// a lower threshold after a reorg doesn't unprune buckets
+		data.lock().insert(id(5), h(300), sat(1000));
+		let inputs = TakenInputs::take(&data, sat(1000)).unwrap();
+		data.lock().prune_expiring(h(300));
+		data.lock().prune_expiring(h(250));
+		drop(inputs);
+		assert_eq!(data.lock().len(), 0);
+	}
 }
