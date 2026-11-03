@@ -837,10 +837,7 @@ impl Server {
 
 		// A receive started with a claim key is only prepared for that key, by
 		// its owner. This also covers the retry below that returns the grant.
-		let claim_pubkey = self.db.read(async |t|
-			t.get_htlc_subscription_claim_pubkey(sub.id).await
-		).await?;
-		if let Some(claim_pubkey) = claim_pubkey {
+		if let Some(claim_pubkey) = sub.claim_pubkey {
 			if user_pubkey != claim_pubkey {
 				return badarg!("user pubkey doesn't match the receive's claim key");
 			}
@@ -1175,6 +1172,7 @@ mod tests {
 			lowest_incoming_htlc_expiry: None,
 			accepted_at: None,
 			user_agent: None,
+			claim_pubkey: None,
 			created_at: now,
 			updated_at: now,
 			htlc_vtxos: vec![],

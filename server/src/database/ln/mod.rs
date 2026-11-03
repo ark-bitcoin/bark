@@ -476,20 +476,6 @@ impl<'t> Tx<'t> {
 		Ok(())
 	}
 
-	/// The key the receiver committed to when starting the receive, if any.
-	pub async fn get_htlc_subscription_claim_pubkey(
-		&self,
-		subscription_id: i64,
-	) -> anyhow::Result<Option<PublicKey>> {
-		let row = self.query_one(
-			"SELECT claim_pubkey FROM lightning_htlc_subscription WHERE id = $1",
-			&[&subscription_id],
-		).await?;
-		row.get::<_, Option<String>>("claim_pubkey")
-			.map(|s| PublicKey::from_str(&s).context("corrupt claim_pubkey in lightning_htlc_subscription"))
-			.transpose()
-	}
-
 	/// Store a new HTLC subscription for a given invoice.
 	///
 	/// CLN node monitor regularly queries open subscriptions to check if there are any incoming HTLCs.
@@ -766,7 +752,7 @@ impl<'t> Tx<'t> {
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
 		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
-				status, lowest_incoming_htlc_expiry, accepted_at, user_agent,
+				status, lowest_incoming_htlc_expiry, accepted_at, user_agent, claim_pubkey,
 				created_at, updated_at
 			FROM lightning_htlc_subscription
 			WHERE status NOT IN ($1, $2) AND lightning_node_id = $3
@@ -792,7 +778,7 @@ impl<'t> Tx<'t> {
 		let stmt = self.prepare("
 			SELECT lhs.id, lhs.lightning_node_id, lhs.payment_hash, lhs.invoice,
 				lhs.status, lhs.lowest_incoming_htlc_expiry, lhs.accepted_at, lhs.user_agent,
-				lhs.created_at, lhs.updated_at,
+				lhs.claim_pubkey, lhs.created_at, lhs.updated_at,
 				COALESCE(array_agg(vtxo.vtxo_id::text), ARRAY[]::text[]) AS htlc_vtxos
 			FROM lightning_htlc_subscription lhs
 			LEFT JOIN vtxo ON vtxo.lightning_htlc_subscription_id = lhs.id
@@ -822,7 +808,7 @@ impl<'t> Tx<'t> {
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
 		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
-				status, lowest_incoming_htlc_expiry, accepted_at, user_agent,
+				status, lowest_incoming_htlc_expiry, accepted_at, user_agent, claim_pubkey,
 				created_at, updated_at
 			FROM lightning_htlc_subscription
 			WHERE id = $1
@@ -903,7 +889,7 @@ impl<'t> Tx<'t> {
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
 		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
-				status, lowest_incoming_htlc_expiry, accepted_at, user_agent,
+				status, lowest_incoming_htlc_expiry, accepted_at, user_agent, claim_pubkey,
 				created_at, updated_at
 			FROM lightning_htlc_subscription
 			WHERE payment_hash = $1

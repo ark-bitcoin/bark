@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
+use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
 use postgres_types::{FromSql, ToSql};
@@ -244,6 +245,9 @@ pub struct LightningHtlcSubscription {
 	pub lowest_incoming_htlc_expiry: Option<BlockHeight>,
 	pub accepted_at: Option<DateTime<Local>>,
 	pub user_agent: Option<String>,
+	/// The key the receiver committed to when starting the receive, if any.
+	/// Only that key can prepare the claim.
+	pub claim_pubkey: Option<PublicKey>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
 	/// NB this field is not always provided by all queries
@@ -275,6 +279,9 @@ impl <'a>TryFrom<&'a Row> for LightningHtlcSubscription {
 				.map(|i| BlockHeight::try_from(i).expect("invalid block height in db")),
 			accepted_at: row.try_get("accepted_at").ok(),
 			user_agent: row.try_get("user_agent").ok().flatten(),
+			claim_pubkey: row.get::<_, Option<&str>>("claim_pubkey")
+				.map(|s| PublicKey::from_str(s).context("corrupt claim_pubkey in lightning_htlc_subscription"))
+				.transpose()?,
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 			htlc_vtxos: if let Some(raw) = row.try_get::<_, Vec<&str>>("htlc_vtxos").ok() {
