@@ -136,6 +136,15 @@ impl ClnNodeInfo {
 			return Err(anyhow::Error::msg(msg.clone()).context(NodeState::invalid(msg)));
 		}
 
+		let version = parse_cln_version(&info.version).with_context(||
+			NodeState::invalid(format!("unrecognized version {}", info.version))
+		)?;
+		if version < MIN_CLN_VERSION {
+			let (major, minor) = MIN_CLN_VERSION;
+			let msg = format!("version is {}, need v{major}.{minor:02} or later", info.version);
+			return Err(anyhow::Error::msg(msg.clone()).context(NodeState::invalid(msg)));
+		}
+
 		let pubkey = PublicKey::from_slice(&info.id.to_vec())
 			.context(NodeState::invalid("malformed pubkey"))?;
 
@@ -179,5 +188,38 @@ impl ClnNodeInfo {
 		self.set_state(new_state);
 
 		Ok(id)
+	}
+}
+
+/// Older `listpays` can report a payment failed while xpay still retries it.
+const MIN_CLN_VERSION: (u32, u32) = (26, 6);
+
+/// Reads major and minor from versions like `v26.06.6`, `v26.06rc1` or `v26.06-modded`.
+fn parse_cln_version(version: &str) -> Option<(u32, u32)> {
+	let mut parts = version.strip_prefix('v').unwrap_or(version).split('.');
+	let major = parts.next()?.parse().ok()?;
+	let minor = parts.next()?;
+	let minor_end = minor.find(|c: char| !c.is_ascii_digit()).unwrap_or(minor.len());
+	let minor = minor[..minor_end].parse().ok()?;
+	Some((major, minor))
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn parse_cln_versions() {
+		assert_eq!(parse_cln_version("v26.06.6"), Some((26, 6)));
+		assert_eq!(parse_cln_version("v26.06"), Some((26, 6)));
+		assert_eq!(parse_cln_version("v26.06rc1"), Some((26, 6)));
+		assert_eq!(parse_cln_version("v26.06.7-hold"), Some((26, 6)));
+		assert_eq!(parse_cln_version("v25.12.1-12-gabcdef"), Some((25, 12)));
+		assert_eq!(parse_cln_version("26.04.1"), Some((26, 4)));
+		assert_eq!(parse_cln_version("vx.y"), None);
+		assert_eq!(parse_cln_version(""), None);
+		assert!(parse_cln_version("v26.04.2").unwrap() < MIN_CLN_VERSION);
+		assert!(parse_cln_version("v26.06").unwrap() >= MIN_CLN_VERSION);
+		assert!(parse_cln_version("v27.01").unwrap() >= MIN_CLN_VERSION);
 	}
 }
