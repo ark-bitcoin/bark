@@ -104,7 +104,7 @@ pub struct LightningManager {
 	node_handles: Arc<parking_lot::RwLock<Vec<NodeHandle>>>,
 
 	/// We also keep a handle of the update channel to update from
-	/// payment request that fail before the hit the sendpay stream.
+	/// payment request that fail before they reach CLN.
 	//TODO(stevenroose) consider changing this to hold some update info
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 	// If all receivers are dropped the channel will close and the payment might fail
@@ -283,8 +283,7 @@ impl LightningManager {
 	///
 	/// If a hold-invoice subscription already exists for this payment hash,
 	/// this is an intra-Ark payment and we settle off-CLN instead of issuing
-	/// an outbound xpay. Otherwise we spawn the xpay fire-and-forget; the
-	/// xpay monitor picks the result up via the sendpays stream.
+	/// an outbound xpay. Otherwise we spawn the xpay fire-and-forget.
 	#[tracing::instrument(skip_all, fields(
 		payment_hash = %invoice.payment_hash(),
 		invoice = %invoice,
@@ -426,9 +425,8 @@ impl LightningManager {
 			.expect("an outgoing payment has its xpay call prepared above");
 
 		// Fire-and-forget: ClnXpayClient::pay issues the gRPC and reconciles
-		// the DB on completion, same as the old ClnXpay::pay wrapper. If the
-		// gRPC times out the payment may still succeed; the xpay monitor's
-		// sendpay stream is the source of truth.
+		// the DB on completion. If the gRPC breaks the payment may still
+		// succeed, and the xpay monitor reconciles it.
 		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", amount, invoice);
 		let xpay_client = node.xpay.clone();
 		tokio::spawn(async move {

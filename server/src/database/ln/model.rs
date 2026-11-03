@@ -48,6 +48,8 @@ pub enum LightningPaymentStatus {
 	/// of truth for settlement.
 	#[postgres(name = "succeeded")]
 	Succeeded,
+	/// Only stored once we are sure the payment can no longer succeed:
+	/// the user may revoke its HTLCs on this status.
 	#[postgres(name = "failed")]
 	Failed,
 }
