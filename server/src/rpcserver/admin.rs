@@ -85,7 +85,7 @@ impl rpc::server::LightningAdminService for Server {
 }
 
 #[async_trait]
-impl rpc::server::SweepAdminService for crate::watchman::Daemon {
+impl rpc::server::WatchmanAdminService for crate::watchman::Daemon {
 	#[tracing::instrument(skip(self, _req))]
 	async fn trigger_sweep(
 		&self,
@@ -94,6 +94,26 @@ impl rpc::server::SweepAdminService for crate::watchman::Daemon {
 
 		self.watchman_handle().trigger_sweep();
 		Ok(tonic::Response::new(protos::Empty {}))
+	}
+
+	#[tracing::instrument(skip(self, _req))]
+	async fn reindex_frontier(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::ReindexFrontierResponse>, tonic::Status> {
+		let stats = self.watchman_handle().reindex_frontier().await.to_status()?;
+		Ok(tonic::Response::new(protos::ReindexFrontierResponse {
+			entries_checked: stats.entries_checked as u64,
+			confirmations_repaired: stats.confirmations_repaired as u64,
+			spends_repaired: stats.spends_repaired as u64,
+			vtxos_added: stats.vtxos_added as u64,
+			funding_txs_added: stats.funding_txs_added as u64,
+			funding_vtxos_added: stats.funding_vtxos_added as u64,
+			unresolved_spends: stats.unresolved_spends as u64,
+			blocks_scanned: stats.blocks_scanned as u64,
+			confirmations_cleared: stats.confirmations_cleared as u64,
+			spends_cleared: stats.spends_cleared as u64,
+		}))
 	}
 }
 
@@ -249,7 +269,7 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	Ok(())
 }
 
-/// Run the watchmand admin gRPC server: `SweepAdminService` and `BlocklistAdminService`.
+/// Run the watchmand admin gRPC server
 pub async fn run_watchmand_admin_rpc_server(
 	addr: SocketAddr,
 	daemon: Arc<crate::watchman::Daemon>,
@@ -258,7 +278,7 @@ pub async fn run_watchmand_admin_rpc_server(
 	info!("Starting watchmand admin gRPC service on address {}", addr);
 
 	let routes = tonic::service::Routes::default()
-		.add_service(rpc::server::SweepAdminServiceServer::from_arc(daemon.clone()))
+		.add_service(rpc::server::WatchmanAdminServiceServer::from_arc(daemon.clone()))
 		.add_service(rpc::server::BlocklistAdminServiceServer::from_arc(daemon));
 
 	tonic::transport::Server::builder()

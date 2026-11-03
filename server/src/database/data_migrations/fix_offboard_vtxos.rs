@@ -23,8 +23,8 @@ const NOARG: &[&bool] = &[];
 ///
 /// - Any of these rows entering the watchman frontier makes the frontier
 ///   unreadable, because `ServerVtxo::deserialize` fails on the empty blob.
-///   The legacy startup path (`get_unfrontiered_funding_txids`) pulls them
-///   in on the first watchman restart after an offboard.
+///   The unfrontiered-funding path (`get_unfrontiered_funding_txids`) pulls
+///   them in on the first frontier reindex after an offboard.
 /// - The connector rows record a bare server-key p2tr while the on-chain
 ///   output pays the lost ephemeral key, so they can never be swept.
 ///
@@ -58,7 +58,7 @@ pub async fn run(db: &Db) -> anyhow::Result<u64> {
 	).await.context("preparing forfeit update")?;
 
 	// Setting frontier_at keeps get_unfrontiered_funding_txids from pulling
-	// the row into the frontier at watchman startup; onchain_spent_height
+	// the row into the frontier on a reindex; onchain_spent_height
 	// keeps it out of get_frontier. Height 0 is a sentinel that no reorg
 	// rollback can clear, since reorg_frontier only clears heights above the
 	// fork point.

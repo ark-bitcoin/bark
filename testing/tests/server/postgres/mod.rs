@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::Transaction;
+use bitcoin::{Transaction, Txid};
 use chrono::{Local, TimeDelta};
 
 use ark::{ServerVtxo, VtxoPolicy, VtxoRequest};
@@ -1113,7 +1113,17 @@ async fn watchman_get_vtxos_by_txid() {
 	let vtxo_txid = vtxo.point().txid;
 	let vtxos = db.read(async |t| t.get_vtxos_by_txid(vtxo_txid).await).await.unwrap();
 	assert_eq!(vtxos.len(), 1);
-	assert_eq!(vtxos[0].id(), vtxo.id());
+	assert_eq!(vtxos[0].0.id(), vtxo.id());
+	assert_eq!(vtxos[0].1, None, "no spend recorded yet");
+	assert_eq!(vtxos[0].2, None, "no spend recorded yet");
+
+	// A recorded spend comes back with the vtxo
+	let spent_txid = Txid::from_byte_array([7; 32]);
+	db.write(async |t| t.register_vtxo_spend(vtxo.id(), 105.into(), spent_txid).await).await.unwrap();
+	let vtxos = db.read(async |t| t.get_vtxos_by_txid(vtxo_txid).await).await.unwrap();
+	assert_eq!(vtxos.len(), 1);
+	assert_eq!(vtxos[0].1, Some(105.into()));
+	assert_eq!(vtxos[0].2, Some(spent_txid));
 
 	// Non-existent txid returns empty
 	let other_tx = Transaction {

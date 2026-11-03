@@ -79,6 +79,60 @@ impl<'t> Tx<'t> {
 		Ok(())
 	}
 
+	/// Clear the confirmation height of all vtxos created by a tx that is
+	/// no longer confirmed.
+	///
+	/// Returns the cleared vtxos with their stale height.
+	pub async fn clear_vtxo_confirmations_by_txid(
+		&self,
+		txid: Txid,
+	) -> anyhow::Result<Vec<(VtxoId, BlockHeight)>> {
+		// The self-join exposes the pre-update row to RETURNING.
+		let stmt = self.prepare_typed("
+			UPDATE vtxo v SET confirmed_height = NULL, updated_at = NOW()
+			FROM vtxo old
+			WHERE old.id = v.id AND v.vtxo_txid = $1 AND v.confirmed_height IS NOT NULL
+			RETURNING v.vtxo_id, old.confirmed_height
+		", &[Type::TEXT]).await?;
+
+		let rows = self.query(&stmt, &[&txid.to_string()]).await?;
+
+		rows.iter().map(|row| {
+			let vtxo_id = row.get::<_, &str>("vtxo_id").parse()?;
+			let height = row.get::<_, i32>("confirmed_height");
+			Ok((vtxo_id, BlockHeight::from(height as u32)))
+		}).collect()
+	}
+
+	/// Clear the on-chain spend of all vtxos spent by a tx that is no
+	/// longer confirmed.
+	///
+	/// Returns each cleared vtxo with its confirmation height and its
+	/// stale spend height.
+	pub async fn clear_vtxo_spends_by_txid(
+		&self,
+		spending_txid: Txid,
+	) -> anyhow::Result<Vec<(ServerVtxo, Option<BlockHeight>, BlockHeight)>> {
+		// The self-join exposes the pre-update row to RETURNING.
+		let stmt = self.prepare_typed("
+			UPDATE vtxo v
+			SET onchain_spent_height = NULL, onchain_spent_txid = NULL, updated_at = NOW()
+			FROM vtxo old
+			WHERE old.id = v.id AND v.onchain_spent_txid = $1
+			RETURNING v.vtxo, v.confirmed_height, old.onchain_spent_height
+		", &[Type::TEXT]).await?;
+
+		let rows = self.query(&stmt, &[&spending_txid.to_string()]).await?;
+
+		rows.iter().map(|row| {
+			let vtxo = ServerVtxo::deserialize(row.get("vtxo"))?;
+			let confirmed_height = row.get::<_, Option<i32>>("confirmed_height")
+				.map(|h| BlockHeight::from(h as u32));
+			let spent_height = row.get::<_, i32>("onchain_spent_height");
+			Ok((vtxo, confirmed_height, BlockHeight::from(spent_height as u32)))
+		}).collect()
+	}
+
 	/// Register a spend for a vtxo at a given block height and txid.
 	pub async fn register_vtxo_spend(
 		&self,
@@ -148,22 +202,39 @@ impl<'t> Tx<'t> {
 		}).collect()
 	}
 
-	/// Get all vtxos that originate from a specific transaction.
-	pub async fn get_vtxos_by_txid(&self, txid: Txid) -> anyhow::Result<Vec<ServerVtxo>> {
+	/// Get all vtxos that originate from a specific transaction, each with
+	/// its recorded on-chain spend height and spending txid, if any.
+	///
+	/// Callers use this to register vtxos into the frontier; a vtxo with a
+	/// recorded spend height was already advanced past and must not re-enter
+	/// it. The spending txid can be absent even when the height is set: data
+	/// repair writes a sentinel height without one (see fix_offboard_vtxos).
+	pub async fn get_vtxos_by_txid(
+		&self,
+		txid: Txid,
+	) -> anyhow::Result<Vec<(ServerVtxo, Option<BlockHeight>, Option<Txid>)>> {
 		let stmt = self.prepare_typed(
-			"SELECT vtxo FROM vtxo WHERE vtxo_txid = $1",
+			"SELECT vtxo, onchain_spent_height, onchain_spent_txid \
+			FROM vtxo WHERE vtxo_txid = $1",
 			&[Type::TEXT],
 		).await?;
 
 		let rows = self.query(&stmt, &[&txid.to_string()]).await?;
 
-		rows.iter().map(|row| Ok(ServerVtxo::deserialize(row.get("vtxo"))?)).collect()
+		rows.iter().map(|row| {
+			let vtxo = ServerVtxo::deserialize(row.get("vtxo"))?;
+			let spent_height: Option<i32> = row.get("onchain_spent_height");
+			let spent_txid: Option<String> = row.get("onchain_spent_txid");
+			let spent_txid = spent_txid.map(|t| t.parse()).transpose()?;
+			Ok((vtxo, spent_height.map(|i| BlockHeight::from(i as u32)), spent_txid))
+		}).collect()
 	}
 
 	/// Get all funding transaction txids that have vtxos not yet in the frontier.
 	///
-	/// TODO: remove this once all deployments have run with finish_round adding
-	/// vtxos directly to the frontier. It is only called once at startup now.
+	/// Every code path that creates funding vtxos adds them to the frontier
+	/// in the same database transaction, so this only finds legacy rows or
+	/// rows left behind by a bug. It is only used by the frontier reindex.
 	pub async fn get_unfrontiered_funding_txids(&self) -> anyhow::Result<Vec<Txid>> {
 		let stmt = self.prepare("
 			SELECT DISTINCT v.vtxo_txid

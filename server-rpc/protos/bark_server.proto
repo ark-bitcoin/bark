@@ -689,8 +689,9 @@ service LightningAdminService {
 	rpc StopLightningNode(LightningNodeUri) returns (core.Empty) {}
 }
 
-service SweepAdminService {
+service WatchmanAdminService {
 	rpc TriggerSweep(core.Empty) returns (core.Empty) {}
+	rpc ReindexFrontier(core.Empty) returns (ReindexFrontierResponse) {}
 }
 
 service BlocklistAdminService {
@@ -750,6 +751,31 @@ message ReloadBlocklistResponse {
 	uint64 total = 1;
 	uint64 added = 2;
 	uint64 removed = 3;
+}
+
+message ReindexFrontierResponse {
+	// Number of frontier entries verified against the chain.
+	uint64 entries_checked = 1;
+	// Entries whose missed or incorrect confirmation height was repaired.
+	uint64 confirmations_repaired = 2;
+	// Entries whose missed on-chain spend was registered.
+	uint64 spends_repaired = 3;
+	// VTXOs newly added to the frontier as children of repaired spends.
+	uint64 vtxos_added = 4;
+	// Funding txs with unfrontiered VTXOs that were processed.
+	uint64 funding_txs_added = 5;
+	// VTXOs newly registered from unfrontiered funding txs.
+	uint64 funding_vtxos_added = 6;
+	// Entries spent on-chain whose spending tx was not found.
+	uint64 unresolved_spends = 7;
+	// Number of blocks scanned looking for missed spends.
+	uint64 blocks_scanned = 8;
+	// Entries whose stored confirmation height was cleared because their
+	// tx is no longer confirmed.
+	uint64 confirmations_cleared = 9;
+	// VTXOs whose stored on-chain spend was cleared because the spending
+	// tx is no longer confirmed.
+	uint64 spends_cleared = 10;
 }
 
 message BanVtxoRequest {

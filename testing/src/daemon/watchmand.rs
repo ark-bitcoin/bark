@@ -18,7 +18,7 @@ use server_rpc::protos;
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
-use crate::daemon::captaind::{BlocklistAdminClient, SlogHandler, SweepAdminClient};
+use crate::daemon::captaind::{BlocklistAdminClient, SlogHandler, WatchmanAdminClient};
 use crate::constants::env::WATCHMAND_EXEC;
 use crate::ports::pick_port;
 use crate::util::{poll_interval, resolve_path};
@@ -102,8 +102,8 @@ impl Watchmand {
 		self.inner.get_custom_command(args).await
 	}
 
-	pub async fn get_sweep_rpc(&self) -> SweepAdminClient {
-		SweepAdminClient::connect(self.inner.admin_url()).await.expect("can't connect sweep rpc")
+	pub async fn get_watchman_admin_rpc(&self) -> WatchmanAdminClient {
+		WatchmanAdminClient::connect(self.inner.admin_url()).await.expect("can't connect sweep rpc")
 	}
 
 	pub async fn get_blocklist_rpc(&self) -> BlocklistAdminClient {
@@ -111,7 +111,12 @@ impl Watchmand {
 	}
 
 	pub async fn trigger_sweep(&self) {
-		self.get_sweep_rpc().await.trigger_sweep(protos::Empty {}).await.unwrap();
+		self.get_watchman_admin_rpc().await.trigger_sweep(protos::Empty {}).await.unwrap();
+	}
+
+	pub async fn reindex_frontier(&self) -> protos::ReindexFrontierResponse {
+		self.get_watchman_admin_rpc().await.reindex_frontier(protos::Empty {}).await
+			.unwrap().into_inner()
 	}
 
 	pub fn add_slog_handler<L: SlogHandler>(&self, handler: L) {
@@ -290,7 +295,7 @@ impl WatchmandHelper {
 	}
 
 	async fn try_is_ready(&self) -> anyhow::Result<()> {
-		SweepAdminClient::connect(self.admin_url()).await.context("connecting admin rpc")?;
+		WatchmanAdminClient::connect(self.admin_url()).await.context("connecting admin rpc")?;
 		Ok(())
 	}
 

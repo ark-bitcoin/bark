@@ -328,6 +328,23 @@ pub async fn set_htlc_vtxo_chain_resolution(
 	Ok(())
 }
 
+/// Drop the chain resolution of a single vtxo whose spend is no longer
+/// confirmed.
+pub async fn clear_htlc_vtxo_chain_resolution(
+	tx: &Tx<'_>,
+	vtxo_id: VtxoId,
+) -> anyhow::Result<()> {
+	let stmt = tx.prepare_typed("
+		UPDATE htlc_vtxo SET chain_resolution = NULL, chain_resolution_height = NULL
+		FROM vtxo WHERE vtxo.id = htlc_vtxo.id AND vtxo.vtxo_id = $1
+			AND htlc_vtxo.chain_resolution IS NOT NULL
+	", &[Type::TEXT]).await?;
+
+	tx.execute(&stmt, &[&vtxo_id.to_string()])
+		.await.context("failed to clear htlc vtxo chain resolution")?;
+	Ok(())
+}
+
 /// Drop the chain resolutions recorded above the given height.
 pub async fn clear_htlc_vtxo_chain_resolutions_above(
 	tx: &Tx<'_>,

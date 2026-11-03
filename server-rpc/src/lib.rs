@@ -75,7 +75,7 @@ pub mod admin {
 	pub use crate::protos::bark_server::wallet_admin_service_client::WalletAdminServiceClient;
 	pub use crate::protos::bark_server::round_admin_service_client::RoundAdminServiceClient;
 	pub use crate::protos::bark_server::lightning_admin_service_client::LightningAdminServiceClient;
-	pub use crate::protos::bark_server::sweep_admin_service_client::SweepAdminServiceClient;
+	pub use crate::protos::bark_server::watchman_admin_service_client::WatchmanAdminServiceClient;
 	pub use crate::protos::bark_server::ban_admin_service_client::BanAdminServiceClient;
 	pub use crate::protos::bark_server::blocklist_admin_service_client::BlocklistAdminServiceClient;
 	pub use crate::protos::bark_server::nursery_admin_service_client::NurseryAdminServiceClient;
@@ -92,7 +92,7 @@ pub mod server {
 	pub use crate::protos::bark_server::wallet_admin_service_server::{WalletAdminService, WalletAdminServiceServer};
 	pub use crate::protos::bark_server::round_admin_service_server::{RoundAdminService, RoundAdminServiceServer};
 	pub use crate::protos::bark_server::lightning_admin_service_server::{LightningAdminService, LightningAdminServiceServer};
-	pub use crate::protos::bark_server::sweep_admin_service_server::{SweepAdminService, SweepAdminServiceServer};
+	pub use crate::protos::bark_server::watchman_admin_service_server::{WatchmanAdminService, WatchmanAdminServiceServer};
 	pub use crate::protos::bark_server::ban_admin_service_server::{BanAdminService, BanAdminServiceServer};
 	pub use crate::protos::bark_server::blocklist_admin_service_server::{BlocklistAdminService, BlocklistAdminServiceServer};
 	pub use crate::protos::bark_server::nursery_admin_service_server::{NurseryAdminService, NurseryAdminServiceServer};

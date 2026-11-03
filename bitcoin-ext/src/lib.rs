@@ -201,6 +201,15 @@ impl ops::Add<BlockDelta> for BlockHeight {
 	}
 }
 
+/// Add small numbers to the height, saturating at [u32::MAX].
+impl ops::Add<u8> for BlockHeight {
+	type Output = BlockHeight;
+
+	fn add(self, rhs: u8) -> BlockHeight {
+		self.add_delta(BlockDelta::from(rhs as u16))
+	}
+}
+
 /// Type representing a difference between two block heights.
 ///
 /// A delta fits in a u16, so that it can be used in a relative timelock.
