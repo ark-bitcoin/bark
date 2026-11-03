@@ -60,6 +60,7 @@ impl ControlServer {
 			.route("/trigger_round", get(trigger_round))
 			.route("/get_new_address", get(get_new_address))
 			.route("/esplora/{*rest}", any(esplora))
+			.route("/esplora_status/{status}/{*rest}", any(esplora_with_status))
 			.with_state(self.state)
 			.layer(SetResponseHeaderLayer::overriding(
 				header::CACHE_CONTROL,
@@ -138,6 +139,28 @@ async fn esplora(
 			Err(_) => body.into_response(),
 		},
 		Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+	}
+}
+
+/// Esplora stub that answers every request with the given HTTP status.
+///
+/// The genesis lookup is forwarded to the real esplora so that a
+/// [bark::chain::ChainSource] built against this URL passes its network
+/// check. Every request after that gets the status, which is how a
+/// rate-limiting or failing esplora looks to a wallet that is already open.
+async fn esplora_with_status(
+	State(state): State<AppState>,
+	Path((status, rest)): Path<(u16, String)>,
+	RawQuery(query): RawQuery,
+	method: Method,
+	body: Bytes,
+) -> Response {
+	if rest == "block-height/0" {
+		return esplora(State(state), Path(rest), RawQuery(query), method, body).await;
+	}
+	match StatusCode::from_u16(status) {
+		Ok(status) => (status, format!("esplora stub answering {}", status)).into_response(),
+		Err(_) => (StatusCode::BAD_REQUEST, format!("invalid status code {}", status)).into_response(),
 	}
 }
 
