@@ -13,7 +13,7 @@ use bark::subsystem::RoundMovement;
 use bark::vtxo::{VtxoLockHolder, VtxoState};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_log::{NoRoundPayments, RoundFinished, RoundParticipationRejected};
-use server_rpc::protos;
+use server_rpc::{protos, StatusExt};
 
 use ark_testing::{btc, sat, secs, TestContext};
 use ark_testing::constants::ROUND_CONFIRMATIONS;
@@ -324,6 +324,97 @@ async fn finished_round_supersedes_pending_delegated_participation() {
 	srv.trigger_round().await;
 	log_no_payments.recv().wait(Duration::from_secs(30)).await
 		.expect("the server must still produce rounds");
+}
+
+/// A new delegated submission replaces the pending participation over the same
+/// inputs, but once a round attempt has picked that participation up it must be
+/// refused instead, naming the inputs as in flight: the attempt builds on the
+/// old participation's leaf, and replacing it would spend the inputs for vtxos
+/// nobody holds the preimage of. The rejection leaves the old participation
+/// alone, so the round finishes with it and its status stays retrievable.
+#[tokio::test]
+async fn resubmission_over_in_flight_delegated_inputs_is_rejected() {
+	let ctx = TestContext::new("bark_sdk/resubmission_over_in_flight_delegated_inputs_is_rejected").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).funded(btc(10)).create().await;
+
+	let delegated = ctx.bark_sdk("delegated", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(800_000))
+		.create().await;
+	let [vtxo] = delegated.spendable_vtxos().await.expect("list vtxos")
+		.try_into().expect("expected one boarded vtxo");
+	let id = vtxo.id();
+
+	// An interactive participant we drive by hand: it keeps the attempt open
+	// in its signing phase, which comes after the delegated sign-ups.
+	let interactive = ctx.bark_sdk("interactive", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(800_000))
+		.create().await;
+	let [other] = interactive.spendable_vtxos().await.expect("list vtxos")
+		.try_into().expect("expected one boarded vtxo");
+	let participation = interactive.build_refresh_participation(vec![other.id()]).await
+		.expect("build participation").expect("the vtxo needs a refresh");
+	interactive.join_next_round(participation, Some(RoundMovement::Refresh)).await
+		.expect("join the next round");
+
+	let first = delegated.refresh_vtxos_delegated(vec![id]).await
+		.expect("submit the delegated participation")
+		.expect("a participation was submitted");
+	let unlock_hash = first.state().unlock_hash()
+		.expect("delegated participation carries an unlock hash")
+		.to_byte_array().to_vec();
+
+	let mut rpc = srv.get_public_rpc().await;
+	let mut events = rpc.subscribe_rounds(protos::Empty {}).await.unwrap().into_inner();
+	let mut log_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+
+	let mut rejected = false;
+	while let Some(item) = events.next().await {
+		let event = RoundEvent::try_from(item.unwrap()).unwrap();
+
+		// The proposal follows the delegated sign-ups, so by now the attempt
+		// holds the delegated input.
+		if let RoundEvent::VtxoProposal(_) = &event && !rejected {
+			let err = delegated.refresh_vtxos_delegated(vec![id]).await
+				.err().expect("a resubmission over an in-flight input must be refused");
+			let status = err.chain().find_map(|c| c.downcast_ref::<tonic::Status>())
+				.unwrap_or_else(|| panic!("the rejection must come from the server: {err:#}"));
+			assert_eq!(status.code(), tonic::Code::InvalidArgument, "status: {status:?}");
+			assert_eq!(status.in_flight_vtxos(), vec![id],
+				"the rejection must name the in-flight input: {status:?}",
+			);
+			assert!(status.rejected_vtxos().is_empty(),
+				"an in-flight input must not read as unusable: {status:?}",
+			);
+			assert_eq!(
+				participation_status(&srv, unlock_hash.clone()).await,
+				protos::RoundParticipationStatus::RoundPartPending as i32,
+				"the rejection must leave the first participation in place",
+			);
+			rejected = true;
+		}
+
+		interactive.progress_pending_rounds(Some(&event)).await.expect("progress the round");
+		if let RoundEvent::Finished(_) = &event {
+			break;
+		}
+	}
+	assert!(rejected, "never observed the vtxo proposal");
+
+	let finished = log_finished.recv().wait(Duration::from_secs(30)).await
+		.expect("the round must finish");
+	assert_eq!(finished.nb_input_vtxos, 2,
+		"the round must include both the interactive and the delegated participation",
+	);
+	assert_eq!(
+		participation_status(&srv, unlock_hash).await,
+		protos::RoundParticipationStatus::RoundPartIssued as i32,
+		"the first participation must have completed and still be retrievable",
+	);
 }
 
 /// A delegated refresh scheduled at a future block height must sit out rounds

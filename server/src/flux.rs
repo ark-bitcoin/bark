@@ -61,6 +61,20 @@ impl VtxosInFlux {
 		Ok(ret)
 	}
 
+	/// Those of the given vtxos that are currently in flux.
+	///
+	/// A snapshot only: it is not a lock, so the set can change right after.
+	pub fn in_flux<V>(&self, ids: impl IntoIterator<Item = V>) -> Vec<VtxoId>
+	where
+		V: VtxoRef,
+	{
+		let inner = self.inner.lock();
+		ids.into_iter()
+			.map(|v| v.vtxo_id())
+			.filter(|id| inner.vtxos.contains(id))
+			.collect()
+	}
+
 	fn atomic_check_put<V>(
 		&self,
 		ids: impl IntoIterator<Item = V>,

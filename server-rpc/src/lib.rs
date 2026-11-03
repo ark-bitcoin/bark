@@ -45,7 +45,7 @@ mod convert;
 pub use crate::convert::{ConvertError, TryFromBytes};
 
 mod error;
-pub use crate::error::StatusExt;
+pub use crate::error::{StatusExt, IN_FLIGHT_INPUTS_METADATA_KEY};
 
 pub mod pver;
 

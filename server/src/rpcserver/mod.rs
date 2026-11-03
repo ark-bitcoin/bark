@@ -21,9 +21,10 @@ use std::sync::atomic::{self, AtomicBool};
 use tokio::sync::oneshot;
 use tracing::{trace, warn};
 
-use server_rpc::{pver, RequestExt};
+use ::ark::VtxoId;
+use server_rpc::{pver, RequestExt, IN_FLIGHT_INPUTS_METADATA_KEY};
 
-use crate::error::{BadArgument, NotFound, Unavailable, UnusableInputs};
+use crate::error::{BadArgument, InFlightInputs, NotFound, Unavailable, UnusableInputs};
 
 
 /// The minimum protocol version supported by the server.
@@ -60,6 +61,18 @@ pub(crate) const DEFAULT_HTTP2_MAX_PENDING_ACCEPT_RESET_STREAMS: usize = 1000;
 /// into all error conversions.
 pub(crate) static RPC_RICH_ERRORS: AtomicBool = AtomicBool::new(false);
 
+/// Join vtxo ids into a comma-separated gRPC metadata value.
+fn vtxo_ids_metadata(ids: &[VtxoId]) -> tonic::metadata::MetadataValue<tonic::metadata::Ascii> {
+	let mut buf = String::with_capacity(ids.len() * 65);
+	for (i, id) in ids.iter().enumerate() {
+		if i > 0 {
+			buf.push_str(",");
+		}
+		write!(&mut buf, "{}", id).unwrap();
+	}
+	buf.parse().expect("non-ascii identifier")
+}
+
 /// A trait to easily convert some errors to [tonic::Status].
 trait ToStatus {
 	fn to_status(self) -> tonic::Status;
@@ -87,19 +100,15 @@ impl ToStatus for anyhow::Error {
 		} else if let Some(ui) = self.downcast_ref::<UnusableInputs>() {
 			// Like a bad argument, but we attach the offending VTXO ids so the
 			// client can drop exactly those inputs and retry without them.
-			let ids = {
-				let ids = ui.identifiers();
-				let mut buf = String::with_capacity(ids.len() * 65);
-				for (i, id) in ids.iter().enumerate() {
-					if i > 0 {
-						buf.push_str(",");
-					}
-					write!(&mut buf, "{}", id).unwrap();
-				}
-				buf.parse().expect("non-ascii identifier")
-			};
 			let mut metadata = tonic::metadata::MetadataMap::new();
-			metadata.insert("identifiers", ids);
+			metadata.insert("identifiers", vtxo_ids_metadata(ui.identifiers()));
+			tonic::Status::with_metadata(tonic::Code::InvalidArgument, format!("{:#}", self), metadata)
+		} else if let Some(ifi) = self.downcast_ref::<InFlightInputs>() {
+			// Also a bad argument, but under a key of its own: these inputs
+			// are still the client's, it should wait for them rather than
+			// drop them the way it would with `identifiers`.
+			let mut metadata = tonic::metadata::MetadataMap::new();
+			metadata.insert(IN_FLIGHT_INPUTS_METADATA_KEY, vtxo_ids_metadata(ifi.identifiers()));
 			tonic::Status::with_metadata(tonic::Code::InvalidArgument, format!("{:#}", self), metadata)
 		} else if let Some(_) = self.downcast_ref::<Unavailable>() {
 			tonic::Status::unavailable(format!("{:#}", self))
