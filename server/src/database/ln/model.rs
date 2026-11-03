@@ -112,7 +112,7 @@ pub struct LightningPaymentAttempt {
 	/// header, and for pre-V66 rows.
 	pub user_agent: Option<String>,
 	/// How long the lightning node was told to keep retrying the payment.
-	/// `None` for pre-V66 rows, for which `cln_xpay_timeout` applies.
+	/// `None` for pre-V66 rows.
 	pub retry_for: Option<Duration>,
 	/// Routing budget passed to CLN as xpay's `maxfee`. `None` for pre-V68
 	/// rows and intra-Ark self-payments, which never reach CLN.

@@ -139,7 +139,6 @@ impl LightningManager {
 		};
 		let xpay_config = ClnXpayConfig {
 			invoice_check_interval: config.invoice_check_interval,
-			cln_xpay_timeout: config.cln_xpay_timeout,
 			check_base_delay: config.invoice_check_base_delay,
 			max_check_delay: config.max_invoice_check_delay,
 		};

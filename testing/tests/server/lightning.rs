@@ -26,6 +26,7 @@ use server_log::{LightningReceiveCanceled, LightningReceiveKeptCommitted};
 use server_rpc::protos;
 use server::database::Db;
 use server::database::htlc_vtxo::HtlcDirection;
+use server::database::xpay;
 use server::vtxopool::VtxoTarget;
 
 use ark_testing::{Bark, Captaind, TestContext, btc, lightning_test, require_bark_version, sat};
@@ -3633,18 +3634,40 @@ async fn late_xpay_result_does_not_finalize_a_retry() {
 	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
 
 	// The first attempt is closed and the invoice retried while xpay is
-	// still running.
+	// still running. As in the server, each attempt's xpay call ends with it,
+	// and the retry gets a call of its own, which it never makes.
 	let db = Db::connect(&srv.config().postgres).await.unwrap();
 	let first = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await)
 		.await.unwrap().expect("open attempt");
-	db.write(async |t| t.update_lightning_payment_attempt_status(
-		&first, server::database::ln::LightningPaymentStatus::Failed, Some("closed for the test"),
-	).await).await.unwrap().expect("first attempt unchanged");
+	db.write(async |t| {
+		let first = t.update_lightning_payment_attempt_status(
+			&first, server::database::ln::LightningPaymentStatus::Failed, Some("closed for the test"),
+		).await?;
+		xpay::end_pending_xpay_by_payment_hash(&**t, payment_hash,
+			xpay::ClnXpayOutcome::Fail { error_code: None },
+		).await?.expect("first xpay call pending");
+		Ok(first)
+	}).await.unwrap().expect("first attempt unchanged");
 	let invoice = ark::lightning::Invoice::from_str(&bolt11).unwrap();
-	let retry_id = db.write(async |t| t.store_lightning_payment_start(
-		first.lightning_node_id, &invoice, sat(10_000), None, &[], None,
-		first.block_height.unwrap(), sat(0), None, Duration::from_secs(3600), Some(sat(1_000)),
-	).await).await.unwrap();
+	let retry_id = db.write(async |t| {
+		let retry_id = t.store_lightning_payment_start(
+			first.lightning_node_id, &invoice, sat(10_000), None, &[], None,
+			first.block_height.unwrap(), sat(0), None, Duration::from_secs(3600), Some(sat(1_000)),
+		).await?;
+		xpay::create_xpay(&**t, &xpay::NewClnXpay {
+			lightning_node_id: first.lightning_node_id,
+			payment_amount_msat: sat(10_000).to_msat(),
+			max_routing_fee_msat: Some(sat(1_000).to_msat()),
+			attempt_expiry: chrono::Local::now() + chrono::TimeDelta::hours(1),
+			partial_msat: None,
+			htlc_expiry: None,
+			label: Some("retry".to_string()),
+			payment_hash,
+			user_fee_msat: Some(0),
+			user_agent: None,
+		}).await?;
+		Ok(retry_id)
+	}).await.unwrap();
 
 	// Releasing the hold makes the first xpay call fail.
 	eve_hold.cancel(hold::CancelRequest {
