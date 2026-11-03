@@ -17,9 +17,11 @@
 //! All operations are idempotent: granting the same HTLC again, fulfilling a
 //! fulfilled HTLC, or revoking an absent HTLC all succeed without effect.
 //!
+//! Fulfilled HTLCs are final and can't be revoked.
+//!
 //! Actions that can only make the ledger safer — granting or fulfilling an
-//! incoming HTLC, revoking an outgoing one — skip the invariant checks and
-//! always succeed.
+//! incoming HTLC, revoking a pending outgoing one — skip the invariant checks
+//! and always succeed.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -52,6 +54,10 @@ pub enum Error<I: fmt::Debug> {
 	/// An HTLC with this id was already present with different parameters.
 	#[error("HTLC with id {0:?} already exists with different parameters")]
 	DuplicateHtlcId(I),
+
+	/// The HTLC is fulfilled, so it can no longer be revoked.
+	#[error("HTLC with id {0:?} is already fulfilled")]
+	AlreadyFulfilled(I),
 
 	/// The requested HTLC id was not found.
 	#[error("HTLC with id {0:?} not found")]
@@ -187,14 +193,19 @@ impl<I: Copy + Eq + Hash + fmt::Debug> Ledger<I> {
 		Ok(())
 	}
 
-	/// Revoke an HTLC, removing it from the ledger.
+	/// Revoke a pending HTLC, removing it from the ledger.
+	///
+	/// Fails for a fulfilled HTLC: its preimage is already out.
 	///
 	/// Idempotent: revoking an absent HTLC is a no-op.
 	pub fn revoke(&mut self, id: I) -> Result<(), Error<I>> {
+		if self.htlcs.get(&id).is_some_and(|h| h.fulfilled) {
+			return Err(Error::AlreadyFulfilled(id));
+		}
 		let Some(htlc) = self.htlcs.remove(&id) else {
 			return Ok(());
 		};
-		// Revoking an outgoing HTLC only removes liability.
+		// Revoking a pending outgoing HTLC only removes liability.
 		if htlc.direction == Direction::Incoming {
 			if let Err(e) = self.check_invariants() {
 				self.htlcs.insert(id, htlc);
@@ -435,6 +446,36 @@ mod tests {
 	}
 
 	#[test]
+	fn revoke_fulfilled_outgoing_fails() {
+		let mut ledger = Ledger::new(DELTA);
+		let amount = Amount::from_sat(1000);
+		ledger.add_incoming("in", amount, BlockHeight::new(100)).unwrap();
+		ledger.fulfill("in").unwrap();
+		ledger.add_outgoing("paid", amount, BlockHeight::new(90)).unwrap();
+		ledger.fulfill("paid").unwrap();
+
+		let err = ledger.revoke("paid").expect_err("paid outgoing is final");
+		assert!(matches!(err, Error::AlreadyFulfilled("paid")));
+		assert_eq!(ledger.outgoing_fulfilled(), amount);
+
+		// The incoming is already paid out, so it funds no second payout.
+		let err = ledger.add_outgoing("second", amount, BlockHeight::new(90))
+			.expect_err("incoming already paid out");
+		assert!(matches!(err, Error::CoverageInvariant { .. }));
+	}
+
+	#[test]
+	fn revoke_fulfilled_incoming_fails() {
+		let mut ledger = Ledger::new(DELTA);
+		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
+		ledger.fulfill("in").unwrap();
+
+		let err = ledger.revoke("in").expect_err("claimed incoming is final");
+		assert!(matches!(err, Error::AlreadyFulfilled("in")));
+		assert_eq!(ledger.incoming_fulfilled(), Amount::from_sat(1000));
+	}
+
+	#[test]
 	fn add_rejects_same_id_with_different_parameters() {
 		let mut ledger = Ledger::new(DELTA);
 		ledger.add_incoming("in", Amount::from_sat(1000), BlockHeight::new(100)).unwrap();
@@ -499,7 +540,7 @@ mod tests {
 	fn safe_actions_succeed_on_inconsistent_ledger() {
 		let mut ledger = Ledger::new(DELTA);
 		ledger
-			.force_htlc("bad-out", Amount::from_sat(200), BlockHeight::new(90), true, Direction::Outgoing)
+			.force_htlc("bad-out", Amount::from_sat(200), BlockHeight::new(90), false, Direction::Outgoing)
 			.unwrap();
 		ledger.check_invariants().expect_err("should be inconsistent");
 		// Safe actions never check invariants, so they succeed regardless.
