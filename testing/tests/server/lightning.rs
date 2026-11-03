@@ -2168,9 +2168,12 @@ async fn prepare_lightning_claim_requires_the_claim_key() {
 		claim_pubkey: Some(claim_key.public_key().serialize().to_vec()),
 	};
 	let invoice = rpc.start_lightning_receive(start(&claim_key)).await.unwrap().into_inner().bolt11;
-	// starting it again returns the same receive and keeps its claim key
-	let again = rpc.start_lightning_receive(start(&other_key)).await.unwrap().into_inner().bolt11;
+	// starting it again returns the same receive, but not for another key
+	let again = rpc.start_lightning_receive(start(&claim_key)).await.unwrap().into_inner().bolt11;
 	assert_eq!(again, invoice);
+	let err = rpc.start_lightning_receive(start(&other_key)).await
+		.expect_err("the receive keeps its claim key");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "unexpected error: {err:?}");
 
 	let pay = tokio::spawn({
 		let payer = payer.clone();

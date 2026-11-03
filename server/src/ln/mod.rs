@@ -697,6 +697,13 @@ impl Server {
 							);
 						}
 					}
+					if let Some(requested) = claim_pubkey {
+						if subscription.claim_pubkey != Some(requested) {
+							return badarg!("an invoice for payment hash {} already exists \
+								with a different claim key", payment_hash,
+							);
+						}
+					}
 					trace!("Found existing created subscription, returning invoice: {}",
 						subscription.invoice.to_string(),
 					);
