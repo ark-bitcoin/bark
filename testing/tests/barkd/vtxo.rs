@@ -220,9 +220,14 @@ async fn import_vtxo_partial_barkd() {
 	let theirs = stranger.vtxos(None).await;
 	let theirs_hex = stranger.get_vtxo_encoded(&theirs[0].vtxo.id.to_string()).await.encoded.0;
 
+	// The failed import below reveals the key of `mine`. Without manual sync, the
+	// daemon's mailbox stream can then store `mine` from the sender's arkoor message.
 	let recovered = ctx.barkd("recovered", &srv)
 		.mnemonic(recipient.mnemonic().await)
-		.cfg(|c| c.vtxo_key_gap_limit = 50)
+		.cfg(|c| {
+			c.vtxo_key_gap_limit = 50;
+			c.daemon_manual_sync = true;
+		})
 		.create().await;
 	recovered.onchain_sync().await;
 	assert!(recovered.vtxos(Some(true)).await.is_empty(), "the recovered wallet starts empty");
