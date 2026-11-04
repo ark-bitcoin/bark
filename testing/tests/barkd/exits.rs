@@ -28,7 +28,8 @@ async fn exit_start_all_and_progress_barkd() {
 	// Board into a VTXO, then refresh into a round so it's fully in-round.
 	let barkd = ctx.barkd("barkd1", &srv).boarded(sat(500_000)).create().await;
 
-	tokio::join!(barkd.refresh_all(), srv.trigger_round());
+	barkd.refresh_all().await;
+	srv.trigger_round().await;
 	wait_for_rounds_complete(&ctx, &barkd).await;
 
 	let balance_before = barkd.bark_balance().await;
@@ -82,7 +83,8 @@ async fn exit_claim_all_barkd() {
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let barkd = ctx.barkd("barkd1", &srv).boarded(sat(500_000)).create().await;
 
-	tokio::join!(barkd.refresh_all(), srv.trigger_round());
+	barkd.refresh_all().await;
+	srv.trigger_round().await;
 	wait_for_rounds_complete(&ctx, &barkd).await;
 
 	srv.stop().await.unwrap();
@@ -196,7 +198,8 @@ async fn exit_auto_progress_disconnected_barkd() {
 	// Setup: board and refresh into round.
 	let barkd = ctx.barkd("barkd1", &srv).boarded(sat(500_000)).create().await;
 
-	tokio::join!(barkd.refresh_all(), srv.trigger_round());
+	barkd.refresh_all().await;
+	srv.trigger_round().await;
 	wait_for_rounds_complete(&ctx, &barkd).await;
 
 	// Stop server — barkd becomes disconnected.
