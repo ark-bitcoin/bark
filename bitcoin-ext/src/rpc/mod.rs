@@ -239,6 +239,22 @@ pub struct SubmitPackageTxResult {
 	pub error: Option<String>,
 }
 
+/// The ancestor fields of the `getmempoolentry` RPC call. The bitcoincore_rpc
+/// type requires `bip125-replaceable`, which bitcoind v32 no longer returns.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MempoolEntryAncestors {
+	pub weight: u64,
+	#[serde(rename = "ancestorsize")]
+	pub ancestor_size: u64,
+	pub fees: MempoolEntryAncestorFees,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MempoolEntryAncestorFees {
+	#[serde(with = "bitcoin::amount::serde::as_btc")]
+	pub ancestor: Amount,
+}
+
 /// Shorthand for converting a variable into a serde_json::Value.
 fn into_json<T>(val: T) -> RpcResult<serde_json::Value>
 where
