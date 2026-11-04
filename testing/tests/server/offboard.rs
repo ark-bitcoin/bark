@@ -23,6 +23,7 @@ use ark::musig;
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use bark::WalletVtxo;
 
+use bitcoin_ext::BlockHeight;
 use bitcoin_ext::rpc::RpcApi;
 
 use ark_testing::{btc, sat, TestContext};
@@ -333,4 +334,121 @@ async fn pending_offboards_lock_at_most_part_of_the_wallet() {
 	assert_eq!(expired, HashSet::from([vtxo2, vtxo3]));
 	rpc.prepare_offboard(prepare(&req, vtxo1, &key1)).await.unwrap();
 	rpc.prepare_offboard(prepare(&req, vtxo2, &key2)).await.unwrap();
+}
+
+/// A vtxo is in one place at a time. The server refuses to spend a vtxo that
+/// is in an offboard session, and to offboard a vtxo that is spent or exited
+/// onchain. A vtxo scheduled for a delegated round can still be offboarded.
+#[tokio::test]
+async fn offboard_refuses_vtxos_used_elsewhere() {
+	let ctx = TestContext::new("server/offboard_refuses_vtxos_used_elsewhere").await;
+	// Every fee rate is 1 sat/vB, so the request can use a fixed fee.
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(1)).watchmand().cfg(|cfg| {
+		cfg.fee_estimator.fallback_fee_rate_fast = FeeRate::from_sat_per_vb_u32(1);
+		cfg.fee_estimator.fallback_fee_rate_regular = FeeRate::from_sat_per_vb_u32(1);
+		cfg.fee_estimator.fallback_fee_rate_slow = FeeRate::from_sat_per_vb_u32(1);
+		// The cap on locked coins is tested elsewhere.
+		cfg.offboard_max_locked_percent = 100;
+		// No round starts unless the test triggers it.
+		cfg.round_interval = Duration::from_secs(3600);
+	}).create().await;
+	// Each session locks a whole 1 btc coin, so give the server more than one.
+	for _ in 0..7 {
+		ctx.fund_captaind(&srv, btc(1)).await;
+	}
+	// Each vtxo has one job:
+	// - vtxo_a, vtxo_b: in an offboard session. They are the only vtxos of `locker`,
+	//   so any arkoor or round spend from `locker` has to use them.
+	// - vtxo_c: shares vtxo_b with a second offboard session
+	// - round_vtxo: scheduled for a delegated round
+	// - exited_vtxo: its exit tx is confirmed onchain
+	// - spent_vtxo: spent by an arkoor
+	let locker = ctx.bark_sdk("locker", &srv)
+		.boarded(sat(100_000))
+		.boarded(sat(110_000))
+		.create().await;
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.boarded(sat(120_000))
+		.boarded(sat(130_000))
+		.boarded(sat(140_000))
+		.create().await;
+	let spender = ctx.bark_sdk("spender", &srv).boarded(sat(150_000)).create().await;
+	let mut rpc = srv.get_public_rpc().await;
+
+	let find_vtxo = async |wallet: &bark::Wallet, amount| {
+		let vtxo = wallet.spendable_vtxos().await.unwrap().into_iter()
+			.find(|v| v.amount() == amount).unwrap();
+		(vtxo.id(), wallet.get_vtxo_key(&vtxo).await.unwrap())
+	};
+	let (vtxo_a, key_a) = find_vtxo(&locker, sat(100_000)).await;
+	let (vtxo_b, key_b) = find_vtxo(&locker, sat(110_000)).await;
+	let (vtxo_c, key_c) = find_vtxo(&wallet, sat(120_000)).await;
+	let (round_vtxo, round_key) = find_vtxo(&wallet, sat(130_000)).await;
+	let (exited_vtxo, exited_key) = find_vtxo(&wallet, sat(140_000)).await;
+	let (spent_vtxo, spent_key) = find_vtxo(&spender, sat(150_000)).await;
+
+	let prepare = |net_amount: Amount, inputs: &[(VtxoId, &Keypair)]| {
+		// Offboard the inputs to a fresh address, paying 1_000 sat in fees.
+		let req = OffboardRequest {
+			script_pubkey: ctx.bitcoind().get_new_address().script_pubkey(),
+			net_amount,
+			deduct_fees_from_gross_amount: true,
+			fee_rate: FeeRate::from_sat_per_vb_u32(1),
+		};
+		let ids = inputs.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+		protos::PrepareOffboardRequest {
+			offboard: Some((&req).into()),
+			input_vtxo_ids: ids.iter().map(|id| id.to_bytes().to_vec()).collect(),
+			attestation: inputs.iter()
+				.map(|(_, key)| OffboardRequestAttestation::new(&req, &ids, key).serialize())
+				.collect(),
+		}
+	};
+
+	// vtxo_a + vtxo_b start a session.
+	rpc.prepare_offboard(prepare(sat(209_000), &[(vtxo_a, &key_a), (vtxo_b, &key_b)])).await.unwrap();
+
+	// vtxo_b + vtxo_c cannot start a new session, because vtxo_b is in the first one.
+	let err = rpc.prepare_offboard(prepare(sat(229_000), &[(vtxo_b, &key_b), (vtxo_c, &key_c)])).await
+		.unwrap_err();
+	// The client may retry: the lock goes away when the first session ends.
+	assert_eq!(err.code(), tonic::Code::Internal, "{err}");
+	assert!(err.message().contains("already locked"), "{err}");
+	// The refused request left vtxo_c free.
+	rpc.prepare_offboard(prepare(sat(119_000), &[(vtxo_c, &key_c)])).await.unwrap();
+
+	// The session's vtxos can't be spent by an arkoor
+	let address = wallet.new_address().await.unwrap();
+	let err = locker.send_arkoor_payment(&address, sat(50_000)).await.unwrap_err();
+	assert!(format!("{err:#}").contains("already locked"), "{err:#}");
+
+	// The session's vtxos can't join a round
+	let err = locker.refresh_vtxos_delegated([vtxo_a]).await.err().expect("vtxo_a is in a session");
+	assert!(format!("{err:#}").contains("in flight"), "{err:#}");
+
+	// A spent vtxo can't be offboarded
+	spender.send_arkoor_payment(&address, sat(50_000)).await.unwrap();
+	let err = rpc.prepare_offboard(prepare(sat(149_000), &[(spent_vtxo, &spent_key)])).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+	assert!(err.message().contains("is not spendable"), "{err}");
+
+	// A vtxo scheduled for a delegated round can still be offboarded.
+	wallet.refresh_vtxos_delegated([round_vtxo]).await.unwrap();
+	rpc.prepare_offboard(prepare(sat(129_000), &[(round_vtxo, &round_key)])).await.unwrap();
+
+	// An exited vtxo can't be offboarded. bitcoind mines the exit txs directly,
+	// so they need no fee.
+	let full = wallet.get_full_vtxo(exited_vtxo).await.unwrap();
+	let exit_txs = full.transactions()
+		.map(|item| serde_json::Value::from(bitcoin::consensus::encode::serialize_hex(&item.tx)))
+		.collect::<Vec<_>>();
+	let miner = ctx.bitcoind().get_new_address().to_string();
+	ctx.bitcoind().async_client().call_raw::<serde_json::Value>(
+		"generateblock", &[miner.into(), exit_txs.into()],
+	).await.unwrap();
+	let tip = ctx.bitcoind().get_block_count().await;
+	srv.watchmand().wait_for_sync_height(BlockHeight::new(u32::try_from(tip).unwrap())).await;
+	let err = rpc.prepare_offboard(prepare(sat(139_000), &[(exited_vtxo, &exited_key)])).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+	assert!(err.message().contains("has exited onchain"), "{err}");
 }
