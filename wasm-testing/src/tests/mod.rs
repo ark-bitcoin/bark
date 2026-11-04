@@ -1,5 +1,6 @@
 pub mod arkoor;
 pub mod board;
+pub mod chain;
 pub mod daemon;
 pub mod mailbox;
 pub mod offboard;
