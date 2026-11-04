@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context};
 use bdk_wallet::{TxBuilder, Wallet};
 use bdk_wallet::coin_selection::CoinSelectionAlgorithm;
+use bdk_wallet::signer::SignersContainer;
 use bip39::Mnemonic;
 use bitcoin::{
 	bip32, Address, Amount, FeeRate, Network, OutPoint, Psbt, Transaction, Weight,
@@ -19,7 +20,10 @@ use bitcoind_async_client::Client as BitcoindClient;
 use tracing::{error, warn};
 
 use bitcoin_ext::BlockRef;
-use bitcoin_ext::bdk::{TrustedBalance, TrustedCanonicalization, WalletExt, KEYCHAIN};
+use bitcoin_ext::bdk::{
+	CpfpInternalError, TrustedBalance, TrustedCanonicalization, WalletExt, KEYCHAIN,
+};
+use bitcoin_ext::cpfp::MakeCpfpFees;
 
 use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::bitcoind as bcd;
@@ -92,6 +96,7 @@ impl BdkWalletExt for Wallet {}
 
 pub struct PersistedWallet {
 	wallet: Wallet,
+	signers: SignersContainer,
 	kind: WalletKind,
 	db: database::Db,
 	bitcoind: BitcoindClient,
@@ -115,21 +120,20 @@ impl PersistedWallet {
 		let fresh = init.is_none();
 
 		let desc = format!("tr({}/0/*)", xpriv);
-		#[allow(deprecated)]
 		let mut wallet = if let Some(changeset) = init {
 			bdk_wallet::Wallet::load()
-				.descriptor(KEYCHAIN, Some(desc))
+				.descriptor(KEYCHAIN, Some(desc.clone()))
 				.check_network(network)
-				.extract_keys()
 				.load_wallet_no_persist(changeset)
 				.context("error loading bdk wallet")?
 				.expect("changeset is not empty")
 		} else {
-			bdk_wallet::Wallet::create_single(desc)
+			bdk_wallet::Wallet::create_single(desc.clone())
 				.network(network)
 				.create_wallet_no_persist()
 				.context("error creating bdk wallet")?
 		};
+		let signers = wallet.build_signers(&desc).context("error building wallet signers")?;
 
 		if fresh {
 			wallet.set_checkpoint(deep_tip.height.to_u32(), deep_tip.hash);
@@ -138,7 +142,7 @@ impl PersistedWallet {
 		}
 
 		Ok(Self {
-			wallet, kind, db, bitcoind, min_trusted_confs,
+			wallet, signers, kind, db, bitcoind, min_trusted_confs,
 			locked_outputs: LockedWalletUtxosIndex::new(),
 			address_blocklist: None,
 		})
@@ -196,6 +200,15 @@ impl PersistedWallet {
 		}
 	}
 
+	/// Create and sign a CPFP child spending the fee anchor of `tx`.
+	pub fn make_signed_p2a_cpfp(
+		&mut self,
+		tx: &Transaction,
+		fees: MakeCpfpFees,
+	) -> Result<Transaction, CpfpInternalError> {
+		self.wallet.make_signed_p2a_cpfp(tx, fees, &self.signers)
+	}
+
 	/// Finish the PSBT by signing it and committing it to the wallet.
 	///
 	/// This method does not persist changes to the database.
@@ -206,8 +219,8 @@ impl PersistedWallet {
 			..Default::default()
 		};
 		let fee = psbt.fee().context("error calculating fee")?;
-		#[allow(deprecated)]
-		let finalized = self.sign(&mut psbt, opts).context("error signing psbt")?;
+		let finalized = self.wallet.sign_with_signers(&mut psbt, &[&self.signers], opts)
+			.context("error signing psbt")?;
 		ensure!(finalized, "tx not finalized after signing, psbt: {}", psbt.serialize().as_hex());
 		let ret = psbt.extract_tx().context("error extracting finalized tx from psbt")?;
 		let txid = ret.compute_txid();
@@ -697,11 +710,11 @@ mod builder_test {
 		(wallet, coins)
 	}
 
-	#[allow(deprecated)]
 	fn sign(wallet: &mut Wallet, mut psbt: Psbt) -> Transaction {
+		let signers = wallet.build_signers(get_test_tr_single_sig_xprv()).unwrap();
 		#[allow(deprecated)]
 		let opts = bdk_wallet::SignOptions { trust_witness_utxo: true, ..Default::default() };
-		assert!(wallet.sign(&mut psbt, opts).unwrap());
+		assert!(wallet.sign_with_signers(&mut psbt, &[&signers], opts).unwrap());
 		psbt.extract_tx().unwrap()
 	}
 

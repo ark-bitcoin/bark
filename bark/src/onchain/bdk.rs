@@ -7,6 +7,7 @@ use bdk_esplora::EsploraAsyncExt;
 use bdk_wallet::chain::{Anchor, ChainPosition, CheckPoint};
 use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
+use bdk_wallet::signer::SignersContainer;
 use bdk_wallet::{Balance, KeychainKind, LocalOutput, TxBuilder, TxOrdering};
 use bitcoin::{
 	Address, Amount, FeeRate, Network, Psbt, Script, Sequence, Transaction, TxOut,
@@ -140,6 +141,7 @@ fn cpfp_internal_to_error(e: CpfpInternalError) -> CpfpError {
 /// wrapper only needs to proxy the methods.
 pub struct OnchainWallet {
 	pub inner: BdkWallet,
+	signers: SignersContainer,
 	db: Arc<dyn BarkPersister>,
 }
 
@@ -163,21 +165,20 @@ impl OnchainWallet {
 		let desc = bdk_wallet::template::Bip86(xpriv, KeychainKind::External);
 
 		let changeset = db.initialize_bdk_wallet().await.context("error reading bdk wallet state")?;
-		#[allow(deprecated)]
 		let wallet_opt = bdk_wallet::Wallet::load()
 			.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
-			.extract_keys()
 			.check_network(network)
 			.load_wallet_no_persist(changeset)?;
 
 		let wallet = match wallet_opt {
 			Some(wallet) => wallet,
-			None => bdk_wallet::Wallet::create_single(desc)
+			None => bdk_wallet::Wallet::create_single(desc.clone())
 				.network(network)
 				.create_wallet_no_persist()?,
 		};
+		let signers = wallet.build_signers(desc).context("error building wallet signers")?;
 
-		Ok(Self { inner: wallet, db })
+		Ok(Self { inner: wallet, signers, db })
 	}
 }
 
@@ -248,8 +249,8 @@ impl OnchainWalletTrait for OnchainWallet {
 			trust_witness_utxo: true,
 			..Default::default()
 		};
-		#[allow(deprecated)]
-		let finalized = self.inner.sign(&mut psbt, opts).context("signing error")?;
+		let finalized = self.inner.sign_with_signers(&mut psbt, &[&self.signers], opts)
+			.context("signing error")?;
 		ensure!(finalized, "failed to succesfully sign the tx");
 		let tx = psbt.clone().extract_tx()?;
 		self.inner.apply_unconfirmed_txs([(tx, bark_runtime::timestamp_secs())]);
@@ -262,7 +263,7 @@ impl OnchainWalletTrait for OnchainWallet {
 		tx: &Transaction,
 		fees: MakeCpfpFees,
 	) -> Result<Transaction, CpfpError> {
-		WalletExt::make_signed_p2a_cpfp(&mut self.inner, tx, fees)
+		WalletExt::make_signed_p2a_cpfp(&mut self.inner, tx, fees, &self.signers)
 			.inspect_err(|e| error!("Error creating signed P2A CPFP: {}", e))
 			.map_err(cpfp_internal_to_error)
 	}
@@ -414,8 +415,8 @@ impl OnchainWallet {
 			trust_witness_utxo: true,
 			..Default::default()
 		};
-		#[allow(deprecated)]
-		let finalized = self.inner.sign(&mut psbt, opts).context("signing error")?;
+		let finalized = self.inner.sign_with_signers(&mut psbt, &[&self.signers], opts)
+			.context("signing error")?;
 		ensure!(finalized, "failed to succesfully sign the tx");
 		Ok(psbt)
 	}

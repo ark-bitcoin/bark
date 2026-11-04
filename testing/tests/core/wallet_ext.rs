@@ -6,6 +6,7 @@ use bitcoin::address::NetworkUnchecked;
 use bitcoincore_rpc::RpcApi;
 use bitcoincore_rpc::json::CreateRawTransactionInput;
 use bdk_wallet::Wallet;
+use bdk_wallet::signer::SignersContainer;
 
 use ark_testing::{TestContext, sat};
 use bitcoin_ext::bdk::{TrustedCanonicalization, WalletExt, KEYCHAIN};
@@ -30,13 +31,15 @@ fn build_zero_fee_tx_with_p2a_output(client: &impl RpcApi) -> bitcoin::Transacti
 		.unwrap().transaction().unwrap()
 }
 
-fn create_wallet() -> Wallet {
+fn create_wallet() -> (Wallet, SignersContainer) {
 	let xpriv = bitcoin::bip32::Xpriv::new_master(Network::Regtest, &[0xAB; 32]).unwrap();
 	let desc = format!("tr({}/0/*)", xpriv);
-	Wallet::create_single(desc)
+	let wallet = Wallet::create_single(desc.clone())
 		.network(Network::Regtest)
 		.create_wallet_no_persist()
-		.unwrap()
+		.unwrap();
+	let signers = wallet.build_signers(&desc).unwrap();
+	(wallet, signers)
 }
 
 fn sync_wallet(wallet: &mut Wallet, bitcoind: &impl RpcApi) {
@@ -54,13 +57,12 @@ fn sync_wallet(wallet: &mut Wallet, bitcoind: &impl RpcApi) {
 }
 
 #[tokio::test]
-#[allow(deprecated)]
 async fn is_trusted() {
 	let ctx = TestContext::new("bitcoin_ext/is_trusted").await;
 	let bitcoind = ctx.bitcoind();
 	bitcoind.prepare_funds().await;
 
-	let mut wallet = create_wallet();
+	let (mut wallet, signers) = create_wallet();
 	let addr = wallet.peek_address(KEYCHAIN, 0).address;
 	let client = bitcoind.sync_client();
 
@@ -96,7 +98,7 @@ async fn is_trusted() {
 	let mut b = wallet.build_tx();
 	b.add_recipient(self_addr.script_pubkey(), sat(50_000));
 	let mut psbt = b.finish().unwrap();
-	wallet.sign(&mut psbt, Default::default()).unwrap();
+	wallet.sign_with_signers(&mut psbt, &[&signers], Default::default()).unwrap();
 	let self_tx = psbt.extract_tx().unwrap();
 	let self_txid = self_tx.compute_txid();
 	client.send_raw_transaction(&self_tx).unwrap();
@@ -112,7 +114,7 @@ async fn is_trusted() {
 		let mut b = wallet.build_tx();
 		b.add_recipient(next_addr.script_pubkey(), sat(10_000));
 		let mut psbt = b.finish().unwrap();
-		wallet.sign(&mut psbt, Default::default()).unwrap();
+		wallet.sign_with_signers(&mut psbt, &[&signers], Default::default()).unwrap();
 		let tx = psbt.extract_tx().unwrap();
 		last_txid = tx.compute_txid();
 		client.send_raw_transaction(&tx).unwrap();
@@ -131,7 +133,7 @@ async fn is_trusted() {
 	let parent_tx = build_zero_fee_tx_with_p2a_output(&client);
 
 	let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
-	let child_tx = wallet.make_signed_p2a_cpfp(&parent_tx, fees).unwrap();
+	let child_tx = wallet.make_signed_p2a_cpfp(&parent_tx, fees, &signers).unwrap();
 	let child_txid = child_tx.compute_txid();
 	client.submit_package(&[&parent_tx, &child_tx]).unwrap();
 	sync_wallet(&mut wallet, &client);
@@ -160,13 +162,12 @@ async fn is_trusted() {
 /// the wallet's canonical view, which is what BDK's `list_unspent`
 /// reads from.
 #[tokio::test]
-#[allow(deprecated)]
 async fn balance_perf_deep_unconfirmed_fanout() {
 	let ctx = TestContext::new("bitcoin_ext/balance_perf").await;
 	let bitcoind = ctx.bitcoind();
 	bitcoind.prepare_funds().await;
 
-	let mut wallet = create_wallet();
+	let (mut wallet, signers) = create_wallet();
 	let client = bitcoind.sync_client();
 
 	// One confirmed funding UTXO — the root of trust the recursion
@@ -187,7 +188,7 @@ async fn balance_perf_deep_unconfirmed_fanout() {
 		b.drain_to(next_addr.script_pubkey());
 		b.fee_rate(FeeRate::from_sat_per_vb(2).unwrap());
 		let mut psbt = b.finish().unwrap();
-		wallet.sign(&mut psbt, Default::default()).unwrap();
+		wallet.sign_with_signers(&mut psbt, &[&signers], Default::default()).unwrap();
 		let tx = psbt.extract_tx().unwrap();
 		wallet.apply_unconfirmed_txs([(tx, 0)]);
 	}
@@ -206,7 +207,7 @@ async fn balance_perf_deep_unconfirmed_fanout() {
 	}
 	b.fee_rate(FeeRate::from_sat_per_vb(2).unwrap());
 	let mut psbt = b.finish().unwrap();
-	wallet.sign(&mut psbt, Default::default()).unwrap();
+	wallet.sign_with_signers(&mut psbt, &[&signers], Default::default()).unwrap();
 	let fanout_tx = psbt.extract_tx().unwrap();
 	wallet.apply_unconfirmed_txs([(fanout_tx, 0)]);
 
@@ -227,13 +228,12 @@ async fn balance_perf_deep_unconfirmed_fanout() {
 }
 
 #[tokio::test]
-#[allow(deprecated)]
 async fn deep_reorg_wallet_sync() {
 	let ctx = TestContext::new("bitcoin_ext/deep_reorg").await;
 	let bitcoind = ctx.bitcoind();
 	bitcoind.prepare_funds().await;
 
-	let mut wallet = create_wallet();
+	let (mut wallet, signers) = create_wallet();
 	let client = bitcoind.sync_client();
 
 	// Phase 1: Sync wallet with current chain
@@ -264,7 +264,7 @@ async fn deep_reorg_wallet_sync() {
 	let mut b = wallet.build_tx();
 	b.add_recipient(self_addr.script_pubkey(), sat(50_000));
 	let mut psbt = b.finish().unwrap();
-	wallet.sign(&mut psbt, Default::default()).unwrap();
+	wallet.sign_with_signers(&mut psbt, &[&signers], Default::default()).unwrap();
 	let self_tx = psbt.extract_tx().unwrap();
 	let self_txid = self_tx.compute_txid();
 	client.send_raw_transaction(&self_tx).unwrap();

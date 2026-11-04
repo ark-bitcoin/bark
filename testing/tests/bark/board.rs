@@ -96,7 +96,6 @@ async fn board_all_bark() {
 /// never confirm: the board action must fail the board (vtxo dropped, movement
 /// failed) instead of re-broadcasting and retrying forever.
 #[tokio::test]
-#[allow(deprecated)]
 async fn board_fails_when_funding_tx_double_spent() {
 	require_bark_version!(> "0.5.0");
 
@@ -113,11 +112,9 @@ async fn board_fails_when_funding_tx_double_spent() {
 	onchain.sync(wallet.chain()).await.unwrap();
 	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let conflict_addr = ctx.bitcoind().get_new_address();
-	let mut conflict_psbt = onchain.prepare_drain_tx(conflict_addr, fee_rate).await.unwrap();
+	let conflict_psbt = onchain.prepare_drain_tx(conflict_addr, fee_rate).await.unwrap();
 	// Not onchain.finish_psbt(): that persists the signed tx to the wallet db.
-	#[allow(deprecated)]
-	let opts = bdk_wallet::SignOptions { trust_witness_utxo: true, ..Default::default() };
-	assert!(onchain.inner.sign(&mut conflict_psbt, opts).unwrap(), "conflict psbt must finalize");
+	let conflict_psbt = onchain.sign_psbt(conflict_psbt).await.expect("conflict psbt must finalize");
 	let conflict_tx = conflict_psbt.extract_tx().unwrap();
 	drop(onchain);
 
@@ -625,7 +622,6 @@ async fn board_psbt_unfinalized_fails_when_input_double_spent() {
 /// can only fail: classifying before broadcasting is what turns that into a
 /// teardown rather than an error retried forever.
 #[tokio::test]
-#[allow(deprecated)]
 async fn board_fails_when_input_double_spent_before_broadcast() {
 	require_bark_version!(> "0.6.2");
 
@@ -644,10 +640,8 @@ async fn board_fails_when_input_double_spent_before_broadcast() {
 	// Built before the board and signed in-memory: `finish_psbt` would persist it to
 	// the wallet db, leaving the board below with nothing to spend.
 	let elsewhere = ctx.bitcoind().get_new_address();
-	let mut conflict = onchain.prepare_drain_tx(elsewhere, fee_rate).await.unwrap();
-	#[allow(deprecated)]
-	let opts = bdk_wallet::SignOptions { trust_witness_utxo: true, ..Default::default() };
-	assert!(onchain.inner.sign(&mut conflict, opts).unwrap(), "conflict psbt must finalize");
+	let conflict = onchain.prepare_drain_tx(elsewhere, fee_rate).await.unwrap();
+	let conflict = onchain.sign_psbt(conflict).await.expect("conflict psbt must finalize");
 	let conflict = conflict.extract_tx().unwrap();
 
 	// Finalised, so the funding tx is bark's to broadcast.

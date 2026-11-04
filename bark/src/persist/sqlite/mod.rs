@@ -593,12 +593,10 @@ mod test {
 			.unwrap();
 		db.store_bdk_wallet_changeset(&created.take_staged().unwrap()).await.unwrap();
 
-		#[allow(deprecated)]
 		let loaded = {
 			let changeset = db.initialize_bdk_wallet().await.unwrap();
 			bdk_wallet::Wallet::load()
 				.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
-				.extract_keys()
 				.check_network(network)
 				.load_wallet_no_persist(changeset)
 				.unwrap()

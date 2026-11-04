@@ -9,7 +9,10 @@ use bdk_wallet::coin_selection::{
 	decide_change, CoinSelectionAlgorithm, CoinSelectionResult, DefaultCoinSelectionAlgorithm,
 	Excess, InsufficientFunds,
 };
+use bdk_wallet::descriptor::{DescriptorError, IntoWalletDescriptor};
 use bdk_wallet::error::CreateTxError;
+use bdk_wallet::miniscript::ForEachKey;
+use bdk_wallet::signer::SignersContainer;
 use bitcoin::consensus::encode::{serialize, serialize_hex};
 use bitcoin::{
 	Amount, BlockHash, FeeRate, OutPoint, Script, Transaction, TxOut, Txid, Weight, Witness,
@@ -296,11 +299,43 @@ pub enum CpfpInternalError {
 	Signer(bdk_wallet::signer::SignerError),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum BuildSignersError {
+	#[error("Invalid descriptor: {0}")]
+	Descriptor(DescriptorError),
+	#[error("Descriptor does not match the wallet descriptor")]
+	DescriptorMismatch,
+	#[error("Descriptor does not hold all private keys")]
+	MissingPrivateKeys,
+}
+
 /// An extension trait for [Wallet].
 pub trait WalletExt: BorrowMut<Wallet> {
 	/// Peek into the next address.
 	fn peek_next_address(&self) -> AddressInfo {
 		self.borrow().peek_address(KEYCHAIN, self.borrow().next_derivation_index(KEYCHAIN))
+	}
+
+	/// Build the software signers for this wallet from a descriptor that
+	/// holds the private keys.
+	///
+	/// Fails if the descriptor is not the wallet descriptor, or if a key in
+	/// the descriptor has no private key.
+	fn build_signers(
+		&self,
+		desc: impl IntoWalletDescriptor,
+	) -> Result<SignersContainer, BuildSignersError> {
+		let wallet = self.borrow();
+		let (public_desc, keymap) = desc
+			.into_wallet_descriptor(wallet.secp_ctx(), wallet.network().into())
+			.map_err(BuildSignersError::Descriptor)?;
+		if public_desc != *wallet.public_descriptor(KEYCHAIN) {
+			return Err(BuildSignersError::DescriptorMismatch);
+		}
+		if !public_desc.for_each_key(|pk| keymap.contains_key(pk)) {
+			return Err(BuildSignersError::MissingPrivateKeys);
+		}
+		Ok(SignersContainer::build(keymap, &public_desc, wallet.secp_ctx()))
 	}
 
 	/// Returns an iterator for each unconfirmed transaction in the wallet.
@@ -391,6 +426,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		&mut self,
 		tx: &Transaction,
 		fees: MakeCpfpFees,
+		signers: &SignersContainer,
 	) -> Result<Transaction, CpfpInternalError> {
 		let wallet = self.borrow_mut();
 		let (fee_anchor_point, fee_anchor_txout) = tx.fee_anchor()
@@ -430,8 +466,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 				trust_witness_utxo: true,
 				..Default::default()
 			};
-			#[allow(deprecated)]
-			let finalized = wallet.sign(&mut psbt, opts)
+			let finalized = wallet.sign_with_signers(&mut psbt, &[signers], opts)
 				.map_err(|e| CpfpInternalError::Signer(e))?;
 			if !finalized {
 				return Err(CpfpInternalError::FinalizeError("finalization failed".into()));
@@ -469,8 +504,8 @@ mod test {
 	use bdk_wallet::KeychainKind;
 	use bdk_wallet::chain::BlockId;
 	use bdk_wallet::test_utils::{
-		get_test_wpkh, insert_checkpoint, receive_output, receive_output_in_latest_block,
-		ReceiveTo,
+		get_test_tr_single_sig, get_test_tr_with_taptree, get_test_wpkh, insert_checkpoint,
+		receive_output, receive_output_in_latest_block, ReceiveTo,
 	};
 	use bitcoin::Network;
 	use bitcoin::hashes::Hash;
@@ -627,6 +662,44 @@ mod test {
 			assert!(inputs.contains(op), "every confirmed UTXO must be spent");
 		}
 		assert!(inputs.contains(&unconfirmed), "unconfirmed UTXO must be pulled in");
+	}
+
+	#[test]
+	fn build_signers_from_wallet_descriptor() {
+		let (wallet, _) = two_utxo_wallet();
+		let signers = wallet.build_signers(get_test_wpkh()).unwrap();
+		assert_eq!(signers.signers().len(), 1);
+	}
+
+	#[test]
+	fn build_signers_rejects_public_descriptor() {
+		let (wallet, _) = two_utxo_wallet();
+		let public = wallet.public_descriptor(KEYCHAIN).clone();
+		match wallet.build_signers(public) {
+			Err(BuildSignersError::MissingPrivateKeys) => {},
+			other => panic!("expected MissingPrivateKeys, got {:?}", other),
+		}
+	}
+
+	#[test]
+	fn build_signers_rejects_partly_public_descriptor() {
+		let wallet = Wallet::create_single(get_test_tr_with_taptree())
+			.network(Network::Regtest)
+			.create_wallet_no_persist()
+			.unwrap();
+		match wallet.build_signers(get_test_tr_with_taptree()) {
+			Err(BuildSignersError::MissingPrivateKeys) => {},
+			other => panic!("expected MissingPrivateKeys, got {:?}", other),
+		}
+	}
+
+	#[test]
+	fn build_signers_rejects_other_descriptor() {
+		let (wallet, _) = two_utxo_wallet();
+		match wallet.build_signers(get_test_tr_single_sig()) {
+			Err(BuildSignersError::DescriptorMismatch) => {},
+			other => panic!("expected DescriptorMismatch, got {:?}", other),
+		}
 	}
 }
 
