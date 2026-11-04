@@ -457,13 +457,9 @@ impl<'t> Tx<'t> {
 		let payment_hash = invoice.payment_hash();
 		let mailbox_str = receiver_mailbox_id.map(|id| id.to_string());
 
-		// The hash can settle while the invoice is generated. Serialize with
-		// `store_htlc_settlement` so no receive opens for a known preimage.
-		self.execute(
-			&format!("SELECT pg_advisory_xact_lock({})",
-				super::AdvisoryLock::HtlcSettlementWrite as i64,
-			), &[],
-		).await?;
+		// The hash can settle while the invoice is generated. The gate
+		// serializes with `store_htlc_settlement`, so no receive opens for a
+		// known preimage.
 		self.ensure_not_settled(PaymentHash::from(*payment_hash)).await?;
 
 		self.inner_store_lightning_htlc_subscription(
@@ -1017,11 +1013,16 @@ impl<'t> Tx<'t> {
 	///
 	/// Call this INSIDE the write transaction that releases the funds so a
 	/// settlement racing between an earlier read-check and the write cannot
-	/// slip through.
+	/// slip through. It takes the `HtlcSettlementWrite` advisory lock.
 	pub async fn ensure_not_settled(
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<()> {
+		self.execute(
+			&format!("SELECT pg_advisory_xact_lock({})",
+				super::AdvisoryLock::HtlcSettlementWrite as i64,
+			), &[],
+		).await?;
 		if self.get_htlc_settlement_by_payment_hash(payment_hash).await?.is_some() {
 			return badarg!("invoice has already been paid");
 		}
