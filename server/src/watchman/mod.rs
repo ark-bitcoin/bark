@@ -14,7 +14,7 @@ mod signer;
 
 pub use self::config::Config;
 pub use self::daemon::Daemon;
-pub use self::frontier::VtxoExitFrontier;
+pub use self::frontier::{Frontier, FrontierChainListener};
 pub use self::signer::WatchmanSigner;
 
 /// Control messages that can be sent to a running [Watchman].
@@ -86,7 +86,7 @@ use anyhow::Context;
 use bitcoin::{Address, Amount, FeeRate, Transaction, TxIn, TxOut, Sequence, ScriptBuf, Weight, Witness, sighash};
 use bitcoin::Txid;
 use tokio::sync::watch;
-use tracing::{error, info, trace, warn};
+use tracing::{info, trace, warn};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId};
 use ark::vtxo::policy::signing::VtxoSigner;
@@ -190,9 +190,8 @@ pub struct Watchman {
 	drain_spk: ScriptBuf,
 	/// Wallet used to pay fees for progress transactions.
 	watchman_wallet: InstrumentedLock<PersistedWallet>,
-	/// The set of VTXOs the watchman is responsible for monitoring and claiming.
-	/// Shared with SyncManager for chain event handling.
-	frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
+	/// Shared with the SyncManager, which feeds it chain events.
+	frontier: FrontierChainListener,
 	/// The latest chain tip from the sync manager
 	sync_height: watch::Receiver<BlockRef>,
 	/// Cache of transactions spending frontier vtxos, keyed by vtxo id.
@@ -211,7 +210,7 @@ impl Watchman {
 		fee_estimator: Arc<FeeEstimator>,
 		drain_address: Address,
 		wallet: InstrumentedLock<PersistedWallet>,
-		frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
+		frontier: FrontierChainListener,
 		sync_height: watch::Receiver<BlockRef>,
 	) -> Self {
 		Self {
@@ -310,7 +309,7 @@ impl Watchman {
 	async fn sync_unfrontiered_funding(
 		&self,
 		tx: &Tx<'_>,
-		frontier: &mut VtxoExitFrontier,
+		frontier: &mut Frontier,
 	) -> anyhow::Result<(usize, usize)> {
 		let txids = tx.get_unfrontiered_funding_txids().await?;
 
@@ -344,7 +343,7 @@ impl Watchman {
 					tx.add_vtxo_to_frontier(vtxo.id()).await?;
 					continue;
 				}
-				if frontier.register_in_tx(tx, vtxo, confirmed_height).await? {
+				if self.frontier.register_in_tx(tx, frontier, vtxo, confirmed_height).await? {
 					nb_registered += 1;
 				}
 			}
@@ -373,26 +372,16 @@ impl Watchman {
 	/// reindex is applied or none of it.
 	///
 	/// This runs from the watchman control loop, so it never runs
-	/// concurrently with claim or sweep processing. The frontier write lock
-	/// is held for the entire verification pass, so the sync manager cannot
+	/// concurrently with claim or sweep processing. The frontier lock is
+	/// held for the entire verification pass, so the sync manager cannot
 	/// advance the frontier underneath it; it catches up afterwards.
 	async fn reindex_frontier(&self) -> anyhow::Result<ReindexStats> {
-		let mut frontier = self.frontier.write().await;
+		let _guard = self.frontier.lock().await;
 
-		let res = self.db.write(async |t| {
+		let (stats, newly_confirmed) = self.db.write(async |t| {
+			let mut frontier = t.get_frontier().await?;
 			self.reindex_frontier_in_tx(t, &mut frontier).await
-		}).await;
-		let (stats, newly_confirmed) = match res {
-			Ok(ret) => ret,
-			Err(e) => {
-				// The in-memory frontier changed along with the db tx,
-				// which is rolled back now, so load it back from the db.
-				if let Err(e) = frontier.reload().await {
-					error!("Failed to reload frontier after failed reindex: {:#}", e);
-				}
-				return Err(e);
-			},
-		};
+		}).await?;
 
 		// Now that the repairs are committed, fire the telemetry for the
 		// first on-chain sightings of frontier VTXOs' funding txs:
@@ -428,7 +417,7 @@ impl Watchman {
 	async fn reindex_frontier_in_tx(
 		&self,
 		tx: &Tx<'_>,
-		frontier: &mut VtxoExitFrontier,
+		frontier: &mut Frontier,
 	) -> anyhow::Result<(ReindexStats, Vec<Amount>)> {
 		let mut stats = ReindexStats::default();
 		let mut newly_confirmed = Vec::new();
@@ -448,9 +437,8 @@ impl Watchman {
 		// virtual txid, contains set of VTXO id, VTXO confirmation height
 		// and VTXO amount.
 		let mut by_txid = BTreeMap::<Txid, Vec<(VtxoId, Option<BlockHeight>, Amount)>>::new();
-		for (vtxo, height) in frontier.iter() {
-			let id = vtxo.id();
-			by_txid.entry(id.to_point().txid).or_default().push((id, height, vtxo.amount()));
+		for (id, (height, vtxo)) in frontier.iter() {
+			by_txid.entry(id.to_point().txid).or_default().push((*id, *height, vtxo.amount()));
 		}
 		let mut groups = by_txid.into_iter().collect::<VecDeque<_>>();
 
@@ -469,14 +457,14 @@ impl Watchman {
 					// height as a confirmed exit and would pick actions the
 					// chain can't take yet, so clear it. The regular sync
 					// sets it again when the tx confirms.
-					for (id, height) in frontier.clear_confirmed_txid_in_tx(tx, virtual_txid).await? {
+					for (id, height) in self.frontier.clear_confirmed_txid_in_tx(tx, frontier, virtual_txid).await? {
 						stats.confirmations_cleared += 1;
 						slog!(FrontierClearedConfirmation, vtxo_id: id, height);
 					}
 					// The VTXOs this tx spends are unspent again. Queue them
 					// so their own tx gets verified too, recursively.
 					for (id, height, amount, spent_height) in
-						frontier.restore_spent_in_tx(tx, virtual_txid).await?
+						self.frontier.restore_spent_in_tx(tx, frontier, virtual_txid).await?
 					{
 						stats.spends_cleared += 1;
 						slog!(FrontierClearedSpend, vtxo_id: id,
@@ -496,7 +484,7 @@ impl Watchman {
 
 			for (id, height, amount) in group {
 				if in_block_table && height != Some(block.height) {
-					if frontier.set_confirmed_in_tx(tx, id, block.height).await? {
+					if self.frontier.set_confirmed_in_tx(tx, frontier, id, block.height).await? {
 						stats.confirmations_repaired += 1;
 						if height.is_none() {
 							newly_confirmed.push(amount);
@@ -539,7 +527,7 @@ impl Watchman {
 					for input in &btx.input {
 						let id = VtxoId::from(input.previous_output);
 						if wanted.remove(&id) {
-							if frontier.spend_in_tx(tx, id, height, txid, &input.witness).await? {
+							if self.frontier.spend_in_tx(tx, frontier, id, height, txid, &input.witness).await? {
 								stats.spends_repaired += 1;
 								slog!(FrontierRepairedSpend, vtxo_id: id,
 									spending_txid: txid, height,
@@ -564,7 +552,7 @@ impl Watchman {
 								} else {
 									// unspent, let's add it as this one got lost
 									let child_id = vtxo.id();
-									if frontier.register_in_tx(tx, vtxo, Some(height)).await? {
+									if self.frontier.register_in_tx(tx, frontier, vtxo, Some(height)).await? {
 										stats.vtxos_added += 1;
 										slog!(FrontierRepairedVtxo, vtxo_id: child_id, height);
 									}
@@ -598,8 +586,8 @@ impl Watchman {
 	/// This determines the action for every VTXO in the frontier, reports the
 	/// frontier telemetry and drops cached mempool spends for VTXOs that no
 	/// longer need any action.
-	async fn scan_frontier(&self) -> FrontierWork {
-		let frontier = self.frontier.read().await;
+	async fn scan_frontier(&self) -> anyhow::Result<FrontierWork> {
+		let frontier = self.db.read(async |t| t.get_frontier().await).await?;
 
 		let mut claims = Vec::new();
 		let mut progress = Vec::new();
@@ -612,23 +600,22 @@ impl Watchman {
 			bitcoind: &self.bitcoind,
 			chain_tip_height: self.sync_height().height,
 		};
-		for (vtxo, confirmed_at) in frontier.iter() {
-			match ctx.get_action(vtxo, confirmed_at).await {
+		for (confirmed_at, vtxo) in frontier.into_values() {
+			match ctx.get_action(&vtxo, confirmed_at).await {
 				Action::Wait => {
 					wait_volume += vtxo.amount();
 				},
 				Action::Progress { txid, deadline } => {
-					progress.push((deadline, txid, vtxo.clone()));
+					progress.push((deadline, txid, vtxo));
 				},
 				Action::Claim { deadline } => {
-					claims.push((deadline, vtxo.clone()));
+					claims.push((deadline, vtxo));
 				},
 				Action::Sweep => {
-					sweeps.push(vtxo.clone());
+					sweeps.push(vtxo);
 				},
 			}
 		}
-		drop(frontier); // Release read lock before processing
 
 		let claim_volume = claims.iter().map(|(_, v)| v.amount()).sum::<Amount>();
 		let progress_volume = progress.iter().map(|(_, _, v)| v.amount()).sum::<Amount>();
@@ -652,7 +639,7 @@ impl Watchman {
 
 		self.clean_mempool_spends(work.actionable_vtxos().map(|v| v.id()));
 
-		work
+		Ok(work)
 	}
 
 	/// React to on-chain exit activity: progress exit chains and claim VTXOs
@@ -661,7 +648,7 @@ impl Watchman {
 	/// This is the time-critical half of the watchman's work and runs on the
 	/// short [Config::reaction_interval].
 	pub async fn process_reactions(&self) -> anyhow::Result<()> {
-		let work = self.scan_frontier().await;
+		let work = self.scan_frontier().await?;
 
 		let vtxos = work.claims.iter().chain(work.progress.iter().map(|(_, v)| v));
 		for vtxo in vtxos {
@@ -683,7 +670,7 @@ impl Watchman {
 	/// Sweeps have no deadline, so this runs on the much longer
 	/// [Config::sweep_interval].
 	pub async fn process_sweeps(&self) -> anyhow::Result<()> {
-		let work = self.scan_frontier().await;
+		let work = self.scan_frontier().await?;
 
 		for vtxo in &work.sweeps {
 			self.update_mempool_spend(vtxo.id()).await;

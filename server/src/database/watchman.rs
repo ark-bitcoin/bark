@@ -178,30 +178,6 @@ impl<'t> Tx<'t> {
 		Ok(frontier)
 	}
 
-	/// Get frontier vtxos that joined the frontier after `since`, used for the
-	/// periodic in-memory sync. Returns unspent entries so the caller can
-	/// register any that are not yet in the in-memory frontier.
-	pub async fn get_frontier_vtxos_since(
-		&self,
-		since: chrono::DateTime<chrono::Utc>,
-	) -> anyhow::Result<Vec<(ServerVtxo, Option<BlockHeight>)>> {
-		let stmt = self.prepare_typed("
-			SELECT confirmed_height, vtxo FROM vtxo
-			WHERE frontier_at > $1 AND onchain_spent_height IS NULL
-		", &[Type::TIMESTAMPTZ]).await?;
-
-		let rows = self.query(&stmt, &[&since]).await?;
-
-		rows.iter().map(|row| {
-			let confirmed_height: Option<i32> = row.get("confirmed_height");
-			let confirmed_height = confirmed_height.map(|h| {
-				BlockHeight::try_from(h).expect("invalid block height in db")
-			});
-			let vtxo = ServerVtxo::deserialize(row.get("vtxo"))?;
-			Ok((vtxo, confirmed_height))
-		}).collect()
-	}
-
 	/// Get all vtxos that originate from a specific transaction, each with
 	/// its recorded on-chain spend height and spending txid, if any.
 	///

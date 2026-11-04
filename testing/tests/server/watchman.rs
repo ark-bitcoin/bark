@@ -424,7 +424,7 @@ async fn watchman_reindexes_frontier() {
 		).await?;
 		Ok(row.get::<_, String>(0))
 	}).await.unwrap();
-	// bark2's unspent board vtxo, corrupted later while the watchman runs.
+	// bark2's unspent board vtxo: drop it from the frontier.
 	let board_id = db.read(async |t| {
 		let row = t.query_one(
 			"SELECT v.vtxo_id FROM vtxo v \
@@ -468,6 +468,10 @@ async fn watchman_reindexes_frontier() {
 			onchain_spent_txid = NULL, updated_at = NOW() WHERE vtxo_id = $1",
 			&[&board1_id],
 		).await?;
+		t.execute(
+			"UPDATE vtxo SET frontier_at = NULL, updated_at = NOW() WHERE vtxo_id = $1",
+			&[&board_id],
+		).await?;
 		Ok(())
 	}).await.unwrap();
 
@@ -479,17 +483,6 @@ async fn watchman_reindexes_frontier() {
 	generate_empty_blocks(&wm_bitcoind, 1);
 	wm.wait_for_sync_height(tip + 1).await;
 
-	// While the watchman runs, drop bark2's board vtxo from the DB frontier:
-	// the in-memory entry survives, so only the db row needs repair by the
-	// unfrontiered-funding pass of the reindex.
-	db.write(async |t| {
-		t.execute(
-			"UPDATE vtxo SET frontier_at = NULL, updated_at = NOW() WHERE vtxo_id = $1",
-			&[&board_id],
-		).await?;
-		Ok(())
-	}).await.unwrap();
-
 	let stats = wm.reindex_frontier().await;
 	println!("Reindex stats: {:#?}", stats);
 	assert_eq!(1, stats.confirmations_repaired, "payment checkpoint confirmation");
@@ -498,9 +491,7 @@ async fn watchman_reindexes_frontier() {
 	assert_eq!(3, stats.spends_repaired, "board, checkpoint and change spends");
 	assert_eq!(1, stats.vtxos_added, "change vtxo re-added as checkpoint spend child");
 	assert_eq!(2, stats.funding_txs_added, "both board funding txs");
-	// bark1's board vtxo was gone from memory too; bark2's board entry was
-	// still in memory, only its db row is repaired
-	assert_eq!(1, stats.funding_vtxos_added);
+	assert_eq!(2, stats.funding_vtxos_added, "bark1's and bark2's board vtxos");
 	assert_eq!(0, stats.unresolved_spends);
 	assert!(stats.entries_checked > 0);
 	assert!(stats.blocks_scanned > 0);
