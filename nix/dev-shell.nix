@@ -102,6 +102,9 @@ let
 		postPatch = (old.postPatch or "") + ''
 			chmod +x devtools/blockreplace.py
 			patchShebangs devtools/blockreplace.py
+			# The v26.06.10 release zip has timestamps in the future, which
+			# makes make rerun ./configure forever.
+			find . -exec touch -h -d @1 {} +
 		'';
 		preInstall = ''
 			mkdir -p $out/libexec/c-lightning/plugins/
