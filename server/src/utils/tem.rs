@@ -9,21 +9,17 @@
 //!
 #![allow(unused)]
 
-use std::{fmt, iter, mem};
+use std::{fmt, iter, vec};
 use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::time::{Duration, Instant};
 
-use indexmap::IndexMap;
-
 
 /// A map structure that tracks the time entries were inserted
-///
-/// The remove operation is quite costly, so could potentially be avoided,
-/// in favor of letting elements expire naturally.
 #[derive(Default)]
 pub struct TimedEntryMap<K, V> {
-	inner: IndexMap<K, (V, Instant)>,
+	inner: HashMap<K, (V, Instant)>,
 }
 
 impl<K, V> TimedEntryMap<K, V>
@@ -33,14 +29,14 @@ where
 	/// Construct a new empty [TimedEntryMap]
 	pub fn new() -> Self {
 		Self {
-			inner: IndexMap::new(),
+			inner: HashMap::new(),
 		}
 	}
 
 	/// Construct a new [TimedEntryMap] with given capacity
 	pub fn with_capacity(capacity: usize) -> Self {
 		Self {
-			inner: IndexMap::with_capacity(capacity),
+			inner: HashMap::with_capacity(capacity),
 		}
 	}
 
@@ -73,20 +69,18 @@ where
 	}
 
 	/// Remove an entry
-	///
-	/// This operation is quite costly in memory operations.
 	pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
 	where
 		K: Borrow<Q>,
 		Q: Hash + Eq + ?Sized,
 	{
-		self.inner.shift_remove(key).map(|(v, _t)| v)
+		self.inner.remove(key).map(|(v, _t)| v)
 	}
 
 	/// Iterator over the values
 	pub fn values(
 		&self,
-	) -> impl Iterator<Item = &V> + ExactSizeIterator + DoubleEndedIterator + Clone {
+	) -> impl Iterator<Item = &V> + ExactSizeIterator + Clone {
 		self.inner.values().map(|(v, _t)| v)
 	}
 
@@ -95,16 +89,9 @@ where
 	/// Returns an iterator over the removed items. The items will be removed
 	/// immediatelly, even if the iterator is dropped.
 	pub fn remove_before(&mut self, before: Instant) -> RemoveBefore<K, V> {
-		let split_idx = match self.inner.binary_search_by(|_k, (_v, t)| t.cmp(&before)) {
-			Ok(exact_idx) => exact_idx,
-			Err(next_idx) => next_idx,
-		};
-		let mut split = self.inner.split_off(split_idx);
-		// we actually want the other half
-		mem::swap(&mut self.inner, &mut split);
-
+		let removed = self.inner.extract_if(|_k, (_v, t)| *t < before).collect::<Vec<_>>();
 		RemoveBefore {
-			iter: split.into_iter(),
+			iter: removed.into_iter(),
 		}
 	}
 
@@ -128,7 +115,7 @@ where
 {
 	/// Insert a new [`Option::Some`] entry
 	pub fn insert_some(&mut self, key: K, value: V) -> Option<V> {
-		self.inner.insert(key, (Some(value), Instant::now())).map(|(mut v, _t)| v.take()).flatten()
+		self.insert(key, Some(value)).flatten()
 	}
 
 	/// Lookup an element for the given key, and return the result of [Option::take]
@@ -161,7 +148,7 @@ impl<K: fmt::Debug, V: fmt::Debug> fmt::Debug for TimedEntryMap<K, V> {
 
 /// Iterator returned by [TimedEntryMap::remove_before]
 pub struct RemoveBefore<K, V> {
-	iter: indexmap::map::IntoIter<K, (V, Instant)>,
+	iter: vec::IntoIter<(K, (V, Instant))>,
 }
 
 impl<K, V> Iterator for RemoveBefore<K, V> {
@@ -179,12 +166,6 @@ impl<K, V> Iterator for RemoveBefore<K, V> {
 impl<K, V> ExactSizeIterator for RemoveBefore<K, V> {
 	fn len(&self) -> usize {
 	    self.iter.len()
-	}
-}
-
-impl<K, V> DoubleEndedIterator for RemoveBefore<K, V> {
-	fn next_back(&mut self) -> Option<Self::Item> {
-	    self.iter.next_back().map(|(k, (v, _))| (k, v))
 	}
 }
 
@@ -211,12 +192,33 @@ mod test {
 		map.insert(3, 33);
 		map.insert(4, 44);
 
-		let mut r = map.remove_before(t);
-		assert_eq!(r.next(), Some((1, 11)));
-		assert_eq!(r.next(), Some((2, 22)));
+		let mut removed = map.remove_before(t).collect::<Vec<_>>();
+		removed.sort();
+		assert_eq!(removed, vec![(1, 11), (2, 22)]);
 
 		assert_eq!(map.len(), 2);
 		assert_eq!(map.get(&3), Some(&33));
 		assert_eq!(map.get(&4), Some(&44));
+	}
+
+	#[test]
+	fn reinserted_key_does_not_break_expiry_order() {
+		let now = Instant::now();
+		let old = now - Duration::from_secs(2);
+		let before = now - Duration::from_secs(1);
+		let mut map = TimedEntryMap::<usize, usize>::new();
+
+		map.inner.insert(1, (11, old));
+		map.inner.insert(2, (22, old));
+		map.inner.insert(3, (33, old));
+
+		// refreshing a key moves it behind the older entries
+		map.insert(2, 222);
+
+		let mut removed = map.remove_before(before).collect::<Vec<_>>();
+		removed.sort();
+		assert_eq!(removed, vec![(1, 11), (3, 33)]);
+		assert_eq!(map.len(), 1);
+		assert_eq!(map.get(&2), Some(&222));
 	}
 }

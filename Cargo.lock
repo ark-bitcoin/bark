@@ -613,7 +613,6 @@ dependencies = [
  "http-body",
  "humantime",
  "hyper",
- "indexmap 2.14.0",
  "ipnet",
  "json-subscriber",
  "lazy_static",
