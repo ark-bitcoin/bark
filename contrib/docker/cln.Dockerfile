@@ -1,4 +1,4 @@
-FROM docker.io/elementsproject/lightningd:v26.06.7
+FROM docker.io/elementsproject/lightningd:v26.06.10
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	build-essential \
@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV RUST_BACKTRACE=1 \
 	RUSTUP_TOOLCHAIN_VERSION=1.90 \
-	CLN_VERSION=26.06.7 \
+	CLN_VERSION=26.06.10 \
+	HOLD_PLUGIN_REVISION=efc7d5f50470ed9d87b2b3b9c99c049da72de91a \
 	PATH=/root/.cargo/bin:${PATH}
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
@@ -27,6 +28,7 @@ RUN echo "Installing Rust toolchains version ${RUSTUP_TOOLCHAIN_VERSION}..." && 
 RUN echo "Installing c-lightning hold invoice plugin in /hold/" && \
 	git clone https://gitlab.com/ark-bitcoin/hold.git && \
 	cd hold && \
+	git checkout ${HOLD_PLUGIN_REVISION} && \
 	cargo build && \
 	chown root:root /hold/target/debug/hold && \
 	chmod a+x /hold/target/debug/hold

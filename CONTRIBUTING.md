@@ -60,7 +60,7 @@ $ rustup toolchain install 1.82
 If you're using the Nix flake then [just](https://github.com/casey/just?tab=readme-ov-file#cross-platform)
 will come preinstalled. If you aren't using Nix then you must manually install `just` and ensure
 that you have [bitcoind](https://bitcoincore.org/en/download/) and [clightning](https://github.com/ElementsProject/lightning)
-with the [hold plugin](https://github.com/BoltzExchange/hold)
+with the [hold plugin](https://gitlab.com/ark-bitcoin/hold)
 in your `PATH` variable, alternatively you can set the following environmental variables:
 - `BITCOIND_EXEC`: e.g. `export BITCOIND_EXEC="${PATH_TO_BITCOIND}/bin/bitcoind"`
 - `LIGHTNINGD_EXEC`: e.g. `export LIGHTNINGD_EXEC="${PATH_TO_LIGHTNINGD}/bin/lightningd"`
@@ -115,7 +115,7 @@ $ just test
 On macOS we use [Docker](https://www.docker.com/) for running Core Lightning. If Docker is not
 installed then the lightning tests will fail. If you are not using the Nix Flake then you must set
 environmental variable for the Docker image to pull:
-- `LIGHTNINGD_DOCKER_IMAGE`: e.g. `export LIGHTNINGD_DOCKER_IMAGE="second/cln-hold:v25.02.2"`
+- `LIGHTNINGD_DOCKER_IMAGE`: e.g. `export LIGHTNINGD_DOCKER_IMAGE="docker.io/secondark/cln-hold:v26.06.10-efc7d5f"`
 
 Please also make sure "Host networking" feature is enabled, so that Docker-based lightning node
 can connect to a bitcoind outside the container. To do so, please refer to

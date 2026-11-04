@@ -1,6 +1,6 @@
 [package]
 name = "bark-cln-rpc"
-version = "0.7.1+cln.26.06.7-hold"
+version = "0.8.0+cln.26.06.10-hold.efc7d5f"
 license = "MIT"
 authors = [ "Team Second <hello@second.tech>" ]
 repository = "https://gitlab.com/ark-bitcoin/bark"
@@ -18,4 +18,4 @@ prost.workspace = true
 tonic-prost.workspace = true
 
 [build-dependencies]
-tonic-prost-build.workspace= true
+tonic-prost-build.workspace = true
