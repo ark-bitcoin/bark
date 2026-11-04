@@ -544,9 +544,10 @@ impl Server {
 			// Re-check the settlement inside the write tx: the early gate and
 			// the eligibility read above both run in their own (read)
 			// transactions, so a payment can settle between them and this write.
-			// `ensure_not_settled` commits the check atomically with the
-			// vtxo-tree update below, so a settled payment can no longer be
-			// refunded (which would double-pay the sender).
+			// `ensure_not_settled` locks out the settlement write and commits
+			// the check atomically with the vtxo-tree update below, so a
+			// settled payment can no longer be refunded (which would
+			// double-pay the sender).
 			t.ensure_not_settled(payment_hash).await?;
 
 			// For an intra-Ark payment the payee shares this payment hash via a
