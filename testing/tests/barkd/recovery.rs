@@ -81,7 +81,8 @@ async fn recovered_wallet_keeps_spent_round_vtxo_spent() {
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
 	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).expose_mnemonic().create().await;
-	tokio::join!(barkd.refresh_all(), srv.trigger_round());
+	barkd.refresh_all().await;
+	srv.trigger_round().await;
 	wait_for_rounds_complete(&ctx, &barkd).await;
 
 	let after_refresh = barkd.vtxos(None).await;
@@ -276,8 +277,9 @@ async fn recovered_wallet_finds_round_vtxo() {
 	let board_id = board[0].vtxo.id;
 
 	// Refresh it into a round and confirm the round. The default round interval
-	// is long, so the round needs an explicit trigger alongside the refresh.
-	tokio::join!(barkd.refresh_all(), srv.trigger_round());
+	// is long, so the round needs an explicit trigger after the refresh.
+	barkd.refresh_all().await;
+	srv.trigger_round().await;
 	wait_for_rounds_complete(&ctx, &barkd).await;
 
 	let after_refresh = barkd.vtxos(None).await;
@@ -724,10 +726,8 @@ async fn recovered_wallet_finds_mixed_origin_vtxos() {
 	let second_board = barkd.vtxos(None).await
 		.into_iter().find(|v| v.vtxo.id != board_id && v.state == VtxoStateInfo::Spendable)
 		.expect("second board VTXO").vtxo.id;
-	tokio::join!(
-		barkd.refresh_vtxos(vec![second_board.to_string()]),
-		srv.trigger_round(),
-	);
+	barkd.refresh_vtxos(vec![second_board.to_string()]).await;
+	srv.trigger_round().await;
 	wait_for_rounds_complete(&ctx, &barkd).await;
 
 	// Receive an arkoor payment from another wallet.
