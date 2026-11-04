@@ -42,12 +42,13 @@ impl PaymentGuards {
 		let mut waiting = Waiting {
 			locks: &self.locks,
 			payment_hash,
-			semaphore: self.locks.semaphore(payment_hash),
+			semaphore: Some(self.locks.semaphore(payment_hash)),
 			acquired: false,
 		};
 
 		// The semaphore is never closed.
-		let permit = waiting.semaphore.acquire().await
+		let permit = waiting.semaphore.as_ref().expect("a waiting caller has the lock")
+			.acquire().await
 			.expect("the semaphore is never closed");
 
 		// The permit is returned by hand in `PaymentGuard::drop`. This is what
@@ -58,7 +59,7 @@ impl PaymentGuards {
 		PaymentGuard {
 			locks: self.locks.clone(),
 			payment_hash,
-			semaphore: waiting.semaphore.clone(),
+			semaphore: waiting.semaphore.take(),
 		}
 	}
 
@@ -112,10 +113,13 @@ impl Locks {
 	/// The map is locked for the whole check. A new caller can only reach the
 	/// lock through [`Locks::semaphore`], which needs the same map lock, so the
 	/// count cannot grow while it is read.
-	fn remove_if_last(&self, payment_hash: PaymentHash, semaphore: &Arc<Semaphore>) {
+	///
+	/// The caller's reference is dropped before the map is unlocked. Otherwise
+	/// two callers that leave at once could each count the other and both keep
+	/// the payment hash.
+	fn remove_if_last(&self, payment_hash: PaymentHash, semaphore: Arc<Semaphore>) {
 		let mut map = self.map.lock();
-		// The single holder of the Arc is this task.
-		if Arc::strong_count(semaphore) == 1 {
+		if Arc::into_inner(semaphore).is_some() {
 			map.remove(&payment_hash);
 		}
 	}
@@ -128,7 +132,13 @@ impl Locks {
 struct Waiting<'a> {
 	locks: &'a Locks,
 	payment_hash: PaymentHash,
-	semaphore: Arc<Semaphore>,
+	/// This is set to `Some(semaphore)` until the lock is granted and the
+	/// semaphore moves to the [`PaymentGuard`].
+	///
+	/// However, the `Drop` trait requires us to implement `fn drop(&mut self)`
+	/// and we need access to an owned `Arc<Semaphore>`. An `Option` allows us to
+	/// `take` the semaphore.
+	semaphore: Option<Arc<Semaphore>>,
 	/// True after the lock is granted. From that moment the guard is the caller
 	/// that removes the payment hash.
 	acquired: bool,
@@ -137,7 +147,8 @@ struct Waiting<'a> {
 impl Drop for Waiting<'_> {
 	fn drop(&mut self) {
 		if !self.acquired {
-			self.locks.remove_if_last(self.payment_hash, &self.semaphore);
+			let semaphore = self.semaphore.take().expect("a waiting caller has the lock");
+			self.locks.remove_if_last(self.payment_hash, semaphore);
 		}
 	}
 }
@@ -148,7 +159,12 @@ impl Drop for Waiting<'_> {
 pub struct PaymentGuard {
 	locks: Arc<Locks>,
 	payment_hash: PaymentHash,
-	semaphore: Arc<Semaphore>,
+	/// This is always set to `Some(semaphore)`.
+	///
+	/// However, the `Drop` trait requires us to implement `fn drop(&mut self)`
+	/// and we need access to an owned `Arc<Semaphore>`. An `Option` allows us to
+	/// `take` the semaphore.
+	semaphore: Option<Arc<Semaphore>>,
 }
 
 impl PaymentGuard {
@@ -163,8 +179,9 @@ impl Drop for PaymentGuard {
 		// This gives the lock to the caller that waits the longest, if there is
 		// one. That caller holds a strong reference, which is what keeps the
 		// payment hash in the map.
-		self.semaphore.add_permits(1);
-		self.locks.remove_if_last(self.payment_hash, &self.semaphore);
+		let semaphore = self.semaphore.take().expect("a guard has the lock");
+		semaphore.add_permits(1);
+		self.locks.remove_if_last(self.payment_hash, semaphore);
 	}
 }
 
@@ -172,6 +189,8 @@ impl Drop for PaymentGuard {
 mod tests {
 	use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 	use std::time::Duration;
+
+	use futures::FutureExt;
 
 	use super::*;
 
@@ -348,6 +367,25 @@ mod tests {
 
 		drop(giving_up);
 		assert_eq!(guards.tracked(), 0, "no lock remains");
+	}
+
+	/// A guard that is dropped while the last waiter gives up must not leave the
+	/// payment hash behind.
+	#[test]
+	fn a_guard_and_a_waiter_that_leave_at_once_free_the_lock() {
+		let guards = PaymentGuards::new();
+		for _ in 0..1_000 {
+			let held = futures::executor::block_on(guards.lock(hash(1)));
+			let mut waiting = Box::pin(guards.lock(hash(1)));
+			assert!((&mut waiting).now_or_never().is_none(), "the lock is held");
+
+			let barrier = std::sync::Barrier::new(2);
+			std::thread::scope(|s| {
+				s.spawn(|| { barrier.wait(); drop(held); });
+				s.spawn(|| { barrier.wait(); drop(waiting); });
+			});
+			assert_eq!(guards.tracked(), 0, "no lock remains");
+		}
 	}
 
 	/// A task can hold the guard across an await point.
