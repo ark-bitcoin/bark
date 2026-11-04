@@ -1697,6 +1697,19 @@ async fn start_keyless_receive(srv: &Captaind, amount: Amount) -> KeylessReceive
 	KeylessReceive { invoice, payment_hash }
 }
 
+/// The latest HTLC recv expiry the server accepts for an accepted receive.
+///
+/// It depends on the chain height when the HTLC arrived, so tests can't
+/// hardcode it.
+async fn max_htlc_recv_expiry(srv: &Captaind, payment_hash: PaymentHash) -> u32 {
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let sub = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
+		.await.unwrap().expect("subscription exists");
+	sub.lowest_incoming_htlc_expiry.expect("accepted")
+		.saturating_sub(srv.config().htlc_expiry_delta)
+		.into()
+}
+
 async fn server_returned_htlc_recv_vtxos_identical(
 	ctx: &TestContext,
 	_lightning: &LightningPaymentSetup,
@@ -1724,12 +1737,13 @@ async fn server_returned_htlc_recv_vtxos_identical(
 				hash: receive.payment_hash.to_vec(),
 				wait: true,
 			}).wait_millis(10_000).await.unwrap().into_inner();
+			let htlc_recv_expiry = max_htlc_recv_expiry(srv, receive.payment_hash).await;
 
 			let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 			let req_1 = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
 				user_pubkey: keypair.public_key().serialize().to_vec(),
-				htlc_recv_expiry: 172,
+				htlc_recv_expiry,
 				lightning_receive_anti_dos: None,
 				claim_attestation: None,
 			};
@@ -1749,7 +1763,7 @@ async fn server_returned_htlc_recv_vtxos_identical(
 			let req_2 = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
 				user_pubkey: keypair.public_key().serialize().to_vec(),
-				htlc_recv_expiry: 172,
+				htlc_recv_expiry,
 				lightning_receive_anti_dos: None,
 				claim_attestation: None,
 			};
@@ -1803,6 +1817,7 @@ async fn server_concurrent_prepare_lightning_claim(
 			).wait_millis(10_000).await.unwrap();
 		} => {},
 	}
+	let htlc_recv_expiry = max_htlc_recv_expiry(srv, receive.payment_hash).await;
 
 	// Fire all requests at once, each over its own connection. Every call
 	// uses a fresh user pubkey, so nothing but the server's own bookkeeping
@@ -1813,7 +1828,7 @@ async fn server_concurrent_prepare_lightning_claim(
 			payment_hash: receive.payment_hash.to_vec(),
 			user_pubkey: Keypair::new(&SECP, &mut bip39::rand::thread_rng())
 				.public_key().serialize().to_vec(),
-			htlc_recv_expiry: 172,
+			htlc_recv_expiry,
 			lightning_receive_anti_dos: None,
 			claim_attestation: None,
 		}).await
@@ -1859,7 +1874,7 @@ async fn server_concurrent_prepare_lightning_claim(
 			payment_hash: receive.payment_hash.to_vec(),
 			user_pubkey: Keypair::new(&SECP, &mut bip39::rand::thread_rng())
 				.public_key().serialize().to_vec(),
-			htlc_recv_expiry: 172,
+			htlc_recv_expiry,
 			lightning_receive_anti_dos: None,
 			claim_attestation: None,
 		}).await
