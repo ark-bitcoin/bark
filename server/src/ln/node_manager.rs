@@ -723,9 +723,9 @@ impl LightningManager {
 			if let Err(err) = hold_client.settle(hold_plugin::SettleRequest {
 				payment_preimage: preimage.to_vec(),
 			}).await {
-				// The cooperative claim and the hold settler both settle on
-				// the same preimage, so one of them can find the HTLCs
-				// already gone. That is the outcome we wanted, not a failure.
+				// An earlier call can have settled the invoice and then
+				// failed to store it, so a retry finds the HTLCs already
+				// gone. That is the outcome we wanted, not a failure.
 				let paid = is_hold_invoice_paid(&mut hold_client, payment_hash).await
 					.with_context(|| format!(
 						"hold settle failed ({}) and the invoice state is unknown", err,
@@ -827,8 +827,8 @@ impl LightningManager {
 	///   on-chain preimage extraction via the frontier). The settler is the
 	///   single source of truth for preimages; this subscriber is the
 	///   fallback path that settles hold invoices the cooperative claim
-	///   never got to. Both can end up settling the same invoice, so
-	///   [`LightningManager::settle_invoice`] tolerates losing that race.
+	///   never got to. It takes the payment hash guard, so it never settles
+	///   an invoice while a cooperative claim settles it.
 	///
 	/// - Retry on failure: a settlement that fails is retried on the same
 	///   item every 5 seconds until it succeeds, so one stuck preimage does
@@ -900,6 +900,10 @@ async fn try_settle_hold_invoice(
 	payment_hash: PaymentHash,
 	preimage: Preimage,
 ) -> bool {
+	// A cooperative claim holds this guard while it settles the same invoice,
+	// so we wait for it and then find the subscription settled.
+	let _guard = srv.payment_guards.lock(payment_hash).await;
+
 	let sub = match srv.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await {
 		Ok(Some(sub)) => sub,
 		Ok(None) => return true, // no subscription, nothing to settle
