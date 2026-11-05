@@ -700,9 +700,13 @@ impl CollectingPayments {
 			return Err(ProcessHarkParticipationError::RoundFull);
 		}
 
-		// These two checks are what drop a delegated participation whose input
-		// an interactive one already took. The interactive path has no mirror
-		// of them, so this only holds while it runs first. See the caller.
+		// These two checks keep a delegated participation out of this round
+		// when an interactive one already took its input. The interactive path
+		// has no mirror of them, so this only holds while it runs first. See
+		// the caller. A vtxo is in flux only for a while, so the row stays.
+		// When a round spends the input, storing that round deletes the row,
+		// and else check_fetch_round_input_vtxos refuses the spent input in a
+		// later round, which deletes it.
 		let input_ids = participation.inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
 		let lock = match srv.vtxos_in_flux.try_lock(&input_ids) {
 			Ok(l) => l,
@@ -710,9 +714,7 @@ impl CollectingPayments {
 				client_rslog!(RoundUserVtxoInFlux, self.round_step,
 					vtxo: e.id,
 				);
-				return Err(ProcessHarkParticipationError::BadParticipation(
-					badarg_err!("VTXO already in use by another process: {e:#}")
-				));
+				return Err(ProcessHarkParticipationError::InputTaken(e.id));
 			},
 		};
 
@@ -734,9 +736,7 @@ impl CollectingPayments {
 				client_rslog!(RoundUserVtxoAlreadyRegistered, self.round_step,
 					vtxo: input.vtxo_id,
 				);
-				return Err(ProcessHarkParticipationError::BadParticipation(
-					anyhow!("vtxo {} already registered", input.vtxo_id)
-				));
+				return Err(ProcessHarkParticipationError::InputTaken(input.vtxo_id));
 			}
 		}
 
@@ -816,6 +816,12 @@ impl CollectingPayments {
 				Err(ProcessHarkParticipationError::Superseded) => {
 					debug!("Skipping hArk round participation for unlock hash {}: \
 						superseded by a newer submission", unlock_hash,
+					);
+					continue;
+				},
+				Err(ProcessHarkParticipationError::InputTaken(vtxo)) => {
+					debug!("Skipping hArk round participation for unlock hash {} \
+						this round: input {} is in use", unlock_hash, vtxo,
 					);
 					continue;
 				},
@@ -1021,6 +1027,9 @@ enum ProcessHarkParticipationError {
 	/// The participation was replaced by a newer submission over its inputs
 	/// between the round reading it and locking its inputs.
 	Superseded,
+	/// Another process or participation holds this input; the participation
+	/// stays stored for a later round.
+	InputTaken(VtxoId),
 	/// The round could not verify the participation; it stays stored for a
 	/// later round.
 	CheckFailed(anyhow::Error),

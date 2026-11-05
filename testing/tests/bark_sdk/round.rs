@@ -12,7 +12,7 @@ use bark::round::RoundFlowKind;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::{VtxoLockHolder, VtxoState};
 use bitcoin_ext::{BlockDelta, BlockHeight};
-use server_log::{NoRoundPayments, RoundFinished, RoundParticipationRejected};
+use server_log::{NoRoundPayments, RoundFinished};
 use server_rpc::{protos, StatusExt};
 
 use ark_testing::{btc, sat, secs, TestContext};
@@ -220,7 +220,7 @@ async fn participation_status(srv: &Captaind, unlock_hash: Vec<u8>) -> i32 {
 
 /// An interactive participation beats a delegated one on the same input: the
 /// server registers delegated participations only after the interactive sign-ups,
-/// so the delegated one finds the input taken and is dropped.
+/// so the delegated one finds the input taken and sits out the round.
 #[tokio::test]
 async fn interactive_participation_wins_over_delegated() {
 	let ctx = TestContext::new("bark_sdk/interactive_participation_wins_over_delegated").await;
@@ -241,7 +241,6 @@ async fn interactive_participation_wins_over_delegated() {
 	wallet.refresh_vtxos_delegated(vec![id]).await
 		.expect("submit the delegated participation");
 
-	let mut log_rejected = srv.subscribe_log::<RoundParticipationRejected>();
 	let mut log_finished = srv.subscribe_log::<RoundFinished>();
 
 	// `refresh_vtxos` blocks until the round it joins finishes, so trigger a round
@@ -254,19 +253,6 @@ async fn interactive_participation_wins_over_delegated() {
 		},
 	);
 	res.expect("the interactive refresh must succeed");
-
-	let rejected = log_rejected.recv().wait(Duration::from_secs(30)).await
-		.expect("the delegated participation must be rejected");
-	assert!(rejected.reason.contains(&id.to_string()),
-		"the rejection must name the contested input: {}", rejected.reason,
-	);
-	// The flux lock rejects it first; the already-registered check behind it
-	// would catch it otherwise.
-	assert!(
-		rejected.reason.contains("already in use by another process")
-			|| rejected.reason.contains("already registered"),
-		"unexpected rejection reason: {}", rejected.reason,
-	);
 
 	let finished = log_finished.recv().wait(Duration::from_secs(30)).await
 		.expect("the round must finish");
