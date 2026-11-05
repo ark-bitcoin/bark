@@ -630,48 +630,63 @@ impl Wallet {
 			debug!("Lightning send finished notification (failed): payment_hash={}", payment_hash);
 		}
 
+		// Take the lock that every driver of the send takes, so that no drive
+		// holds a copy of a checkpoint we remove here. A drive that holds the
+		// lock now has often polled the server just before the payment
+		// finished and is about to park, so wait for it. If it keeps the lock
+		// longer, the periodic sync of the daemon drives the send later.
+		//
 		// Errors are logged but not propagated: we always advance the
 		// mailbox checkpoint to avoid re-processing the same
 		// notification on the next poll.
-		match self.is_invoice_paid(payment_hash).await {
-			Ok(true) => {
-				debug!("Lightning send {} already settled; ignoring notification", payment_hash);
-			},
-			Ok(false) => {
-				let action_id = ln_pay_action_id(payment_hash);
-				let lookup = self.lock_action::<LightningSend>(&action_id, LIGHTNING_SEND_LOCK_TIMEOUT).await;
-				match lookup {
-					Ok(checkpoint) => match checkpoint.get().map(|send| send.progress.clone()) {
-						Some(progress) => {
-							let result = match (progress, known_preimage) {
-								(Progress::PaymentInitiated(htlcs), Some(preimage)) => {
-									self.settle_lightning_send_with_preimage(checkpoint, htlcs, preimage).await
-								},
-								(Progress::PaymentInitiated(_), None) => {
-									self.drive_checkpoint(checkpoint, DriveMode::UntilParkOrDone).await
-								},
-								_ => {
-									debug!("Lightning send finished notification for {} but checkpoint is not PaymentInitiated; ignoring", payment_hash);
-									Ok(())
-								},
-							};
-							match result {
-								Ok(()) => info!("Processed lightning send finished for {}", payment_hash),
-								Err(e) => error!("Failed to process lightning send finished for {}: {:#}", payment_hash, e),
-							}
-						},
-						None => {
-							warn!("Lightning send finished notification for unknown payment hash {}", payment_hash);
-						},
-					},
-					Err(e) => {
-						error!("Failed to look up lightning send checkpoint for {}: {:#}", payment_hash, e);
-					},
-				}
-			},
+		let action_id = ln_pay_action_id(payment_hash);
+		let checkpoint = match self.lock_action::<LightningSend>(&action_id, LIGHTNING_SEND_LOCK_TIMEOUT).await {
+			Ok(checkpoint) => checkpoint,
 			Err(e) => {
-				error!("Failed to look up paid_invoice for {}: {:#}", payment_hash, e);
+				info!("Could not read lightning send {} under its lock, leaving it to the next sync: {:#}", payment_hash, e);
+				return Ok(());
 			},
+		};
+
+		let (progress, paid) = match (
+			checkpoint.get().map(|send| send.progress.clone()),
+			self.is_invoice_paid(payment_hash).await,
+		) {
+			(Some(progress), Ok(paid)) => (progress, paid),
+			(None, Ok(true)) => {
+				debug!("Lightning send {} already settled; ignoring notification", payment_hash);
+				return Ok(());
+			},
+			(None, Ok(false)) => {
+				warn!("Lightning send finished notification for unknown payment hash {}", payment_hash);
+				return Ok(());
+			},
+			(_, Err(e)) => {
+				error!("Failed to look up lightning send {}: {:#}", payment_hash, e);
+				return Ok(());
+			},
+		};
+
+		let result = match (progress, known_preimage) {
+			// A settlement stopped half-way. The drive finishes it from the
+			// stored preimage.
+			_ if paid => {
+				self.drive_checkpoint(checkpoint, DriveMode::UntilParkOrDone).await
+			},
+			(Progress::PaymentInitiated(htlcs), Some(preimage)) => {
+				self.settle_lightning_send_with_preimage(checkpoint, htlcs, preimage).await
+			},
+			(Progress::PaymentInitiated(_), None) => {
+				self.drive_checkpoint(checkpoint, DriveMode::UntilParkOrDone).await
+			},
+			_ => {
+				debug!("Lightning send finished notification for {} but checkpoint is not PaymentInitiated; ignoring", payment_hash);
+				Ok(())
+			},
+		};
+		match result {
+			Ok(()) => info!("Processed lightning send finished for {}", payment_hash),
+			Err(e) => error!("Failed to process lightning send finished for {}: {:#}", payment_hash, e),
 		}
 
 		Ok(())

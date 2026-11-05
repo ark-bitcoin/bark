@@ -213,7 +213,7 @@ pub struct Config {
 	pub offboard_lost_tx_grace_period_secs: u64,
 
 	/// Daemon sync interval in seconds for periodic tasks (onchain, exits,
-	/// boards, offboards, maintenance, rounds, mailbox).
+	/// boards, offboards, lightning sends, maintenance, rounds, mailbox).
 	///
 	/// Default value: 60
 	pub daemon_sync_interval_secs: u64,

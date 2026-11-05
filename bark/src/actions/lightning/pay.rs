@@ -134,6 +134,31 @@ impl WalletAction for LightningSend {
 	}
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
+		let payment_hash = self.invoice.payment_hash();
+		if let Some(paid) = wallet.inner.db.get_paid_invoice(payment_hash).await.retry()? {
+			match &self.progress {
+				// No HTLCs yet, so this is a second send for an invoice that an
+				// earlier send paid. The movement belongs to that earlier send,
+				// so leave it and only drop this one.
+				Progress::Start | Progress::InputsLocked { .. } => {
+					return Ok(Advance::Failed(anyhow!(
+						"invoice {} has already been paid", payment_hash,
+					)));
+				},
+				// A settlement that stopped half-way: redo it from the stored
+				// preimage.
+				Progress::HtlcReceived(htlcs)
+					| Progress::PaymentInitiated(htlcs)
+					| Progress::RevocableHtlcs { htlcs, .. }
+					| Progress::RevocationStuck { htlcs, .. }
+				=> {
+					info!("Finishing the settlement of lightning send {}", self.id());
+					settle_lightning_send_payment(wallet, &self, htlcs, paid.preimage).await?;
+					return Ok(Advance::Done);
+				},
+			}
+		}
+
 		let new_progress = match &self.progress {
 			Progress::Start => {
 				wallet.lock_vtxos(
@@ -640,6 +665,9 @@ async fn check_lightning_send_payment_status(
 
 /// Terminal success: mark HTLC vtxos spent, finalise the movement with
 /// the preimage, and persist the replay-protection record.
+///
+/// Idempotent, so that a settlement which stopped half-way can be done
+/// again from [LightningSend::advance].
 pub(crate) async fn settle_lightning_send_payment(
 	wallet: &Wallet,
 	send: &LightningSend,
@@ -654,14 +682,20 @@ pub(crate) async fn settle_lightning_send_payment(
 
 	wallet.inner.db.record_paid_invoice(payment_hash, preimage).await.retry()?;
 	wallet.mark_vtxos_as_spent(&htlcs.vtxo_ids).await.retry()?;
-	wallet.inner.movements.finish_movement_with_update(
-		htlcs.movement_id,
-		MovementStatus::Successful,
-		MovementUpdate::new().metadata([(
-			"payment_preimage".into(),
-			serde_json::to_value(preimage).expect("payment preimage can serde"),
-		)]),
-	).await.retry()?;
+
+	// Finishing the movement again would write its update and completion
+	// times again and send another notification.
+	let movement = wallet.inner.db.get_movement_by_id(htlcs.movement_id).await.retry()?;
+	if movement.status != MovementStatus::Successful {
+		wallet.inner.movements.finish_movement_with_update(
+			htlcs.movement_id,
+			MovementStatus::Successful,
+			MovementUpdate::new().metadata([(
+				"payment_preimage".into(),
+				serde_json::to_value(preimage).expect("payment preimage can serde"),
+			)]),
+		).await.retry()?;
+	}
 
 	Ok(())
 }
