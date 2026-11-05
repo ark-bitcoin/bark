@@ -100,17 +100,20 @@ impl BlockIndex {
 	///
 	/// This is the highest block that has been fully processed and stored
 	/// in the database. May lag behind `chain_tip()` during sync operations.
+	///
+	/// Only published for observers, [`Self::sync`] reads the database instead.
 	pub fn sync_tip(&self) -> BlockRef {
 		*self.sync_height_tx.borrow()
 	}
 
 	/// Syncs the block index with the blockchain.
 	///
-	/// Updates both `chain_tip` and `sync_tip`.
+	/// Syncs from the highest stored block, not from `sync_tip`. The published
+	/// `sync_tip` never points above the highest stored block, but may lag it.
 	/// Handles chain reorganizations by rolling back to the common ancestor.
 	/// Adds new blocks to the index if needed and notifies all listeners.
 	///
-	/// Returns `Ok(true)` if blocks were synced, `Ok(false)` if already in sync.
+	/// Returns `Ok(false)` if the sync was already completed and nothing happened.
 	pub async fn sync(&mut self) -> anyhow::Result<bool> {
 		let bitcoind_tip = bcd::tip(&self.bitcoind).await
 			.context("Failed to get bitcoind tip")?;
@@ -119,21 +122,30 @@ impl BlockIndex {
 			self.update_tip(bitcoind_tip);
 		}
 
-		if self.sync_tip() == bitcoind_tip {
+		let mut stored_tip = self.db.read(async |t| t.get_highest_block(self.block_table).await).await
+			.context("failed to read the highest stored block")?
+			.context("block index holds no blocks")?;
+
+		if stored_tip == bitcoind_tip {
+			// Only republish here, a stored tip below the chain tip may be orphaned.
+			if stored_tip != self.sync_tip() {
+				self.update_sync_height(stored_tip);
+				return Ok(true);
+			}
 			return Ok(false);
 		}
 
-		if bitcoind_tip.height < self.sync_tip().height {
+		if bitcoind_tip.height < stored_tip.height {
 			panic!("bitcoind chain went backward. We probably restarted. Wait for bitcoind to sync and start again");
 		}
 
 		debug!("Discovered new tip with height={} and hash={}", bitcoind_tip.height, bitcoind_tip.hash);
 
 		// Try and find the common ancestor
-		let common = self.common_ancestor().await?;
+		let common = self.common_ancestor(stored_tip).await?;
 
 		// Log if a reorg occurred
-		let reorg_depth = self.sync_tip().height.checked_blocks_since(common.height)
+		let reorg_depth = stored_tip.height.checked_blocks_since(common.height)
 			.expect("common ancestor is below the sync tip");
 		if reorg_depth > 6 {
 			warn!("Reorg detected with depth {}", reorg_depth);
@@ -143,6 +155,7 @@ impl BlockIndex {
 
 		if reorg_depth > 0 {
 			self.org_out_blocks_above(common).await?;
+			stored_tip = common;
 		}
 
 
@@ -154,10 +167,10 @@ impl BlockIndex {
 
 			debug!("Adding block {} - {} - {} to the index", height, hash, block.block_hash());
 
-			if block.header.prev_blockhash != self.sync_tip().hash {
+			if block.header.prev_blockhash != stored_tip.hash {
 				bail!("Block {} has unexpected previous block hash. Expected: {}, Got: {}",
 					height,
-					self.sync_tip().hash,
+					stored_tip.hash,
 					block.header.prev_blockhash
 				);
 			}
@@ -168,7 +181,9 @@ impl BlockIndex {
 			};
 
 
+			let block_ref = block_data.block_ref;
 			self.add_block(block_data).await?;
+			stored_tip = block_ref;
 		}
 
 		Ok(true)
@@ -192,6 +207,9 @@ impl BlockIndex {
 	/// retries. Orphaned blocks are not provided directly - listeners can look them
 	/// up by height if needed before the database is updated.
 	async fn org_out_blocks_above(&self, block: BlockRef) -> anyhow::Result<()> {
+		// Lower the published tip first, it must never point above the stored tip.
+		self.update_sync_height(block);
+
 		let results = join_all(self.listeners.iter().map(|listener| {
 			listener.on_reorg(block)
 		})).await;
@@ -204,11 +222,6 @@ impl BlockIndex {
 		}
 
 		self.db.write(async |t| t.remove_blocks_above(self.block_table, block.height).await).await?;
-
-		// Only advance the in-memory sync height once the listeners and the
-		// database delete have succeeded. This mirrors `add_block` and keeps
-		// the reorg retryable if a listener fails.
-		self.update_sync_height(block);
 		Ok(())
 	}
 
@@ -250,12 +263,12 @@ impl BlockIndex {
 
 
 	/// Finds a common ancestor in the bitcoind chain and the local chain
-	async fn common_ancestor(&self) -> anyhow::Result<BlockRef> {
+	async fn common_ancestor(&self, local_tip: BlockRef) -> anyhow::Result<BlockRef> {
 		trace!("Looking for common ancestor");
 
 		let bitcoind_tip = bcd::tip(&self.bitcoind).await
 			.context("Failed to get bitcoind tip")?;
-		let local_height = self.sync_tip().height;
+		let local_height = local_tip.height;
 
 		// Take the local and bitcoind at this height and see if they match
 		let mut height = std::cmp::min(bitcoind_tip.height, local_height);
