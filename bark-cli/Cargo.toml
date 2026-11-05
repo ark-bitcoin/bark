@@ -23,7 +23,7 @@ name = "barkd"
 path = "src/bin/barkd/main.rs"
 
 [features]
-default = ["tls-native-roots", "barkd-swagger-ui"]
+default = ["tls-native-roots"]
 
 # TLS certificate verification options (pick one). The bark-cli REST client
 # verifies against the platform's certificate store under either option.
