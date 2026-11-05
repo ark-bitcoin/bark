@@ -15,7 +15,7 @@ use bitcoin::{Amount, FeeRate, Transaction, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{Keypair, rand::thread_rng};
 use server_rpc::{protos, TryFromBytes};
-use server_log::OffboardSessionTimeout;
+use server_log::{OffboardSessionTimeout, ProgressBroadcast};
 
 use ark::{ProtocolEncoding, VtxoId, SECP};
 use ark::attestations::OffboardRequestAttestation;
@@ -23,7 +23,7 @@ use ark::musig;
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use bark::WalletVtxo;
 
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 use bitcoin_ext::rpc::RpcApi;
 
 use ark_testing::{btc, sat, TestContext};
@@ -37,7 +37,16 @@ async fn offboard_validates_requests_and_replays_retries() {
 		cfg.fee_estimator.fallback_fee_rate_regular = FeeRate::from_sat_per_vb_u32(1);
 		cfg.fee_estimator.fallback_fee_rate_slow = FeeRate::from_sat_per_vb_u32(1);
 		cfg.max_offboard_amount = Some(sat(900_000));
+	}).watchmand_cfg(|cfg| {
+		// The watchman only acts when the test triggers it.
+		cfg.watchman.reaction_interval = Duration::from_secs(3600);
+		cfg.watchman.sweep_interval = Duration::from_secs(3600);
+		// It waits 2 blocks after an exit confirms before it applies the forfeit.
+		cfg.watchman.progress_grace_period = BlockDelta::new(2);
 	}).create().await;
+	let wm = srv.watchmand();
+	// The watchman pays the fees of the txs it broadcasts.
+	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(1_000_000)).await;
 	// The server prices an offboard in one of two ways, so each vtxo has one job:
 	// - offboard_vtxo (800_000 sat): the whole vtxo goes onchain, the server takes its fee
 	//   out of the vtxo (deduct_fees_from_gross_amount = true). bark's offboard.
@@ -192,6 +201,26 @@ async fn offboard_validates_requests_and_replays_retries() {
 		ctx.bitcoind().await_transaction(offboard_txid).await;
 		ctx.bitcoind().generate(1).await;
 		assert_eq!(ctx.bitcoind().get_received_by_address(&destination), sat(799_000));
+
+		// The user exits the offboarded vtxo anyway.
+		let exit_txs = full_vtxo.transactions().map(|item| item.tx).collect::<Vec<_>>();
+		ctx.mine(&exit_txs).await;
+		let exit_point = offboard_vtxo.id().to_point();
+		let client = ctx.bitcoind().sync_client();
+		assert!(client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_some());
+
+		// After the grace period, the watchman applies the forfeit, which spends the exit
+		// output and the connector.
+		ctx.bitcoind().generate(2).await;
+		let tip = ctx.bitcoind().get_block_count().await;
+		wm.wait_for_sync_height(BlockHeight::new(u32::try_from(tip).unwrap())).await;
+		let mut progress = wm.subscribe_log::<ProgressBroadcast>();
+		wm.trigger_sweep().await;
+		let forfeit = progress.recv().await.unwrap();
+		assert_eq!(forfeit.vtxo_id, offboard_vtxo.id());
+		ctx.bitcoind().await_transaction(forfeit.cpfp_txid).await;
+		ctx.bitcoind().generate(1).await;
+		assert!(client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_none());
 	}
 
 	// Using send_vtxo

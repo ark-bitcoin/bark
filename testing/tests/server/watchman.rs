@@ -1551,17 +1551,6 @@ async fn watchman_force_exit_checkpointed_arkoor_stays_spendable() {
 	);
 }
 
-/// Driver sanity check: a SINGLE-input offboard forfeit is valid, so the watchman
-/// MUST be able to confiscate a malicious post-offboard exit. If this fails, the
-/// test harness (not the protocol) is at fault — so it guards the meaning of
-/// `multi_input_offboard_double_spend` below.
-#[tokio::test]
-async fn watchman_defends_single_input_offboard_exit() {
-	let stolen = offboard_exit_attack("server/watchman_defends_single_input_offboard_exit", 1).await;
-	assert_eq!(stolen, sat(0),
-		"single-input offboard: watchman should have confiscated the exit, attacker got {}", stolen);
-}
-
 /// The bug, end-to-end: a MULTI-input offboard forfeit is consensus-invalid, so the
 /// watchman cannot confiscate a malicious post-offboard exit and the attacker
 /// double-spends (keeps both the offboard payout and the exited vtxo value).
