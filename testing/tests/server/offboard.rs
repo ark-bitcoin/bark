@@ -54,10 +54,14 @@ async fn offboard_validates_requests_and_replays_retries() {
 	//   (deduct_fees_from_gross_amount = false). bark's send-onchain.
 	// - dust_vtxo (400 sat): less than dust once the fee is taken out.
 	// - large_vtxo (1_000_000 sat): more than the 900_000 sat max_offboard_amount.
+	// - multi_a (300_000 sat), multi_b (310_000 sat): offboarded together, so their forfeits
+	//   share one connector output that a fanout tx splits.
 	let wallet = ctx.bark_sdk("bark", &srv)
 		.boarded(sat(800_000))
 		.boarded(sat(500_000))
 		.boarded(sat(1_000_000))
+		.boarded(sat(300_000))
+		.boarded(sat(310_000))
 		.create().await;
 	// Boards have a 20_000 sat minimum, so the dust vtxo arrives by arkoor.
 	let dust_source = ctx.bark_sdk("dust_source", &srv).boarded(sat(100_000)).create().await;
@@ -72,6 +76,8 @@ async fn offboard_validates_requests_and_replays_retries() {
 	let send_vtxo = find_vtxo(sat(500_000));
 	let dust_vtxo = find_vtxo(sat(400));
 	let large_vtxo = find_vtxo(sat(1_000_000));
+	let multi_a = find_vtxo(sat(300_000));
+	let multi_b = find_vtxo(sat(310_000));
 	let prepare = async |req: &OffboardRequest, vtxo: &WalletVtxo| {
 		let key = wallet.get_vtxo_key(vtxo).await.unwrap();
 		protos::PrepareOffboardRequest {
@@ -221,6 +227,97 @@ async fn offboard_validates_requests_and_replays_retries() {
 		ctx.bitcoind().await_transaction(forfeit.cpfp_txid).await;
 		ctx.bitcoind().generate(1).await;
 		assert!(client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_none());
+	}
+
+	// Using multi_a and multi_b
+	{
+		// 609_000 sat onchain, 1_000 sat fee taken from the vtxos.
+		let req = OffboardRequest {
+			script_pubkey: script_pubkey.clone(),
+			net_amount: sat(609_000),
+			deduct_fees_from_gross_amount: true,
+			fee_rate: FeeRate::from_sat_per_vb_u32(1),
+		};
+		let ids = [multi_a.id(), multi_b.id()];
+		let keys = [
+			wallet.get_vtxo_key(&multi_a).await.unwrap(),
+			wallet.get_vtxo_key(&multi_b).await.unwrap(),
+		];
+		let full_vtxos = [
+			wallet.get_full_vtxo(multi_a.id()).await.unwrap(),
+			wallet.get_full_vtxo(multi_b.id()).await.unwrap(),
+		];
+		let prepared = rpc.prepare_offboard(protos::PrepareOffboardRequest {
+			offboard: Some((&req).into()),
+			input_vtxo_ids: ids.iter().map(|id| id.to_bytes().to_vec()).collect(),
+			attestation: keys.iter()
+				.map(|key| OffboardRequestAttestation::new(&req, &ids, key).serialize())
+				.collect(),
+		}).await.unwrap().into_inner();
+		let offboard_tx = bitcoin::consensus::deserialize::<Transaction>(&prepared.offboard_tx).unwrap();
+		let server_nonces = prepared.forfeit_cosign_nonces.iter()
+			.map(|n| musig::PublicNonce::from_bytes(n).unwrap())
+			.collect::<Vec<_>>();
+		let sigs = OffboardForfeitContext::new(&full_vtxos, &offboard_tx).unwrap()
+			.user_sign_forfeits(&keys, &server_nonces).unwrap();
+		rpc.finish_offboard(protos::FinishOffboardRequest {
+			offboard_txid: offboard_tx.compute_txid().to_byte_array().to_vec(),
+			user_nonces: sigs.public_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+			partial_signatures: sigs.partial_signatures.iter().map(|s| s.serialize().to_vec()).collect(),
+		}).await.unwrap();
+		ctx.bitcoind().await_transaction(offboard_tx.compute_txid()).await;
+		ctx.bitcoind().generate(1).await;
+
+		// The forfeits share one connector output, but the watchman applies each one on its own.
+		let [full_a, full_b] = full_vtxos;
+		let client = ctx.bitcoind().sync_client();
+		let mut progress = wm.subscribe_log::<ProgressBroadcast>();
+
+		// The user exits multi_a.
+		let exit_txs = full_a.transactions().map(|item| item.tx).collect::<Vec<_>>();
+		ctx.mine(&exit_txs).await;
+		let exit_a = multi_a.id().to_point();
+		assert!(client.get_tx_out(&exit_a.txid, exit_a.vout, Some(true)).unwrap().is_some());
+
+		// After the grace period, the watchman first broadcasts the fanout tx, which splits
+		// the connector output into one connector per forfeit.
+		ctx.bitcoind().generate(2).await;
+		let tip = ctx.bitcoind().get_block_count().await;
+		wm.wait_for_sync_height(BlockHeight::new(u32::try_from(tip).unwrap())).await;
+		wm.trigger_sweep().await;
+		let fanout = progress.recv().await.unwrap();
+		assert_eq!(fanout.vtxo_id, multi_a.id());
+		ctx.bitcoind().await_transaction(fanout.cpfp_txid).await;
+		ctx.bitcoind().generate(1).await;
+		let tip = ctx.bitcoind().get_block_count().await;
+		wm.wait_for_sync_height(BlockHeight::new(u32::try_from(tip).unwrap())).await;
+
+		// Once the fanout tx confirms, it applies the forfeit of multi_a.
+		wm.trigger_sweep().await;
+		let forfeit = progress.recv().await.unwrap();
+		assert_eq!(forfeit.vtxo_id, multi_a.id());
+		ctx.bitcoind().await_transaction(forfeit.cpfp_txid).await;
+		ctx.bitcoind().generate(1).await;
+		assert!(client.get_tx_out(&exit_a.txid, exit_a.vout, Some(true)).unwrap().is_none());
+
+		// The user exits multi_b later.
+		let exit_txs = full_b.transactions().map(|item| item.tx).collect::<Vec<_>>();
+		ctx.mine(&exit_txs).await;
+		let exit_b = multi_b.id().to_point();
+		assert!(client.get_tx_out(&exit_b.txid, exit_b.vout, Some(true)).unwrap().is_some());
+
+		// The fanout tx is already onchain, so after the grace period the watchman applies
+		// the forfeit of multi_b right away.
+		ctx.bitcoind().generate(2).await;
+		let tip = ctx.bitcoind().get_block_count().await;
+		wm.wait_for_sync_height(BlockHeight::new(u32::try_from(tip).unwrap())).await;
+		wm.trigger_sweep().await;
+		let forfeit = progress.recv().await.unwrap();
+		assert_eq!(forfeit.vtxo_id, multi_b.id());
+		assert_ne!(forfeit.txid, fanout.txid);
+		ctx.bitcoind().await_transaction(forfeit.cpfp_txid).await;
+		ctx.bitcoind().generate(1).await;
+		assert!(client.get_tx_out(&exit_b.txid, exit_b.vout, Some(true)).unwrap().is_none());
 	}
 
 	// Using send_vtxo
