@@ -286,6 +286,10 @@ async fn pay_hold_refused() {
 	tokio::time::sleep(Duration::from_millis(500)).await;
 	assert!(!waiter.is_finished(), "waiting check resolved before cancel");
 
+	// A cancel that races the HTLC into the hold plugin cancels 0 HTLCs and
+	// leaves the HTLC held forever.
+	wait_for_hold_invoice_accepted(&mut hold_client, payment_hash).await;
+
 	// Cancel the hold invoice — the HTLC fails back to the server and
 	// bark revokes the HTLC vtxos, restoring the funds.
 	hold_client.cancel(hold::CancelRequest {
