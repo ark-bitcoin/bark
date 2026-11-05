@@ -17,10 +17,7 @@
 //! status, so the two never disagree on whether a payment is still in flight.
 //!
 //! That also means the outcome is our verdict on the call, copied from the
-//! attempt, and not what CLN reports. An attempt failed after an empty
-//! `listpays` can still succeed in CLN later, and `fail` is terminal here.
-//! Anything that decides on the outcome must take it from CLN's record of the
-//! call, matched by `label`.
+//! attempt, and not what CLN reports.
 
 use std::str::FromStr;
 

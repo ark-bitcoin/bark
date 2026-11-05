@@ -609,6 +609,9 @@ impl rpc::server::ArkService for Server {
 			.map(ark::mailbox::MailboxIdentifier::deserialize)
 			.transpose()
 			.map_err(|_| tonic::Status::invalid_argument("invalid mailbox_id"))?;
+		let claim_pubkey = req.claim_pubkey.as_deref()
+			.map(PublicKey::from_bytes)
+			.transpose()?;
 
 		let resp = self.start_lightning_receive(
 			payment_hash,
@@ -617,6 +620,7 @@ impl rpc::server::ArkService for Server {
 			mailbox_id,
 			req.description,
 			req.expiry_secs.map(Duration::from_secs),
+			claim_pubkey,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))
@@ -656,10 +660,15 @@ impl rpc::server::ArkService for Server {
 
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 		let htlc_recv_expiry = BlockHeight::new(req.htlc_recv_expiry);
+		let claim_attestation = req.claim_attestation.as_deref()
+			.map(ark::attestations::LightningReceiveClaimAttestation::deserialize)
+			.transpose()
+			.badarg("invalid claim attestation")?;
 
 		let (sub, htlcs) = self.prepare_lightning_claim(
 			payment_hash, user_pubkey, htlc_recv_expiry, req.lightning_receive_anti_dos,
 			client_address,
+			claim_attestation,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::PrepareLightningReceiveClaimResponse {

@@ -1,25 +1,17 @@
 //! Manages outbound Lightning payments. Sends payments via CLN's `xpay` RPC
-//! and tracks their status via `listsendpays` streams.
+//! and tracks their status via `listpays`.
 //!
 //! ## Payment lifecycle
 //!
 //! [`ClnXpay::pay`] is fire-and-forget: it spawns a task that calls `xpay` over gRPC.
-//! When CLN answers, success or error, the attempt is reconciled right away, and an
-//! error is trusted as a final failure. When the call breaks in transport, xpay may
-//! still be running, so the monitor reconciles the attempt once its retry time has
-//! passed.
-//!
-//! ## Sendpay stream
-//!
-//! The main loop `wait`s on CLN for new `created` and `updated` sendpay events.
-//! Each event is matched against open payment attempts in the DB and transitions
-//! them through `Requested → Submitted → Succeeded/Failed`.
+//! When CLN answers, success or error, the attempt moves to `Submitted` and is
+//! reconciled right away. When the call breaks in transport, the monitor reconciles
+//! the attempt.
 //!
 //! ## Payment reconciliation
 //!
-//! On a periodic interval, queries `listpays` for all open attempts to catch anything
-//! the stream missed (e.g. events during downtime). Uses exponential backoff per
-//! invoice to avoid hammering CLN.
+//! On a periodic interval, queries `listpays` for all open attempts. Uses
+//! exponential backoff per invoice to avoid hammering CLN.
 
 use std::{fmt, str};
 use std::collections::HashMap;
@@ -39,6 +31,7 @@ use bitcoin_ext::BlockDelta;
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 
 use crate::database;
+use crate::database::xpay::{self, ClnXpayStatus};
 use crate::database::ln::{LightningNodeId, LightningPaymentAttempt, LightningPaymentStatus};
 use crate::ln::settler::HtlcSettler;
 use crate::system::RuntimeManager;
@@ -48,8 +41,9 @@ use super::ClnGrpcClient;
 use super::super::payment_handler::PaymentAttemptHandler;
 
 
-/// The buffer we add to the xpay timeout before we check invoice
-pub const XPAY_TIMEOUT_BUFFER: Duration = Duration::from_secs(15);
+/// How long an attempt may wait for xpay to answer. xpay always answers, so an
+/// attempt still `Requested` after this, with no record in CLN, never reached it.
+const XPAY_ANSWER_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Shared client for sending xpay RPCs and reconciling payment status against CLN.
 ///
@@ -83,10 +77,8 @@ impl ClnXpayClient {
 
 	/// Calls xpay and then reconciles the attempt status against CLN.
 	///
-	/// On RPC success the sendpay stream will pick up the result, but we still
-	/// reconcile afterwards to handle edge cases (e.g. the stream missing an event).
-	/// An error from CLN means xpay stopped trying, so the attempt is failed.
-	/// On a transport error it is left to the monitor.
+	/// On an answer from CLN, success or error, the attempt is reconciled
+	/// against `listpays`. On a transport error it is left to the monitor.
 	#[tracing::instrument(skip_all, fields(
 		payment_hash = %invoice.payment_hash(),
 		invoice = %invoice,
@@ -114,9 +106,15 @@ impl ClnXpayClient {
 			&mut rpc, &invoice, payment_amount, max_routing_fee, max_cltv_expiry_delta, retry_for,
 			label,
 		).await {
-			Ok(_preimage) => {
-				// NB we don't do db stuff when it's succesful, because
-				// it will happen in the sendpay stream of the monitor process
+			Ok(preimage) => {
+				// Record the settlement now: the attempt is finished by the
+				// reconciliation below or the monitor, which can both fail,
+				// and a revocation is refused only once the preimage is known.
+				if preimage.compute_payment_hash() != payment_hash {
+					error!("xpay returned a preimage that doesn't match payment hash {}", payment_hash);
+				} else if let Err(e) = self.settler.settle(preimage).await {
+					error!("Error storing the xpay preimage for payment hash {}: {:#}", payment_hash, e);
+				}
 				trace!("Payment successful for payment hash {}", payment_hash.as_hex());
 				None
 			},
@@ -140,18 +138,16 @@ impl ClnXpayClient {
 			.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await
 			.map(|a| a.filter(|a| a.id == attempt_id));
 
-		let attempt_res = match (attempt_res, pay_error.as_deref()) {
-			// Store the error before reconciling, so the reason survives if
+		let attempt_res = match attempt_res {
+			// Store the answer before reconciling, so it survives if
 			// `listpays` fails and the monitor has to finish the attempt.
-			(Ok(Some(attempt)), Some(e)) => self.store_pay_error(attempt, e).await,
-			(res, _) => res,
+			Ok(Some(attempt)) => self.store_xpay_answer(attempt, pay_error.as_deref()).await,
+			res => res,
 		};
 
 		match attempt_res {
 			Ok(Some(attempt)) => {
-				if let Err(e) = self.sync_payment_attempt_status(
-					attempt, pay_error.as_deref(),
-				).await {
+				if let Err(e) = self.sync_payment_attempt_status(attempt).await {
 					error!("Error syncing payment attempt status: {e:#}");
 				}
 			},
@@ -166,22 +162,26 @@ impl ClnXpayClient {
 		}
 	}
 
-	/// Stores the xpay error on `attempt` and returns it as stored, so later
-	/// updates carry the new `updated_at`. When the attempt was changed in the
-	/// meantime, it is reloaded and the store retried. Returns `None` once the
-	/// attempt is no longer open, leaving a finalized attempt untouched.
-	async fn store_pay_error(
+	/// Moves `attempt` to `Submitted`, with xpay's error if it answered with
+	/// one, and returns it as stored, so later updates carry the new
+	/// `updated_at`. When the attempt was changed in the meantime, it is
+	/// reloaded and the store retried. Returns `None` once the attempt is no
+	/// longer open, leaving a finalized attempt untouched.
+	async fn store_xpay_answer(
 		&self,
 		mut attempt: LightningPaymentAttempt,
-		error: &str,
+		error: Option<&str>,
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
 		loop {
-			let updated_at = self.db.write(async |t|
-				t.set_lightning_payment_attempt_error(&attempt, error).await
-			).await?;
+			let updated_at = self.db.write(async |t| t.update_lightning_payment_attempt_status(
+				&attempt, LightningPaymentStatus::Submitted, error,
+			).await).await?;
 			if let Some(updated_at) = updated_at {
 				attempt.updated_at = updated_at;
-				attempt.error = Some(error.to_owned());
+				attempt.status = LightningPaymentStatus::Submitted;
+				if let Some(error) = error {
+					attempt.error = Some(error.to_owned());
+				}
 				return Ok(Some(attempt));
 			}
 
@@ -197,22 +197,19 @@ impl ClnXpayClient {
 
 	/// Queries CLN's `listpays` for the given attempt and updates the DB to match.
 	///
-	/// If CLN has no record of the payment and the attempt is still open, it is
-	/// marked `Failed`. If CLN reports a different status than the DB, the DB is
-	/// updated (unless the DB status is already final, which is logged as an error).
-	/// Sends on `payment_update_tx` when the status changes.
-	///
-	/// `pay_error` is the error CLN returned for the xpay call this follows.
-	/// xpay only returns once it has stopped trying, so the attempt is failed
-	/// even when `listpays` still reports it pending. The monitor loop passes
-	/// `None`; it is reconciling attempts it did not make.
+	/// Only the record of the attempt's own xpay call counts: an earlier call
+	/// on the same payment hash says nothing about this one. If CLN has no
+	/// record of the call, the attempt is failed once xpay answered, or once it
+	/// waited [`XPAY_ANSWER_TIMEOUT`] for an answer. If CLN reports a
+	/// different status than the DB, the DB is updated (unless the DB status
+	/// is already final, which is logged as an error). Sends on
+	/// `payment_update_tx` when the status changes.
 	pub async fn sync_payment_attempt_status(
 		&self,
 		attempt: LightningPaymentAttempt,
-		pay_error: Option<&str>,
 	) -> anyhow::Result<()> {
 		let payment_hash = attempt.payment_hash;
-		let error = pay_error.or(attempt.error.as_deref());
+		let error = attempt.error.as_deref();
 		debug!("Lightning payment attempt ({}): with payment hash {} is being verified.",
 			attempt.id, payment_hash,
 		);
@@ -230,7 +227,20 @@ impl ClnXpayClient {
 		let listpays_response = self.rpc.clone().list_pays(req).await
 			.context("Could not fetch cln payments")?
 			.into_inner();
-		if listpays_response.pays.is_empty() {
+
+		// The attempt's own call is the pending one on its hash, and xpay puts
+		// the call's label on every part it sends. Calls from before labels
+		// existed match every record.
+		let label = self.db
+			.read(async |t| xpay::get_xpays_by_payment_hash(&**t, payment_hash).await).await?
+			.into_iter()
+			.find(|x| x.status == ClnXpayStatus::Pending)
+			.and_then(|x| x.label);
+		let pays = listpays_response.pays.into_iter()
+			.filter(|p| label.is_none() || p.label == label)
+			.collect::<Vec<_>>();
+
+		if pays.is_empty() {
 			match attempt.status {
 				LightningPaymentStatus::Succeeded => {
 					error!("Lightning payment attempt ({}): flagged succeeded \
@@ -244,20 +254,28 @@ impl ClnXpayClient {
 						attempt.id, payment_hash,
 					)
 				},
+				// xpay answered without sending a part.
+				LightningPaymentStatus::Submitted => {
+					self.payment_handler().fail_payment_attempt(&attempt, error).await?;
+				},
 				LightningPaymentStatus::Requested
-					| LightningPaymentStatus::Submitted =>
+					if attempt.created_at + XPAY_ANSWER_TIMEOUT < Local::now() =>
 				{
 					self.payment_handler().fail_payment_attempt(&attempt, error).await?;
 				},
+				// xpay may not have sent a part yet.
+				LightningPaymentStatus::Requested => {
+					debug!("Lightning payment attempt ({}): no record in CLN yet \
+						for payment hash {}", attempt.id, payment_hash,
+					);
+				},
 			}
 		} else {
-			let latest = listpays_response.pays.into_iter().max_by_key(|p| {
+			let latest = pays.into_iter().max_by_key(|p| {
 				p.created_index.expect("should have index")
 			}).expect("we have at least one");
 
 			let updated_status = match latest.status() {
-				// xpay told us it failed, trust that over the listpays record.
-				ListpaysPaysStatus::Pending if pay_error.is_some() => LightningPaymentStatus::Failed,
 				ListpaysPaysStatus::Pending => LightningPaymentStatus::Submitted,
 				ListpaysPaysStatus::Complete => {
 					if latest.preimage.is_none() {
@@ -320,16 +338,13 @@ impl ClnXpayClient {
 #[derive(Debug, Clone)]
 pub struct ClnXpayConfig {
 	pub invoice_check_interval: Duration,
-	/// Retry time for attempts that were stored without one.
-	pub cln_xpay_timeout: Duration,
 	pub check_base_delay: Duration,
 	pub max_check_delay: Duration,
 }
 
 /// Handle for the xpay monitor process.
 ///
-/// Tracks outbound payment status via CLN's listsendpays streams
-/// and periodically verifies open payment attempts.
+/// Periodically verifies open payment attempts.
 pub struct ClnXpay {
 	jh: Option<JoinHandle<anyhow::Result<()>>>,
 	client: Arc<ClnXpayClient>,
@@ -337,9 +352,6 @@ pub struct ClnXpay {
 
 impl ClnXpay {
 	/// Spawns the background reconciliation loop and returns a handle.
-	///
-	/// Reads the current payment stream indices from the DB so the monitor
-	/// knows where to resume after a restart.
 	pub async fn start(
 		rtmgr: RuntimeManager,
 		mgr_waker: Arc<Notify>,
@@ -417,8 +429,8 @@ impl fmt::Debug for ClnXpay {
 /// Background loop that periodically reconciles open payment attempts against CLN.
 ///
 /// Runs on a fixed interval ([`ClnXpayConfig::invoice_check_interval`]) and,
-/// for each open attempt old enough to have finished xpay retries, queries
-/// `listpays` to drive the attempt to a final state. Uses exponential backoff
+/// for each open attempt, queries `listpays` to drive the attempt to a final
+/// state. Uses exponential backoff
 /// per invoice to avoid hammering CLN for long-lived pending payments.
 struct ClnXpayProcess {
 	config: ClnXpayConfig,
@@ -458,7 +470,7 @@ impl ClnXpayProcess {
 	}
 
 	/// Iterates over all open payment attempts for this node and reconciles
-	/// each one that is old enough and not in backoff. Prunes expired backoff
+	/// each one that is not in backoff. Prunes expired backoff
 	/// entries afterwards.
 	async fn process_payment_attempts(&mut self) -> anyhow::Result<()> {
 		let open_attempts = self.db.read(async |t| t.get_open_lightning_payment_attempts(self.node_id).await).await?;
@@ -466,19 +478,6 @@ impl ClnXpayProcess {
 		for attempt in open_attempts {
 			if attempt.is_self_payment() {
 				trace!("Lightning payment attempt ({}): Skipping since it is a self payment.",
-					attempt.id,
-				);
-
-				continue;
-			}
-
-			// We don't want to go further if we aren't sure CLN
-			// didn't finished retrying payment attempts. Each attempt carries
-			// the retry time it was started with; older rows predate that.
-			let retry_for = attempt.retry_for.unwrap_or(self.config.cln_xpay_timeout);
-			let safe_delay_cln_stopped_retries = retry_for + XPAY_TIMEOUT_BUFFER;
-			if attempt.created_at > Local::now() - safe_delay_cln_stopped_retries {
-				trace!("Lightning payment attempt ({}): Skipping since it was just created.",
 					attempt.id,
 				);
 
@@ -495,7 +494,7 @@ impl ClnXpayProcess {
 			}
 
 			let attempt_id = attempt.id;
-			if let Err(e) = self.client.sync_payment_attempt_status(attempt, None).await {
+			if let Err(e) = self.client.sync_payment_attempt_status(attempt).await {
 				error!("Error syncing payment attempt status: {e:#}");
 			} else {
 				self.update_next_attempt_check(attempt_id);

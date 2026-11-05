@@ -39,6 +39,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
+use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use chrono::{DateTime, Local, TimeDelta};
 use cln_rpc::plugins::hold as hold_plugin;
@@ -104,7 +105,7 @@ pub struct LightningManager {
 	node_handles: Arc<parking_lot::RwLock<Vec<NodeHandle>>>,
 
 	/// We also keep a handle of the update channel to update from
-	/// payment request that fail before the hit the sendpay stream.
+	/// payment request that fail before they reach CLN.
 	//TODO(stevenroose) consider changing this to hold some update info
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 	// If all receivers are dropped the channel will close and the payment might fail
@@ -139,7 +140,6 @@ impl LightningManager {
 		};
 		let xpay_config = ClnXpayConfig {
 			invoice_check_interval: config.invoice_check_interval,
-			cln_xpay_timeout: config.cln_xpay_timeout,
 			check_base_delay: config.invoice_check_base_delay,
 			max_check_delay: config.max_invoice_check_delay,
 		};
@@ -283,8 +283,7 @@ impl LightningManager {
 	///
 	/// If a hold-invoice subscription already exists for this payment hash,
 	/// this is an intra-Ark payment and we settle off-CLN instead of issuing
-	/// an outbound xpay. Otherwise we spawn the xpay fire-and-forget; the
-	/// xpay monitor picks the result up via the sendpays stream.
+	/// an outbound xpay. Otherwise we spawn the xpay fire-and-forget.
 	#[tracing::instrument(skip_all, fields(
 		payment_hash = %invoice.payment_hash(),
 		invoice = %invoice,
@@ -426,9 +425,8 @@ impl LightningManager {
 			.expect("an outgoing payment has its xpay call prepared above");
 
 		// Fire-and-forget: ClnXpayClient::pay issues the gRPC and reconciles
-		// the DB on completion, same as the old ClnXpay::pay wrapper. If the
-		// gRPC times out the payment may still succeed; the xpay monitor's
-		// sendpay stream is the source of truth.
+		// the DB on completion. If the gRPC breaks the payment may still
+		// succeed, and the xpay monitor reconciles it.
 		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", amount, invoice);
 		let xpay_client = node.xpay.clone();
 		tokio::spawn(async move {
@@ -625,6 +623,7 @@ impl LightningManager {
 		expiry: Duration,
 		description: Option<String>,
 		receiver_mailbox_id: Option<MailboxIdentifier>,
+		claim_pubkey: Option<PublicKey>,
 	) -> anyhow::Result<Bolt11Invoice> {
 		let node = self.hold_active_node().context("no active hold-compatible cln node")?;
 		let mut hold_client = node.hold_rpc.clone().expect("hold-active node has hold_rpc");
@@ -662,7 +661,7 @@ impl LightningManager {
 		let stored = self.db.write(async |t| {
 			t.store_generated_lightning_receive(
 				node.id, &invoice, amount.to_msat(), receiver_mailbox_id.as_ref(),
-				user_agent.as_deref(),
+				claim_pubkey, user_agent.as_deref(),
 			).await?;
 			hold_db::create_hold(&**t, &new_hold).await
 				.context("failed to store the hold invoice")?;

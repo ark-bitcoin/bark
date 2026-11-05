@@ -15,7 +15,7 @@ use ark::lightning::PaymentHash;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use bitcoin_ext::rpc::RpcApi;
 use ark::arkoor::ArkoorDestination;
-use ark::attestations::ArkoorCosignAttestation;
+use ark::attestations::{ArkoorCosignAttestation, LightningReceiveClaimAttestation};
 use ark::vtxo::Full;
 use ark::vtxo::TapScriptClause;
 use ark::vtxo::policy::VtxoPolicyKind;
@@ -26,6 +26,7 @@ use server_log::{LightningReceiveCanceled, LightningReceiveKeptCommitted};
 use server_rpc::protos;
 use server::database::Db;
 use server::database::htlc_vtxo::HtlcDirection;
+use server::database::xpay;
 use server::vtxopool::VtxoTarget;
 
 use ark_testing::{Bark, Captaind, TestContext, btc, lightning_test, require_bark_version, sat};
@@ -866,6 +867,37 @@ impl ForeignReceive {
 	}
 }
 
+/// Someone who only knows the payment hash of a wallet's receive can't take
+/// over its claim: the wallet bound the receive to its claim key.
+#[tokio::test]
+async fn receive_claim_cannot_be_prepared_by_others() {
+	let ctx = TestContext::new("server/receive_claim_cannot_be_prepared_by_others").await;
+	let f = ForeignReceive::setup(&ctx).await;
+
+	let payment = f.spawn_payment();
+	wait_for_subscription_status(&f.db, f.payment_hash, "accepted").await;
+	let sub = f.db.read(async |t| t.get_htlc_subscription_by_payment_hash(f.payment_hash).await)
+		.await.unwrap().expect("subscription exists");
+	let expiry = sub.lowest_incoming_htlc_expiry.expect("accepted")
+		.saturating_sub(f.srv.config().htlc_expiry_delta);
+
+	let key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let err = f.srv.get_public_rpc().await.prepare_lightning_receive_claim(
+		protos::PrepareLightningReceiveClaimRequest {
+			payment_hash: f.payment_hash.as_ref().to_vec(),
+			user_pubkey: key.public_key().serialize().to_vec(),
+			htlc_recv_expiry: expiry.into(),
+			lightning_receive_anti_dos: None,
+			claim_attestation: Some(
+				LightningReceiveClaimAttestation::new(f.payment_hash, expiry, &key).serialize(),
+			),
+		},
+	).await.expect_err("only the receiver can prepare the claim");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "unexpected error: {err:?}");
+
+	f.assert_victim_paid(payment).await;
+}
+
 /// While an external payer holds the victim's invoice in `accepted`, a client
 /// pays the same invoice intra-Ark. The server fails that payment because the
 /// invoice is already being paid, and the client revokes its HTLCs. That
@@ -1579,6 +1611,7 @@ async fn check_lightning_receive_returns_on_canceled_subscription() {
 		mailbox_id: None,
 		description: None,
 		expiry_secs: None,
+		claim_pubkey: None,
 	}).await.unwrap();
 
 	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
@@ -1637,6 +1670,46 @@ async fn server_claim_lightning_receive_is_idempotent(
 }
 lightning_test!(server_claim_lightning_receive_is_idempotent);
 
+/// A receive started without a claim key, the way wallets did before they
+/// bound receives to one. Its claim can be prepared with any key.
+struct KeylessReceive {
+	invoice: String,
+	payment_hash: PaymentHash,
+}
+
+/// Start a [KeylessReceive] with the CLTV delta a wallet asks for.
+async fn start_keyless_receive(srv: &Captaind, amount: Amount) -> KeylessReceive {
+	// plus bark's vtxo exit margin, htlc recv claim delta and prepare claim delta
+	let min_cltv_delta = {
+		let cfg = srv.config();
+		cfg.vtxo_exit_delta + cfg.htlc_expiry_delta + BlockDelta::new(12 + 18 + 2)
+	};
+	let payment_hash = ark::lightning::Preimage::random().compute_payment_hash();
+	let invoice = srv.get_public_rpc().await.start_lightning_receive(protos::StartLightningReceiveRequest {
+		payment_hash: payment_hash.as_ref().to_vec(),
+		amount_sat: amount.to_sat(),
+		min_cltv_delta: min_cltv_delta.into(),
+		mailbox_id: None,
+		description: None,
+		expiry_secs: None,
+		claim_pubkey: None,
+	}).await.unwrap().into_inner().bolt11;
+	KeylessReceive { invoice, payment_hash }
+}
+
+/// The latest HTLC recv expiry the server accepts for an accepted receive.
+///
+/// It depends on the chain height when the HTLC arrived, so tests can't
+/// hardcode it.
+async fn max_htlc_recv_expiry(srv: &Captaind, payment_hash: PaymentHash) -> u32 {
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let sub = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
+		.await.unwrap().expect("subscription exists");
+	sub.lowest_incoming_htlc_expiry.expect("accepted")
+		.saturating_sub(srv.config().htlc_expiry_delta)
+		.into()
+}
+
 async fn server_returned_htlc_recv_vtxos_identical(
 	ctx: &TestContext,
 	_lightning: &LightningPaymentSetup,
@@ -1648,11 +1721,8 @@ async fn server_returned_htlc_recv_vtxos_identical(
 
 	srv.wait_for_vtxopool(&ctx).await;
 
-	let bark = ctx.bark("bark-1", srv).funded(btc(3)).create().await;
-	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
-
-	let invoice_info = bark.bolt11_invoice(btc(1)).await;
-	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+	// keyless, like a receive from an older wallet: any key can prepare it
+	let receive = start_keyless_receive(srv, btc(1)).await;
 
 	let mut client = srv.get_public_rpc().await;
 
@@ -1660,20 +1730,22 @@ async fn server_returned_htlc_recv_vtxos_identical(
 	// pay_lightning_wait blocks forever (no one claims), so we use select!
 	// to drop pay once the assertions complete.
 	tokio::select! {
-		_ = pay(invoice_info.invoice) => {},
+		_ = pay(receive.invoice) => {},
 		_ = async {
 			// Wait for the payment to be received
 			client.check_lightning_receive(protos::CheckLightningReceiveRequest {
 				hash: receive.payment_hash.to_vec(),
 				wait: true,
 			}).wait_millis(10_000).await.unwrap().into_inner();
+			let htlc_recv_expiry = max_htlc_recv_expiry(srv, receive.payment_hash).await;
 
 			let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 			let req_1 = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
 				user_pubkey: keypair.public_key().serialize().to_vec(),
-				htlc_recv_expiry: 172,
+				htlc_recv_expiry,
 				lightning_receive_anti_dos: None,
+				claim_attestation: None,
 			};
 			let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
 				.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
@@ -1691,8 +1763,9 @@ async fn server_returned_htlc_recv_vtxos_identical(
 			let req_2 = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
 				user_pubkey: keypair.public_key().serialize().to_vec(),
-				htlc_recv_expiry: 172,
+				htlc_recv_expiry,
 				lightning_receive_anti_dos: None,
+				claim_attestation: None,
 			};
 
 			let vtxos_3 = client.prepare_lightning_receive_claim(req_2).await.unwrap()
@@ -1724,12 +1797,9 @@ async fn server_concurrent_prepare_lightning_claim(
 
 	srv.wait_for_vtxopool(&ctx).await;
 
-	let bark = ctx.bark("bark-1", srv).funded(btc(3)).create().await;
-	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
-
 	let invoice_amount = btc(1);
-	let invoice_info = bark.bolt11_invoice(invoice_amount).await;
-	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+	// keyless, like a receive from an older wallet: any key can prepare it
+	let receive = start_keyless_receive(srv, invoice_amount).await;
 
 	let pg_cfg = srv.config().postgres.clone();
 	let db = Db::connect(&pg_cfg).await.unwrap();
@@ -1737,7 +1807,7 @@ async fn server_concurrent_prepare_lightning_claim(
 	// pay blocks until the payment is claimed, which never happens here, so
 	// we race it against the wait for its HTLC to arrive and then drop it.
 	tokio::select! {
-		_ = pay(invoice_info.invoice) => panic!("pay returned before any claim"),
+		_ = pay(receive.invoice) => panic!("pay returned before any claim"),
 		_ = async {
 			srv.get_public_rpc().await.check_lightning_receive(
 				protos::CheckLightningReceiveRequest {
@@ -1747,6 +1817,7 @@ async fn server_concurrent_prepare_lightning_claim(
 			).wait_millis(10_000).await.unwrap();
 		} => {},
 	}
+	let htlc_recv_expiry = max_htlc_recv_expiry(srv, receive.payment_hash).await;
 
 	// Fire all requests at once, each over its own connection. Every call
 	// uses a fresh user pubkey, so nothing but the server's own bookkeeping
@@ -1757,8 +1828,9 @@ async fn server_concurrent_prepare_lightning_claim(
 			payment_hash: receive.payment_hash.to_vec(),
 			user_pubkey: Keypair::new(&SECP, &mut bip39::rand::thread_rng())
 				.public_key().serialize().to_vec(),
-			htlc_recv_expiry: 172,
+			htlc_recv_expiry,
 			lightning_receive_anti_dos: None,
+			claim_attestation: None,
 		}).await
 	})).await;
 
@@ -1802,8 +1874,9 @@ async fn server_concurrent_prepare_lightning_claim(
 			payment_hash: receive.payment_hash.to_vec(),
 			user_pubkey: Keypair::new(&SECP, &mut bip39::rand::thread_rng())
 				.public_key().serialize().to_vec(),
-			htlc_recv_expiry: 172,
+			htlc_recv_expiry,
 			lightning_receive_anti_dos: None,
+			claim_attestation: None,
 		}).await
 		.expect("retry after the storm must succeed").into_inner();
 	let retry_ids = retry.htlc_vtxos.iter()
@@ -1832,17 +1905,14 @@ async fn refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry(
 
 	srv.wait_for_vtxopool(&ctx).await;
 
-	let bark = ctx.bark("bark-1", srv).funded(btc(3)).create().await;
-	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
-
-	let invoice_info = bark.bolt11_invoice(btc(1)).await;
-	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+	// keyless, like a receive from an older wallet: any key can prepare it
+	let receive = start_keyless_receive(srv, btc(1)).await;
 
 	let mut client = srv.get_public_rpc().await;
 	let htlc_expiry_delta = srv.config().htlc_expiry_delta;
 
 	tokio::select! {
-		_ = pay(invoice_info.invoice) => {},
+		_ = pay(receive.invoice) => {},
 		_ = async {
 			client.check_lightning_receive(protos::CheckLightningReceiveRequest {
 				hash: receive.payment_hash.to_vec(),
@@ -1865,6 +1935,7 @@ async fn refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry(
 				user_pubkey: keypair.public_key().serialize().to_vec(),
 				htlc_recv_expiry: attacker_expiry,
 				lightning_receive_anti_dos: None,
+				claim_attestation: None,
 			};
 			let err = client.prepare_lightning_receive_claim(req).await
 				.expect_err("server must refuse htlc_recv_expiry + delta >= lowest");
@@ -1883,6 +1954,7 @@ async fn refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry(
 				user_pubkey: keypair.public_key().serialize().to_vec(),
 				htlc_recv_expiry: safe_expiry,
 				lightning_receive_anti_dos: None,
+				claim_attestation: None,
 			};
 			client.prepare_lightning_receive_claim(req_safe).await
 				.expect("server must accept htlc_recv_expiry just below the safety bound");
@@ -1937,6 +2009,7 @@ async fn refuse_receive_claim_after_incoming_htlc_expiry() {
 			mailbox_id: None,
 			description: None,
 			expiry_secs: None,
+			claim_pubkey: None,
 		})
 		.await
 		.expect("start receive failed")
@@ -1979,6 +2052,7 @@ async fn refuse_receive_claim_after_incoming_htlc_expiry() {
 			user_pubkey: keypair.public_key().serialize().to_vec(),
 			htlc_recv_expiry: lowest.saturating_sub(srv.config().htlc_expiry_delta).into(),
 			lightning_receive_anti_dos: None,
+			claim_attestation: None,
 		})
 		.await
 		.expect("prepare should succeed while the inbound HTLC is live")
@@ -2071,6 +2145,7 @@ async fn settled_hash_cannot_fund_new_receive() {
 			mailbox_id: None,
 			description: None,
 			expiry_secs: None,
+			claim_pubkey: None,
 		})
 		.await
 		.expect_err("receive for an already-settled hash must be refused");
@@ -2078,6 +2153,84 @@ async fn settled_hash_cannot_fund_new_receive() {
 	assert!(err.message().contains("already been paid"), "unexpected message: {}", err.message());
 
 	assert_vtxopool_consistency(&srv).await;
+}
+
+/// A receive started with a claim key is only prepared for that key, signed
+/// by it. Knowing the payment hash, as the payer and every routing node do,
+/// is not enough to take over the grant, shape it or look at it.
+#[tokio::test]
+async fn prepare_lightning_claim_requires_the_claim_key() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/prepare_lightning_claim_requires_the_claim_key").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let payer = Arc::new(lightning.external);
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
+	let mut rpc = srv.get_public_rpc().await;
+
+	let payment_hash = ark::lightning::Preimage::random().compute_payment_hash();
+	let claim_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let other_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let start = |claim_key: &Keypair| protos::StartLightningReceiveRequest {
+		payment_hash: payment_hash.as_ref().to_vec(),
+		amount_sat: 100_000,
+		min_cltv_delta: 6,
+		mailbox_id: None,
+		description: None,
+		expiry_secs: None,
+		claim_pubkey: Some(claim_key.public_key().serialize().to_vec()),
+	};
+	let invoice = rpc.start_lightning_receive(start(&claim_key)).await.unwrap().into_inner().bolt11;
+	// starting it again returns the same receive, but not for another key
+	let again = rpc.start_lightning_receive(start(&claim_key)).await.unwrap().into_inner().bolt11;
+	assert_eq!(again, invoice);
+	let err = rpc.start_lightning_receive(start(&other_key)).await
+		.expect_err("the receive keeps its claim key");
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "unexpected error: {err:?}");
+
+	let pay = tokio::spawn({
+		let payer = payer.clone();
+		async move { payer.try_pay_bolt11(invoice).await }
+	});
+	wait_for_subscription_status(&db, payment_hash, "accepted").await;
+	let sub = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
+		.await.unwrap().expect("subscription exists");
+	let expiry = sub.lowest_incoming_htlc_expiry.expect("accepted")
+		.saturating_sub(srv.config().htlc_expiry_delta);
+
+	let prepare = |key: &Keypair, signer: Option<&Keypair>| protos::PrepareLightningReceiveClaimRequest {
+		payment_hash: payment_hash.as_ref().to_vec(),
+		user_pubkey: key.public_key().serialize().to_vec(),
+		htlc_recv_expiry: expiry.into(),
+		lightning_receive_anti_dos: None,
+		claim_attestation: signer.map(|s|
+			LightningReceiveClaimAttestation::new(payment_hash, expiry, s).serialize()
+		),
+	};
+
+	for (key, signer) in [
+		(&other_key, Some(&other_key)),
+		(&claim_key, None),
+		(&claim_key, Some(&other_key)),
+	] {
+		let err = rpc.prepare_lightning_receive_claim(prepare(key, signer)).await
+			.expect_err("only the claim key's owner can prepare the claim");
+		assert_eq!(err.code(), tonic::Code::InvalidArgument, "unexpected error: {err:?}");
+	}
+	assert_eq!(count_htlc_recv_vtxos(&db).await, 0);
+
+	let granted = rpc.prepare_lightning_receive_claim(prepare(&claim_key, Some(&claim_key))).await
+		.expect("the receiver prepares the claim").into_inner().htlc_vtxos;
+	assert!(!granted.is_empty());
+	let again = rpc.prepare_lightning_receive_claim(prepare(&claim_key, Some(&claim_key))).await
+		.expect("the receiver retries").into_inner().htlc_vtxos;
+	assert_eq!(again, granted, "a retry returns the same grant");
+	rpc.prepare_lightning_receive_claim(prepare(&other_key, Some(&other_key))).await
+		.expect_err("the grant isn't handed to anyone else");
+
+	pay.abort();
 }
 
 /// A receive whose hash settled while it was only Accepted must not be granted
@@ -2146,6 +2299,7 @@ async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
 		mailbox_id: None,
 		description: None,
 		expiry_secs: None,
+		claim_pubkey: None,
 	}).await.expect("receive should be allowed while H is unsettled").into_inner().bolt11;
 
 	let pay_receive = {
@@ -2173,6 +2327,7 @@ async fn settled_hash_cannot_be_granted_htlc_recv_vtxos() {
 		user_pubkey: keypair.public_key().serialize().to_vec(),
 		htlc_recv_expiry: lowest.saturating_sub(srv.config().htlc_expiry_delta).into(),
 		lightning_receive_anti_dos: None,
+		claim_attestation: None,
 	}).await.expect_err("a settled hash must not be granted HTLC-recv vtxos");
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "unexpected error: {err:?}");
 	assert!(err.message().contains("already been paid"), "unexpected error: {err:?}");
@@ -2253,6 +2408,7 @@ async fn intra_ark_payment_refused_while_same_hash_send_is_open() {
 		mailbox_id: None,
 		description: None,
 		expiry_secs: None,
+		claim_pubkey: None,
 	}).await.expect("receive should be allowed while H is unsettled").into_inner().bolt11;
 
 	let err = payer.try_pay_lightning(&receive_invoice, None, false).await
@@ -2823,7 +2979,7 @@ async fn check_lightning_receive_poll_interval_fallback() {
 
 	// Create a hold invoice on the server.
 	let resp = srv.start_lightning_receive(
-		payment_hash, btc(1), BlockDelta::new(18), None, None, None,
+		payment_hash, btc(1), BlockDelta::new(18), None, None, None, None,
 	).await.unwrap();
 
 	// Create a disconnected receiver: the sender is kept alive so
@@ -2876,7 +3032,7 @@ async fn check_lightning_receive_ignores_other_payment_updates() {
 	let preimage = ark::lightning::Preimage::from(rand::random::<[u8; 32]>());
 	let payment_hash = preimage.compute_payment_hash();
 	srv.start_lightning_receive(
-		payment_hash, btc(1), BlockDelta::new(18), None, None, None,
+		payment_hash, btc(1), BlockDelta::new(18), None, None, None, None,
 	).await.unwrap();
 
 	let (update_tx, mut update_rx) = tokio::sync::broadcast::channel::<PaymentHash>(16);
@@ -2944,6 +3100,7 @@ async fn refuse_receive_with_unlock_hash_as_payment_hash() {
 		mailbox_id: None,
 		description: None,
 		expiry_secs: None,
+		claim_pubkey: None,
 	}).await.expect_err("must refuse a payment hash that is an existing unlock hash");
 	assert_eq!(err.code(), tonic::Code::InvalidArgument);
 	assert!(err.message().contains("unlock hash"), "unexpected error: {err:?}");
@@ -2969,6 +3126,7 @@ async fn invoice_expiry_is_chosen_by_the_client() {
 			mailbox_id: None,
 			description: None,
 			expiry_secs,
+			claim_pubkey: None,
 		}).await.map(|r| Bolt11Invoice::from_str(&r.into_inner().bolt11).unwrap())
 	};
 
@@ -3170,6 +3328,64 @@ async fn wait_for_cln_hold_status(
 /// Wait until Eve's hold plugin holds the payment's HTLCs. The invoice turns
 /// ACCEPTED only once every HTLC is irrevocably committed and handed to the
 /// plugin; a settle before that fails with "no HTLCs to settle".
+/// A successful xpay records its preimage at once, also when the payment
+/// attempt was closed meanwhile and nothing else would record it.
+#[tokio::test]
+async fn successful_xpay_records_the_preimage() {
+	let ctx = TestContext::new("server/successful_xpay_records_the_preimage").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let ark_ln = lightning.internal;
+	let eve_ln = lightning.external;
+
+	let srv = ctx.captaind("server").lightningd(&ark_ln).funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	ark_ln.wait_for_block_sync().await;
+	eve_ln.wait_for_block_sync().await;
+
+	// Eve holds the payment, so the server's xpay call doesn't return yet.
+	let preimage = ark::lightning::Preimage::random();
+	let payment_hash = preimage.compute_payment_hash();
+	let mut eve_hold = eve_ln.hold_client().await;
+	let bolt11 = eve_hold.invoice(hold::InvoiceRequest {
+		payment_hash: payment_hash.to_byte_array().to_vec(),
+		amount_msat: sat(10_000).to_msat(),
+		description: Some(hold::invoice_request::Description::Memo("held".to_string())),
+		min_final_cltv_expiry: Some(18),
+		expiry: Some(3600),
+		routing_hints: vec![],
+	}).await.unwrap().into_inner().bolt11;
+	bark.try_pay_lightning(&bolt11, None, false).await.unwrap();
+	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
+
+	// Close the attempt, so neither the reconciliation after xpay nor the
+	// monitor finishes it.
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await)
+		.await.unwrap().expect("open attempt");
+	db.write(async |t| t.update_lightning_payment_attempt_status(
+		&attempt, server::database::ln::LightningPaymentStatus::Failed, Some("closed for the test"),
+	).await).await.unwrap().expect("attempt unchanged");
+
+	// Eve settles, so xpay returns the preimage.
+	eve_hold.settle(hold::SettleRequest {
+		payment_preimage: preimage.as_ref().to_vec(),
+	}).await.unwrap();
+
+	async {
+		loop {
+			let settled = db.read(async |t| t.get_htlc_settlement_by_payment_hash(payment_hash).await)
+				.await.unwrap();
+			if settled == Some(preimage) {
+				break;
+			}
+			tokio::time::sleep(poll_interval()).await;
+		}
+	}.wait(wait_timeout()).await;
+}
+
 async fn wait_for_hold_invoice_accepted(
 	hold_client: &mut hold::hold_client::HoldClient<tonic::transport::Channel>,
 	payment_hash: ark::lightning::PaymentHash,
@@ -3281,6 +3497,7 @@ async fn prevent_double_pay_via_canceled_subscription_and_inflight_xpay() {
 			mailbox_id: None,
 			description: None,
 			expiry_secs: None,
+			claim_pubkey: None,
 		}).await.unwrap().into_inner().bolt11;
 
 	// 4. Pay invoice-2 from Eve's node. The HTLC is held by the server's
@@ -3403,6 +3620,7 @@ async fn self_payment_claim_rejected_after_sender_onchain_refund() {
 		mailbox_id: None,
 		description: None,
 		expiry_secs: None,
+		claim_pubkey: None,
 	}).await.unwrap().into_inner().bolt11;
 
 	let sender_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
@@ -3431,6 +3649,7 @@ async fn self_payment_claim_rejected_after_sender_onchain_refund() {
 			user_pubkey: receiver_key.public_key().serialize().to_vec(),
 			htlc_recv_expiry: send_expiry.saturating_sub(srv.config().htlc_expiry_delta).into(),
 			lightning_receive_anti_dos: None,
+			claim_attestation: None,
 		},
 	).await.unwrap().into_inner().htlc_vtxos.into_iter()
 		.map(|bytes| Vtxo::<Full>::deserialize(&bytes).unwrap())
@@ -3575,18 +3794,40 @@ async fn late_xpay_result_does_not_finalize_a_retry() {
 	wait_for_hold_invoice_accepted(&mut eve_hold, payment_hash).await;
 
 	// The first attempt is closed and the invoice retried while xpay is
-	// still running.
+	// still running. As in the server, each attempt's xpay call ends with it,
+	// and the retry gets a call of its own, which it never makes.
 	let db = Db::connect(&srv.config().postgres).await.unwrap();
 	let first = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await)
 		.await.unwrap().expect("open attempt");
-	db.write(async |t| t.update_lightning_payment_attempt_status(
-		&first, server::database::ln::LightningPaymentStatus::Failed, Some("closed for the test"),
-	).await).await.unwrap().expect("first attempt unchanged");
+	db.write(async |t| {
+		let first = t.update_lightning_payment_attempt_status(
+			&first, server::database::ln::LightningPaymentStatus::Failed, Some("closed for the test"),
+		).await?;
+		xpay::end_pending_xpay_by_payment_hash(&**t, payment_hash,
+			xpay::ClnXpayOutcome::Fail { error_code: None },
+		).await?.expect("first xpay call pending");
+		Ok(first)
+	}).await.unwrap().expect("first attempt unchanged");
 	let invoice = ark::lightning::Invoice::from_str(&bolt11).unwrap();
-	let retry_id = db.write(async |t| t.store_lightning_payment_start(
-		first.lightning_node_id, &invoice, sat(10_000), None, &[], None,
-		first.block_height.unwrap(), sat(0), None, Duration::from_secs(3600), Some(sat(1_000)),
-	).await).await.unwrap();
+	let retry_id = db.write(async |t| {
+		let retry_id = t.store_lightning_payment_start(
+			first.lightning_node_id, &invoice, sat(10_000), None, &[], None,
+			first.block_height.unwrap(), sat(0), None, Duration::from_secs(3600), Some(sat(1_000)),
+		).await?;
+		xpay::create_xpay(&**t, &xpay::NewClnXpay {
+			lightning_node_id: first.lightning_node_id,
+			payment_amount_msat: sat(10_000).to_msat(),
+			max_routing_fee_msat: Some(sat(1_000).to_msat()),
+			attempt_expiry: chrono::Local::now() + chrono::TimeDelta::hours(1),
+			partial_msat: None,
+			htlc_expiry: None,
+			label: Some("retry".to_string()),
+			payment_hash,
+			user_fee_msat: Some(0),
+			user_agent: None,
+		}).await?;
+		Ok(retry_id)
+	}).await.unwrap();
 
 	// Releasing the hold makes the first xpay call fail.
 	eve_hold.cancel(hold::CancelRequest {

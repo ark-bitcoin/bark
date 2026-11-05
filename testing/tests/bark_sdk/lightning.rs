@@ -296,8 +296,7 @@ async fn pay_hold_refused() {
 	// is Unknown. With CLN 26.06, xpay reports the destination failure before CLN's own sendpay
 	// row transitions to failed, so captaind's immediate listpays reconciliation still sees
 	// Pending and marks the attempt Submitted. It only flips to Failed on the next
-	// process_payment_attempts tick past cln_xpay_timeout + XPAY_TIMEOUT_BUFFER (5s + 15s)
-	// after the attempt was created. Wait long enough to clear that gate under
+	// process_payment_attempts tick. Wait long enough for that under
 	// BARK_DOUBLE_DRIVE_ACTIONS + a couple of bark re-poll intervals.
 	let status = waiter.wait_millis(40_000).await.expect("join waiter")
 		.expect("waiting check errored");

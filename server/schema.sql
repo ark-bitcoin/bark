@@ -1047,7 +1047,8 @@ CREATE TABLE public.lightning_htlc_subscription (
     invoice text NOT NULL,
     final_amount_msat bigint,
     receiver_mailbox_id text,
-    user_agent text
+    user_agent text,
+    claim_pubkey text
 );
 
 

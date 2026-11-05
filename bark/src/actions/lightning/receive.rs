@@ -17,7 +17,7 @@ use rand::seq::IteratorRandom;
 
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::arkoor::state::UserGeneratedNonces;
-use ark::attestations::LightningReceiveAttestation;
+use ark::attestations::{LightningReceiveAttestation, LightningReceiveClaimAttestation};
 use ark::fees::validate_and_subtract_fee;
 use ark::lightning::{Bolt11InvoiceExt, PaymentHash, Preimage};
 use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy};
@@ -368,6 +368,10 @@ pub(crate) async fn start_lightning_receive(
 	let mailbox_kp = wallet.inner.seed.to_mailbox_keypair();
 	let mailbox_id = ark::mailbox::MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
 
+	// The HTLC-recv vtxos get locked to this key, and only it can prepare the
+	// claim, so nobody else who knows the payment hash can take it over.
+	let (claim_keypair, key_index) = wallet.derive_store_next_keypair().await?;
+
 	let req = protos::StartLightningReceiveRequest {
 		payment_hash: payment_hash.to_vec(),
 		amount_sat: amount.to_sat(),
@@ -375,6 +379,7 @@ pub(crate) async fn start_lightning_receive(
 		mailbox_id: Some(mailbox_id.serialize()),
 		description,
 		expiry_secs: expiry.map(|e| e.as_secs()),
+		claim_pubkey: Some(claim_keypair.public_key().serialize().to_vec()),
 	};
 
 	let resp = srv.client.start_lightning_receive(req).await?.into_inner();
@@ -393,7 +398,6 @@ pub(crate) async fn start_lightning_receive(
 		}
 	}
 
-	let (_, key_index) = wallet.derive_store_next_keypair().await?;
 
 	Ok(LightningReceive {
 		invoice,
@@ -536,6 +540,9 @@ async fn prepare_lightning_receive_htlcs(
 		user_pubkey: keypair.public_key().serialize().to_vec(),
 		htlc_recv_expiry: htlc_recv_expiry.into(),
 		lightning_receive_anti_dos,
+		claim_attestation: Some(
+			LightningReceiveClaimAttestation::new(payment_hash, htlc_recv_expiry, &keypair).serialize(),
+		),
 	};
 	let res = srv.client.prepare_lightning_receive_claim(req).await
 		.retry_unless_rejected()?.into_inner();
