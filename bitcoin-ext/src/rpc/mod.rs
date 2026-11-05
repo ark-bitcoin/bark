@@ -243,7 +243,6 @@ pub struct SubmitPackageTxResult {
 /// type requires `bip125-replaceable`, which bitcoind v32 no longer returns.
 #[derive(Clone, Debug, Deserialize)]
 pub struct MempoolEntryAncestors {
-	pub weight: u64,
 	#[serde(rename = "ancestorsize")]
 	pub ancestor_size: u64,
 	pub fees: MempoolEntryAncestorFees,

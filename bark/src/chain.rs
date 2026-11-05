@@ -549,8 +549,8 @@ impl ChainSource {
 				let err = || anyhow!("invalid ancestorsize from getmempoolentry");
 
 				result.total_fee = entry.fees.ancestor;
-				result.total_weight = Weight::from_wu(entry.weight) +
-					Weight::from_vb(entry.ancestor_size).ok_or_else(err)?;
+				// ancestorsize includes the tx itself
+				result.total_weight = Weight::from_vb(entry.ancestor_size).ok_or_else(err)?;
 			},
 			ChainSourceClient::Esplora(client) => {
 				// We should first verify the transaction is in the mempool to maintain the same
