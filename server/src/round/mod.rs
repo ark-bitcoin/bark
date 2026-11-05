@@ -37,6 +37,7 @@ use server_log::{LogMsg, RoundVtxoCreated};
 
 use crate::database::rounds::{StoredRoundOutput, StoredRoundParticipation};
 use crate::database::tree::VtxoTreeUpdate;
+use crate::database::VtxoState;
 use crate::{check_max_amount, telemetry, Server, SECP};
 use crate::secret::Secret;
 use crate::error::{BadArgument, ContextExt, NotFound};
@@ -141,6 +142,32 @@ impl VtxoParticipant {
 			unblinded_mailbox_id,
 		}
 	}
+}
+
+/// Check that all round input vtxos are spendable and return them.
+///
+/// Collects *every* unspendable input rather than bailing on the first, so the
+/// client learns all the ids it must drop in one go.
+fn check_round_inputs_spendable(
+	srv: &Server,
+	vtxos: Vec<VtxoState>,
+) -> anyhow::Result<Vec<Vtxo<Full>>> {
+	let chain_tip = srv.sync_manager.chain_tip().height;
+	let mut ret = Vec::with_capacity(vtxos.len());
+	let mut unusable = Vec::new();
+	for v in vtxos {
+		if let Err(e) = v.check_spendable(chain_tip) {
+			debug!("round input vtxo {} is not spendable: {:#}", v.vtxo_id, e);
+			unusable.push(v.vtxo_id);
+		} else {
+			ret.push(v.vtxo);
+		}
+	}
+	if !unusable.is_empty() {
+		return badarg!("input vtxo(s) not spendable")
+			.unusable_inputs(unusable);
+	}
+	Ok(ret)
 }
 
 #[derive(Clone)]
@@ -433,27 +460,18 @@ impl CollectingPayments {
 		srv: &Server,
 		inputs: &[VtxoId],
 	) -> anyhow::Result<Vec<Vtxo<Full>>> {
-		let chain_tip = srv.sync_manager.chain_tip().height;
-		let mut ret  = Vec::with_capacity(inputs.len());
+		let vtxos = self.fetch_round_input_vtxos(srv, inputs).await?;
+		check_round_inputs_spendable(srv, vtxos)
+	}
+
+	/// Fetch the input vtxos without checking whether they are spendable.
+	async fn fetch_round_input_vtxos(
+		&self,
+		srv: &Server,
+		inputs: &[VtxoId],
+	) -> anyhow::Result<Vec<VtxoState>> {
 		match srv.db.read(async |t| t.get_user_vtxos_by_id(&inputs).await).await {
-			Ok(vtxos) => {
-				// Collect *every* unspendable input rather than bailing on the
-				// first, so the client learns all the ids it must drop in one go.
-				let mut unusable = Vec::new();
-				for v in vtxos {
-					if let Err(e) = v.check_spendable(chain_tip) {
-						debug!("round input vtxo {} is not spendable: {:#}", v.vtxo_id, e);
-						unusable.push(v.vtxo_id);
-					} else {
-						ret.push(v.vtxo);
-					}
-				}
-				if !unusable.is_empty() {
-					return badarg!("input vtxo(s) not spendable")
-						.unusable_inputs(unusable);
-				}
-				Ok(ret)
-			},
+			Ok(vtxos) => Ok(vtxos),
 			Err(e) => {
 				if let Some(nf) = e.downcast_ref::<NotFound>() {
 					for id in nf.identifiers() {
@@ -593,8 +611,9 @@ impl CollectingPayments {
 			.map_err(|e| { client_rslog!(RoundUserVtxoInFlux, self.round_step, vtxo: e.id); e })
 			.badarg("input VTXO already locked")?;
 
-		// Check if the input vtxos exist and are unspent.
-		let input_vtxos = match self.check_fetch_round_input_vtxos(srv, &input_ids).await {
+		// Only tell whether the inputs can be spent once the caller proved it
+		// owns them, so nobody else learns their state from the answer.
+		let input_vtxos = match self.fetch_round_input_vtxos(srv, &input_ids).await {
 			Ok(i) => i,
 			Err(e) => {
 				let ret = if let Some(id) = e.downcast_ref::<VtxoId>().cloned() {
@@ -612,13 +631,14 @@ impl CollectingPayments {
 			.map(|v| (v.vtxo_id, &v.attestation))
 			.collect::<HashMap<_,_>>();
 		for input in &input_vtxos {
-			let attestation = attestation_by_vtxo_id.get(&input.id())
+			let attestation = attestation_by_vtxo_id.get(&input.vtxo_id)
 				.expect("all vtxos were found");
-			attestation.verify(self.round_attempt_challenge, input, &vtxo_requests)
+			attestation.verify(self.round_attempt_challenge, &input.vtxo, &vtxo_requests)
 				.with_context(|| format!(
-					"attestation is invalid: vtxo {}, proof: {:?}", input.id(), attestation,
+					"attestation is invalid: vtxo {}, proof: {:?}", input.vtxo_id, attestation,
 				))?;
 		}
+		let input_vtxos = check_round_inputs_spendable(srv, input_vtxos)?;
 
 		let current_height = srv.sync_manager.chain_tip().height;
 		let amount_check = validate_payment_amounts(&input_vtxos, &vtxo_requests)
