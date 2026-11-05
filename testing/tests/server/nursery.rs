@@ -9,7 +9,7 @@ use log::info;
 use serde_json::json;
 
 use bitcoin_ext::{BlockDelta, FeeRateExt};
-use bitcoin_ext::rpc::RpcApi;
+use bitcoin_ext::rpc::{MempoolEntryAncestors, RpcApi};
 use server::bitcoind::MempoolEntry;
 use server::vtxopool::VtxoTarget;
 use server_log::{NurseryTxConfirmed, NurseryTxMissedTarget, RoundFinished};
@@ -208,7 +208,8 @@ async fn nursery_reports_chunk_fee_rate() {
 
 	// The ancestor feerate of the tx and of its child are both below the
 	// chunk feerate, so a report based on them would have missed the bump.
-	let child_entry = srv.bitcoind().sync_client().get_mempool_entry(&child_txid)
+	let child_entry: MempoolEntryAncestors = srv.bitcoind().sync_client()
+		.call("getmempoolentry", &[json!(child_txid)])
 		.expect("server bitcoind has the child");
 	let child_ancestor_kwu = FeeRate::from_amount_and_weight_ceil(
 		child_entry.fees.ancestor, Weight::from_vb(child_entry.ancestor_size).unwrap(),

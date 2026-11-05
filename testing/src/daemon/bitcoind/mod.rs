@@ -444,6 +444,10 @@ impl DaemonHelper for BitcoindHelper {
 			"-debug=1",
 			"-debugexclude=libevent",
 			"-whitelist=noban,in,out@127.0.0.1", // whitelist our peers for instant relay
+			// tests run many RPC clients (barks, server, electrs) that keep
+			// idle keep-alive connections open, the default of 16 is too low
+			"-rpcmaxconnections=1024",
+			"-listenonion=0",
 			&format!("-rpcauth={}", BITCOINRPC_TEST_AUTH),
 			&format!("-datadir={}", self.config.datadir.display()),
 			&format!("-txindex={}", self.config.txindex as u8),

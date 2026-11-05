@@ -543,13 +543,13 @@ impl ChainSource {
 		match self.inner() {
 			#[cfg(feature = "bitcoind-rpc")]
 			ChainSourceClient::Bitcoind { rpc, .. } => {
-				let entry: rpc::json::GetMempoolEntryResult = rpc.call_raw(
+				let entry: rpc::MempoolEntryAncestors = rpc.call_raw(
 					"getmempoolentry", &[serde_json::to_value(txid).expect("serializable")],
 				).await?;
-				let err = || anyhow!("missing weight parameter from getmempoolentry");
+				let err = || anyhow!("invalid ancestorsize from getmempoolentry");
 
 				result.total_fee = entry.fees.ancestor;
-				result.total_weight = Weight::from_wu(entry.weight.ok_or_else(err)?) +
+				result.total_weight = Weight::from_wu(entry.weight) +
 					Weight::from_vb(entry.ancestor_size).ok_or_else(err)?;
 			},
 			ChainSourceClient::Esplora(client) => {

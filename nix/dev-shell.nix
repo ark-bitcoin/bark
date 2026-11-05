@@ -1,9 +1,9 @@
 { system, pkgs, lib, fenix, slog-tools, buildShell, rustTargetWasm,
 }:
 let
-	bitcoinVersion = "31.0";
-	lightningVersion = "26.06.6";
-	holdPluginVersion = "0.3.3";
+	bitcoinVersion = "32.1";
+	lightningVersion = "26.06.10";
+	holdPluginRevision = "efc7d5f50470ed9d87b2b3b9c99c049da72de91a";
 	esploraElectrsRevision = "ef4417921511610fe8c9663020ce7b835cb1f14a";
 	mempoolElectrsRevision = "v3.3.0";
 
@@ -29,7 +29,7 @@ let
 		version = bitcoinVersion;
 		src = pkgs.fetchurl {
 			urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];
-			sha256 = "sha256-C6DvXuo679lswXdL4nTD1ZSBLPrAmIgJ1wZzi7Bns+M=";
+			sha256 = "sha256-pfL2HjLPf3kGQcnsMGo8iMp7WlVpRpVrHzX/1+J4E/k=";
 		};
 		# nixpkgs' bitcoind gpg-verifies the release SHA256SUMS in preUnpack,
 		# but its checksum files are pinned to the nixpkgs version, which our
@@ -96,12 +96,15 @@ let
 		version = lightningVersion;
 		src = pkgs.fetchurl {
 			url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
-			hash = "sha256-cZEfzDXkqyRuvH1FMcrPK8OBYGnZZ5jcj3pztAMgfO0=";
+			hash = "sha256-SRRWHm0QjazKAYPX5rOxwiTFgFl93Ls5cpnvWw/MMjA=";
 		};
 		makeFlags = [ "VERSION=v${lightningVersion}" ];
 		postPatch = (old.postPatch or "") + ''
 			chmod +x devtools/blockreplace.py
 			patchShebangs devtools/blockreplace.py
+			# The v26.06.10 release zip has timestamps in the future, which
+			# makes make rerun ./configure forever.
+			find . -exec touch -h -d @1 {} +
 		'';
 		preInstall = ''
 			mkdir -p $out/libexec/c-lightning/plugins/
@@ -116,7 +119,7 @@ let
 			owner = "ElementsProject";
 			repo = "lightning";
 			rev = "v${lightningVersion}";
-			hash = "sha256-bra45wREkyt4byY7/oemRQsmqSiVX/8vVuwYcYjcQHQ=";
+			hash = "sha256-NMy7nr2xfP7JX2QY/zYvnxWQYtyhcb2uvqGljyTgYjM=";
 		};
 		buildAndTestSubdir = "plugins/grpc-plugin";
 		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf ];
@@ -131,12 +134,12 @@ let
 
 	hold-invoice = rustPlatform.buildRustPackage rec {
 		pname = "hold-invoice";
-		version = holdPluginVersion;
-		src = pkgs.fetchFromGitHub {
-			owner = "BoltzExchange";
+		version = holdPluginRevision;
+		src = pkgs.fetchFromGitLab {
+			owner = "ark-bitcoin";
 			repo = "hold";
-			rev = "v${holdPluginVersion}";
-			hash = "sha256-AIqYN1z91oUfCxM2MALUpduviEzX4mj87GcdFkXnNdQ=";
+			rev = holdPluginRevision;
+			hash = "sha256-alFEXDfurp0jZdt4jH6YnaVvsSmv4eXwiWs0TU88Se4=";
 		};
 		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf rustPlatform.bindgenHook pkgs.go pkgs.git pkgs.perl ];
 		buildInputs = [
@@ -160,7 +163,7 @@ let
 		ESPLORA_ELECTRS_EXEC = "${esploraElectrs}/bin/electrs";
 		MEMPOOL_ELECTRS_EXEC = "${mempoolElectrs}/bin/electrs";
 		LIGHTNINGD_EXEC = if isDarwin then null else "${clightning}/bin/lightningd";
-		LIGHTNINGD_DOCKER_IMAGE = if isDarwin then "docker.io/secondark/cln-hold:v${lightningVersion}" else null;
+		LIGHTNINGD_DOCKER_IMAGE = if isDarwin then "docker.io/secondark/cln-hold:v${lightningVersion}-${builtins.substring 0 7 holdPluginRevision}" else null;
 		LIGHTNINGD_PLUGIN_DIR = if isDarwin then "/plugins" else "${cln-plugins}";
 		TOR_EXEC = "${pkgs.tor}/bin/tor";
 		# For CC crate to compile C code to WASM
