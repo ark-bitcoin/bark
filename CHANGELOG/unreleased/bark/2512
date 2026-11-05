@@ -1,8 +1,0 @@
-- Add a read-only remaining exit transactions API
-  `Exit::remaining_exit_transactions` and `Wallet::remaining_exit_transactions`
-  list every exit transaction of the given VTXOs not yet confirmed onchain: per
-  VTXO, the transaction ids it needs confirmed in broadcast order, plus each
-  transaction exactly once with parents before children. Nothing is signed and
-  the onchain wallet is never touched; `presign_emergency_exit` signs children
-  for the same transactions.
-  [#2512](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2512)

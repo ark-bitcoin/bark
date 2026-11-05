@@ -1,3 +1,0 @@
-- Do not panic on a BOLT12 offer with an amount in a fiat currency
-  The payment request parser now treats the offer amount as unknown.
-  [#2686](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2686)

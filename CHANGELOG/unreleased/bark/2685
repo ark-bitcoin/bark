@@ -1,9 +1,0 @@
-- Update `bdk_wallet` to 3.2.0
-  `bdk_wallet` 3.2.0 deprecates signing with the keys stored in the
-  `Wallet`. `OnchainWallet` now keeps its own signers and signs with
-  `Wallet::sign_with_signers`.
-  [#2685](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2685)
-  - **BREAKING:** The re-exported `bdk_wallet` is pinned to `=3.2.0`
-  - **BREAKING:** After a reload, `OnchainWallet::inner` holds no private
-    keys. `inner.sign` returns an unsigned PSBT. Sign through
-    `OnchainWalletTrait` instead.

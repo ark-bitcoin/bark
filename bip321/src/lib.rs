@@ -49,8 +49,7 @@ use std::fmt::{self, Write};
 use std::str::FromStr;
 
 use bitcoin::address::{NetworkChecked, NetworkUnchecked};
-use bitcoin::{Address, Amount, Denomination, Network, NetworkKind};
-use bitcoin_ext::AddressExt;
+use bitcoin::{Address, AddressType, Amount, Denomination, Network, NetworkKind};
 #[cfg(feature = "lightning")]
 use lightning::offers::offer::Offer;
 #[cfg(feature = "lightning")]
@@ -120,7 +119,8 @@ const UNSAFE_POP_SCHEMES: &[&str] = &[
 	"file", "mailto", "ftp", "wss",
 	"ws", "ssh", "tel", "data", "blob",
 	"about", "view-source", "intent",
-	"microsoft-edge", "googlechrome", "googlechromes",
+	"microsoft-edge", "microsoft-edge-http", "microsoft-edge-https",
+	"googlechrome", "googlechromes",
 	"googlechrome-x-callback", "x-safari-http", "x-safari-https", "firefox",
 ];
 
@@ -654,6 +654,7 @@ impl<E: ExtensionHandler> FromStr for Bip321Uri<E> {
 	}
 }
 
+/// Append `key=value` to the query string, percent-encoding the value.
 fn write_query_param(f: &mut String, key: &str, value: &str, required: bool) -> fmt::Result {
 	let separator = if f.is_empty() { "" } else { "&" };
 	let required_prefix = if required { "req-" } else { "" };
@@ -661,9 +662,18 @@ fn write_query_param(f: &mut String, key: &str, value: &str, required: bool) -> 
 	write!(f, "={}", utf8_percent_encode(value, QUERY_ENCODE_SET))
 }
 
+/// The URI has case-sensitive components, so it cannot be upper-cased.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("uri is not fully uppercasable")]
 pub struct NotUppercasable;
+
+/// Whether the address uses a case-insensitive bech32(m) encoding.
+fn is_uppercasable(address: &Address) -> bool {
+	matches!(
+		address.address_type(),
+		Some(AddressType::P2wpkh | AddressType::P2wsh | AddressType::P2tr),
+	)
+}
 
 impl<E: ExtensionHandler> Bip321Uri<E> {
 	/// Whether every component of the URI is case-insensitive, so the whole
@@ -680,9 +690,9 @@ impl<E: ExtensionHandler> Bip321Uri<E> {
 			&& self.custom.values().all(|v| v.iter().all(|s| {
 				!s.inner().chars().any(|c| c.is_lowercase())
 			}))
-			&& self.address.as_ref().map_or(true, |a| a.is_uppercasable())
-			&& self.bc.iter().all(|f| f.inner().is_uppercasable())
-			&& self.tb.iter().all(|f| f.inner().is_uppercasable())
+			&& self.address.as_ref().map_or(true, is_uppercasable)
+			&& self.bc.iter().all(|f| is_uppercasable(f.inner()))
+			&& self.tb.iter().all(|f| is_uppercasable(f.inner()))
 	}
 
 	/// Serializes the URI as an all-uppercase `bitcoin:` URI string.
@@ -1066,6 +1076,8 @@ mod tests {
 			("c%3A%2Fx.html", "c:/x.html"),
 			("web%2Bx%3Aevil", "web+x:evil"),
 			("Microsoft-Edge%3Ahttps%3A%2F%2Fevil.com", "Microsoft-Edge:https://evil.com"),
+			("microsoft-edge-http%3A%2F%2Fevil.com", "microsoft-edge-http://evil.com"),
+			("Microsoft-Edge-Https%3A%2F%2Fevil.com", "Microsoft-Edge-Https://evil.com"),
 			(
 				"GoogleChrome-X-Callback%3A%2F%2Fx-callback-url%2Fopen%2F%3Furl%3Dhttps%3A%2F%2Fevil.com",
 				"GoogleChrome-X-Callback://x-callback-url/open/?url=https://evil.com",

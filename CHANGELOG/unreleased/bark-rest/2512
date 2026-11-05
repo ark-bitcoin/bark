@@ -1,5 +1,0 @@
-- Add `GET /v1/exits/remaining` to list remaining exit transactions
-  Read-only twin of the presign endpoint: per VTXO, the transaction ids it
-  needs confirmed in broadcast order, plus each pending exit transaction
-  exactly once with parents before children.
-  [#2512](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2512)

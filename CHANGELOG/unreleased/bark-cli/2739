@@ -1,2 +1,0 @@
-- remove `barkd-swagger-ui` from default features for `bark-cli` crate
-  [#2739](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2739)

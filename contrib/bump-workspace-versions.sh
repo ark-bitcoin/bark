@@ -44,7 +44,21 @@ packages="
 	bark-server
 "
 
+# Cargo.toml files that version on their own but pin lockstep crates. Only
+# their pins are swept.
+dependents="
+	bark-nwc/Cargo.toml
+	cln-rpc/Cargo.toml
+"
+
 lockstep_count=$(echo $lockstep | wc -w)
+
+is_lockstep() {
+	case " $(echo $lockstep) " in
+		*" $1 "*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
 
 # Read every observed version before touching anything: each crate's
 # [package].version AND every internal-dep pin (`<pkg> = ...version = "..."`
@@ -52,10 +66,12 @@ lockstep_count=$(echo $lockstep | wc -w)
 # a stale pin left behind by a partial prior run counts as drift, so we
 # either repair it via the sweep or refuse if it disagrees with the rest.
 old_vers=""
-for f in $lockstep; do
-	v=$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$f" | head -n1)
-	[ -n "$v" ] || log_error "couldn't find [package].version in $f"
-	old_vers="$old_vers $v"
+for f in $lockstep $dependents; do
+	if is_lockstep "$f"; then
+		v=$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$f" | head -n1)
+		[ -n "$v" ] || log_error "couldn't find [package].version in $f"
+		old_vers="$old_vers $v"
+	fi
 	for pkg in $packages; do
 		pins=$(sed -nE "/^${pkg} = /s/.*version = \"([0-9]+\.[0-9]+\.[0-9]+)\".*/\1/p" "$f")
 		for p in $pins; do
@@ -97,7 +113,7 @@ cleanup() {
 			[ -f "$cf$bak_suf" ] && mv -f "$cf$bak_suf" "$cf"
 		done
 	fi
-	for f in $lockstep; do
+	for f in $lockstep $dependents; do
 		rm -f "$f$new_suf" "$f$bak_suf"
 	done
 }
@@ -106,14 +122,18 @@ trap cleanup EXIT
 # Phase 1: stage.
 total=0
 staged=""
-for f in $lockstep; do
-	n=$(grep -cE "^version = \"$old_pat\"" "$f" || true)
+for f in $lockstep $dependents; do
+	n=0
+	set -- -E
+	if is_lockstep "$f"; then
+		n=$(grep -cE "^version = \"$old_pat\"" "$f" || true)
+		set -- "$@" -e "s/^version = \"$old_pat\"/version = \"$new_ver\"/"
+	fi
 	for pkg in $packages; do
 		m=$(grep -cE "^${pkg} = .*version = \"$old_pat\"" "$f" || true)
 		n=$((n + m))
 	done
 	if [ "$n" -gt 0 ]; then
-		set -- -E -e "s/^version = \"$old_pat\"/version = \"$new_ver\"/"
 		for pkg in $packages; do
 			set -- "$@" -e "/^${pkg} = /s/version = \"$old_pat\"/version = \"$new_ver\"/g"
 		done
@@ -131,10 +151,12 @@ done
 fail=0
 for f in $staged; do
 	sf="$f$new_suf"
-	v=$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$sf" | head -n1)
-	if [ "$v" != "$new_ver" ]; then
-		printf "  ERR: staged %s [package].version is %s, not %s\n" "$f" "$v" "$new_ver" >&2
-		fail=1
+	if is_lockstep "$f"; then
+		v=$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$sf" | head -n1)
+		if [ "$v" != "$new_ver" ]; then
+			printf "  ERR: staged %s [package].version is %s, not %s\n" "$f" "$v" "$new_ver" >&2
+			fail=1
+		fi
 	fi
 	for pkg in $packages; do
 		pins=$(sed -nE "/^${pkg} = /s/.*version = \"([0-9]+\.[0-9]+\.[0-9]+)\".*/\1/p" "$sf")
