@@ -92,7 +92,7 @@ impl RuntimeManager {
 				} else {
 					error!("Graceful shutdown took too long, exiting... Remaining workers: {:?}",
 						rt.remaining_worker_names());
-					std::process::exit(0);
+					std::process::exit(1);
 				}
 			}
 		});
