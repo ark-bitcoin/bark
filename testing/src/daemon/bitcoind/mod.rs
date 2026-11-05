@@ -25,6 +25,13 @@ use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
 use crate::util::{FutureExt, poll_interval, resolve_path, get_tx_propagation_timeout_millis, wait_timeout};
 
+lazy_static! {
+	/// Receives block rewards. Paying an address outside the wallet keeps mining fast.
+	pub static ref RANDOM_ADDR: Address = Address::<NetworkUnchecked>::from_str(
+		"mzU8XRVhUdXtdxmSA3Vw8XeU2FDV4iBDRW"
+	).unwrap().assume_checked();
+}
+
 struct BitcoindRpcTipSource {
 	rpc: rpc::BitcoinRpcClient,
 }
@@ -245,12 +252,6 @@ impl Bitcoind {
 	}
 
 	pub async fn generate(&self, block_num: u32) {
-		lazy_static! {
-			static ref RANDOM_ADDR: Address = Address::<NetworkUnchecked>::from_str(
-				"mzU8XRVhUdXtdxmSA3Vw8XeU2FDV4iBDRW"
-			).unwrap().assume_checked();
-		}
-
 		self.generate_to_address(block_num as u64, &*RANDOM_ADDR).await;
 	}
 

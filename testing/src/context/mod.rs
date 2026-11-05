@@ -865,6 +865,27 @@ impl TestContext {
 		self.bitcoind().generate(block_num).await;
 	}
 
+	/// Mines one block that holds exactly `txs`, so they need no fee. Returns the new tip.
+	pub async fn mine<'a>(&self, txs: impl IntoIterator<Item = &'a Transaction>) -> BlockHeight {
+		self.try_mine(txs).await.expect("bitcoind refused the block")
+	}
+
+	/// Like [Self::mine], but returns bitcoind's error when it refuses the block.
+	pub async fn try_mine<'a>(
+		&self,
+		txs: impl IntoIterator<Item = &'a Transaction>,
+	) -> anyhow::Result<BlockHeight> {
+		let txs = txs.into_iter()
+			.map(|tx| serde_json::Value::from(bitcoin::consensus::encode::serialize_hex(tx)))
+			.collect::<Vec<_>>();
+		let miner = crate::daemon::bitcoind::RANDOM_ADDR.to_string();
+		self.bitcoind().async_client().call_raw::<serde_json::Value>(
+			"generateblock", &[miner.into(), txs.into()],
+		).await.map_err(|e| anyhow::anyhow!("generateblock failed: {e:#}"))?;
+		let height = self.bitcoind().get_block_count().await;
+		Ok(BlockHeight::new(u32::try_from(height).expect("block height fits in u32")))
+	}
+
 	/// Broadcast a zero-fee parent transaction using CPFP via its P2A anchor.
 	///
 	/// Assumes the last output of `parent` is a P2A (pay-to-anchor) output.

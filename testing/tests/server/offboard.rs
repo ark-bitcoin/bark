@@ -436,18 +436,11 @@ async fn offboard_refuses_vtxos_used_elsewhere() {
 	wallet.refresh_vtxos_delegated([round_vtxo]).await.unwrap();
 	rpc.prepare_offboard(prepare(sat(129_000), &[(round_vtxo, &round_key)])).await.unwrap();
 
-	// An exited vtxo can't be offboarded. bitcoind mines the exit txs directly,
-	// so they need no fee.
+	// An exited vtxo can't be offboarded.
 	let full = wallet.get_full_vtxo(exited_vtxo).await.unwrap();
-	let exit_txs = full.transactions()
-		.map(|item| serde_json::Value::from(bitcoin::consensus::encode::serialize_hex(&item.tx)))
-		.collect::<Vec<_>>();
-	let miner = ctx.bitcoind().get_new_address().to_string();
-	ctx.bitcoind().async_client().call_raw::<serde_json::Value>(
-		"generateblock", &[miner.into(), exit_txs.into()],
-	).await.unwrap();
-	let tip = ctx.bitcoind().get_block_count().await;
-	srv.watchmand().wait_for_sync_height(BlockHeight::new(u32::try_from(tip).unwrap())).await;
+	let exit_txs = full.transactions().map(|item| item.tx).collect::<Vec<_>>();
+	let tip = ctx.mine(&exit_txs).await;
+	srv.watchmand().wait_for_sync_height(tip).await;
 	let err = rpc.prepare_offboard(prepare(sat(139_000), &[(exited_vtxo, &exited_key)])).await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
 	assert!(err.message().contains("has exited onchain"), "{err}");
