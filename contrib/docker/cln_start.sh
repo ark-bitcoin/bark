@@ -53,25 +53,25 @@ else
 fi
 
 
-echo "Booting"
-lightningd --${NETWORK} --alias="${CLN_ALIAS}" --log-level=${CLN_LOG_LEVEL} \
-	--grpc-port=${CLN_GRPC_PORT} --grpc-host=${CLN_GRPC_HOST} \
-	--bitcoin-rpcconnect=${BITCOIN_RPCCONNECT} --bitcoin-rpcuser=${BITCOIN_RPCUSER} --bitcoin-rpcpassword=${BITCOIN_RPCPASSWORD} \
-	--important-plugin=/plugins/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
-	--plugin=/plugins/cln-prometheus --prometheus-listen=${CLN_PROMETHEUS_LISTEN} \
-	--bind-addr=${CLN_BIND_ADDR} ${ANNOUNCE_ARG} ${WALLET_ARG} ${BOOKKEEPER_ARG} &
-LIGHTNINGD_PID=$!
-
 WAIT_FILE="/root/.lightning/${NETWORK}/hold/ca.pem"
 GEN_MARKER="/root/.lightning/${NETWORK}/hold/generation.done"
 
-echo "Waiting for ${WAIT_FILE}..."
-while [ ! -f "${WAIT_FILE}" ]; do
-	sleep 1s
-done
-
-echo "Found file ${WAIT_FILE}"
 if [ ! -f "${GEN_MARKER}" ]; then
+	echo "Booting"
+	lightningd --${NETWORK} --alias="${CLN_ALIAS}" --log-level=${CLN_LOG_LEVEL} \
+		--grpc-port=${CLN_GRPC_PORT} --grpc-host=${CLN_GRPC_HOST} \
+		--bitcoin-rpcconnect=${BITCOIN_RPCCONNECT} --bitcoin-rpcuser=${BITCOIN_RPCUSER} --bitcoin-rpcpassword=${BITCOIN_RPCPASSWORD} \
+		--important-plugin=/plugins/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
+		--plugin=/plugins/cln-prometheus --prometheus-listen=${CLN_PROMETHEUS_LISTEN} \
+		--bind-addr=${CLN_BIND_ADDR} ${ANNOUNCE_ARG} ${WALLET_ARG} ${BOOKKEEPER_ARG} &
+	LIGHTNINGD_PID=$!
+
+	echo "Waiting for ${WAIT_FILE}..."
+	while [ ! -f "${WAIT_FILE}" ]; do
+		sleep 1s
+	done
+
+	echo "Found file ${WAIT_FILE}"
 	cat > /root/.lightning/${NETWORK}/v3.ext <<EOF
 [v3_req]
 basicConstraints = CA:FALSE
@@ -128,14 +128,12 @@ EOF
 	echo "Generation done rebooting"
 	kill ${LIGHTNINGD_PID} || echo "Warning: lightningd might have exited before kill"
 	sleep 1s
-
-	echo "Booting"
-	lightningd --${NETWORK} --alias="${CLN_ALIAS}" --log-level=${CLN_LOG_LEVEL} \
-		--grpc-port=${CLN_GRPC_PORT} --grpc-host=${CLN_GRPC_HOST} \
-		--bitcoin-rpcconnect=${BITCOIN_RPCCONNECT} --bitcoin-rpcuser=${BITCOIN_RPCUSER} --bitcoin-rpcpassword=${BITCOIN_RPCPASSWORD} \
-		--important-plugin=/plugins/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
-		--plugin=/plugins/cln-prometheus --prometheus-listen=${CLN_PROMETHEUS_LISTEN} \
-		--bind-addr=${CLN_BIND_ADDR} ${ANNOUNCE_ARG} ${WALLET_ARG} ${BOOKKEEPER_ARG}
-else
-	wait ${LIGHTNINGD_PID}
 fi
+
+echo "Booting"
+exec lightningd --${NETWORK} --alias="${CLN_ALIAS}" --log-level=${CLN_LOG_LEVEL} \
+	--grpc-port=${CLN_GRPC_PORT} --grpc-host=${CLN_GRPC_HOST} \
+	--bitcoin-rpcconnect=${BITCOIN_RPCCONNECT} --bitcoin-rpcuser=${BITCOIN_RPCUSER} --bitcoin-rpcpassword=${BITCOIN_RPCPASSWORD} \
+	--important-plugin=/plugins/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
+	--plugin=/plugins/cln-prometheus --prometheus-listen=${CLN_PROMETHEUS_LISTEN} \
+	--bind-addr=${CLN_BIND_ADDR} ${ANNOUNCE_ARG} ${WALLET_ARG} ${BOOKKEEPER_ARG}
