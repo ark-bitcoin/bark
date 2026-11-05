@@ -1,18 +1,13 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use bark::{BarkNetwork, OpenWalletArgs, WalletSeed};
-use bark::movement::MovementStatus;
 use bark::onchain::{OnchainWallet, OnchainWalletTrait};
 use bark::persist::BarkPersister;
 use bark::persist::sqlite::SqliteClient;
-use bark::movement::MovementId;
 use bitcoin::Amount;
 use bitcoin_ext::BlockHeight;
-use futures::StreamExt;
 use log::warn;
 use server::wallet::MNEMONIC_FILE;
 use tokio::fs;
@@ -649,40 +644,7 @@ impl<'a> BarkSdkBuilder<'a> {
 		}
 
 		if !self.board_amounts.is_empty() {
-			// Subscribe before issuing so we can watch each board's terminal
-			// transition. Match on the specific `movement_id` each board
-			// returned so we don't count an unrelated Board movement's
-			// notification as one of ours.
-			let mut movements = wallet.subscribe_notifications().movements();
-
-			let mut pending: HashSet<MovementId> = HashSet::new();
-			for amount in &self.board_amounts {
-				let b = wallet.board_amount(*amount).await.context("board_amount")?;
-				self.ctx.await_transaction(b.funding_tx.compute_txid()).await;
-				pending.insert(b.movement_id);
-			}
-			self.ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-			wallet.sync().await;
-
-			// One deadline for the whole wait — a per-`next()` timeout would
-			// be reset by unrelated movements and never fire.
-			let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-			while !pending.is_empty() {
-				let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-				let m = movements.next()
-					.try_wait(remaining).await
-					.context("boards did not all complete before deadline")?
-					.context("wallet notification stream ended before all boards completed")?;
-				if !pending.contains(&m.id) {
-					continue;
-				}
-				match m.status {
-					MovementStatus::Pending => continue,
-					MovementStatus::Successful => { pending.remove(&m.id); },
-					other => bail!("board movement {} entered terminal status {:?}", m.id, other),
-				}
-			}
+			self.ctx.try_board(&wallet, &self.board_amounts).await?;
 		}
 
 		Ok(wallet)
