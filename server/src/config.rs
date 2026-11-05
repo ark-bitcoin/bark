@@ -295,7 +295,12 @@ pub struct Config {
 	#[serde(with = "utils::serde::duration")]
 	pub round_forfeit_nonces_timeout: Duration,
 
-	/// Whether or not to add full error information to RPC internal errors.
+	/// Put the full error chain of RPC internal errors in the response.
+	///
+	/// The chain names internal components and how they failed, and any
+	/// unauthenticated client can read it. Meant for development; on mainnet
+	/// captaind logs a warning at startup.
+	#[serde(default)]
 	pub rpc_rich_errors: bool,
 
 	/// The interval at which the SyncManager polls for new blocks.

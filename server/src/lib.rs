@@ -370,6 +370,11 @@ impl Server {
 				fee than the user's fee covers", cfg.ln_max_fee_ppm,
 			);
 		}
+		if cfg.network == bitcoin::Network::Bitcoin && cfg.rpc_rich_errors {
+			warn!("Running on mainnet with rpc_rich_errors: any client can read the full error \
+				chain of internal errors, which names internal components and how they failed",
+			);
+		}
 
 		info!("Starting server at {}", cfg.data_dir.display());
 
