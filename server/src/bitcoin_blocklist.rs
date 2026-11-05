@@ -231,6 +231,9 @@ impl BitcoinAddressBlocklist {
 				return AddressBlocklistCheckResult::BadOutput { idx, addr };
 			}
 		}
+		// Don't hold the lock over the RPCs below: a waiting reload would
+		// hold up every other check behind them.
+		drop(list);
 
 		for (idx, inp) in tx.input.iter().enumerate() {
 			let point = inp.previous_output;
@@ -249,7 +252,7 @@ impl BitcoinAddressBlocklist {
 					return AddressBlocklistCheckResult::UnknownInput { idx, point, err: e.into() };
 				},
 			};
-			if list.contains(&utxo.script_pubkey) {
+			if self.list.read().await.contains(&utxo.script_pubkey) {
 				let addr = Address::from_script(&utxo.script_pubkey, self.network).ok();
 				return AddressBlocklistCheckResult::BadInput { idx, addr };
 			}
@@ -319,8 +322,10 @@ mod test {
 	async fn reload_replaces_list() {
 		let path = std::env::temp_dir().join(format!("blocklist-reload-{}.txt", std::process::id()));
 		std::fs::write(&path, format!("{A}\n{B}\n")).unwrap();
+		// takes RPC requests but never answers them
+		let rpc = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
 		let bitcoind = BitcoindClient::new(
-			"http://127.0.0.1:1".into(),
+			format!("http://{}", rpc.local_addr().unwrap()),
 			bitcoind_async_client::Auth::UserPass("u".into(), "p".into()),
 			None, None, None,
 		).unwrap();
@@ -336,6 +341,27 @@ mod test {
 		std::fs::write(&path, "not an address\n").unwrap();
 		assert!(list.reload().await.is_err());
 		assert!(list.check_spk(&spk(C)).await);
+
+		// A check waiting on the lookup of its inputs doesn't hold up a reload.
+		let tx = Transaction {
+			version: bitcoin::transaction::Version::TWO,
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: vec![bitcoin::TxIn {
+				previous_output: OutPoint::new(bitcoin::hashes::Hash::from_byte_array([1; 32]), 0),
+				..Default::default()
+			}],
+			output: vec![],
+		};
+		let check = tokio::spawn({
+			let list = list.clone();
+			async move { list.check_tx(&tx).await }
+		});
+		let _lookup = rpc.accept().await.unwrap();
+		std::fs::write(&path, format!("{A}\n")).unwrap();
+		tokio::time::timeout(Duration::from_secs(10), list.reload()).await
+			.expect("the reload waited on the check's input lookup").unwrap();
+		assert!(list.check_spk(&spk(A)).await);
+		check.abort();
 
 		std::fs::remove_file(&path).unwrap();
 	}
