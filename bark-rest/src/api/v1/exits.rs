@@ -34,6 +34,8 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 		exit_claim_all,
 		exit_cancel,
 		emergency_exit_fee,
+		exit_presign,
+		remaining_exit_transactions,
 	),
 	components(schemas(
 		bark_json::web::ExitStatusRequest,
@@ -48,6 +50,10 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 		bark_json::web::ExitCancelResponse,
 		bark_json::web::EmergencyExitFeeEstimateQuery,
 		bark_json::web::EmergencyExitFeeEstimateResponse,
+		bark_json::web::ExitPresignRequest,
+		bark_json::exit::presign::PresignedExits,
+		bark_json::web::RemainingExitTransactionsQuery,
+		bark_json::exit::remaining::RemainingExitTransactions,
 	)),
 	tags((name = "exits", description = "Move bitcoin back on-chain without server cooperation."))
 )]
@@ -70,6 +76,8 @@ pub fn router() -> Router<Arc<ServerState>> {
 		.route("/claim/all", post(exit_claim_all))
 		.route("/cancel/{vtxo_id}", post(exit_cancel))
 		.route("/fee", get(emergency_exit_fee))
+		.route("/presign", post(exit_presign))
+		.route("/remaining", get(remaining_exit_transactions))
 }
 
 async fn inner_vtxo_exit_status(
@@ -667,4 +675,136 @@ pub async fn emergency_exit_fee(
 	};
 
 	Ok(axum::Json(bark_json::web::EmergencyExitFeeEstimateResponse::new(estimate, onchain_balance)))
+}
+
+#[utoipa::path(
+	get,
+	path = "/remaining",
+	summary = "List remaining exit transactions",
+	params(
+		("vtxo_ids" = Option<String>, Query, description = "Comma-separated VTXO ids to inspect; omit to inspect the entire wallet"),
+	),
+	responses(
+		(status = 200, description = "Returns the remaining exit transactions", body = bark_json::exit::remaining::RemainingExitTransactions),
+		(status = 400, description = "A VTXO is unknown, non-standard, already exited, or already spent, or a parameter is invalid", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Lists every exit transaction of the given VTXOs not yet confirmed on-chain: \
+		per VTXO, the transaction ids it needs confirmed in broadcast order, plus each \
+		transaction exactly once with parents before children. Read-only: nothing is signed and \
+		the wallet is never touched, so this works whether or not an exit has been started. \
+		Transaction statuses reflect the last exit sync; the daemon refreshes them at the cadence \
+		of `SLOW_INTERVAL`, and `POST /exits/progress` forces a refresh. Use \
+		`POST /exits/presign` to sign CPFP children for the listed transactions.",
+	tag = "exits"
+)]
+#[debug_handler]
+pub async fn remaining_exit_transactions(
+	State(state): State<Arc<ServerState>>,
+	Query(query): Query<bark_json::web::RemainingExitTransactionsQuery>,
+) -> HandlerResult<Json<bark_json::exit::remaining::RemainingExitTransactions>> {
+	let wallet = state.require_wallet()?;
+
+	// Same comma-separated form as `GET /exits/fee`; see the note there.
+	let vtxo_ids = match query.vtxo_ids {
+		Some(ref s) => s.split(',')
+			.map(str::trim)
+			.filter(|id| !id.is_empty())
+			.map(ark::VtxoId::from_str)
+			.collect::<Result<Vec<_>, _>>()
+			.badarg("Invalid VTXO ID")?,
+		None => wallet.spendable_vtxos().await
+			.context("Failed to list spendable VTXOs")?
+			.into_iter().map(|v| v.vtxo.id()).collect(),
+	};
+
+	let result = wallet.remaining_exit_transactions(&vtxo_ids).await;
+	let remaining = match &result {
+		Err(ExitError::NonStandardVtxo { vtxo, .. }) => badarg!("Provided VTXO {} is non-standard", vtxo),
+		Err(ExitError::UnknownVtxo { vtxo }) => badarg!("Provided VTXO {} is unknown", vtxo),
+		Err(ExitError::VtxoAlreadyExited { vtxo }) => badarg!("Provided VTXO {} has already exited", vtxo),
+		Err(ExitError::VtxoAlreadySpent { vtxo }) => badarg!("Provided VTXO {} has already been spent", vtxo),
+		Err(ExitError::VtxoSwept { vtxo }) => badarg!(
+			"An intermediate output of VTXO {} has been swept and the exit cannot be completed. \\
+			You can still attempt to do a refresh and get a fresh VTXO", vtxo,
+		),
+		_ => result.context("Failed to list remaining exit transactions")?,
+	};
+
+	Ok(axum::Json(remaining.into()))
+}
+
+#[utoipa::path(
+	post,
+	path = "/presign",
+	summary = "Presign emergency exit chains",
+	request_body = bark_json::web::ExitPresignRequest,
+	responses(
+		(status = 200, description = "Returns the presigned exit packages", body = bark_json::exit::presign::PresignedExits),
+		(status = 400, description = "A VTXO is unknown, non-standard, already exited, or \
+			already spent, or a parameter is invalid", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Signs, without broadcasting, the CPFP child of every transaction that still \
+		needs to be broadcast to unilaterally (emergency) exit the specified VTXOs, for as long \
+		as the wallet's confirmed on-chain funds last. The result is a self-contained broadcast \
+		plan meant for later execution by any independent party: broadcast all of a wave's \
+		`(exit, child)` packages together, wait for every one to confirm, then move to the next \
+		wave—each wave's children spend change confirmed by the previous wave. Exit \
+		transactions already in the mempool are listed in the first wave's `in_mempool`. \
+		Each exit's \
+		`status` reports whether its packages are `fully-signed` (`exited_in_wave` names the \
+		wave whose confirmation completes the exit), `partially-signed` (confirmed funds ran out \
+		mid-chain; `last_wave` holds the last signed package and the unfunded tail is listed \
+		under `unsigned`), or `unsigned`. \
+		How much more funding a partial result would need is not reported: adding funds changes \
+		which coins the next child selects and therefore what it costs. Use `GET /exits/fee` for \
+		the remaining broadcast cost. Presigning reserves no funds, so a later spend from the \
+		on-chain wallet can invalidate the remaining children. It does reveal the on-chain \
+		addresses the children pay their change to, so one wallet sync recognizes the whole \
+		chain once broadcast, and repeat calls against unchanged funds re-derive the same \
+		addresses.",
+	tag = "exits"
+)]
+#[debug_handler]
+pub async fn exit_presign(
+	State(state): State<Arc<ServerState>>,
+	Json(body): Json<bark_json::web::ExitPresignRequest>,
+) -> HandlerResult<Json<bark_json::exit::presign::PresignedExits>> {
+	let wallet = state.require_wallet()?;
+
+	let vtxo_ids = match body.vtxos {
+		Some(ids) => ids.iter()
+			.map(|s| ark::VtxoId::from_str(s))
+			.collect::<Result<Vec<_>, _>>()
+			.badarg("Invalid VTXO ID")?,
+		None => wallet.spendable_vtxos().await
+			.context("Failed to list spendable VTXOs")?
+			.into_iter().map(|v| v.vtxo.id()).collect(),
+	};
+
+	let fee_rate = match body.fee_rate_sat_per_vb {
+		Some(v) => Some(FeeRate::from_sat_per_vb_decimal_checked_ceil(v)
+			.badarg("Fee rate must be finite and non-negative")?),
+		None => None,
+	};
+
+	// Sign against current funds and exit transaction statuses.
+	wallet.sync_onchain().await.context("error syncing on-chain wallet")?;
+	wallet.sync_exits().await.context("error syncing exits")?;
+	let result = wallet.presign_emergency_exit(&vtxo_ids, fee_rate).await;
+
+	let presigned = match &result {
+		Err(ExitError::UnknownVtxo { vtxo }) => badarg!("Provided VTXO {} is unknown", vtxo),
+		Err(ExitError::NonStandardVtxo { vtxo, .. }) => badarg!("Provided VTXO {} is non-standard", vtxo),
+		Err(ExitError::VtxoAlreadyExited { vtxo }) => badarg!("Provided VTXO {} has already exited", vtxo),
+		Err(ExitError::VtxoAlreadySpent { vtxo }) => badarg!("Provided VTXO {} has already been spent", vtxo),
+		Err(ExitError::VtxoSwept { vtxo }) => badarg!(
+			"An intermediate output of VTXO {} has been swept and the exit cannot be completed. \\
+			You can still attempt to do a refresh and get a fresh VTXO", vtxo,
+		),
+		_ => result.context("Failed to presign emergency exit")?,
+	};
+
+	Ok(axum::Json(presigned.into()))
 }

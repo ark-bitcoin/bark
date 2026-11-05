@@ -39,6 +39,7 @@ Class | Method | HTTP request | Description
 *ExitsApi* | [**exit_cancel**](docs/ExitsApi.md#exit_cancel) | **POST** /api/v1/exits/cancel/{vtxo_id} | Cancel an exit
 *ExitsApi* | [**exit_claim_all**](docs/ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | Claim all exited VTXOs
 *ExitsApi* | [**exit_claim_vtxos**](docs/ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | Claim specific exited VTXOs
+*ExitsApi* | [**exit_presign**](docs/ExitsApi.md#exit_presign) | **POST** /api/v1/exits/presign | Presign emergency exit chains
 *ExitsApi* | [**exit_progress**](docs/ExitsApi.md#exit_progress) | **POST** /api/v1/exits/progress | Progress exits
 *ExitsApi* | [**exit_start_all**](docs/ExitsApi.md#exit_start_all) | **POST** /api/v1/exits/start/all | Start exit for all VTXOs
 *ExitsApi* | [**exit_start_vtxos**](docs/ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | Start exit for specific VTXOs
@@ -48,6 +49,7 @@ Class | Method | HTTP request | Description
 *ExitsApi* | [**get_exit_status_by_vtxo_id_deprecated**](docs/ExitsApi.md#get_exit_status_by_vtxo_id_deprecated) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status (deprecated)
 *ExitsApi* | [**get_finished_exits**](docs/ExitsApi.md#get_finished_exits) | **GET** /api/v1/exits/status/finished | List finished exits
 *ExitsApi* | [**get_live_exit_status**](docs/ExitsApi.md#get_live_exit_status) | **GET** /api/v1/exits/status/live | List live exit statuses
+*ExitsApi* | [**remaining_exit_transactions**](docs/ExitsApi.md#remaining_exit_transactions) | **GET** /api/v1/exits/remaining | List remaining exit transactions
 *FeesApi* | [**board_fee**](docs/FeesApi.md#board_fee) | **GET** /api/v1/fees/board | Estimate board fee
 *FeesApi* | [**lightning_receive_fee**](docs/FeesApi.md#lightning_receive_fee) | **GET** /api/v1/fees/lightning/receive | Estimate Lightning receive fee
 *FeesApi* | [**lightning_send_fee**](docs/FeesApi.md#lightning_send_fee) | **GET** /api/v1/fees/lightning/pay | Estimate Lightning send fee
@@ -185,6 +187,7 @@ Class | Method | HTTP request | Description
  - [ExitErrorOneOf7](docs/ExitErrorOneOf7.md)
  - [ExitErrorOneOf8](docs/ExitErrorOneOf8.md)
  - [ExitErrorOneOf9](docs/ExitErrorOneOf9.md)
+ - [ExitPresignRequest](docs/ExitPresignRequest.md)
  - [ExitProcessingState](docs/ExitProcessingState.md)
  - [ExitProgressRequest](docs/ExitProgressRequest.md)
  - [ExitProgressResponse](docs/ExitProgressResponse.md)
@@ -262,8 +265,19 @@ Class | Method | HTTP request | Description
  - [PendingBoardInfo](docs/PendingBoardInfo.md)
  - [PendingRoundInfo](docs/PendingRoundInfo.md)
  - [PpmExpiryFeeEntry](docs/PpmExpiryFeeEntry.md)
+ - [PresignedExit](docs/PresignedExit.md)
+ - [PresignedExitChildInfo](docs/PresignedExitChildInfo.md)
+ - [PresignedExitPackage](docs/PresignedExitPackage.md)
+ - [PresignedExitStatus](docs/PresignedExitStatus.md)
+ - [PresignedExitStatusOneOf](docs/PresignedExitStatusOneOf.md)
+ - [PresignedExitStatusOneOf1](docs/PresignedExitStatusOneOf1.md)
+ - [PresignedExitStatusOneOf2](docs/PresignedExitStatusOneOf2.md)
+ - [PresignedExits](docs/PresignedExits.md)
+ - [PresignedWave](docs/PresignedWave.md)
  - [RefreshFees](docs/RefreshFees.md)
  - [RefreshRequest](docs/RefreshRequest.md)
+ - [RemainingExitTransactions](docs/RemainingExitTransactions.md)
+ - [RemainingExitTransactionsQuery](docs/RemainingExitTransactionsQuery.md)
  - [RoundFlowState](docs/RoundFlowState.md)
  - [RoundParticipationInfo](docs/RoundParticipationInfo.md)
  - [RoundStatus](docs/RoundStatus.md)

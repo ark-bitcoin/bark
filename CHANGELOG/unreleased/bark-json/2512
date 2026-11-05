@@ -1,0 +1,4 @@
+- Add remaining exit transaction type
+  `RemainingExitTransactions` mirrors the read-only `bark` API listing the exit
+  transactions not yet confirmed onchain.
+  [#2512](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2512)

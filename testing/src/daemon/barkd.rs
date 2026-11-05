@@ -17,6 +17,7 @@ use bark_json::cli::{
 use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_json::notifications::WalletNotification;
 use bark_json::primitives::{UtxoInfo, WalletTxInfo, WalletVtxoInfo};
+use bark_json::exit::presign::PresignedExits;
 use bark_json::web::{
 	BarkNetwork, Bip321UriRequest, Bip321UriResponse, BitcoindAuth, ChainSourceConfig,
 	ConnectedResponse, CreateWalletRequest, EncodedVtxoResponse, ExitStartResponse,
@@ -31,7 +32,8 @@ use bark_rest_client::apis::{
 };
 use bark_rest_client::models::{
 	BoardRequest, DelegatedRefreshRequest, ExitClaimAllRequest, ExitClaimVtxosRequest,
-	ExitProgressRequest, ExitStartRequest, LightningInvoiceRequest, OffboardAllRequest,
+	ExitPresignRequest, ExitProgressRequest, ExitStartRequest, LightningInvoiceRequest,
+	OffboardAllRequest, RemainingExitTransactions,
 	RefreshRequest, SendOnchainRequest, SendRequest, WaitNotificationResponse,
 };
 use futures::{Stream, StreamExt};
@@ -688,6 +690,32 @@ impl Barkd {
 			vtxos: vtxo_ids,
 			fee_rate: None,
 		}).await.expect("barkd exit_claim_vtxos failed")
+	}
+
+	/// Presign the emergency exit packages for the given VTXOs, or every
+	/// spendable VTXO when `None`.
+	pub async fn presign_exits(
+		&self,
+		vtxo_ids: Option<Vec<String>>,
+		fee_rate_sat_per_vb: Option<f64>,
+	) -> PresignedExits {
+		let config = self.client_config();
+		exits_api::exit_presign(&config, ExitPresignRequest {
+			vtxos: vtxo_ids,
+			fee_rate_sat_per_vb,
+		}).await.expect("barkd exit_presign failed")
+	}
+
+	/// List the remaining exit transactions for the given VTXOs, or every spendable VTXO when
+	/// `None`.
+	pub async fn remaining_exit_transactions(
+		&self,
+		vtxo_ids: Option<Vec<String>>,
+	) -> RemainingExitTransactions {
+		let config = self.client_config();
+		let ids = vtxo_ids.map(|v| v.join(","));
+		exits_api::remaining_exit_transactions(&config, ids.as_deref()).await
+			.expect("barkd remaining_exit_transactions failed")
 	}
 
 	/// Force a full off-chain sync via `POST /sync`. Updates fee rates,

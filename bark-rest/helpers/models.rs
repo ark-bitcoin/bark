@@ -2,6 +2,8 @@ pub use bark_json::cli::*;
 pub use bark_json::cli::onchain::*;
 pub use bark_json::exit::states::*;
 pub use bark_json::exit::error::*;
+pub use bark_json::exit::presign::*;
+pub use bark_json::exit::remaining::*;
 pub use bark_json::movements::*;
 pub use bark_json::primitives::*;
 pub use bark_json::web::*;

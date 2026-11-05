@@ -182,6 +182,32 @@ pub trait OnchainWalletTrait: std::any::Any + Send + Sync {
 		fees: MakeCpfpFees,
 	) -> Result<Transaction, CpfpError>;
 
+	/// Sign a CPFP child for every P2A parent of the given exits, for as long as confirmed funds
+	/// last, and return the children grouped into broadcast waves with the package fee each
+	/// commits.
+	///
+	/// `exits` holds one entry per exit, listing its parents in broadcast order. A wave models
+	/// one block: its children spend only coins confirmed before it (counting earlier waves'
+	/// change), so all of a wave's packages broadcast together once the previous wave confirms.
+	/// Exits advance concurrently within a wave when disjoint confirmed UTXOs exist; a parent
+	/// spending another still-unsigned parent in the set waits for it.
+	///
+	/// `relayed` exit transactions are already in the mempool and confirm with the first wave.
+	///
+	/// Nothing is broadcast and no funds are reserved, so a later spend can still invalidate the
+	/// children. Implementations must reveal and persist the addresses the children pay their
+	/// change to: the wallet has no other record of these transactions, so a sync that only
+	/// queries revealed scripts would otherwise discover the broadcast chain one child per wave.
+	///
+	/// The default implementation returns an error.
+	async fn presign_p2a_cpfp_walk(
+		&mut self,
+		_exits: &[Vec<(Transaction, MakeCpfpFees)>],
+		_relayed: &[Txid],
+	) -> Result<Vec<Vec<(Transaction, Amount)>>, CpfpError> {
+		Err(CpfpError::CreateError("this onchain wallet does not support presigning".into()))
+	}
+
 	/// Persist the signed CPFP transaction so it can be rebroadcast or retrieved as needed.
 	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError>;
 }

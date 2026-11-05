@@ -8,6 +8,7 @@ Method | HTTP request | Description
 [**exit_cancel**](ExitsApi.md#exit_cancel) | **POST** /api/v1/exits/cancel/{vtxo_id} | Cancel an exit
 [**exit_claim_all**](ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | Claim all exited VTXOs
 [**exit_claim_vtxos**](ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | Claim specific exited VTXOs
+[**exit_presign**](ExitsApi.md#exit_presign) | **POST** /api/v1/exits/presign | Presign emergency exit chains
 [**exit_progress**](ExitsApi.md#exit_progress) | **POST** /api/v1/exits/progress | Progress exits
 [**exit_start_all**](ExitsApi.md#exit_start_all) | **POST** /api/v1/exits/start/all | Start exit for all VTXOs
 [**exit_start_vtxos**](ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | Start exit for specific VTXOs
@@ -17,6 +18,7 @@ Method | HTTP request | Description
 [**get_exit_status_by_vtxo_id_deprecated**](ExitsApi.md#get_exit_status_by_vtxo_id_deprecated) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status (deprecated)
 [**get_finished_exits**](ExitsApi.md#get_finished_exits) | **GET** /api/v1/exits/status/finished | List finished exits
 [**get_live_exit_status**](ExitsApi.md#get_live_exit_status) | **GET** /api/v1/exits/status/live | List live exit statuses
+[**remaining_exit_transactions**](ExitsApi.md#remaining_exit_transactions) | **GET** /api/v1/exits/remaining | List remaining exit transactions
 
 
 
@@ -130,6 +132,36 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**models::ExitClaimResponse**](ExitClaimResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## exit_presign
+
+> models::PresignedExits exit_presign(exit_presign_request)
+Presign emergency exit chains
+
+Signs, without broadcasting, the CPFP child of every transaction that still needs to be broadcast to unilaterally (emergency) exit the specified VTXOs, for as long as the wallet's confirmed on-chain funds last. The result is a self-contained broadcast plan meant for later execution by any independent party: broadcast all of a wave's `(exit, child)` packages together, wait for every one to confirm, then move to the next wave—each wave's children spend change confirmed by the previous wave. Exit transactions already in the mempool are listed in the first wave's `in_mempool`. Each exit's `status` reports whether its packages are `fully-signed` (`exited_in_wave` names the wave whose confirmation completes the exit), `partially-signed` (confirmed funds ran out mid-chain; `last_wave` holds the last signed package and the unfunded tail is listed under `unsigned`), or `unsigned`. How much more funding a partial result would need is not reported: adding funds changes which coins the next child selects and therefore what it costs. Use `GET /exits/fee` for the remaining broadcast cost. Presigning reserves no funds, so a later spend from the on-chain wallet can invalidate the remaining children. It does reveal the on-chain addresses the children pay their change to, so one wallet sync recognizes the whole chain once broadcast, and repeat calls against unchanged funds re-derive the same addresses.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**exit_presign_request** | [**ExitPresignRequest**](ExitPresignRequest.md) |  | [required] |
+
+### Return type
+
+[**models::PresignedExits**](PresignedExits.md)
 
 ### Authorization
 
@@ -401,6 +433,36 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**Vec<models::ExitTransactionStatus>**](ExitTransactionStatus.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## remaining_exit_transactions
+
+> models::RemainingExitTransactions remaining_exit_transactions(vtxo_ids)
+List remaining exit transactions
+
+Lists every exit transaction of the given VTXOs not yet confirmed on-chain: per VTXO, the transaction ids it needs confirmed in broadcast order, plus each transaction exactly once with parents before children. Read-only: nothing is signed and the wallet is never touched, so this works whether or not an exit has been started. Transaction statuses reflect the last exit sync; the daemon refreshes them at the cadence of `SLOW_INTERVAL`, and `POST /exits/progress` forces a refresh. Use `POST /exits/presign` to sign CPFP children for the listed transactions.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**vtxo_ids** | Option<**String**> | Comma-separated VTXO ids to inspect; omit to inspect the entire wallet |  |
+
+### Return type
+
+[**models::RemainingExitTransactions**](RemainingExitTransactions.md)
 
 ### Authorization
 

@@ -1,0 +1,20 @@
+- Presign the CPFP children of emergency (unilateral) exit chains
+  `Exit::presign_emergency_exit` and `Wallet::presign_emergency_exit` sign,
+  without broadcasting or reserving funds, a CPFP child for every exit
+  transaction that still needs broadcasting, for as long as confirmed onchain
+  funds last. The returned `PresignedExits` is a wave-by-wave broadcast
+  plan: all of a wave's `(exit, child)` packages broadcast together and
+  confirm before the next wave, so independent exits advance concurrently.
+  Exit transactions already in the mempool are listed in the first wave's
+  `in_mempool`, and whatever spends them waits for the next wave.
+  The plan is self-contained and can be executed later, e.g. from cold
+  storage or by a third party. The onchain wallet reveals the change
+  addresses the children pay to, so a single wallet sync recognizes the
+  whole chain once it is broadcast.
+  [#2293](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2293)
+- Presigning support on the onchain wallet trait
+  `OnchainWalletTrait::presign_p2a_cpfp_walk` signs the CPFP broadcast walk
+  grouped into waves, revealing the change addresses the children pay to.
+  Its default implementation returns an error, so a wallet without
+  presigning support isn't mistaken for one without funds.
+  [#2293](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2293)

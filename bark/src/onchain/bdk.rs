@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use bdk_esplora::EsploraAsyncExt;
-use bdk_wallet::chain::{Anchor, ChainPosition, CheckPoint};
+use bdk_wallet::chain::{Anchor, ChainPosition, CheckPoint, ConfirmationBlockTime, Indexer, TxUpdate};
 use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bdk_wallet::signer::SignersContainer;
-use bdk_wallet::{Balance, KeychainKind, LocalOutput, TxBuilder, TxOrdering};
+use bdk_wallet::{Balance, KeychainKind, LoadError, LocalOutput, TxBuilder, TxOrdering, Update};
 use bitcoin::{
 	Address, Amount, FeeRate, Network, Psbt, Script, Sequence, Transaction, TxOut,
 	Txid, Weight, bip32, psbt,
@@ -16,14 +16,17 @@ use bitcoin::{
 use log::{debug, error, info, trace, warn};
 
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockDelta, BlockHeight, DEEPLY_CONFIRMED};
-use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
+use bitcoin_ext::{BlockDelta, BlockHeight, DEEPLY_CONFIRMED, TransactionExt};
+use bitcoin_ext::bdk::{CpfpInternalError, WalletExt, KEYCHAIN};
 use bitcoin_ext::cpfp::CpfpError;
 
 use crate::Wallet;
 use crate::chain::{ChainSource, ChainSourceClient};
 use crate::exit::{ExitVtxo, ExitState};
-use crate::onchain::{LocalUtxo, MakeCpfpFees, Utxo, OnchainWalletTrait, WalletTxInfo};
+use crate::onchain::{
+	LocalUtxo, MakeCpfpFees, Utxo, OnchainWalletTrait,
+	WalletTxInfo,
+};
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
 
@@ -130,6 +133,153 @@ fn cpfp_internal_to_error(e: CpfpInternalError) -> CpfpError {
 		},
 		CpfpInternalError::NoFeeAnchor(txid) => CpfpError::NoFeeAnchor(txid),
 		CpfpInternalError::Signer(e) => CpfpError::SigningError(e.to_string()),
+	}
+}
+
+/// A throwaway, in-memory replica of a wallet, used only for presigning CPFP children.
+///
+/// The broadcast walk inserts CPFP children into the wallet, which BDK can't undo. Running it on
+/// a replica keeps that mutation off the live wallet.
+pub struct WalletReplica {
+	inner: BdkWallet,
+}
+
+impl WalletReplica {
+	/// Build a replica from a snapshot of `wallet`'s live components (chain, tx graph, keychain
+	/// index and locked outpoints — staged changes included), so the replica builds transactions
+	/// exactly like the original would. It holds no keys.
+	pub fn new(wallet: &BdkWallet) -> Result<WalletReplica, LoadError> {
+		let mut changeset = bdk_wallet::ChangeSet {
+			network: Some(wallet.network()),
+			local_chain: wallet.local_chain().initial_changeset(),
+			tx_graph: wallet.tx_graph().initial_changeset(),
+			indexer: wallet.spk_index().initial_changeset(),
+			..Default::default()
+		};
+		for (keychain, descriptor) in wallet.keychains() {
+			match keychain {
+				KeychainKind::External => changeset.descriptor = Some(descriptor.clone()),
+				KeychainKind::Internal => changeset.change_descriptor = Some(descriptor.clone()),
+			}
+		}
+		changeset.locked_outpoints.outpoints = wallet.list_locked_outpoints()
+			.map(|outpoint| (outpoint, true))
+			.collect();
+
+		let inner = BdkWallet::load()
+			.check_network(wallet.network())
+			.load_wallet_no_persist(changeset)?
+			.expect("changeset carries a descriptor");
+
+		Ok(WalletReplica { inner })
+	}
+
+	/// Mark the given wave's children as confirmed at the replica tip, so the next wave can
+	/// spend their change.
+	fn confirm_cpfp_children(&mut self, txids: impl IntoIterator<Item = Txid>) {
+		let mut tx_update = TxUpdate::default();
+		let block = ConfirmationBlockTime {
+			block_id: self.inner.latest_checkpoint().block_id(),
+			confirmation_time: 0,
+		};
+		for txid in txids {
+			tx_update.anchors.insert((block, txid));
+		}
+		self.inner.apply_update(Update { tx_update, ..Default::default() })
+			.expect("anchor block is the replica's own tip");
+	}
+
+	/// The package fee a signed child commits: everything its inputs bring in beyond its own
+	/// outputs (the parent is zero-fee).
+	fn package_fee(&self, parent: &Transaction, child: &Transaction) -> Amount {
+		let (_, anchor_txout) = parent.fee_anchor()
+			.expect("make_signed_p2a_cpfp succeeded on this parent");
+		// The replica wallet knows all inputs but the anchor.
+		let funding_value = anchor_txout.value + child.input.iter()
+			.filter_map(|input| {
+				self.inner.tx_graph().get_txout(input.previous_output)
+					.map(|txout| txout.value)
+			})
+			.sum::<Amount>();
+		funding_value.checked_sub(child.output_value()).unwrap_or_default()
+	}
+
+	/// Sign a CPFP child per parent, grouped into broadcast waves; see
+	/// [OnchainWalletTrait::presign_p2a_cpfp_walk] for the wave semantics.
+	///
+	/// A wave models one block: children signed within it spend only coins confirmed before it
+	/// and are inserted unconfirmed, so BDK's own coin selection keeps concurrent chains funded
+	/// disjointly. At wave end the children confirm and the next wave begins. Stops when no
+	/// chain can advance (funds ran out), returning a leading run per exit. An RBF minimum can
+	/// push a child's fee above rate × weight.
+	///
+	/// `relayed` transactions confirm with the first wave, which may sign nothing. Children are
+	/// signed with `signers`.
+	pub fn sign_p2a_cpfp_walk(
+		&mut self,
+		exits: &[Vec<(Transaction, MakeCpfpFees)>],
+		relayed: &[Txid],
+		signers: &SignersContainer,
+	) -> Result<Vec<Vec<(Transaction, Amount)>>, CpfpInternalError> {
+		let all_parents = exits.iter().flatten()
+			.map(|(parent, _)| parent.compute_txid())
+			.chain(relayed.iter().copied())
+			.collect::<HashSet<_>>();
+		let mut confirmed = HashSet::new();
+		let mut cursors = vec![0usize; exits.len()];
+		let mut waves = Vec::new();
+		loop {
+			let mut wave = Vec::new();
+			for (parents, cursor) in exits.iter().zip(cursors.iter_mut()) {
+				let Some((parent, fees)) = parents.get(*cursor) else {
+					continue;
+				};
+				// A package can only broadcast once every in-set parent its exit tx spends has
+				// confirmed, which includes this exit's own previous package.
+				let gated = parent.input.iter().any(|input| {
+					let prev = input.previous_output.txid;
+					all_parents.contains(&prev) && !confirmed.contains(&prev)
+				});
+				if gated {
+					continue;
+				}
+				let child = match self.inner.make_signed_p2a_cpfp(parent, *fees, signers) {
+					Ok(child) => child,
+					// Skip for now; the next wave's confirmed change may cover it.
+					Err(CpfpInternalError::InsufficientConfirmedFunds(_)) => continue,
+					Err(e) => return Err(e),
+				};
+				let fee = self.package_fee(parent, &child);
+				self.inner.apply_unconfirmed_txs([(child.clone(), 0)]);
+				wave.push((parent.compute_txid(), child, fee));
+				*cursor += 1;
+			}
+			let first_wave = waves.is_empty();
+			if wave.is_empty() && !(first_wave && !relayed.is_empty()) {
+				// No chain advanced: another wave can't change anything.
+				break;
+			}
+			self.confirm_cpfp_children(wave.iter().map(|(_, child, _)| child.compute_txid()));
+			confirmed.extend(wave.iter().map(|(parent_txid, _, _)| *parent_txid));
+			if first_wave {
+				confirmed.extend(relayed.iter().copied());
+			}
+			waves.push(wave.into_iter().map(|(_, child, fee)| (child, fee)).collect());
+		}
+
+		if waves.iter().all(Vec::is_empty) {
+			waves.clear();
+		}
+		Ok(waves)
+	}
+
+	/// The highest drain-keychain index this replica revealed, covering the change addresses of
+	/// the children it signed, or `None` if it revealed none.
+	///
+	/// Presigning reveals the real wallet up to this index; that is a no-op when the walk signed
+	/// nothing, since the replica starts from the real wallet's own index.
+	fn revealed_change_index(&self) -> Option<u32> {
+		self.inner.derivation_index(KEYCHAIN)
 	}
 }
 
@@ -266,6 +416,27 @@ impl OnchainWalletTrait for OnchainWallet {
 		WalletExt::make_signed_p2a_cpfp(&mut self.inner, tx, fees, &self.signers)
 			.inspect_err(|e| error!("Error creating signed P2A CPFP: {}", e))
 			.map_err(cpfp_internal_to_error)
+	}
+
+	async fn presign_p2a_cpfp_walk(
+		&mut self,
+		exits: &[Vec<(Transaction, MakeCpfpFees)>],
+		relayed: &[Txid],
+	) -> Result<Vec<Vec<(Transaction, Amount)>>, CpfpError> {
+		let mut replica = WalletReplica::new(&self.inner)
+			.map_err(|e|
+				CpfpError::InternalError(format!("failed to build wallet replica: {}", e)),
+			)?;
+		let waves = replica.sign_p2a_cpfp_walk(exits, relayed, &self.signers)
+			.map_err(cpfp_internal_to_error)?;
+
+		// The children pay change to addresses only the replica derived, so reveal them here or
+		// the wallet would discover the broadcast chain one child per sync.
+		if let Some(index) = replica.revealed_change_index() {
+			let _ = self.inner.reveal_addresses_to(KEYCHAIN, index).last();
+			self.persist().await.map_err(|e| CpfpError::StoreError(e.to_string()))?;
+		}
+		Ok(waves)
 	}
 
 	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
@@ -618,5 +789,355 @@ impl OnchainWallet {
 			let _ = self.inner.take_staged();
 		}
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use std::collections::HashSet;
+
+	use bdk_wallet::chain::BlockId;
+	use bdk_wallet::test_utils::{
+		get_test_tr_single_sig_xprv, get_test_wpkh, insert_checkpoint, insert_tx,
+		receive_output_in_latest_block,
+	};
+	use bitcoin::{BlockHash, OutPoint};
+	use bitcoin::hashes::Hash;
+
+	/// A wallet with one confirmed UTXO per given amount, and its signers.
+	fn funded_wallet(amounts: &[Amount]) -> (BdkWallet, SignersContainer) {
+		let mut wallet = BdkWallet::create_single(get_test_wpkh())
+			.network(Network::Regtest)
+			.create_wallet_no_persist()
+			.unwrap();
+		insert_checkpoint(&mut wallet, BlockId { height: 1_000, hash: BlockHash::all_zeros() });
+		for amount in amounts {
+			receive_output_in_latest_block(&mut wallet, *amount);
+		}
+		let signers = wallet.build_signers(get_test_wpkh()).unwrap();
+		(wallet, signers)
+	}
+
+	/// A zero-fee v3 parent spending the given prevout, carrying a P2A fee anchor.
+	fn p2a_parent_spending(prev: OutPoint) -> Transaction {
+		Transaction {
+			version: bitcoin::transaction::Version(3),
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: vec![bitcoin::TxIn { previous_output: prev, ..Default::default() }],
+			output: vec![bitcoin_ext::fee::fee_anchor()],
+		}
+	}
+
+	/// A zero-fee v3 parent carrying a P2A fee anchor; `tag` makes its txid unique.
+	fn p2a_parent(tag: u8) -> Transaction {
+		p2a_parent_spending(OutPoint::new(Txid::from_byte_array([tag; 32]), 0))
+	}
+
+	#[test]
+	fn wallet_replica_replicates_and_isolates() {
+		let (wallet, signers) = funded_wallet(&[Amount::from_sat(1_000), Amount::from_sat(1_001)]);
+		let mut replica = WalletReplica::new(&wallet).unwrap();
+
+		assert_eq!(wallet.balance(), replica.inner.balance());
+		assert_eq!(
+			wallet.list_unspent().map(|u| u.outpoint).collect::<Vec<_>>(),
+			replica.inner.list_unspent().map(|u| u.outpoint).collect::<Vec<_>>(),
+		);
+		assert_eq!(
+			wallet.next_derivation_index(KeychainKind::External),
+			replica.inner.next_derivation_index(KeychainKind::External),
+		);
+
+		// Mutating the replica must not leak into the original wallet.
+		let parent = p2a_parent(1);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(1).unwrap());
+		let child = replica.inner.make_signed_p2a_cpfp(&parent, fees, &signers).unwrap();
+		assert_eq!(wallet.balance().confirmed, Amount::from_sat(2_001));
+		assert!(wallet.get_tx(child.compute_txid()).is_none());
+	}
+
+	/// With a single-coin wallet, every CPFP child after the first can only be funded by the
+	/// previous child's change: the walk must model that serial recycling.
+	#[test]
+	fn cpfp_walk_recycles_change_serially() {
+		let (wallet, signers) = funded_wallet(&[Amount::from_sat(50_000)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let parents = (1..=3).map(|tag| (p2a_parent(tag), fees)).collect::<Vec<_>>();
+
+		let waves = WalletReplica::new(&wallet).unwrap()
+			.sign_p2a_cpfp_walk(&[parents.clone()], &[], &signers).unwrap();
+		// One exit advances one package per wave.
+		assert!(waves.iter().all(|wave| wave.len() == 1), "{:?}", waves);
+		let children = waves.into_iter().flatten().collect::<Vec<_>>();
+		assert_eq!(children.len(), 3);
+
+		for (i, (child, fee)) in children.iter().enumerate() {
+			let anchor_point = parents[i].0.fee_anchor().unwrap().0;
+			assert!(child.input.iter().any(|input| input.previous_output == anchor_point));
+			assert_eq!(child.input.len(), 2, "anchor spend plus a single funding input");
+			assert_eq!(child.output.len(), 1, "drain output only");
+			// The parent is zero-fee, so the effective-rate child pays exactly the package fee.
+			assert_eq!(*fee, fees.effective() * (parents[i].0.weight() + child.weight()));
+			if i > 0 {
+				let (prev_child, _) = &children[i - 1];
+				let prev_change = OutPoint::new(prev_child.compute_txid(), 0);
+				assert!(
+					child.input.iter().any(|input| input.previous_output == prev_change),
+					"child {} must be funded by the previous child's change", i,
+				);
+				// Funded solely by the previous change, so the reported fee must be exactly
+				// the value that change lost.
+				assert_eq!(*fee, prev_child.output[0].value - child.output[0].value);
+			}
+		}
+
+		// The walk runs against a replica; the wallet itself stays untouched.
+		assert_eq!(wallet.balance().confirmed, Amount::from_sat(50_000));
+		assert!(wallet.get_tx(children[0].0.compute_txid()).is_none());
+	}
+
+	/// Whatever coins each child selects, no coin may fund two children: earlier estimation
+	/// re-ran selection against the same unchanged wallet, double-counting the same UTXO.
+	#[test]
+	fn cpfp_walk_never_double_spends_across_children() {
+		// NB identical amounts would produce identical funding txids and collapse into one UTXO.
+		// No coin covers a ~1150-sat package fee plus non-dust change alone, so children have to
+		// combine coins.
+		let amounts = (0..5).map(|i| Amount::from_sat(1_000 + i)).collect::<Vec<_>>();
+		let (wallet, signers) = funded_wallet(&amounts);
+		let original_coins = wallet.list_unspent()
+			.map(|u| u.outpoint)
+			.collect::<HashSet<_>>();
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(4).unwrap());
+		let parents = (1..=2).map(|tag| (p2a_parent(tag), fees)).collect::<Vec<_>>();
+
+		let waves = WalletReplica::new(&wallet).unwrap()
+			.sign_p2a_cpfp_walk(&[parents.clone()], &[], &signers).unwrap();
+		let children = waves.into_iter().flatten().collect::<Vec<_>>();
+		assert_eq!(children.len(), 2);
+
+		let change_outputs = children.iter()
+			.map(|(child, _)| OutPoint::new(child.compute_txid(), 0))
+			.collect::<HashSet<_>>();
+		let mut spent = HashSet::new();
+		for ((child, _), (parent, _)) in children.iter().zip(&parents) {
+			let anchor_point = parent.fee_anchor().unwrap().0;
+			for input in &child.input {
+				if input.previous_output == anchor_point {
+					continue;
+				}
+				let coin = input.previous_output;
+				assert!(
+					original_coins.contains(&coin) || change_outputs.contains(&coin),
+					"funding input {} must be a wallet coin or an earlier child's change", coin,
+				);
+				assert!(spent.insert(coin), "coin {} funds two children", coin);
+			}
+		}
+	}
+
+	#[test]
+	fn cpfp_walk_signs_leading_run_when_funds_run_out() {
+		// 3000 sats fund the first ~2200-sat package but its change can't fund the second.
+		let (wallet, signers) = funded_wallet(&[Amount::from_sat(3_000)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let parents = (1..=2).map(|tag| (p2a_parent(tag), fees)).collect::<Vec<_>>();
+
+		let waves = WalletReplica::new(&wallet).unwrap()
+			.sign_p2a_cpfp_walk(&[parents], &[], &signers).unwrap();
+		let children = waves.into_iter().flatten().collect::<Vec<_>>();
+		assert_eq!(children.len(), 1, "only the first package is fundable");
+		let (first_child, first_fee) = &children[0];
+		// The single coin funds the first child entirely, so wallet value splits exactly into
+		// the reported fee and the change.
+		assert_eq!(*first_fee + first_child.output[0].value, Amount::from_sat(3_000));
+	}
+
+	/// Two exits with their own confirmed UTXOs advance in the same wave, funded disjointly:
+	/// unconfirmed wave siblings are unselectable, so BDK cannot cross-fund them.
+	#[test]
+	fn cpfp_walk_funds_exits_concurrently() {
+		let (wallet, signers) = funded_wallet(&[Amount::from_sat(50_000), Amount::from_sat(50_001)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let exits = (1..=2).map(|tag| vec![(p2a_parent(tag), fees)]).collect::<Vec<_>>();
+
+		let waves = WalletReplica::new(&wallet).unwrap().sign_p2a_cpfp_walk(&exits, &[], &signers).unwrap();
+		assert_eq!(waves.len(), 1, "{:?}", waves);
+		assert_eq!(waves[0].len(), 2);
+
+		let funding = |child: &Transaction, exit: usize| child.input.iter()
+			.map(|input| input.previous_output)
+			.filter(|point| *point != exits[exit][0].0.fee_anchor().unwrap().0)
+			.collect::<HashSet<_>>();
+		let first = funding(&waves[0][0].0, 0);
+		let second = funding(&waves[0][1].0, 1);
+		assert!(first.is_disjoint(&second), "{:?} vs {:?}", first, second);
+	}
+
+	/// With a single UTXO, a second exit waits a wave and then funds itself from the first
+	/// exit's change, which has confirmed by then.
+	#[test]
+	fn cpfp_walk_chains_onto_other_exit_change_when_utxos_run_out() {
+		let (wallet, signers) = funded_wallet(&[Amount::from_sat(50_000)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let exits = (1..=2).map(|tag| vec![(p2a_parent(tag), fees)]).collect::<Vec<_>>();
+
+		let waves = WalletReplica::new(&wallet).unwrap().sign_p2a_cpfp_walk(&exits, &[], &signers).unwrap();
+		assert_eq!(waves.len(), 2, "{:?}", waves);
+		assert_eq!(waves[0].len(), 1);
+		assert_eq!(waves[1].len(), 1);
+
+		let first_change = OutPoint::new(waves[0][0].0.compute_txid(), 0);
+		assert!(
+			waves[1][0].0.input.iter().any(|input| input.previous_output == first_change),
+			"second exit's child must be funded by the first child's change",
+		);
+	}
+
+	/// An exit transaction spending another exit's still-unsigned transaction cannot broadcast
+	/// before it confirms, so its package must land in a later wave no matter the funds.
+	#[test]
+	fn cpfp_walk_gates_shared_ancestry() {
+		let (wallet, signers) = funded_wallet(&[Amount::from_sat(50_000), Amount::from_sat(50_001)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let shared = p2a_parent(1);
+		// Both exits descend from `shared`, which is listed under the first exit only.
+		let own_a = p2a_parent_spending(OutPoint::new(shared.compute_txid(), 1));
+		let own_b = p2a_parent_spending(OutPoint::new(shared.compute_txid(), 2));
+		let exits = vec![
+			vec![(shared, fees), (own_a.clone(), fees)],
+			vec![(own_b.clone(), fees)],
+		];
+
+		let waves = WalletReplica::new(&wallet).unwrap().sign_p2a_cpfp_walk(&exits, &[], &signers).unwrap();
+		assert_eq!(waves.len(), 2, "{:?}", waves);
+		assert_eq!(waves[0].len(), 1, "only the shared prefix can broadcast first");
+		// Once the prefix confirmed, both descendants advance in the same wave.
+		assert_eq!(waves[1].len(), 2);
+		let anchors = waves[1].iter().flat_map(|(child, _)| &child.input)
+			.map(|input| input.previous_output)
+			.collect::<HashSet<_>>();
+		assert!(anchors.contains(&own_a.fee_anchor().unwrap().0));
+		assert!(anchors.contains(&own_b.fee_anchor().unwrap().0));
+	}
+
+	/// A relayed parent gates its dependents until the second wave.
+	#[test]
+	fn cpfp_walk_gates_relayed_parents() {
+		let (wallet, signers) = funded_wallet(&[Amount::from_sat(50_000), Amount::from_sat(50_001)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let relayed = p2a_parent(1);
+		let dependent = p2a_parent_spending(OutPoint::new(relayed.compute_txid(), 1));
+		let independent = p2a_parent(2);
+		let relayed = [relayed.compute_txid()];
+
+		let exits = vec![vec![(dependent.clone(), fees)], vec![(independent.clone(), fees)]];
+		let waves = WalletReplica::new(&wallet).unwrap()
+			.sign_p2a_cpfp_walk(&exits, &relayed, &signers).unwrap();
+		assert_eq!(waves.len(), 2, "{:?}", waves);
+		let anchor_of = |wave: &[(Transaction, Amount)]| wave.iter()
+			.flat_map(|(child, _)| &child.input)
+			.map(|input| input.previous_output)
+			.collect::<HashSet<_>>();
+		assert_eq!(waves[0].len(), 1);
+		assert!(anchor_of(&waves[0]).contains(&independent.fee_anchor().unwrap().0));
+		assert_eq!(waves[1].len(), 1);
+		assert!(anchor_of(&waves[1]).contains(&dependent.fee_anchor().unwrap().0));
+
+		// Nothing else to sign: the first wave is empty.
+		let waves = WalletReplica::new(&wallet).unwrap()
+			.sign_p2a_cpfp_walk(&[vec![(dependent, fees)]], &relayed, &signers).unwrap();
+		assert_eq!(waves.len(), 2, "{:?}", waves);
+		assert!(waves[0].is_empty());
+		assert_eq!(waves[1].len(), 1);
+
+		// Nothing to sign: no waves.
+		let waves = WalletReplica::new(&wallet).unwrap()
+			.sign_p2a_cpfp_walk(&[], &relayed, &signers).unwrap();
+		assert!(waves.is_empty(), "{:?}", waves);
+	}
+
+	/// A derivable single-keychain wallet (the real onchain wallet's shape) with one confirmed
+	/// UTXO per given amount, and its signers.
+	fn derivable_wallet(amounts: &[Amount]) -> (BdkWallet, SignersContainer) {
+		let mut wallet = BdkWallet::create_single(get_test_tr_single_sig_xprv())
+			.network(Network::Regtest)
+			.create_wallet_no_persist()
+			.unwrap();
+		insert_checkpoint(&mut wallet, BlockId { height: 1_000, hash: BlockHash::all_zeros() });
+		for amount in amounts {
+			receive_output_in_latest_block(&mut wallet, *amount);
+		}
+		let signers = wallet.build_signers(get_test_tr_single_sig_xprv()).unwrap();
+		(wallet, signers)
+	}
+
+	/// The replica must report the change index it derived, so presigning can reveal the real
+	/// wallet up to it, and must leave the real wallet's own derivation state untouched.
+	#[test]
+	fn cpfp_walk_reports_change_index() {
+		let (wallet, signers) = derivable_wallet(&[Amount::from_sat(50_000)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let parents = (1..=3).map(|tag| (p2a_parent(tag), fees)).collect::<Vec<_>>();
+
+		let next = wallet.next_derivation_index(KEYCHAIN);
+		let mut replica = WalletReplica::new(&wallet).unwrap();
+		let children = replica.sign_p2a_cpfp_walk(&[parents.clone()], &[], &signers).unwrap()
+			.into_iter().flatten().collect::<Vec<_>>();
+		assert_eq!(children.len(), 3);
+
+		// One fresh change address per child, derived in order past the wallet's tip.
+		assert_eq!(replica.revealed_change_index(), Some(next + 2));
+		for (i, (child, _)) in children.iter().enumerate() {
+			assert_eq!(
+				child.output[0].script_pubkey,
+				wallet.peek_address(KEYCHAIN, next + i as u32).address.script_pubkey(),
+			);
+		}
+		assert_eq!(wallet.next_derivation_index(KEYCHAIN), next);
+	}
+
+	/// Revealing the walk's change indices must never leave a gap a recovery full scan could stop
+	/// short of: change allocation takes the lowest unused index, so revealed-but-unbroadcast
+	/// indices get reused rather than skipped, and a broadcast chain uses every revealed index.
+	#[test]
+	fn revealed_walk_change_leaves_no_address_gap() {
+		let (mut wallet, signers) = derivable_wallet(&[Amount::from_sat(50_000)]);
+		let fees = MakeCpfpFees::Effective(FeeRate::from_sat_per_vb(10).unwrap());
+		let parents = (1..=3).map(|tag| (p2a_parent(tag), fees)).collect::<Vec<_>>();
+
+		let mut replica = WalletReplica::new(&wallet).unwrap();
+		let children = replica.sign_p2a_cpfp_walk(&[parents.clone()], &[], &signers).unwrap()
+			.into_iter().flatten().collect::<Vec<_>>();
+		let change_index = replica.revealed_change_index().unwrap();
+		let _ = wallet.reveal_addresses_to(KEYCHAIN, change_index).last();
+		assert_eq!(wallet.next_derivation_index(KEYCHAIN), change_index + 1);
+
+		// The allocator still points at the first revealed-unused index, so ordinary wallet
+		// activity fills the presign indices before consuming new ones.
+		assert_eq!(
+			wallet.next_unused_address(KEYCHAIN).address.script_pubkey(),
+			children[0].0.output[0].script_pubkey,
+		);
+
+		// A repeat walk re-derives the same addresses: an un-broadcast chain never consumes
+		// more than one chain's worth of address space, no matter how often it is re-signed.
+		let mut repeat_replica = WalletReplica::new(&wallet).unwrap();
+		let repeat = repeat_replica.sign_p2a_cpfp_walk(&[parents.clone()], &[], &signers).unwrap()
+			.into_iter().flatten().collect::<Vec<_>>();
+		assert_eq!(repeat_replica.revealed_change_index(), Some(change_index));
+		let change_spks = |children: &[(Transaction, Amount)]| children.iter()
+			.map(|(child, _)| child.output[0].script_pubkey.clone())
+			.collect::<Vec<_>>();
+		assert_eq!(change_spks(&repeat), change_spks(&children));
+
+		// Once the chain is onchain, the used run is contiguous: no gap for a full scan.
+		for (child, _) in &children {
+			insert_tx(&mut wallet, child.clone());
+		}
+		assert_eq!(wallet.list_unused_addresses(KEYCHAIN).count(), 0);
+		assert_eq!(wallet.next_unused_address(KEYCHAIN).index, change_index + 1);
 	}
 }
