@@ -77,13 +77,13 @@ async fn offboard_validates_requests_and_replays_retries() {
 
 	// Offboard a single vtxo
 	Box::pin(async {
-		// The whole vtxo goes onchain, the server takes its fee out of the vtxo
-		// (deduct_fees_from_gross_amount = true). bark's offboard.
+		// A vtxo of 800_000 sat.
 		let [offboard_vtxo] = ctx.board(&wallet, &[sat(800_000)]).await.try_into().unwrap();
-		// 799_000 sat onchain, 1_000 sat fee taken from the vtxo.
+		// 799_000 sat onchain and 1_000 sat in fees.
 		let req = OffboardRequest {
 			script_pubkey: script_pubkey.clone(),
 			net_amount: sat(799_000),
+			// The fee comes out of the vtxo, like bark's offboard.
 			deduct_fees_from_gross_amount: true,
 			fee_rate: FeeRate::from_sat_per_vb_u32(1),
 		};
@@ -223,7 +223,7 @@ async fn offboard_validates_requests_and_replays_retries() {
 		// Offboarded together, so their forfeits share one connector output that a fanout tx splits.
 		let [multi_a, multi_b] = ctx.board(&wallet, &[sat(300_000), sat(310_000)]).await
 			.try_into().unwrap();
-		// 609_000 sat onchain, 1_000 sat fee taken from the vtxos.
+		// 609_000 sat onchain and 1_000 sat in fees.
 		let req = OffboardRequest {
 			script_pubkey: script_pubkey.clone(),
 			net_amount: sat(609_000),
@@ -314,13 +314,13 @@ async fn offboard_validates_requests_and_replays_retries() {
 
 	// Send an exact amount onchain
 	Box::pin(async {
-		// An exact amount goes onchain, the fee comes on top
-		// (deduct_fees_from_gross_amount = false). bark's send-onchain.
+		// A vtxo of 500_000 sat.
 		let [send_vtxo] = ctx.board(&wallet, &[sat(500_000)]).await.try_into().unwrap();
-		// 499_000 sat onchain, 1_000 sat fee on top of the amount.
+		// 499_000 sat onchain and 1_000 sat in fees.
 		let req = OffboardRequest {
 			script_pubkey: script_pubkey.clone(),
 			net_amount: sat(499_000),
+			// The fee comes on top of the amount, like bark's send-onchain.
 			deduct_fees_from_gross_amount: false,
 			fee_rate: FeeRate::from_sat_per_vb_u32(1),
 		};
@@ -376,7 +376,7 @@ async fn offboard_validates_requests_and_replays_retries() {
 		let late_expiry = late_a.expiry_height().max(late_b.expiry_height());
 		assert!(late_a.expiry_height().min(late_b.expiry_height()) > early_expiry);
 
-		// 859_000 sat onchain, 1_000 sat fee taken from the vtxos.
+		// 859_000 sat onchain and 1_000 sat in fees.
 		let req = OffboardRequest {
 			script_pubkey: script_pubkey.clone(),
 			net_amount: sat(859_000),
@@ -464,8 +464,9 @@ async fn offboard_validates_requests_and_replays_retries() {
 
 	// Offboard more than max_offboard_amount
 	Box::pin(async {
-		// More than the 900_000 sat max_offboard_amount.
+		// A vtxo of 1_000_000 sat, more than the 900_000 sat max_offboard_amount.
 		let [large_vtxo] = ctx.board(&wallet, &[sat(1_000_000)]).await.try_into().unwrap();
+		// 999_000 sat onchain and 1_000 sat in fees.
 		let req = OffboardRequest {
 			script_pubkey: script_pubkey.clone(),
 			net_amount: sat(999_000),
