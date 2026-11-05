@@ -869,8 +869,7 @@ impl TestContext {
 	/// Boards each amount from the onchain funds of `wallet`, confirms the boards and waits
 	/// until they are registered. Returns the new vtxos in the order of `amounts`.
 	pub async fn board(&self, wallet: &bark::Wallet, amounts: &[Amount]) -> Vec<bark::WalletVtxo> {
-		// Boxed, so a test that boards many times keeps a small future.
-		Box::pin(self.try_board(wallet, amounts)).await.expect("boarding failed")
+		self.try_board(wallet, amounts).await.expect("boarding failed")
 	}
 
 	/// Like [Self::board], but returns the error when a board fails.

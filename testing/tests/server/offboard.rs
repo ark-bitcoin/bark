@@ -75,8 +75,8 @@ async fn offboard_validates_requests_and_replays_retries() {
 	let destination = ctx.bitcoind().get_new_address();
 	let script_pubkey = destination.script_pubkey();
 
-	// Using offboard_vtxo
-	{
+	// Offboard a single vtxo
+	Box::pin(async {
 		// The whole vtxo goes onchain, the server takes its fee out of the vtxo
 		// (deduct_fees_from_gross_amount = true). bark's offboard.
 		let [offboard_vtxo] = ctx.board(&wallet, &[sat(800_000)]).await.try_into().unwrap();
@@ -216,10 +216,10 @@ async fn offboard_validates_requests_and_replays_retries() {
 		ctx.bitcoind().await_transaction(forfeit.cpfp_txid).await;
 		ctx.bitcoind().generate(1).await;
 		assert!(client.get_tx_out(&exit_point.txid, exit_point.vout, Some(true)).unwrap().is_none());
-	}
+	}).await;
 
-	// Using multi_a and multi_b
-	{
+	// Offboard two vtxos together, then exit them one at a time
+	Box::pin(async {
 		// Offboarded together, so their forfeits share one connector output that a fanout tx splits.
 		let [multi_a, multi_b] = ctx.board(&wallet, &[sat(300_000), sat(310_000)]).await
 			.try_into().unwrap();
@@ -310,10 +310,10 @@ async fn offboard_validates_requests_and_replays_retries() {
 		ctx.bitcoind().await_transaction(forfeit.cpfp_txid).await;
 		ctx.bitcoind().generate(1).await;
 		assert!(client.get_tx_out(&exit_b.txid, exit_b.vout, Some(true)).unwrap().is_none());
-	}
+	}).await;
 
-	// Using send_vtxo
-	{
+	// Send an exact amount onchain
+	Box::pin(async {
 		// An exact amount goes onchain, the fee comes on top
 		// (deduct_fees_from_gross_amount = false). bark's send-onchain.
 		let [send_vtxo] = ctx.board(&wallet, &[sat(500_000)]).await.try_into().unwrap();
@@ -339,10 +339,10 @@ async fn offboard_validates_requests_and_replays_retries() {
 
 		// The send is accepted. Its session stays pending and locks one wallet coin.
 		rpc.prepare_offboard(prepare(&req, &send_vtxo).await).await.unwrap();
-	}
+	}).await;
 
-	// Using dust_vtxo
-	{
+	// Offboard a vtxo that is dust once the fee is taken out
+	Box::pin(async {
 		// Boards have a 20_000 sat minimum, so the 400 sat vtxo arrives by arkoor.
 		let dust_source = ctx.bark_sdk("dust_source", &srv).boarded(sat(100_000)).create().await;
 		dust_source.send_arkoor_payment(&wallet.new_address().await.unwrap(), sat(400)).await.unwrap();
@@ -360,10 +360,10 @@ async fn offboard_validates_requests_and_replays_retries() {
 		let err = rpc.prepare_offboard(prepare(&req, &dust_vtxo).await).await.unwrap_err();
 		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
 		assert!(err.message().contains("below dust limit"), "{err}");
-	}
+	}).await;
 
-	// Using early_a, early_b, late_a and late_b
-	{
+	// Offboard vtxos that expire at different heights, and never exit them
+	Box::pin(async {
 		// The late vtxos are boarded 10 blocks after the early ones, so they expire later.
 		// None of them exits, so the connector of their offboard stays unspent. Four inputs
 		// make it 4 * 330 sat, enough to pay for its own sweep.
@@ -460,10 +460,10 @@ async fn offboard_validates_requests_and_replays_retries() {
 		let client = ctx.bitcoind().sync_client();
 		assert!(client.get_tx_out(&connector.txid, connector.vout, Some(true)).unwrap().is_none());
 		assert_eq!(srv.wallet_status().await.rounds.total_balance, rounds_balance + sweep.total_output_value);
-	}
+	}).await;
 
-	// Using large_vtxo
-	{
+	// Offboard more than max_offboard_amount
+	Box::pin(async {
 		// More than the 900_000 sat max_offboard_amount.
 		let [large_vtxo] = ctx.board(&wallet, &[sat(1_000_000)]).await.try_into().unwrap();
 		let req = OffboardRequest {
@@ -487,7 +487,7 @@ async fn offboard_validates_requests_and_replays_retries() {
 		let err = rpc.prepare_offboard(prepare(&req, &large_vtxo).await).await.unwrap_err();
 		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
 		assert!(err.message().contains("offboard is temporarily disabled"), "{err}");
-	}
+	}).await;
 }
 
 /// A prepared offboard keeps its wallet UTXOs locked until the session fails or times out.
