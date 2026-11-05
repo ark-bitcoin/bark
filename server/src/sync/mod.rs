@@ -130,13 +130,25 @@ impl Process {
 		Ok(())
 	}
 
+	/// Takes a mempool snapshot and hands it to the listeners.
+	///
+	/// The snapshot is only handed on once no block arrived since it was taken,
+	/// so the listeners read it against the chain it was taken on.
 	async fn poll_mempool(&mut self) -> anyhow::Result<()> {
 		// We don't want false evictions.
 		// You should only do this if you are sure that
 		// all blocks are fully synced.
 		self.block_index.sync().await?;
 
-		let txids = self.bitcoind.get_raw_mempool().await?.0;
+		// Sync after the snapshot, so a block that took its txs out of it reads
+		// as confirmed. If that finds a block, retake the snapshot: a reorg puts
+		// orphaned txs back in the mempool.
+		let txids = loop {
+			let txids = self.bitcoind.get_raw_mempool().await?.0;
+			if !self.block_index.sync().await? {
+				break txids;
+			}
+		};
 		let mempool = RawMempool {
 			observed_at: chrono::Local::now(),
 			txids,
