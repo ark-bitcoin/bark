@@ -1506,6 +1506,33 @@ async fn bad_round_input() {
 	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::NotFound, "[{}]: {}", err.code(), err.message());
 	assert_eq!(err.metadata().get("identifiers").unwrap().to_str().unwrap(), fake_vtxo.to_string());
+
+	info!("unusable input with someone else's attestation");
+	let db_client = ctx.postgres_manager().database_client(Some(&srv.config().postgres.name)).await;
+	db_client.execute(
+		"UPDATE vtxo SET banned_until_height = 1000000, updated_at = NOW() WHERE vtxo_id = $1",
+		&[&vtxo.id().to_string()],
+	).await.unwrap();
+	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
+		input_vtxos: vec![input.clone()],
+		vtxo_requests: vec![protos::SignedVtxoRequest {
+			vtxo: Some(protos::VtxoRequest {
+				amount: vtxo_req.vtxo.amount.to_sat(),
+				policy: vtxo_req.vtxo.policy.serialize(),
+			}),
+			cosign_pubkey: vtxo_req.cosign_pubkey.serialize().to_vec(),
+			public_nonces: iter::repeat({
+				let (_sec, pb) = musig::nonce_pair(&key);
+				pb.serialize().to_vec()
+			}).take(ark_info.nb_round_nonces as usize).collect(),
+		}],
+		#[allow(deprecated)]
+		offboard_requests: vec![],
+		unblinded_mailbox_id: None,
+	}).ready().await.unwrap_err();
+	// the state of the input is only told to its owner
+	assert!(err.message().contains("attestation is invalid"), "[{}]: {}", err.code(), err.message());
+	assert!(err.metadata().get("identifiers").is_none(), "[{}]: {}", err.code(), err.message());
 }
 
 #[tokio::test]
