@@ -194,25 +194,54 @@ impl Server {
 		let mut ff_txids = Vec::with_capacity(forfeits.len());
 		let mut ff_vtxos = Vec::with_capacity(forfeits.len());
 		let mut input_forfeit_pairs = Vec::with_capacity(forfeits.len());
+		// Verify every bundle before consuming any nonce, so an invalid bundle,
+		// which anyone knowing the participation can send, uses up none of them.
+		let mut pub_nonces = Vec::with_capacity(forfeits.len());
 		for (vtxo_ff, vtxo) in forfeits.iter().zip(&vtxos) {
+			let pub_nonce = {
+				let nonces = self.forfeit_nonces.lock();
+				let nonces = nonces.get(&vtxo_ff.vtxo_id).and_then(|n| n.as_ref()).with_badarg(||
+					format!("no forfeit nonces generated for vtxo {}", vtxo_ff.vtxo_id),
+				)?;
+				if nonces.unlock_hash != unlock_hash {
+					return badarg!("forfeit nonces were generated for unlock hash {} instead of {}",
+						nonces.unlock_hash, unlock_hash,
+					);
+				}
+				nonces.public_nonce()
+			};
+			if let Err(e) = vtxo_ff.verify(&vtxo.vtxo, &pub_nonce) {
+				return badarg!("forfeit validation failed for vtxo {}: {}", vtxo_ff.vtxo_id, e);
+			}
+			pub_nonces.push(pub_nonce);
+		}
+
+		// Then consume them all at once, unless a concurrent request did first.
+		let sec_nonces = {
+			let mut nonces = self.forfeit_nonces.lock();
+			for (vtxo_ff, pub_nonce) in forfeits.iter().zip(&pub_nonces) {
+				let unchanged = nonces.get(&vtxo_ff.vtxo_id).and_then(|n| n.as_ref())
+					.is_some_and(|n| n.public_nonce() == *pub_nonce);
+				if !unchanged {
+					return badarg!("forfeit nonces for vtxo {} were used or replaced meanwhile",
+						vtxo_ff.vtxo_id,
+					);
+				}
+			}
+			forfeits.iter()
+				.map(|ff| nonces.take(&ff.vtxo_id).expect("checked above").into_secret_nonce())
+				.collect::<Vec<_>>()
+		};
+
+		for (((vtxo_ff, vtxo), pub_nonce), sec_nonce) in forfeits.iter().zip(&vtxos)
+			.zip(pub_nonces).zip(sec_nonces)
+		{
 			let input = part.inputs.iter().find(|i| i.vtxo_id == vtxo_ff.vtxo_id)
 				.expect("checked this before");
-			let nonces = self.forfeit_nonces.lock().take(&input.vtxo_id).with_badarg(||
-				format!("no forfeit nonces generated for vtxo {}", input.vtxo_id),
-			)?;
-			if nonces.unlock_hash != unlock_hash {
-				return badarg!("forfeit nonces were generated for unlock hash {} instead of {}",
-					nonces.unlock_hash, unlock_hash,
-				);
-			}
-			let pub_nonce = nonces.public_nonce();
-			if let Err(e) = vtxo_ff.verify(&vtxo.vtxo, &pub_nonce) {
-				return badarg!("forfeit validation failed for vtxo {}: {}", input.vtxo_id, e);
-			}
 			let (_ff_sig, ff_tx, ff_vtxo) = vtxo_ff.finish(
 				&vtxo.vtxo,
 				&pub_nonce,
-				nonces.into_secret_nonce(),
+				sec_nonce,
 				self.server_key.leak_ref(),
 			);
 			let ff_txid = ff_tx.compute_txid();

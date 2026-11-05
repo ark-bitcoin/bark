@@ -44,6 +44,31 @@ impl captaind::proxy::ArkRpcProxy for RecordForfeit {
 	}
 }
 
+/// Before forwarding a forfeit, sends a copy with a bad signature on its last
+/// bundle, like anyone who knows the participation could, and records the
+/// server's answer to it.
+#[derive(Clone, Default)]
+struct BadForfeitFirst {
+	bad_forfeit: Arc<Mutex<Option<Result<(), String>>>>,
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for BadForfeitFirst {
+	async fn forfeit_vtxos(
+		&self, upstream: &mut ArkClient, req: protos::ForfeitVtxosRequest,
+	) -> Result<protos::ForfeitVtxosResponse, tonic::Status> {
+		let mut bad = req.clone();
+		let last = bad.forfeit_bundles.last_mut().expect("at least one bundle");
+		let mut bundle = HashLockedForfeitBundle::deserialize(last).unwrap();
+		bundle.part_sig = musig::PartialSignature::from_byte_array(&[1; 32]).unwrap();
+		*last = bundle.serialize();
+		let res = upstream.forfeit_vtxos(bad).await;
+		*self.bad_forfeit.lock() = Some(res.map(|_| ()).map_err(|e| e.message().to_owned()));
+
+		Ok(upstream.forfeit_vtxos(req).await?.into_inner())
+	}
+}
+
 /// A round input passes every check when it joins the round and the round
 /// finishes. Before the owner forfeits it, a stale copy of the wallet exits
 /// the input and claims it through its exit clause. The forfeit that follows
@@ -168,9 +193,15 @@ async fn forfeit_calls_do_not_reveal_participation_membership() {
 		assert!(!errs.iter().any(|e| e.contains(&private_input.to_string())), "{errs:?}");
 	}
 
-	// the owners still forfeit, sending their attestations
+	// the owners still forfeit, sending their attestations, even after someone
+	// sent the victim's forfeit with a bad signature first
+	let bad_first = BadForfeitFirst::default();
+	let proxy = srv.start_proxy_no_mailbox(bad_first.clone()).await;
+	victim.set_ark_url(&proxy.address).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	victim.sync().await;
+	let bad_forfeit = bad_first.bad_forfeit.lock().clone().expect("victim forfeited");
+	assert!(bad_forfeit.unwrap_err().contains("forfeit validation failed"));
 	other.sync().await;
 	let unforfeited = db.read(async |t| {
 		let row = t.query_one(
