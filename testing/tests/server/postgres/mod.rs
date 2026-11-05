@@ -180,12 +180,6 @@ async fn integration() {
 	assert_eq!(integration_token_config_second.maximum_open_tokens, 10);
 	assert_eq!(integration_token_config_second.active_seconds, 11);
 
-	let integration_token_config_second = db.write(async |t| t.delete_integration_token_config(
-		integration_token_config_second.id,
-		integration_token_config_second.updated_at,
-	).await).await.unwrap();
-	assert_ne!(integration_token_config_second.deleted_at, None);
-
 	let token = uuid::Uuid::new_v4().to_string();
 	let tomorrow = Local::now() + chrono::Duration::days(1);
 	let integration_token_third = db.write(async |t| t.store_integration_token(

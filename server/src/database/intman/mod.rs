@@ -313,29 +313,6 @@ impl<'t> Tx<'t> {
 		Ok(IntegrationTokenConfig::from(row))
 	}
 
-	pub async fn delete_integration_token_config(
-		&self,
-		id: i64,
-		old_updated_at: DateTime<Local>,
-	) -> anyhow::Result<IntegrationTokenConfig> {
-		let statement = self.prepare("
-			UPDATE integration_token_config
-			SET deleted_at = NOW(), updated_at = NOW()
-			WHERE id = $1 AND updated_at = $2
-			RETURNING id,
-				type::TEXT, maximum_open_tokens, active_seconds,
-				integration_id,
-				created_at, updated_at, deleted_at
-		").await?;
-
-		let row = self.query_one(&statement, &[
-			&id,
-			&old_updated_at,
-		]).await?;
-
-		Ok(IntegrationTokenConfig::from(row))
-	}
-
 	pub async fn get_integration_token(
 		&self,
 		token: &str,
