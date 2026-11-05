@@ -15,7 +15,7 @@ use bitcoin::{Amount, FeeRate, Transaction, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{Keypair, rand::thread_rng};
 use server_rpc::{protos, TryFromBytes};
-use server_log::{OffboardSessionTimeout, ProgressBroadcast};
+use server_log::{ClaimBroadcast, OffboardSessionTimeout, ProgressBroadcast};
 
 use ark::{ProtocolEncoding, VtxoId, SECP};
 use ark::attestations::OffboardRequestAttestation;
@@ -32,11 +32,15 @@ use ark_testing::{btc, sat, TestContext};
 async fn offboard_validates_requests_and_replays_retries() {
 	let ctx = TestContext::new("server/offboard_validates_requests_and_replays_retries").await;
 	// Every fee rate is 1 sat/vB, so the request can use a fixed fee.
-	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+	let srv = ctx.captaind("server").funded(btc(1)).cfg(|cfg| {
 		cfg.fee_estimator.fallback_fee_rate_fast = FeeRate::from_sat_per_vb_u32(1);
 		cfg.fee_estimator.fallback_fee_rate_regular = FeeRate::from_sat_per_vb_u32(1);
 		cfg.fee_estimator.fallback_fee_rate_slow = FeeRate::from_sat_per_vb_u32(1);
 		cfg.max_offboard_amount = Some(sat(900_000));
+		// The cap on locked coins is tested elsewhere.
+		cfg.offboard_max_locked_percent = 100;
+		// Short, so the vtxos expire after few blocks.
+		cfg.vtxo_lifetime = BlockDelta::new(144);
 	}).watchmand_cfg(|cfg| {
 		// The watchman only acts when the test triggers it.
 		cfg.watchman.reaction_interval = Duration::from_secs(3600);
@@ -44,40 +48,22 @@ async fn offboard_validates_requests_and_replays_retries() {
 		// It waits 2 blocks after an exit confirms before it applies the forfeit.
 		cfg.watchman.progress_grace_period = BlockDelta::new(2);
 	}).create().await;
+	// A pending session locks a whole coin, so give the server more than one.
+	for _ in 0..7 {
+		ctx.fund_captaind(&srv, btc(1)).await;
+	}
 	let wm = srv.watchmand();
 	// The watchman pays the fees of the txs it broadcasts.
 	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(1_000_000)).await;
-	// The server prices an offboard in one of two ways, so each vtxo has one job:
-	// - offboard_vtxo (800_000 sat): the whole vtxo goes onchain, the server takes its fee
-	//   out of the vtxo (deduct_fees_from_gross_amount = true). bark's offboard.
-	// - send_vtxo (500_000 sat): an exact amount goes onchain, the fee comes on top
-	//   (deduct_fees_from_gross_amount = false). bark's send-onchain.
-	// - dust_vtxo (400 sat): less than dust once the fee is taken out.
-	// - large_vtxo (1_000_000 sat): more than the 900_000 sat max_offboard_amount.
-	// - multi_a (300_000 sat), multi_b (310_000 sat): offboarded together, so their forfeits
-	//   share one connector output that a fanout tx splits.
+	// Each block below boards the vtxos it needs from this wallet. The wallet only
+	// provides the vtxos and their keys; the test talks to the server itself.
+	// Manual sync stops the wallet from spending its coins on CPFPs for the exits the test mines.
 	let wallet = ctx.bark_sdk("bark", &srv)
-		.boarded(sat(800_000))
-		.boarded(sat(500_000))
-		.boarded(sat(1_000_000))
-		.boarded(sat(300_000))
-		.boarded(sat(310_000))
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(btc(5))
 		.create().await;
-	// Boards have a 20_000 sat minimum, so the dust vtxo arrives by arkoor.
-	let dust_source = ctx.bark_sdk("dust_source", &srv).boarded(sat(100_000)).create().await;
-	dust_source.send_arkoor_payment(&wallet.new_address().await.unwrap(), sat(400)).await.unwrap();
-	wallet.sync().await;
 	let mut rpc = srv.get_public_rpc().await;
 
-	// The wallet only provides the vtxos and their keys; the test talks to the server itself.
-	let vtxos = wallet.spendable_vtxos().await.unwrap();
-	let find_vtxo = |amount| vtxos.iter().find(|v| v.amount() == amount).unwrap().clone();
-	let offboard_vtxo = find_vtxo(sat(800_000));
-	let send_vtxo = find_vtxo(sat(500_000));
-	let dust_vtxo = find_vtxo(sat(400));
-	let large_vtxo = find_vtxo(sat(1_000_000));
-	let multi_a = find_vtxo(sat(300_000));
-	let multi_b = find_vtxo(sat(310_000));
 	let prepare = async |req: &OffboardRequest, vtxo: &WalletVtxo| {
 		let key = wallet.get_vtxo_key(vtxo).await.unwrap();
 		protos::PrepareOffboardRequest {
@@ -91,6 +77,9 @@ async fn offboard_validates_requests_and_replays_retries() {
 
 	// Using offboard_vtxo
 	{
+		// The whole vtxo goes onchain, the server takes its fee out of the vtxo
+		// (deduct_fees_from_gross_amount = true). bark's offboard.
+		let [offboard_vtxo] = ctx.board(&wallet, &[sat(800_000)]).await.try_into().unwrap();
 		// 799_000 sat onchain, 1_000 sat fee taken from the vtxo.
 		let req = OffboardRequest {
 			script_pubkey: script_pubkey.clone(),
@@ -231,6 +220,9 @@ async fn offboard_validates_requests_and_replays_retries() {
 
 	// Using multi_a and multi_b
 	{
+		// Offboarded together, so their forfeits share one connector output that a fanout tx splits.
+		let [multi_a, multi_b] = ctx.board(&wallet, &[sat(300_000), sat(310_000)]).await
+			.try_into().unwrap();
 		// 609_000 sat onchain, 1_000 sat fee taken from the vtxos.
 		let req = OffboardRequest {
 			script_pubkey: script_pubkey.clone(),
@@ -322,6 +314,9 @@ async fn offboard_validates_requests_and_replays_retries() {
 
 	// Using send_vtxo
 	{
+		// An exact amount goes onchain, the fee comes on top
+		// (deduct_fees_from_gross_amount = false). bark's send-onchain.
+		let [send_vtxo] = ctx.board(&wallet, &[sat(500_000)]).await.try_into().unwrap();
 		// 499_000 sat onchain, 1_000 sat fee on top of the amount.
 		let req = OffboardRequest {
 			script_pubkey: script_pubkey.clone(),
@@ -342,13 +337,19 @@ async fn offboard_validates_requests_and_replays_retries() {
 		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
 		assert!(err.message().contains("invalid offboard request"), "{err}");
 
-		// The send is accepted. It runs after the offboard finished, because a pending
-		// session locks the server's only wallet coin.
+		// The send is accepted. Its session stays pending and locks one wallet coin.
 		rpc.prepare_offboard(prepare(&req, &send_vtxo).await).await.unwrap();
 	}
 
 	// Using dust_vtxo
 	{
+		// Boards have a 20_000 sat minimum, so the 400 sat vtxo arrives by arkoor.
+		let dust_source = ctx.bark_sdk("dust_source", &srv).boarded(sat(100_000)).create().await;
+		dust_source.send_arkoor_payment(&wallet.new_address().await.unwrap(), sat(400)).await.unwrap();
+		wallet.sync().await;
+		let dust_vtxo = wallet.spendable_vtxos().await.unwrap().into_iter()
+			.find(|v| v.amount() == sat(400)).unwrap();
+
 		// Asks for exactly the dust limit, so only the fee pushes it below.
 		let req = OffboardRequest {
 			net_amount: script_pubkey.minimal_non_dust(),
@@ -361,8 +362,110 @@ async fn offboard_validates_requests_and_replays_retries() {
 		assert!(err.message().contains("below dust limit"), "{err}");
 	}
 
+	// Using early_a, early_b, late_a and late_b
+	{
+		// The late vtxos are boarded 10 blocks after the early ones, so they expire later.
+		// None of them exits, so the connector of their offboard stays unspent. Four inputs
+		// make it 4 * 330 sat, enough to pay for its own sweep.
+		let [early_a, early_b] = ctx.board(&wallet, &[sat(200_000), sat(210_000)]).await
+			.try_into().unwrap();
+		ctx.bitcoind().generate(10).await;
+		let [late_a, late_b] = ctx.board(&wallet, &[sat(220_000), sat(230_000)]).await
+			.try_into().unwrap();
+		let early_expiry = early_a.expiry_height().max(early_b.expiry_height());
+		let late_expiry = late_a.expiry_height().max(late_b.expiry_height());
+		assert!(late_a.expiry_height().min(late_b.expiry_height()) > early_expiry);
+
+		// 859_000 sat onchain, 1_000 sat fee taken from the vtxos.
+		let req = OffboardRequest {
+			script_pubkey: script_pubkey.clone(),
+			net_amount: sat(859_000),
+			deduct_fees_from_gross_amount: true,
+			fee_rate: FeeRate::from_sat_per_vb_u32(1),
+		};
+		let inputs = [&early_a, &early_b, &late_a, &late_b];
+		let ids = inputs.map(|v| v.id());
+		let mut keys = Vec::new();
+		let mut full_vtxos = Vec::new();
+		for vtxo in inputs {
+			keys.push(wallet.get_vtxo_key(vtxo).await.unwrap());
+			full_vtxos.push(wallet.get_full_vtxo(vtxo.id()).await.unwrap());
+		}
+		let prepared = rpc.prepare_offboard(protos::PrepareOffboardRequest {
+			offboard: Some((&req).into()),
+			input_vtxo_ids: ids.iter().map(|id| id.to_bytes().to_vec()).collect(),
+			attestation: keys.iter()
+				.map(|key| OffboardRequestAttestation::new(&req, &ids, key).serialize())
+				.collect(),
+		}).await.unwrap().into_inner();
+		let offboard_tx = bitcoin::consensus::deserialize::<Transaction>(&prepared.offboard_tx).unwrap();
+		let server_nonces = prepared.forfeit_cosign_nonces.iter()
+			.map(|n| musig::PublicNonce::from_bytes(n).unwrap())
+			.collect::<Vec<_>>();
+		let sigs = OffboardForfeitContext::new(&full_vtxos, &offboard_tx).unwrap()
+			.user_sign_forfeits(&keys, &server_nonces).unwrap();
+		rpc.finish_offboard(protos::FinishOffboardRequest {
+			offboard_txid: offboard_tx.compute_txid().to_byte_array().to_vec(),
+			user_nonces: sigs.public_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+			partial_signatures: sigs.partial_signatures.iter().map(|s| s.serialize().to_vec()).collect(),
+		}).await.unwrap();
+		ctx.bitcoind().await_transaction(offboard_tx.compute_txid()).await;
+		ctx.bitcoind().generate(1).await;
+		// The offboard tx pays the connector of all four forfeits to its second output.
+		let connector = bitcoin::OutPoint::new(offboard_tx.compute_txid(), 1);
+		let boards = full_vtxos.iter().map(|v| v.chain_anchor()).collect::<Vec<_>>();
+		let (early_boards, late_boards) = boards.split_at(2);
+		let mut claims = wm.subscribe_log::<ClaimBroadcast>();
+
+		// When the early vtxos expire, the watchman sweeps their board outputs. It keeps
+		// the connector, because a forfeit of a late vtxo might still need it.
+		ctx.bitcoind().generate(early_expiry.to_u32()
+			.checked_sub(u32::try_from(ctx.bitcoind().get_block_count().await).unwrap()).unwrap()).await;
+		wm.wait_for_sync_height(early_expiry).await;
+		wm.trigger_sweep().await;
+		let sweep = claims.recv().await.unwrap();
+		let swept = sweep.vtxo_ids.iter().map(|id| id.to_point()).collect::<HashSet<_>>();
+		assert!(early_boards.iter().all(|b| swept.contains(b)), "{sweep:?}");
+		assert!(!late_boards.iter().any(|b| swept.contains(b)), "{sweep:?}");
+		assert!(!swept.contains(&connector), "{sweep:?}");
+		ctx.bitcoind().await_transaction(sweep.txid).await;
+
+		// When the late vtxos expire, the watchman sweeps their board outputs, and still
+		// keeps the connector.
+		ctx.bitcoind().generate(late_expiry.to_u32()
+			.checked_sub(u32::try_from(ctx.bitcoind().get_block_count().await).unwrap()).unwrap()).await;
+		wm.wait_for_sync_height(late_expiry).await;
+		wm.trigger_sweep().await;
+		let sweep = claims.recv().await.unwrap();
+		let swept = sweep.vtxo_ids.iter().map(|id| id.to_point()).collect::<HashSet<_>>();
+		assert!(late_boards.iter().all(|b| swept.contains(b)), "{sweep:?}");
+		assert!(!swept.contains(&connector), "{sweep:?}");
+		ctx.bitcoind().await_transaction(sweep.txid).await;
+
+		// 144 blocks after the latest expiry, the watchman sweeps the connector into the
+		// rounds wallet.
+		let connector_expiry = late_expiry + BlockDelta::new(144);
+		ctx.bitcoind().generate(connector_expiry.to_u32()
+			.checked_sub(u32::try_from(ctx.bitcoind().get_block_count().await).unwrap()).unwrap()).await;
+		wm.wait_for_sync_height(connector_expiry).await;
+		srv.wait_for_sync_height(connector_expiry).await;
+		let rounds_balance = srv.wallet_status().await.rounds.total_balance;
+		wm.trigger_sweep().await;
+		let sweep = claims.recv().await.unwrap();
+		assert_eq!(sweep.vtxo_ids.iter().map(|id| id.to_point()).collect::<Vec<_>>(), vec![connector]);
+		ctx.bitcoind().await_transaction(sweep.txid).await;
+		ctx.bitcoind().generate(1).await;
+		let tip = BlockHeight::new(u32::try_from(ctx.bitcoind().get_block_count().await).unwrap());
+		srv.wait_for_sync_height(tip).await;
+		let client = ctx.bitcoind().sync_client();
+		assert!(client.get_tx_out(&connector.txid, connector.vout, Some(true)).unwrap().is_none());
+		assert_eq!(srv.wallet_status().await.rounds.total_balance, rounds_balance + sweep.total_output_value);
+	}
+
 	// Using large_vtxo
 	{
+		// More than the 900_000 sat max_offboard_amount.
+		let [large_vtxo] = ctx.board(&wallet, &[sat(1_000_000)]).await.try_into().unwrap();
 		let req = OffboardRequest {
 			script_pubkey: script_pubkey.clone(),
 			net_amount: sat(999_000),
