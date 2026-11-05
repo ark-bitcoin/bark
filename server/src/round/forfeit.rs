@@ -114,8 +114,22 @@ impl Server {
 			// nb this call is quite expensive computationally, so we don't want to
 			// keep the lock while doing it
 			let nonces = HarkForfeitNonces::generate(self.server_key.leak_ref(), unlock_hash);
-			ret.push(nonces.public_nonce());
-			self.forfeit_nonces.lock().insert_some(*vtxo, nonces);
+
+			// A concurrent request may have stored nonces meanwhile. Hand out
+			// those rather than overwrite them, so every caller gets the nonce
+			// whose secret the server keeps.
+			let mut stored = self.forfeit_nonces.lock();
+			let concurrent = stored.get(vtxo)
+				.and_then(|opt| opt.as_ref())
+				.filter(|n| n.unlock_hash == unlock_hash)
+				.map(|n| n.public_nonce());
+			match concurrent {
+				Some(pub_nonce) => ret.push(pub_nonce),
+				None => {
+					ret.push(nonces.public_nonce());
+					stored.insert_some(*vtxo, nonces);
+				},
+			}
 		}
 		Ok(ret)
 	}
