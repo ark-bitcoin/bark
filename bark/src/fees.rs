@@ -7,7 +7,6 @@ use ark::{Vtxo, VtxoId};
 use ark::fees::VtxoFeeInfo;
 
 use crate::Wallet;
-use crate::vtxo::selection::InputSelection;
 
 /// Result of a fee estimation containing the total cost, fee amount, and VTXOs used. It's very
 /// important to consider that fees can change over time, so you should expect to renew this
@@ -218,7 +217,9 @@ impl Wallet {
 	/// the user will receive and `FeeEstimate::gross_amount` is the offchain amount the user will
 	/// pay using `FeeEstimate::vtxos_used`.
 	///
-	/// Uses the same iterative approach as `send_onchain` to account for VTXO expiry-based fees.
+	/// Uses the same input selection as `send_onchain`, so the estimate accounts for VTXO
+	/// expiry-based fees and skips the VTXOs the send would skip, such as those at the server's
+	/// exit depth limit.
 	///
 	/// If the wallet is lacking enough funds to send `amount` onchain, then the estimate will be
 	/// the maximum possible fee, assuming the user acquires enough funds to cover the payment.
@@ -231,7 +232,7 @@ impl Wallet {
 		let offboard_feerate = srv.offboard_feerate().await?;
 		let script_buf = address.script_pubkey();
 
-		let selection = InputSelection::new()
+		let selection = self.spend_input_selection().await?
 			.max_inputs(srv.ark_info().await.max_offboard_inputs)
 			.fee_scheme(self.inner.chain.tip().await?, |a, v|
 				ark_info.fees.offboard.calculate(&script_buf, a, offboard_feerate, v)
