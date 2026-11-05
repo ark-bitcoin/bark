@@ -103,11 +103,10 @@ impl<T: Clone> FieldWithAttributes<T> {
 /// Proof-of-Payment configuration from the `pop=` or `req-pop=` parameter.
 ///
 /// After payment, the wallet should:
-/// 1. Percent-decode the URI prefix
-/// 2. Append the payment instruction key (or `"onchain"`)
-/// 3. Append `=`
-/// 4. Append the payment information (hex-encoded transaction or preimage)
-/// 5. Open the resulting URI
+/// 1. Append the payment instruction key (or `"onchain"`)
+/// 2. Append `=`
+/// 3. Append the payment information (hex-encoded transaction or preimage)
+/// 4. Open the resulting URI
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PopConfig {
 	uri_prefix: String,
@@ -117,22 +116,37 @@ pub struct PopConfig {
 
 /// Schemes that are not safe to open from PoP URIs.
 const UNSAFE_POP_SCHEMES: &[&str] = &[
-	"javascript:", "http:", "https:",
-	"file:", "mailto:", "ftp:", "wss:",
-	"ws:", "ssh:", "tel:", "data:", "blob:",
+	"javascript", "vbscript", "http", "https",
+	"file", "mailto", "ftp", "wss",
+	"ws", "ssh", "tel", "data", "blob",
+	"about", "view-source", "intent",
+	"microsoft-edge", "googlechrome", "googlechromes",
+	"googlechrome-x-callback", "x-safari-http", "x-safari-https", "firefox",
 ];
+
+/// Whether the PoP URI prefix has a valid RFC 3986 scheme that is not unsafe.
+fn is_safe_pop_scheme(uri_prefix: &str) -> bool {
+	let scheme = match uri_prefix.split_once(':') {
+		Some((scheme, _)) => scheme,
+		None => return false,
+	};
+
+	let mut chars = scheme.chars();
+	let valid = scheme.len() >= 2
+		&& chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+		&& chars.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.');
+	if !valid {
+		return false;
+	}
+
+	let scheme = scheme.to_ascii_lowercase();
+	!scheme.starts_with("web+") && !UNSAFE_POP_SCHEMES.contains(&scheme.as_str())
+}
 
 impl PopConfig {
 	/// Create a new PoP configuration, validating the scheme.
 	pub fn new(uri_prefix: String, required: bool) -> Result<Self, Bip321Error> {
-		let lower = uri_prefix.to_ascii_lowercase();
-
-		let mut safe = true;
-		for scheme in UNSAFE_POP_SCHEMES {
-			if lower.starts_with(scheme) {
-				safe = false;
-			}
-		}
+		let safe = is_safe_pop_scheme(&uri_prefix);
 
 		if !safe && required {
 			return Err(Bip321Error::RequiredUnsafePopScheme(uri_prefix));
@@ -439,7 +453,8 @@ impl<E: ExtensionHandler> Default for Bip321Uri<E> {
 
 /// Case-insensitive prefix strip.
 fn strip_prefix_ignore_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-	if s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
+	let head = s.get(..prefix.len())?;
+	if head.eq_ignore_ascii_case(prefix) {
 		Some(&s[prefix.len()..])
 	} else {
 		None
@@ -464,11 +479,8 @@ impl<E: ExtensionHandler> FromStr for Bip321Uri<E> {
 		if input.len() < SCHEME.len() {
 			return Err(Bip321Error::TooShort);
 		}
-		if !input[..SCHEME.len()].eq_ignore_ascii_case(SCHEME) {
-			return Err(Bip321Error::InvalidScheme);
-		}
-
-		let body = &input[SCHEME.len()..];
+		let body = strip_prefix_ignore_case(input, SCHEME)
+			.ok_or(Bip321Error::InvalidScheme)?;
 		let (address_str, query_str) = {
 			let mut split = body.splitn(2, '?');
 			(split.next().unwrap(), split.next())
@@ -953,6 +965,23 @@ mod tests {
 	}
 
 	#[test]
+	fn reject_multibyte_char_across_scheme_end() {
+		for input in ["bitcoiné", "€€€", "user@exämple.com"] {
+			let err = parse_no_ext(input).unwrap_err();
+			assert_eq!(err, Bip321Error::InvalidScheme, "input: {}", input);
+		}
+	}
+
+	#[test]
+	fn multibyte_char_across_req_prefix_end() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?abcé=1").unwrap();
+		assert_eq!(
+			uri.custom.get("abcé").unwrap(),
+			&[FieldWithAttributes::new("1".to_string(), false)]
+		);
+	}
+
+	#[test]
 	fn pop_basic() {
 		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop=initiatingapp%3A")
 		.unwrap();
@@ -1026,6 +1055,33 @@ mod tests {
 		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?req-pop=javascript%3Aalert(1)")
 			.unwrap_err();
 		assert_eq!(err, Bip321Error::RequiredUnsafePopScheme("javascript:alert(1)".into()));
+	}
+
+	#[test]
+	fn pop_unsafe_scheme_shape() {
+		for (value, prefix) in [
+			("%20https%3A%2F%2Fevil.com", " https://evil.com"),
+			("ht%09tps%3A%2F%2Fevil.com", "ht\ttps://evil.com"),
+			("%2568ttps%3A%2F%2Fevil.com", "%68ttps://evil.com"),
+			("c%3A%2Fx.html", "c:/x.html"),
+			("web%2Bx%3Aevil", "web+x:evil"),
+			("Microsoft-Edge%3Ahttps%3A%2F%2Fevil.com", "Microsoft-Edge:https://evil.com"),
+			(
+				"GoogleChrome-X-Callback%3A%2F%2Fx-callback-url%2Fopen%2F%3Furl%3Dhttps%3A%2F%2Fevil.com",
+				"GoogleChrome-X-Callback://x-callback-url/open/?url=https://evil.com",
+			),
+			("initiatingapp", "initiatingapp"),
+		] {
+			let uri = parse_no_ext(&format!("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop={}", value))
+				.unwrap();
+			let pop = uri.pop().unwrap();
+			assert_eq!(pop.uri_prefix(), prefix);
+			assert!(!pop.safe(), "prefix: {:?}", prefix);
+
+			let err = parse_no_ext(&format!("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?req-pop={}", value))
+				.unwrap_err();
+			assert_eq!(err, Bip321Error::RequiredUnsafePopScheme(prefix.into()));
+		}
 	}
 
 	#[test]

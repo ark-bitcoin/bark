@@ -425,7 +425,8 @@ impl Wallet {
 			errors.push(PaymentMethodParsingError::NetworkMismatch);
 		}
 
-		let offer_amount = offer.amount().map(|a| a.to_bitcoin_amount().unwrap());
+		// An amount in a fiat currency has no bitcoin amount to compare with.
+		let offer_amount = offer.amount().and_then(|a| a.to_bitcoin_amount());
 		match (offer_amount, uri_amount) {
 			(Some(offer_amount), Some(amount)) => {
 				if offer_amount != amount {
@@ -651,7 +652,7 @@ impl Wallet {
 
 			return Some(PaymentRequest {
 				label: None,
-				amount: offer.amount().map(|a| a.to_bitcoin_amount().unwrap()),
+				amount: offer.amount().and_then(|a| a.to_bitcoin_amount()),
 				message: offer.description().map(|d| d.to_string()),
 				options: vec![details],
 			});
