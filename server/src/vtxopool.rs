@@ -804,15 +804,18 @@ impl Process {
 
 		let mut force_issue = false;
 		let mut last_forced = None;
+		let mut last_failed = None;
 		loop {
 			// Don't issue until we are fully caught up: the wallet only holds
 			// every confirmed utxo once we reach the tip. Comparing the whole
 			// block ref also holds off on an equal-height reorg, where the tip
 			// has moved to another block of the same height.
-			let synced = *self.sync_height_rx.borrow() == self.srv.chain_tip();
-			if synced {
+			let tip = self.srv.chain_tip();
+			let synced = *self.sync_height_rx.borrow() == tip;
+			// After a failed issuance, wait for the next block before trying
+			// again, so we don't retry on every send from the pool.
+			if synced && last_failed.as_ref() != Some(&tip) {
 				// Force at most once per block to bound issuance txs.
-				let tip = self.srv.chain_tip();
 				let force = force_issue && last_forced.as_ref() != Some(&tip);
 				if force {
 					last_forced = Some(tip);
@@ -822,7 +825,10 @@ impl Process {
 					// longer needed.
 					Ok(true) => force_issue = false,
 					Ok(false) => {},
-					Err(e) => error!("Error from VTXO pool: {:#}", e),
+					Err(e) => {
+						error!("Error from VTXO pool: {:#}", e);
+						last_failed = Some(tip);
+					},
 				}
 			}
 
