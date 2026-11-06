@@ -333,6 +333,8 @@ pub struct VtxoPool {
 	data: Arc<parking_lot::Mutex<Data>>,
 	/// Wakes the issuance process when a send finds the pool empty
 	issue_trigger: Arc<tokio::sync::Notify>,
+	/// Wakes the issuance process when a send takes vtxos from the pool
+	check_trigger: Arc<tokio::sync::Notify>,
 }
 
 impl VtxoPool {
@@ -532,6 +534,7 @@ impl VtxoPool {
 
 		let sent = self.prepare_arkoor(srv, dest, inputs, commit).await?;
 		update_all_bucket_metrics(&self.data);
+		self.check_trigger.notify_one();
 		Ok(sent)
 	}
 
@@ -544,6 +547,7 @@ impl VtxoPool {
 			started: false.into(),
 			data: Arc::new(parking_lot::Mutex::new(data)),
 			issue_trigger: Arc::new(tokio::sync::Notify::new()),
+			check_trigger: Arc::new(tokio::sync::Notify::new()),
 		})
 	}
 
@@ -568,6 +572,7 @@ impl VtxoPool {
 			config: self.config.clone(),
 			data: self.data.clone(),
 			issue_trigger: self.issue_trigger.clone(),
+			check_trigger: self.check_trigger.clone(),
 			sync_height_rx,
 		};
 		tokio::spawn(proc.run());
@@ -580,6 +585,7 @@ struct Process {
 
 	data: Arc<parking_lot::Mutex<Data>>,
 	issue_trigger: Arc<tokio::sync::Notify>,
+	check_trigger: Arc<tokio::sync::Notify>,
 
 	/// Issuance occurs after a sync has completed
 	sync_height_rx: tokio::sync::watch::Receiver<BlockRef>,
@@ -747,11 +753,13 @@ impl Process {
 		Ok(())
 	}
 
+	/// Returns the vtxos to issue per target, and whether a target is below
+	/// its issue threshold.
 	fn calculate_required_issuance(
 		&self,
 		expiry_threshold: BlockHeight,
 	) -> (Vec<(Amount, usize)>, bool) {
-		info!("Checking vtxo pool issuance with expiry threshold {:?}", expiry_threshold);
+		debug!("Checking vtxo pool issuance with expiry threshold {:?}", expiry_threshold);
 		let mut data = self.data.lock();
 		data.prune_expiring(expiry_threshold);
 
@@ -843,6 +851,7 @@ impl Process {
 					info!("VTXO pool ran empty, requesting forced issuance");
 					force_issue = true;
 				},
+				_ = self.check_trigger.notified() => {},
 				_ = self.srv.rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting VtxoPool...");
 					return;

@@ -488,9 +488,9 @@ impl Captaind {
 
 	/// Wait for a vtxopool issuance more recent than `last`.
 	///
-	/// Pool issuance runs off chain-tip changes, so tests that drain the pool
-	/// between blocks must generate a block and wait for the resulting refill
-	/// before continuing.
+	/// Pool issuance is checked on chain-tip changes and after every send from
+	/// the pool, so tests that drain the pool must wait for the resulting
+	/// refill before continuing.
 	pub async fn wait_for_vtxopool_issuance_after(
 		&self,
 		ctx: &TestContext,
