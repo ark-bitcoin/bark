@@ -1254,7 +1254,7 @@ async fn round_participation() {
 	assert!(pending.is_empty());
 
 	// Store a participation
-	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), None, Some("bark/0.8.1")).await).await.unwrap();
 
 	// One pending participation
 	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(0)).await).await.unwrap();
@@ -1267,6 +1267,8 @@ async fn round_participation() {
 	assert_eq!(part.inputs[0].vtxo_id, vtxo.id());
 	assert_eq!(part.outputs.len(), 1);
 	assert_eq!(part.scheduled_height, None);
+	// The full user agent, not the bucketed name telemetry reports.
+	assert_eq!(part.user_agent.as_deref(), Some("bark/0.8.1"));
 
 	// Remove it
 	let removed = db.write(async |t| t.remove_round_participation(unlock_hash).await).await.unwrap();
@@ -1280,7 +1282,7 @@ async fn round_participation() {
 	assert!(!removed_again, "nothing to remove the second time");
 
 	// a scheduled participation only becomes pending at its height
-	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), Some(BlockHeight::new(100))).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), Some(BlockHeight::new(100)), None).await).await.unwrap();
 
 	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(99)).await).await.unwrap();
 	assert!(pending.is_empty(), "not due before the scheduled height");
@@ -1288,10 +1290,11 @@ async fn round_participation() {
 	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(100)).await).await.unwrap();
 	assert_eq!(pending.len(), 1, "due once the scheduled height is reached");
 	assert_eq!(pending[0].scheduled_height, Some(BlockHeight::new(100)));
+	assert_eq!(pending[0].user_agent, None, "no user agent was sent");
 
 	// a height that doesn't fit the column is refused, not stored wrapped negative
 	let too_high: UnlockPreimage = [3u8; 32];
-	let err = db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), too_high, &[vtxo.id()], std::iter::once(&output), Some(BlockHeight::new(u32::MAX))).await).await.unwrap_err();
+	let err = db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), too_high, &[vtxo.id()], std::iter::once(&output), Some(BlockHeight::new(u32::MAX)), None).await).await.unwrap_err();
 	assert!(format!("{:#}", err).contains("out of range"), "{:#}", err);
 	let pending = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(100)).await).await.unwrap();
 	assert_eq!(pending.len(), 1, "the refused request changed nothing");
@@ -1320,12 +1323,12 @@ async fn round_participation_supersedes_on_same_input() {
 
 	// First (old) delegated refresh on the vtxo.
 	let old_preimage: UnlockPreimage = [1u8; 32];
-	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), old_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), old_preimage, &[vtxo.id()], std::iter::once(&output), None, None).await).await.unwrap();
 	let old_hash = UnlockHash::hash(&old_preimage);
 
 	// A new request for the same vtxo supersedes the old one.
 	let new_preimage: UnlockPreimage = [2u8; 32];
-	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), new_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), new_preimage, &[vtxo.id()], std::iter::once(&output), None, None).await).await.unwrap();
 	let new_hash = UnlockHash::hash(&new_preimage);
 
 	// Only the new participation remains pending; the old one was dropped.
@@ -1366,7 +1369,7 @@ async fn round_participation_forfeited_at() {
 		unblinded_mailbox_id: None,
 	};
 
-	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), None, None).await).await.unwrap();
 
 	// newly created participation is not forfeited
 	let part = db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.unwrap()
@@ -1437,7 +1440,7 @@ async fn set_forfeit_transactions_is_idempotent() {
 		},
 		unblinded_mailbox_id: None,
 	};
-	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &input_vtxo_ids, std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &input_vtxo_ids, std::iter::once(&output), None, None).await).await.unwrap();
 
 	// `set_forfeit_transactions` has two preconditions that `finish_round`
 	// would normally have established:
@@ -1567,7 +1570,7 @@ async fn set_forfeit_transactions_rejects_non_round_spent_vtxo() {
 		},
 		unblinded_mailbox_id: None,
 	};
-	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), unlock_preimage, &[vtxo.id()], std::iter::once(&output), None, None).await).await.unwrap();
 
 	// Attach the participation to a round, but deliberately skip the
 	// `vtxo.spend_state = 'spent'` / `spent_in_round` transition that
@@ -1631,10 +1634,10 @@ async fn round_participation_same_vtxo_multiple_pending() {
 	};
 
 	// First participation succeeds
-	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), preimage1, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), preimage1, &[vtxo.id()], std::iter::once(&output), None, None).await).await.unwrap();
 
 	// Second participation with same vtxo as input should remove the first participation
-	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), preimage2, &[vtxo.id()], std::iter::once(&output), None).await).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(BlockHeight::new(0), preimage2, &[vtxo.id()], std::iter::once(&output), None, None).await).await.unwrap();
 
 	// Only the second participation should be stored as pending
 	let [pending] = db.read(async |t| t.get_all_pending_round_participations(BlockHeight::new(0)).await).await.unwrap()

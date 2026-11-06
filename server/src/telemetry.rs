@@ -1195,18 +1195,15 @@ pub fn add_refresh(input_volume_sats: u64, user_agent: Option<&str>) {
 	}
 }
 
-/// One delegated round participation: the server submitted inputs into the
-/// round on behalf of a user (typically an LN HTLC settlement). Volume is
-/// the sum of input VTXO amounts consumed by this participation.
+/// One delegated round participation: a client submitted it for a later round
+/// to pick up. Volume is the sum of input VTXO amounts consumed by this
+/// participation.
 ///
-/// Delegated participations are persisted to `round_participation` before
-/// the round picks them up, and we don't yet store the originating client
-/// alongside them, so `user_agent_name` is currently always `"delegated"` (kept
-/// distinct from `"unknown"`, which specifically means "no x-user-agent
-/// header on the RPC"). Add a column and thread it through if
-/// per-integrator delegated attribution is wanted later.
-pub fn add_delegated_participation(input_volume_sats: u64, user_agent_name: &'static str) {
+/// `user_agent` is the raw `x-user-agent` of the client that submitted the
+/// participation, stored with it in `round_participation`.
+pub fn add_delegated_participation(input_volume_sats: u64, user_agent: Option<&str>) {
 	if let Some(m) = TELEMETRY.get() {
+		let user_agent_name = user_agent.map(bucket_user_agent).unwrap_or("unknown");
 		let attrs = m.with_global_labels([KeyValue::new(USER_AGENT_NAME, user_agent_name)]);
 		m.delegated_participation_counter.add(1, &attrs);
 		m.delegated_participation_volume.add(input_volume_sats, &attrs);

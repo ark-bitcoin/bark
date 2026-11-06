@@ -94,6 +94,7 @@ impl<'t> Tx<'t> {
 				&part.inputs,
 				&part.outputs,
 				None,
+				part.user_agent.as_deref(),
 			).await.with_context(|| format!(
 				"db rejected round participation for interactive participant (unlock_hash={}) \
 				with inputs {:?}", unlock_hash, part.inputs,
@@ -210,7 +211,7 @@ impl<'t> Tx<'t> {
 	) -> anyhow::Result<Option<StoredRoundParticipation>> {
 		let part_opt = self.query_opt(
 			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at, \
-				scheduled_height \
+				scheduled_height, user_agent \
 			FROM round_participation \
 			WHERE unlock_hash = $1",
 			&[&unlock_hash.to_string()],
@@ -233,7 +234,7 @@ impl<'t> Tx<'t> {
 	) -> anyhow::Result<Vec<StoredRoundParticipation>> {
 		let parts = self.query(
 			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at, \
-				scheduled_height \
+				scheduled_height, user_agent \
 			FROM round_participation \
 			WHERE round_id IS NULL \
 				AND (scheduled_height IS NULL OR scheduled_height <= $1)",
@@ -265,6 +266,7 @@ impl<'t> Tx<'t> {
 		inputs: &[VtxoId],
 		outputs: impl IntoIterator<Item = &StoredRoundOutput>,
 		scheduled_height: Option<BlockHeight>,
+		user_agent: Option<&str>,
 	) -> anyhow::Result<()> {
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 		trace!("Storing round participation for unlock hash {} and inputs {:?}",
@@ -284,7 +286,7 @@ impl<'t> Tx<'t> {
 		}
 
 		query::store_round_participation(
-			&self, unlock_hash, unlock_preimage, inputs, outputs, scheduled_height,
+			&self, unlock_hash, unlock_preimage, inputs, outputs, scheduled_height, user_agent,
 		).await?;
 
 		Ok(())

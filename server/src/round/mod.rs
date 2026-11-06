@@ -183,8 +183,8 @@ pub struct InteractiveParticipation {
 	pub(crate) inputs: Vec<VtxoId>,
 	pub(crate) outputs: Vec<StoredRoundOutput>,
 	/// The raw `x-user-agent` of the SubmitPayment RPC that produced this
-	/// participation. Attributes `refresh_counter` / `refresh_volume`
-	/// per-integrator when the round finalizes.
+	/// participation. Stored with it, and attributes `refresh_counter` /
+	/// `refresh_volume` per-integrator when the round finalizes.
 	pub(crate) user_agent: Option<Arc<str>>,
 	/// Refresh fee paid by the user for this participation (input surplus
 	/// over outputs), captured at registration and recorded as fee telemetry
@@ -194,12 +194,9 @@ pub struct InteractiveParticipation {
 
 pub struct DelegatedParticipation {
 	pub(crate) inputs: Vec<VtxoId>,
-	/// Placeholder for future per-integrator delegated-participation
-	/// attribution. Delegated participations are persisted to
-	/// `round_participation` and picked up asynchronously; without a
-	/// `user_agent` column on that table we can't recover the originator here,
-	/// so this stays `"delegated"` until such a column is added.
-	pub(crate) user_agent_name: &'static str,
+	/// The raw `x-user-agent` of the client that submitted it, read back
+	/// from `round_participation`, as the round runs off its RPC task.
+	pub(crate) user_agent: Option<Arc<str>>,
 	/// Refresh fee paid by the user for this participation (input surplus
 	/// over outputs), captured at registration and recorded as fee telemetry
 	/// once the round succeeds.
@@ -550,6 +547,7 @@ impl CollectingPayments {
 		outputs: Vec<StoredRoundOutput>,
 		unlock_hash: UnlockHash,
 		user_fee_sat: u64,
+		user_agent: Option<Arc<str>>,
 	) {
 		client_rslog!(RoundPaymentRegistered, self.round_step, unlock_hash,
 			nb_inputs: inputs.len(),
@@ -571,7 +569,7 @@ impl CollectingPayments {
 
 		assert!(self.delegated_participants.insert(unlock_hash, DelegatedParticipation {
 			inputs: input_ids,
-			user_agent_name: "delegated",
+			user_agent,
 			user_fee_sat,
 		}).is_none(), "duplicate delegated unlock hash");
 
@@ -795,6 +793,7 @@ impl CollectingPayments {
 			participation.outputs,
 			participation.unlock_hash,
 			actual_fee.to_sat(),
+			participation.user_agent.map(Arc::from),
 		);
 
 		Ok(())
@@ -1273,7 +1272,7 @@ impl SigningVtxoTree {
 				.filter_map(|id| self.all_inputs.get(id))
 				.map(|v| v.amount())
 				.sum::<Amount>();
-			telemetry::add_delegated_participation(vol.to_sat(), participation.user_agent_name);
+			telemetry::add_delegated_participation(vol.to_sat(), participation.user_agent.as_deref());
 			telemetry::record_ark_fee(
 				telemetry::ArkFeeOp::Refresh, participation.user_fee_sat, Some(round_seq),
 			);
@@ -2066,9 +2065,12 @@ impl Server {
 			},
 		};
 
+		// The round runs off this RPC task, so it reads the client back from the row.
+		let user_agent = telemetry::current_user_agent();
 		self.db.write(async |t| {
 			t.try_store_round_participation(
 				chain_tip, unlock_preimage, &input_ids, &outputs, scheduled_height,
+				user_agent.as_deref(),
 			).await
 		}).await?;
 
