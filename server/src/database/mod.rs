@@ -320,15 +320,15 @@ impl Db {
 		if read_only {
 			// We want to commit read queries regardless of error because it's the
 			// fastest path and doesn't skew failure stats.
-			pgtx.commit().await.context("tx commit error")?;
+			pgtx.commit().await.context("db tx commit error")?;
 		} else {
 			if ret.is_ok() {
-				pgtx.commit().await.context("tx commit error")?;
+				pgtx.commit().await.context("db tx commit error")?;
 			} else {
-				pgtx.rollback().await.context("tx rollback error")?;
+				pgtx.rollback().await.context("db tx rollback error")?;
 			}
 		}
-		Ok(ret.context("tx body error")?)
+		Ok(ret.context("db tx body error")?)
 	}
 
 	/// Perform db operations in read-only mode
