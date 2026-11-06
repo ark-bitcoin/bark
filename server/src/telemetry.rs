@@ -1182,13 +1182,13 @@ pub fn add_round(input_volume: Amount) {
 /// recycled (refreshed) into a new round. Non-interactive settlements
 /// (board/LN) are excluded; those are counted by their own metrics.
 ///
-/// `user_agent_name` is the bucketed user agent name captured at SubmitPayment RPC
-/// time (see [bucket_user_agent_name]) and stashed on the
-/// [`crate::round::InteractiveParticipation`] until the round finalizes.
-/// We can't read `current_user_agent_name()` here because emission happens on the
-/// round-processing task, not on any user's RPC task.
-pub fn add_refresh(input_volume_sats: u64, user_agent_name: &'static str) {
+/// `user_agent` is the raw `x-user-agent` captured at SubmitPayment RPC time
+/// and stashed on the [`crate::round::InteractiveParticipation`] until the
+/// round finalizes. We can't read `current_user_agent_name()` here because
+/// emission happens on the round-processing task, not on any user's RPC task.
+pub fn add_refresh(input_volume_sats: u64, user_agent: Option<&str>) {
 	if let Some(m) = TELEMETRY.get() {
+		let user_agent_name = user_agent.map(bucket_user_agent).unwrap_or("unknown");
 		let attrs = m.with_global_labels([KeyValue::new(USER_AGENT_NAME, user_agent_name)]);
 		m.refresh_counter.add(1, &attrs);
 		m.refresh_volume.add(input_volume_sats, &attrs);

@@ -805,7 +805,7 @@ impl rpc::server::ArkService for Server {
 			inputs,
 			vtxo_requests,
 			unlock_preimage: Secret::new(unlock_preimage),
-			user_agent_name: crate::telemetry::current_user_agent_name(),
+			user_agent: crate::telemetry::current_user_agent(),
 		};
 
 		self.rounds.round_input_tx.send((inp, tx))
