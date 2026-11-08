@@ -12,7 +12,7 @@ use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
 
-use super::helpers::{
+use ark_testing::barkd_helpers::{
 	wait_for_boards_synced, wait_for_onchain_balance, wait_for_rounds_complete, wait_for_tip,
 };
 

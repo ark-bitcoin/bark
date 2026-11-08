@@ -14,6 +14,7 @@ pub mod ports;
 pub mod util;
 pub mod bark;
 pub mod bark_client;
+pub mod barkd_helpers;
 pub mod postgres;
 pub mod exit;
 pub mod control_server;

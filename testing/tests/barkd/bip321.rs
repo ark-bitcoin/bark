@@ -5,7 +5,7 @@ use bark_rest_client::models::{PaymentMethodKind, SendRequest};
 
 use ark_testing::{btc, require_bark_version, sat, TestContext};
 
-use crate::helpers::wait_for_spendable;
+use ark_testing::barkd_helpers::wait_for_spendable;
 
 /// Verify that `POST /wallet/bip321?uppercase=true` bundles an Ark address, a
 /// BOLT11 invoice, and an on-chain address into a single upper-cased URI.

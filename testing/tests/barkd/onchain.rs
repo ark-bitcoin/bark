@@ -1,7 +1,7 @@
 
 use ark_testing::{sat, TestContext};
 
-use super::helpers::wait_for_onchain_balance;
+use ark_testing::barkd_helpers::wait_for_onchain_balance;
 
 /// Verify that `POST /onchain/addresses/next` and `GET /onchain/balance` work end-to-end.
 #[tokio::test]

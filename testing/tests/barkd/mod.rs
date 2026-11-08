@@ -2,7 +2,6 @@ mod bip321;
 mod boards;
 mod core;
 mod exits;
-mod helpers;
 mod history;
 mod lifecycle;
 mod lightning;
