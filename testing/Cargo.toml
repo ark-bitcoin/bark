@@ -25,6 +25,22 @@ name = "barkd"
 path = "tests/barkd/mod.rs"
 
 [[test]]
+name = "bark-legacy-compat"
+path = "tests/bark_legacy/compat/mod.rs"
+
+[[test]]
+name = "bark-legacy-non-compat"
+path = "tests/bark_legacy/non_compat/mod.rs"
+
+[[test]]
+name = "barkd-compat"
+path = "tests/barkd/compat/mod.rs"
+
+[[test]]
+name = "barkd-non-compat"
+path = "tests/barkd/non_compat/mod.rs"
+
+[[test]]
 name = "bark-client"
 path = "tests/bark_client/mod.rs"
 
