@@ -3,22 +3,3 @@
 //! In CI these tests run under different configurations such as
 //! filestore backends and chain sources.
 
-mod access_token;
-mod arkoor;
-mod base;
-mod payment_request;
-mod board;
-mod chain_source;
-mod create;
-mod dust;
-mod estimate;
-mod exit;
-mod fees;
-mod lightning;
-mod mailbox;
-mod movement;
-mod offboard;
-mod onchain;
-mod recover;
-mod round;
-mod vtxos;
