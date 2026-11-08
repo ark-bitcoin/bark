@@ -13,16 +13,8 @@ name = "server"
 path = "tests/server/mod.rs"
 
 [[test]]
-name = "bark-legacy"
-path = "tests/bark_legacy/mod.rs"
-
-[[test]]
 name = "bark-sdk"
 path = "tests/bark_sdk/mod.rs"
-
-[[test]]
-name = "barkd"
-path = "tests/barkd/mod.rs"
 
 [[test]]
 name = "bark-legacy-compat"
@@ -39,10 +31,6 @@ path = "tests/barkd/compat/mod.rs"
 [[test]]
 name = "barkd-non-compat"
 path = "tests/barkd/non_compat/mod.rs"
-
-[[test]]
-name = "bark-client"
-path = "tests/bark_client/mod.rs"
 
 [[test]]
 name = "core"
