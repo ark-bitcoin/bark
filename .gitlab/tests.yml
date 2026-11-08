@@ -558,12 +558,13 @@ compat-bark-0.5.0:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - >-
       export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
-    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-compat-prebuilt
 
 compat-bark-0.6.0:
   interruptible: true
@@ -595,12 +596,13 @@ compat-bark-0.6.0:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - >-
       export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
-    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-compat-prebuilt
 
 compat-bark-0.6.2:
   interruptible: true
@@ -632,12 +634,13 @@ compat-bark-0.6.2:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - >-
       export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
-    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-compat-prebuilt
 
 compat-bark-0.7.0:
   interruptible: true
@@ -669,12 +672,13 @@ compat-bark-0.7.0:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - >-
       export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
-    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-compat-prebuilt
 
 compat-bark-0.7.1:
   interruptible: true
@@ -706,12 +710,13 @@ compat-bark-0.7.1:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - >-
       export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
-    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-compat-prebuilt
 
 compat-bark-0.8.0:
   interruptible: true
@@ -743,12 +748,13 @@ compat-bark-0.8.0:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - >-
       export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
-    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-compat-prebuilt
 
 compat-bark-0.8.1:
   interruptible: true
@@ -780,12 +786,13 @@ compat-bark-0.8.1:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - export BARK_CLIENT_EXEC=${CI_PROJECT_DIR}/target/ci/bark-cli
     - >-
       export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
       --url "$BARK_RELEASE_URL"
       --sha256 "$BARK_RELEASE_SHA256"
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
-    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-compat-prebuilt
 
 # Runs BOTH binaries, unlike the compat jobs: the release starts an action and
 # this build finishes it. Pinned to the newest release, the pair a new migration
