@@ -13,8 +13,8 @@ name = "server"
 path = "tests/server/mod.rs"
 
 [[test]]
-name = "bark"
-path = "tests/bark/mod.rs"
+name = "bark-legacy"
+path = "tests/bark_legacy/mod.rs"
 
 [[test]]
 name = "bark-sdk"

@@ -197,7 +197,7 @@ alias int-upgrade := test-integration-upgrade
 # run integration tests for bark and barkd test files only
 test-integration-bark: ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
-		--test bark --test barkd --test bark-client
+		--test bark-legacy --test barkd --test bark-client
 alias int-bark := test-integration-bark
 
 # Run the integration tests that drive wallet actions (bark, barkd, bark-sdk)
@@ -207,7 +207,7 @@ alias int-bark := test-integration-bark
 test-integration-bark-int-action-reentrancy TEST="": ensure-build-bins docker-pull
 	BARK_DOUBLE_DRIVE_ACTIONS=1 \
 		cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
-		--test bark --test barkd --test bark-sdk {{TEST}}
+		--test bark-legacy --test barkd --test bark-sdk {{TEST}}
 alias int-bark-int-action-reentrancy := test-integration-bark-int-action-reentrancy
 
 # Must not run under backward-compat mode (BARK_EXEC override has no effect
@@ -234,7 +234,7 @@ test-integration-prebuilt TEST="": docker-pull
 
 test-integration-bark-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
-		-E 'binary(bark) + binary(barkd)'
+		-E 'binary(=bark-legacy) + binary(=barkd)'
 
 test-integration-bark-sdk-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
@@ -255,7 +255,7 @@ test-integration-upgrade-prebuilt: docker-pull
 test-integration-bark-int-prebuilt: docker-pull
 	RUST_MIN_STACK=33554432 \
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
-		-E 'binary(bark) + binary(barkd) + binary(=bark-sdk)'
+		-E 'binary(=bark-legacy) + binary(=barkd) + binary(=bark-sdk)'
 
 test-integration-server-migrations-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
