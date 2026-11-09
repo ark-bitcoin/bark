@@ -75,7 +75,7 @@ macro_rules! client_rslog {
 	($struct:ident, $step:expr) => { client_rslog!($struct, $step, ); };
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SelfSignedInput {
 	pub vtxo_id: VtxoId,
 	pub attestation: RoundAttemptAttestation,
@@ -281,6 +281,28 @@ fn validate_refresh_fee(
 		);
 	}
 
+	Ok(())
+}
+
+/// Check that the attestation of each input signs `challenge` and
+/// `vtxo_requests` with the user key of the input vtxo.
+///
+/// `vtxos` are the input vtxos, one for each entry of `inputs`.
+fn verify_self_signed_inputs<'a>(
+	challenge: Challenge,
+	inputs: &[SelfSignedInput],
+	vtxos: impl IntoIterator<Item = &'a Vtxo<Full>>,
+	vtxo_requests: &[SignedVtxoRequest],
+) -> anyhow::Result<()> {
+	let attestation_by_vtxo_id = inputs.iter()
+		.map(|i| (i.vtxo_id, &i.attestation))
+		.collect::<HashMap<_, _>>();
+	for vtxo in vtxos {
+		let attestation = attestation_by_vtxo_id.get(&vtxo.id())
+			.with_context(|| format!("no input for vtxo {}", vtxo.id()))?;
+		attestation.verify(challenge, vtxo, vtxo_requests)
+			.with_badarg(|| format!("attestation is invalid: vtxo {}", vtxo.id()))?;
+	}
 	Ok(())
 }
 
@@ -629,18 +651,10 @@ impl CollectingPayments {
 			}
 		};
 
-
-		let attestation_by_vtxo_id = inputs.iter()
-			.map(|v| (v.vtxo_id, &v.attestation))
-			.collect::<HashMap<_,_>>();
-		for input in &input_vtxos {
-			let attestation = attestation_by_vtxo_id.get(&input.vtxo_id)
-				.expect("all vtxos were found");
-			attestation.verify(self.round_attempt_challenge, &input.vtxo, &vtxo_requests)
-				.with_context(|| format!(
-					"attestation is invalid: vtxo {}, proof: {:?}", input.vtxo_id, attestation,
-				))?;
-		}
+		verify_self_signed_inputs(
+			self.round_attempt_challenge, &inputs, input_vtxos.iter().map(|v| &v.vtxo),
+			&vtxo_requests,
+		)?;
 		let input_vtxos = check_round_inputs_spendable(srv, input_vtxos)?;
 
 		let current_height = srv.sync_manager.chain_tip().height;
@@ -2112,6 +2126,7 @@ mod tests {
 	use ark::fees::{PpmExpiryFeeEntry, PpmFeeRate};
 	use ark::rounds::RoundAttemptAttestation;
 	use ark::test_util::VTXO_VECTORS;
+	use ark::test_util::dummy::{DummyTestVtxoSpec, DUMMY_USER_KEY};
 	use crate::flux::VtxosInFlux;
 
 	lazy_static::lazy_static! {
@@ -2199,6 +2214,43 @@ mod tests {
 		assert_eq!(state.all_outputs.len(), 1);
 		assert_eq!(state.inputs_per_cosigner.len(), 1);
 		assert_eq!(1, state.inputs_per_cosigner.get(&outputs[0].cosign_pubkey).unwrap().len());
+	}
+
+	#[test]
+	fn test_verify_self_signed_inputs() {
+		let state = create_collecting_payments(2);
+		let vtxo = DummyTestVtxoSpec::default().build().1;
+		let vtxos = vec![vtxo.clone()];
+		let challenge = Challenge::generate();
+		let outputs = vec![create_signed_req(1000, &state.round_data)];
+		let input = SelfSignedInput {
+			vtxo_id: vtxo.id(),
+			attestation: RoundAttemptAttestation::new(
+				challenge, vtxo.id(), &outputs, &DUMMY_USER_KEY,
+			),
+		};
+
+		verify_self_signed_inputs(challenge, &[input.clone()], &vtxos, &outputs).unwrap();
+
+		// Signed for another attempt.
+		verify_self_signed_inputs(Challenge::generate(), &[input.clone()], &vtxos, &outputs)
+			.unwrap_err();
+
+		// Signed over other outputs.
+		let other_outputs = vec![create_signed_req(2000, &state.round_data)];
+		verify_self_signed_inputs(challenge, &[input.clone()], &vtxos, &other_outputs)
+			.unwrap_err();
+
+		// Signed by a key that does not own the vtxo.
+		let other_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let forged = SelfSignedInput {
+			vtxo_id: vtxo.id(),
+			attestation: RoundAttemptAttestation::new(
+				challenge, vtxo.id(), &outputs, &other_key,
+			),
+		};
+		let err = verify_self_signed_inputs(challenge, &[forged], &vtxos, &outputs).unwrap_err();
+		assert!(err.downcast_ref::<BadArgument>().is_some(), "{err:#}");
 	}
 
 	#[test]
