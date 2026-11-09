@@ -785,6 +785,11 @@ impl Server {
 	pub async fn register_board(&self, vtxo: Vtxo<Full>) -> anyhow::Result<()> {
 		check_max_amount("board", vtxo.amount(), self.config.max_board_amount)?;
 
+		// A retry of a registered board needs no bitcoind lookups.
+		if self.db.read(async |t| t.try_get_bare_vtxo_by_id(vtxo.id()).await).await?.is_some() {
+			return Ok(());
+		}
+
 		let funding_txid = vtxo.chain_anchor().txid;
 		let funding_vout = vtxo.chain_anchor().vout;
 		let tx_info = bcd::custom_get_raw_transaction_info(&self.bitcoind, funding_txid, None).await
@@ -811,18 +816,6 @@ impl Server {
 		let funding_tx = bitcoin::consensus::deserialize::<Transaction>(&tx_info.hex)
 			.context("failed to deserialize funding transaction")?;
 
-		if let Some(ref list) = self.bitcoin_address_blocklist {
-			let res = list.check_tx(&funding_tx).await;
-			if !res.is_ok() {
-				if let Some(addr) = res.violating_address() {
-					slog!(BoardAttemptBlockedAddress, vtxo: Some(vtxo.id()), amount: vtxo.amount(),
-						address: addr.as_unchecked().clone(),
-					);
-				}
-				res.into_user_result().context("address blocklist check failed")?;
-			}
-		}
-
 		// bitcoind rpc documents that if a mempool tx spends a utxo in the utxoset,
 		// if will not appear in gettxout when include_mempool is set to true
 		let is_spent = self.bitcoind
@@ -841,6 +834,19 @@ impl Server {
 		// Verify this is actually a board VTXO (not another type)
 		let builder = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, self.server_pubkey)
 			.badarg("vtxo is not a board")?;
+
+		// Only after the cheap checks: it looks up every input.
+		if let Some(ref list) = self.bitcoin_address_blocklist {
+			let res = list.check_tx(&funding_tx).await;
+			if !res.is_ok() {
+				if let Some(addr) = res.violating_address() {
+					slog!(BoardAttemptBlockedAddress, vtxo: Some(vtxo.id()), amount: vtxo.amount(),
+						address: addr.as_unchecked().clone(),
+					);
+				}
+				res.into_user_result().context("address blocklist check failed")?;
+			}
+		}
 
 		// insert_spendable_vtxos uses ON CONFLICT DO NOTHING, so an idempotent
 		// retry inserts zero rows. We gate the board metric on the actual

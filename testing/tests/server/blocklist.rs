@@ -178,8 +178,37 @@ async fn blocklist_board_register_rejected() {
 	let board_cosign: ark::board::BoardCosignResponse = cosign_response.try_into().unwrap();
 	let vtxo = board_builder.build_vtxo(&board_cosign, &user_key).unwrap();
 
+	// A board for another key doesn't match the funding output. Cosigned
+	// before the address is blocked, it must be refused at registration
+	// before the blocklist looks up the funding tx's inputs.
+	let decoy_key = Keypair::new(&SECP, &mut thread_rng());
+	let decoy_builder = ark::board::BoardBuilder::new(
+		decoy_key.public_key(),
+		expiry_height,
+		ark_info.server_pubkey,
+		ark_info.vtxo_exit_delta,
+	).unwrap().set_funding_details(board_amount, Amount::ZERO, board_utxo).unwrap()
+		.generate_user_nonces();
+	let decoy_cosign: ark::board::BoardCosignResponse = rpc.request_board_cosign(
+		protos::BoardCosignRequest {
+			amount: board_amount.to_sat(),
+			utxo: board_utxo.serialize(),
+			expiry_height: expiry_height.into(),
+			user_pubkey: decoy_key.public_key().serialize().to_vec(),
+			pub_nonce: decoy_builder.user_pub_nonce().serialize().to_vec(),
+			funding_tx: bitcoin::consensus::serialize(&funding_tx),
+		},
+	).await.unwrap().into_inner().try_into().unwrap();
+	let decoy = decoy_builder.build_vtxo(&decoy_cosign, &decoy_key).unwrap();
+
 	tokio::fs::write(&blocklist_path, format!("{}\n", blocked_addr)).await.unwrap();
 	srv.get_blocklist_rpc().await.reload_blocklist(protos::Empty {}).await.unwrap();
+
+	let err = rpc.register_board_vtxo(protos::BoardVtxoRequest {
+		board_vtxo: decoy.serialize(),
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
+	assert!(err.message().contains("invalid vtxo"), "err: {err}");
 
 	// Subscribe to the log BEFORE the request so we don't miss the event.
 	let mut blocked_log_rx = srv.subscribe_log::<BoardAttemptBlockedAddress>();
