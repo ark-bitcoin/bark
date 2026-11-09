@@ -1299,7 +1299,7 @@ impl Wallet {
 		message: &[u8],
 		address: &ark::Address,
 	) -> anyhow::Result<Option<secp256k1::schnorr::Signature>> {
-		let pubkey = address.policy().user_pubkey();
+		let pubkey = address.policy().user_pubkey().context("unsupported VTXO policy")?;
 		let Some((_, keypair)) = self.pubkey_keypair(&pubkey).await? else {
 			return Ok(None);
 		};

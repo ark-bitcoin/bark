@@ -466,12 +466,12 @@ impl Wallet {
 		// its window on every match, so later keys of the batch are found however
 		// the candidates are ordered. The keys of staged VTXOs are on record.
 		let staged = self.get_full_vtxos(&staged_ids).await?;
-		let pubkeys = staged.iter().chain(&new).map(|v| v.user_pubkey()).collect::<Vec<_>>();
+		let pubkeys = staged.iter().chain(&new).filter_map(|v| v.user_pubkey()).collect::<Vec<_>>();
 		let keypairs = self.find_vtxo_keypairs(pubkeys, gap_limit).await?;
 
 		let mut owned = Vec::with_capacity(new.len());
 		for vtxo in new {
-			match keypairs.get(&vtxo.user_pubkey()) {
+			match vtxo.user_pubkey().and_then(|pk| keypairs.get(&pk)) {
 				Some(_) => owned.push(vtxo),
 				None => report.push_foreign(&vtxo),
 			}
@@ -502,7 +502,7 @@ impl Wallet {
 
 		let mut ret = Vec::with_capacity(staged.len() + owned.len());
 		for vtxo in staged.into_iter().chain(owned) {
-			let Some(keypair) = keypairs.get(&vtxo.user_pubkey()) else {
+			let Some(keypair) = vtxo.user_pubkey().and_then(|k| keypairs.get(&k)) else {
 				warn!("Staged recovery vtxo {} has no key on record", vtxo.id());
 				report.push_failed_attempt(vtxo.id(), Some(vtxo.amount()));
 				continue;

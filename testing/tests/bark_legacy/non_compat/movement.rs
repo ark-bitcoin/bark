@@ -148,7 +148,7 @@ async fn exit_start() {
 	assert_eq!(movement.sent_to.first().unwrap(), &MovementDestination {
 		destination: PaymentMethod::Bitcoin({
 			let v = vtxos.first().unwrap();
-			let exit_spk = VtxoPolicy::new_pubkey(v.user_pubkey)
+			let exit_spk = VtxoPolicy::new_pubkey(v.user_pubkey.unwrap())
 				.taproot(v.server_pubkey, v.exit_delta, v.expiry_height)
 				.script_pubkey();
 			Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string()

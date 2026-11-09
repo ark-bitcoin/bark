@@ -106,14 +106,14 @@ impl Wallet {
 		let gap_limit = args.gap_limit.unwrap_or(self.inner.config.vtxo_key_gap_limit);
 		// Collected before the await: a closure over `&&Vtxo` held across it is not
 		// general enough over lifetimes for the axum handler's Send bound.
-		let user_pubkeys = pending.iter().map(|v| v.user_pubkey()).collect::<Vec<_>>();
+		let user_pubkeys = pending.iter().filter_map(|v| v.user_pubkey()).collect::<Vec<_>>();
 		let keypairs = self.find_vtxo_keypairs(user_pubkeys, gap_limit).await
 			.context("error scanning the vtxo key space")?;
 
 		let mut to_store = Vec::with_capacity(pending.len());
 		for vtxo in &pending {
 			let id = vtxo.id();
-			let state = match keypairs.get(&vtxo.user_pubkey()) {
+			let state = match vtxo.user_pubkey().and_then(|pk| keypairs.get(&pk)) {
 				None => Err(ImportVtxoError::KeyNotFound { id, gap_limit }),
 				Some(keypair) => self.import_vtxo_state(vtxo, keypair, &args).await,
 			};

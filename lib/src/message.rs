@@ -57,7 +57,10 @@ pub fn verify_for_address(
 	message: &[u8],
 	signature: &schnorr::Signature,
 ) -> bool {
-	verify(address.policy().user_pubkey(), message, signature)
+	match address.policy().user_pubkey() {
+		Some(pubkey) => verify(pubkey, message, signature),
+		None => false,
+	}
 }
 
 #[cfg(test)]

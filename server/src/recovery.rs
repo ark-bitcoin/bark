@@ -111,7 +111,7 @@ impl Server {
 			// within a key, so a call that stops at the size limit resumes at
 			// the first VTXO it left out.
 			let mut used = used.into_iter().map(|policy| {
-				let index = *indices.get(&policy.user_pubkey())
+				let index = *policy.user_pubkey().and_then(|pk| indices.get(&pk))
 					.context("database returned a policy we didn't ask for")?;
 				Ok((index, policy))
 			}).collect::<anyhow::Result<Vec<_>>>()?;

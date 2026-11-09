@@ -432,6 +432,13 @@ impl CollectingPayments {
 				bail!("incorrect number of cosign nonces per set");
 			}
 
+			// the leaf outputs of the vtxo tree are locked to the user key
+			if output.vtxo.policy.user_pubkey().is_none() {
+				bail!("output policy of type {} is unsupported",
+					output.vtxo.policy.policy_type(),
+				);
+			}
+
 			if self.inputs_per_cosigner.contains_key(&output.cosign_pubkey) || !cosign_pubkeys.insert(output.cosign_pubkey) {
 				client_rslog!(RoundUserDuplicateCosignPubkey, self.round_step,
 					cosign_pubkey: output.cosign_pubkey,
@@ -1000,7 +1007,8 @@ impl CollectingPayments {
 			expiry_height,
 			srv.config.vtxo_exit_delta,
 			vec![self.cosign_key.public_key()],
-		);
+		).context("error constructing VTXO tree")
+			.map_err(RoundError::Recoverable)?;
 		if srv.config.round_legacy_hashlock_clauses {
 			warn!("Building round vtxo tree with legacy v0 hashlock clauses. \
 				This should only ever happen in tests.");

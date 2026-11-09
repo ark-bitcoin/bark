@@ -59,7 +59,7 @@ pub(crate) mod genesis;
 mod validation;
 
 pub use self::validation::VtxoValidationError;
-pub use self::policy::{Policy, VtxoPolicy, VtxoPolicyKind, ServerVtxoPolicy};
+pub use self::policy::{NoUserPubkeyError, Policy, VtxoPolicy, VtxoPolicyKind, ServerVtxoPolicy};
 pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
 pub use self::genesis::TransitionKind;
 
@@ -852,7 +852,10 @@ impl<P: Policy> Vtxo<Full, P> {
 
 impl<G> Vtxo<G, VtxoPolicy> {
 	/// Returns the user pubkey associated with this [Vtxo].
-	pub fn user_pubkey(&self) -> PublicKey {
+	///
+	/// Returns [None] if the policy has no single user key, see
+	/// [VtxoPolicy::user_pubkey].
+	pub fn user_pubkey(&self) -> Option<PublicKey> {
 		self.policy.user_pubkey()
 	}
 

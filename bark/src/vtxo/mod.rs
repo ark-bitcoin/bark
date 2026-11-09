@@ -381,7 +381,11 @@ impl Wallet {
 			return Ok(None);
 		}
 
-		let (_idx, keypair) = self.pubkey_keypair(&stored.vtxo.user_pubkey()).await?
+		let keypair = match stored.vtxo.user_pubkey() {
+			Some(pubkey) => self.pubkey_keypair(&pubkey).await?,
+			None => None,
+		};
+		let (_idx, keypair) = keypair
 			.with_context(|| format!("no key for vtxo {vtxo_id} in this wallet"))?;
 
 		let spend_state = self.fetch_vtxo_spend_state(vtxo_id, &keypair).await?;

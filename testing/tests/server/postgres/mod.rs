@@ -1243,7 +1243,7 @@ async fn round_participation() {
 
 	let output = StoredRoundOutput {
 		vtxo_request: VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey().unwrap()),
 			amount: bitcoin::Amount::from_sat(1000),
 		},
 		unblinded_mailbox_id: None,
@@ -1315,7 +1315,7 @@ async fn round_participation_supersedes_on_same_input() {
 
 	let output = StoredRoundOutput {
 		vtxo_request: VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey().unwrap()),
 			amount: bitcoin::Amount::from_sat(1000),
 		},
 		unblinded_mailbox_id: None,
@@ -1363,7 +1363,7 @@ async fn round_participation_forfeited_at() {
 
 	let output = StoredRoundOutput {
 		vtxo_request: VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey().unwrap()),
 			amount: bitcoin::Amount::from_sat(1000),
 		},
 		unblinded_mailbox_id: None,
@@ -1435,7 +1435,7 @@ async fn set_forfeit_transactions_is_idempotent() {
 
 	let output = StoredRoundOutput {
 		vtxo_request: VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey().unwrap()),
 			amount: bitcoin::Amount::from_sat(1000),
 		},
 		unblinded_mailbox_id: None,
@@ -1565,7 +1565,7 @@ async fn set_forfeit_transactions_rejects_non_round_spent_vtxo() {
 
 	let output = StoredRoundOutput {
 		vtxo_request: VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey().unwrap()),
 			amount: bitcoin::Amount::from_sat(1000),
 		},
 		unblinded_mailbox_id: None,
@@ -1627,7 +1627,7 @@ async fn round_participation_same_vtxo_multiple_pending() {
 
 	let output = StoredRoundOutput {
 		vtxo_request: VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey().unwrap()),
 			amount: bitcoin::Amount::from_sat(1000),
 		},
 		unblinded_mailbox_id: None,

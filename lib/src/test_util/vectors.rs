@@ -283,7 +283,7 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 		expiry_height,
 		exit_delta,
 		vec![server_cosign_key.public_key()],
-	);
+	).unwrap();
 	let round_tx = Transaction {
 		version: Version::TWO,
 		lock_time: LockTime::ZERO,

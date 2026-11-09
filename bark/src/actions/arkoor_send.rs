@@ -242,7 +242,7 @@ pub(crate) async fn start_arkoor_send(
 
 	let (change_keypair, change_key_index) = wallet.peek_next_keypair().await
 		.context("failed to derive arkoor change keypair")?;
-	if destination.policy().user_pubkey() == change_keypair.public_key() {
+	if destination.policy().user_pubkey() == Some(change_keypair.public_key()) {
 		bail!("Cannot create arkoor to same address as change");
 	}
 	wallet.inner.db.store_vtxo_key(change_key_index, change_keypair.public_key()).await

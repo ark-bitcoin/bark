@@ -1189,10 +1189,12 @@ async fn hark_cosign_leaf(
 	funding_tx: &Transaction,
 	vtxo: &mut Vtxo<Full>,
 ) -> anyhow::Result<()> {
-	let key = wallet.pubkey_keypair(&vtxo.user_pubkey()).await
+	let user_pubkey = vtxo.user_pubkey()
+		.with_context(|| format!("VTXO {} has unsupported policy", vtxo.id()))?;
+	let key = wallet.pubkey_keypair(&user_pubkey).await
 		.context("error fetching keypair")?
 		.with_context(|| format!(
-			"keypair {} not found for VTXO {}", vtxo.user_pubkey(), vtxo.id(),
+			"keypair {} not found for VTXO {}", user_pubkey, vtxo.id(),
 		))?.1;
 	let (ctx, cosign_req) = LeafVtxoCosignContext::new(vtxo, funding_tx, &key)
 		.with_context(|| format!("can't cosign leaf of VTXO {}", vtxo.id()))?;
@@ -1262,9 +1264,11 @@ async fn hark_forfeit_bundles(
 
 	let mut user_keys = Vec::with_capacity(participation.inputs.len());
 	for input in &participation.inputs {
-		let user_key = wallet.pubkey_keypair(&input.user_pubkey()).await
+		let user_pubkey = input.user_pubkey()
+			.with_context(|| format!("input VTXO {} has unsupported policy", input.id()))?;
+		let user_key = wallet.pubkey_keypair(&user_pubkey).await
 			.ok().flatten().with_context(|| format!(
-				"failed to fetch keypair for vtxo user pubkey {}", input.user_pubkey(),
+				"failed to fetch keypair for vtxo user pubkey {}", user_pubkey,
 			))?.1;
 		user_keys.push(user_key);
 	}
@@ -1298,7 +1302,7 @@ async fn hark_forfeit_bundles(
 	for ((input, nonces), user_key) in participation.inputs.iter().zip(server_nonces).zip(&user_keys) {
 		forfeit_bundles.push(HashLockedForfeitBundle::new(
 			input, unlock_hash, user_key, &nonces,
-		))
+		)?);
 	}
 	Ok(forfeit_bundles)
 }
@@ -2316,10 +2320,14 @@ impl Wallet {
 
 		// The keys of the participation were derived by the wallet that
 		// created it, so they may be past what this wallet has revealed.
-		let output_pubkeys = output_vtxos.iter().map(|v| v.user_pubkey()).collect::<Vec<_>>();
+		let output_pubkeys = output_vtxos.iter().filter_map(|v| v.user_pubkey()).collect::<Vec<_>>();
 		self.find_vtxo_keypairs(output_pubkeys, self.inner.config.vtxo_key_gap_limit).await?;
 		for vtxo in output_vtxos.iter() {
-			if self.pubkey_keypair(&vtxo.user_pubkey()).await?.is_none() {
+			let ours = match vtxo.user_pubkey() {
+				Some(pubkey) => self.pubkey_keypair(&pubkey).await?.is_some(),
+				None => false,
+			};
+			if !ours {
 				error!("Not recovering round participation {}: \
 					output vtxo {} is not ours", unlock_hash, vtxo.id(),
 				);

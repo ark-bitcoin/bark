@@ -311,7 +311,7 @@ async fn run_xpub(
 		// The index is only trusted once it derives the key of the VTXO.
 		let index = entry.derivation_index;
 		if index >= NB_NORMAL_CHILDREN
-			|| wallet.inner.seed.derive_vtxo_keypair(index).public_key() != vtxo.user_pubkey()
+			|| Some(wallet.inner.seed.derive_vtxo_keypair(index).public_key()) != vtxo.user_pubkey()
 		{
 			warn!("Recovery vtxo {} is not owned by key {index} of our xpub", vtxo.id());
 			report.push_foreign(&vtxo);

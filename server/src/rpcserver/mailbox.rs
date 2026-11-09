@@ -132,9 +132,11 @@ impl rpc::server::MailboxService for crate::Server {
 
 		let blinded_mailbox_id = BlindedMailboxIdentifier::from_bytes(&req.blinded_id.as_slice())?;
 		// should all have same pubkey
-		let vtxo_pubkey = vtxos[0].user_pubkey();
-		if !vtxos.iter().skip(1).all(|v| v.user_pubkey() == vtxo_pubkey) {
-			self::badarg!("all vtxos should share vtxo pubkey when mailbox is provided");
+		let Some(vtxo_pubkey) = vtxos[0].user_pubkey() else {
+			self::badarg!("VTXO {} has unsupported policy", vtxos[0].id());
+		};
+		if !vtxos.iter().skip(1).all(|v| v.user_pubkey() == Some(vtxo_pubkey)) {
+			self::badarg!("all vtxos should share VTXO pubkey when mailbox is provided");
 		}
 
 		// The blinded id is peer-controlled. An attacker that submits a
@@ -157,7 +159,7 @@ impl rpc::server::MailboxService for crate::Server {
 		let stored = self.db.read(async |t| t.get_user_vtxos_by_id(&vtxo_ids).await)
 			.await.to_status()?;
 		for stored in &stored {
-			if stored.vtxo.user_pubkey() != vtxo_pubkey {
+			if stored.vtxo.user_pubkey() != Some(vtxo_pubkey) {
 				self::badarg!("vtxo {} doesn't belong to the provided vtxo pubkey", stored.vtxo_id);
 			}
 		}

@@ -378,10 +378,12 @@ impl VtxoPool {
 		let keys = {
 			let mut ret = Vec::with_capacity(input_vtxos.len());
 			for v in &input_vtxos {
-				ret.push(srv.get_ephemeral_cosign_key(v.user_pubkey()).await
+				let user_pubkey = v.user_pubkey()
+					.with_context(|| format!("VTXO {} has unsupported policy", v.id()))?;
+				ret.push(srv.get_ephemeral_cosign_key(user_pubkey).await
 					.with_context(|| format!(
 						"failed to fetch ephemeral keys for vtxo {}: {}",
-						v.id(), v.user_pubkey(),
+						v.id(), user_pubkey,
 					))?
 				);
 			}

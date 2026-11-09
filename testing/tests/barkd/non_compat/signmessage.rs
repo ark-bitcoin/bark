@@ -46,7 +46,7 @@ async fn sign_message_with_address() {
 	assert!(verify_message(&config, message, &signature, None, Some(address.clone())).await,
 		"signature should verify against the address");
 
-	let pubkey = Address::from_str(&address).unwrap().policy().user_pubkey().to_string();
+	let pubkey = Address::from_str(&address).unwrap().policy().user_pubkey().unwrap().to_string();
 	assert!(verify_message(&config, message, &signature, Some(pubkey), None).await,
 		"signature should verify against the address' user pubkey");
 

@@ -1357,7 +1357,7 @@ async fn refuse_htlc_send_vtxo_posted_to_arkoor_mailbox() {
 	// The victim only ever hands out an Ark address.
 	let victim = ctx.bark("victim", &srv).create().await;
 	let victim_addr = ark::Address::from_str(&victim.address().await).unwrap();
-	let victim_pubkey = victim_addr.policy().user_pubkey();
+	let victim_pubkey = victim_addr.policy().user_pubkey().unwrap();
 	let blinded_id = victim_addr.delivery().iter().find_map(|d| match d {
 		ark::address::VtxoDelivery::ServerMailbox { blinded_id } => Some(blinded_id.clone()),
 		_ => None,
@@ -1377,7 +1377,7 @@ async fn refuse_htlc_send_vtxo_posted_to_arkoor_mailbox() {
 	assert!(!htlc_vtxos.is_empty());
 	assert!(htlc_vtxos.iter().all(|v| v.policy().policy_type() == VtxoPolicyKind::ServerHtlcSend),
 		"forged vtxos should carry the ServerHtlcSend policy");
-	assert!(htlc_vtxos.iter().all(|v| v.user_pubkey() == victim_pubkey),
+	assert!(htlc_vtxos.iter().all(|v| v.user_pubkey() == Some(victim_pubkey)),
 		"forged vtxos should be keyed to the victim");
 
 	// The attacker posts the forged "payment" to the victim's mailbox.
@@ -2778,7 +2778,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 		async fn request_lightning_pay_htlc_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			let (_, keypair) = self.0.pubkey_keypair(&self.1.user_pubkey).await.unwrap().unwrap();
+			let (_, keypair) = self.0.pubkey_keypair(&self.1.user_pubkey.unwrap()).await.unwrap().unwrap();
 
 			let outputs = req.parts[0].outputs.iter()
 				.chain(&req.parts[0].isolated_outputs)

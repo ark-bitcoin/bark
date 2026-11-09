@@ -28,7 +28,7 @@ use bitcoin_ext::{fee, BlockDelta, BlockHeight, KeypairExt, NonStandardOutput, T
 
 use crate::{musig, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, SECP};
 use crate::connectors::construct_multi_connector_fanout_tx;
-use crate::vtxo::{Bare, Full};
+use crate::vtxo::{Bare, Full, NoUserPubkeyError};
 
 
 /// The output index of the offboard output in the offboard tx
@@ -133,6 +133,9 @@ pub enum OffboardForfeitError {
 	MissingConnectorOutput,
 	#[error(transparent)]
 	InvalidUserPartialSignature(#[from] InvalidUserPartialSignatureError),
+	/// An input VTXO has no user pubkey to sign the forfeit with.
+	#[error(transparent)]
+	NoUserPubkey(#[from] NoUserPubkeyError),
 }
 
 impl OffboardForfeitError {
@@ -364,8 +367,10 @@ where
 
 		if self.input_vtxos.len() == 1 {
 			let vtxo = self.input_vtxos[0].as_ref();
+			let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
 			let tx = server_check_finalize_forfeit_tx(
 				vtxo,
+				user_pubkey,
 				server_key,
 				&tweaked_connector_key,
 				connector_fanout_prev,
@@ -427,9 +432,11 @@ where
 				.zip(user_partial_sigs);
 			for (i, ((((vtxo, server_pub), server_sec), user_pub), user_part)) in iter.enumerate() {
 				let vtxo = vtxo.as_ref();
+				let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
 				let connector = OutPoint::new(connector_txid, u32::try_from(i).expect("connector index fits in u32"));
 				let tx = server_check_finalize_forfeit_tx(
 					vtxo,
+					user_pubkey,
 					server_key,
 					&tweaked_connector_key,
 					connector,
@@ -559,7 +566,7 @@ fn user_sign_vtxo_forfeit_input<G: Sync + Send>(
 	);
 	debug_assert!({
 		let (key_agg, _) = musig::tweaked_key_agg(
-			[vtxo.user_pubkey(), vtxo.server_pubkey()], tweak,
+			[key.public_key(), vtxo.server_pubkey()], tweak,
 		);
 		let agg_nonce = musig::nonce_agg(&[&pub_nonce, server_nonce]);
 		let ff_session = musig::Session::new(
@@ -571,7 +578,7 @@ fn user_sign_vtxo_forfeit_input<G: Sync + Send>(
 			&key_agg,
 			&partial_sig,
 			&pub_nonce,
-			musig::pubkey_to(vtxo.user_pubkey()),
+			musig::pubkey_to(key.public_key()),
 		)
 	}, "invalid partial offboard forfeit signature");
 
@@ -580,9 +587,12 @@ fn user_sign_vtxo_forfeit_input<G: Sync + Send>(
 
 /// Check the user's partial signature, then finalize the forfeit tx
 ///
+/// The `user_pubkey` is the user pubkey of the VTXO, see [Vtxo::user_pubkey].
+///
 /// Returns `None` only if the user's partial signature is invalid.
 fn server_check_finalize_forfeit_tx<G: Sync + Send>(
 	vtxo: &Vtxo<G>,
+	user_pubkey: PublicKey,
 	server_key: &Keypair,
 	tweaked_connector_key: &Keypair,
 	connector: OutPoint,
@@ -606,7 +616,7 @@ fn server_check_finalize_forfeit_tx<G: Sync + Send>(
 		// it is customary to do that insted
 
 		let (_our_part_sig, final_sig) = musig::partial_sign(
-			[vtxo.user_pubkey(), vtxo.server_pubkey()],
+			[user_pubkey, vtxo.server_pubkey()],
 			agg_nonce,
 			server_key,
 			server_nonces.1,
@@ -616,7 +626,7 @@ fn server_check_finalize_forfeit_tx<G: Sync + Send>(
 		);
 		debug_assert!({
 			let (key_agg, _) = musig::tweaked_key_agg(
-				[vtxo.user_pubkey(), vtxo.server_pubkey()], tweak,
+				[user_pubkey, vtxo.server_pubkey()], tweak,
 			);
 			let ff_session = musig::Session::new(
 				&key_agg,

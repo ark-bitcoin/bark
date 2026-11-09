@@ -119,7 +119,7 @@ use secp256k1_musig::musig::PublicNonce;
 
 use crate::{musig, scripts, Vtxo, VtxoId, ServerVtxo};
 use crate::attestations::ArkoorCosignAttestation;
-use crate::vtxo::{Full, ServerVtxoPolicy, VtxoPolicy, VtxoRef};
+use crate::vtxo::{Full, NoUserPubkeyError, ServerVtxoPolicy, VtxoPolicy, VtxoRef};
 use crate::vtxo::genesis::{GenesisItem, GenesisTransition};
 
 pub use package::ArkoorPackageBuilder;
@@ -146,6 +146,8 @@ pub enum ArkoorConstructionError {
 	TooManyInputs,
 	#[error("Total amount overflowed while allocating outputs to inputs")]
 	Overflow,
+	#[error(transparent)]
+	NoUserPubkey(#[from] NoUserPubkeyError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
@@ -332,6 +334,8 @@ pub struct ArkoorBuilder<S: state::BuilderState> {
 	// These variables are provided by the user
 	/// The input vtxo to be spent
 	input: Vtxo<Full>,
+	/// The user pubkey of the input vtxo, which cosigns the arkoor txs
+	input_user_pubkey: PublicKey,
 	/// Regular output vtxos
 	///
 	/// Each one gets its own checkpoint output. Sub-dust amounts are allowed
@@ -417,7 +421,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 
 		Vtxo {
 			amount: output.total_amount,
-			policy: ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey()),
+			policy: ServerVtxoPolicy::new_checkpoint(self.user_pubkey()),
 			expiry_height: self.input.expiry_height,
 			server_pubkey: self.input.server_pubkey,
 			exit_delta: self.input.exit_delta,
@@ -427,7 +431,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				items: self.input.genesis.items.clone().into_iter().chain([
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
+							vec![self.user_pubkey()],
 							self.input.policy().taproot(
 								self.input.server_pubkey,
 								self.input.exit_delta,
@@ -463,7 +467,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		let (checkpoint_tx, _txid) = &self.checkpoint_data;
 
 		// Two-transition genesis: Input → Checkpoint → Arkoor
-		let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey());
+		let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(self.user_pubkey());
 
 		Vtxo {
 			amount: output.total_amount,
@@ -477,7 +481,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				items: self.input.genesis.items.iter().cloned().chain([
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
+							vec![self.user_pubkey()],
 							self.input.policy.taproot(
 								self.input.server_pubkey,
 								self.input.exit_delta,
@@ -500,7 +504,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					},
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
+							vec![self.user_pubkey()],
 							checkpoint_policy.taproot(
 								self.input.server_pubkey,
 								self.input.exit_delta,
@@ -527,7 +531,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		isolation_fanout_tx_sig: Option<schnorr::Signature>,
 	) -> Vtxo<Full> {
 		let output = &self.isolated_outputs[isolated_idx];
-		let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey());
+		let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(self.user_pubkey());
 		let (checkpoint_tx, _txid) = &self.checkpoint_data;
 
 		let fanout_tx = self.unsigned_isolation_fanout_tx.as_ref()
@@ -550,7 +554,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					// Transition 1: input -> checkpoint
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
+							vec![self.user_pubkey()],
 							self.input.policy.taproot(
 								self.input.server_pubkey,
 								self.input.exit_delta,
@@ -577,7 +581,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					// Transition 2: checkpoint -> isolation fanout tx (final vtxo)
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
+							vec![self.user_pubkey()],
 							checkpoint_policy.taproot(
 								self.input.server_pubkey,
 								self.input.exit_delta,
@@ -646,7 +650,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 
 			let vtxo = Vtxo {
 				amount: self.isolated_outputs.iter().map(|o| o.total_amount).sum(),
-				policy: ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey()),
+				policy: ServerVtxoPolicy::new_checkpoint(self.user_pubkey()),
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
 				exit_delta: self.input.exit_delta,
@@ -656,7 +660,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					items: self.input.genesis.items.clone().into_iter().chain([
 						GenesisItem {
 							transition: GenesisTransition::new_arkoor(
-								vec![self.input.user_pubkey()],
+								vec![self.user_pubkey()],
 								self.input_tweak,
 								checkpoint_sig,
 							),
@@ -729,7 +733,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	}
 
 	fn user_pubkey(&self) -> PublicKey {
-		self.input.user_pubkey()
+		self.input_user_pubkey
 	}
 
 	fn server_pubkey(&self) -> PublicKey {
@@ -742,12 +746,13 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	/// with the total dust amount.
 	fn construct_unsigned_checkpoint_tx<G>(
 		input: &Vtxo<G>,
+		input_user_pubkey: PublicKey,
 		outputs: &[ArkoorDestination],
 		dust_isolation_amount: Option<Amount>,
 	) -> Transaction {
 
 		// All outputs on the checkpoint transaction will use exactly the same policy.
-		let output_policy = ServerVtxoPolicy::new_checkpoint(input.user_pubkey());
+		let output_policy = ServerVtxoPolicy::new_checkpoint(input_user_pubkey);
 		let checkpoint_spk = output_policy
 			.script_pubkey(input.server_pubkey(), input.exit_delta(), input.expiry_height());
 
@@ -932,6 +937,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	fn to_state<S2: state::BuilderState>(self) -> ArkoorBuilder<S2> {
 		ArkoorBuilder {
 			input: self.input,
+			input_user_pubkey: self.input_user_pubkey,
 			outputs: self.outputs,
 			isolated_outputs: self.isolated_outputs,
 			checkpoint_data: self.checkpoint_data,
@@ -1039,6 +1045,7 @@ impl ArkoorBuilder<state::Initial> {
 	) -> Result<Self, ArkoorConstructionError> {
 		// Do some validation on the amounts
 		Self::validate_amounts(&input, &outputs, &isolated_outputs)?;
+		let input_user_pubkey = input.user_pubkey().ok_or(NoUserPubkeyError)?;
 
 		// Compute combined dust amount if dust isolation is needed
 		let combined_dust_amount = if !isolated_outputs.is_empty() {
@@ -1050,6 +1057,7 @@ impl ArkoorBuilder<state::Initial> {
 		// Construct checkpoint transaction
 		let checkpoint_tx = Self::construct_unsigned_checkpoint_tx(
 			&input,
+			input_user_pubkey,
 			&outputs,
 			combined_dust_amount,
 		);
@@ -1105,7 +1113,7 @@ impl ArkoorBuilder<state::Initial> {
 		}
 
 		// Compute taptweaks
-		let policy = ServerVtxoPolicy::new_checkpoint(input.user_pubkey());
+		let policy = ServerVtxoPolicy::new_checkpoint(input_user_pubkey);
 		let input_tweak = input.output_taproot().tap_tweak();
 		let checkpoint_policy_tweak = policy.taproot(
 			input.server_pubkey(),
@@ -1115,6 +1123,7 @@ impl ArkoorBuilder<state::Initial> {
 
 		Ok(Self {
 			input: input,
+			input_user_pubkey,
 			outputs: outputs,
 			isolated_outputs,
 			sighashes: sighashes,
@@ -1197,9 +1206,9 @@ impl ArkoorBuilder<state::Initial> {
 		user_keypair: &Keypair,
 		server_keypair: &Keypair,
 	) -> Result<ArkoorBuilder<state::UserSigned>, ArkoorSigningError> {
-		if user_keypair.public_key() != self.input.user_pubkey() {
+		if user_keypair.public_key() != self.user_pubkey() {
 			return Err(ArkoorSigningError::IncorrectKey {
-				expected: self.input.user_pubkey(),
+				expected: self.user_pubkey(),
 				got: user_keypair.public_key(),
 			});
 		}
@@ -1260,7 +1269,7 @@ impl<'a> ArkoorBuilder<state::ServerCanCosign> {
 		for idx in 0..self.nb_sigs() {
 			let (server_pub_nonce, server_partial_sig) = musig::deterministic_partial_sign(
 				&server_keypair,
-				[self.input.user_pubkey()],
+				[self.user_pubkey()],
 				&[&self.user_pub_nonces.as_ref().expect("state-invariant")[idx]],
 				self.sighashes[idx].to_byte_array(),
 				Some(self.taptweak_at(idx).to_byte_array()),
@@ -1336,7 +1345,7 @@ impl ArkoorBuilder<state::UserGeneratedNonces> {
 				self.sighashes[idx],
 				self.taptweak_at(idx),
 				(self.input.server_pubkey(), &data.server_pub_nonces[idx]),
-				(self.input.user_pubkey(), &self.user_pub_nonces()[idx]),
+				(self.user_pubkey(), &self.user_pub_nonces()[idx]),
 				&data.server_partial_sigs[idx]
 			);
 
@@ -1355,9 +1364,9 @@ impl ArkoorBuilder<state::UserGeneratedNonces> {
 		server_cosign_data: &ArkoorCosignResponse,
 	) -> Result<ArkoorBuilder<state::UserSigned>, ArkoorSigningError> {
 		// Verify that the correct user keypair is provided
-		if user_keypair.public_key() != self.input.user_pubkey() {
+		if user_keypair.public_key() != self.user_pubkey() {
 			return Err(ArkoorSigningError::IncorrectKey {
-				expected: self.input.user_pubkey(),
+				expected: self.user_pubkey(),
 				got: user_keypair.public_key(),
 			});
 		}

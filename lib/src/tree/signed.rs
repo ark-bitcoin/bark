@@ -19,7 +19,10 @@ use crate::encode::{
 };
 use crate::error::IncorrectSigningKeyError;
 use crate::tree::{self, Tree};
-use crate::vtxo::{self, Full, GenesisItem, GenesisTransition, HarkLeafVtxoPolicy, MaybePreimage, ServerVtxo, TapScriptClause};
+use crate::vtxo::{
+	self, Full, GenesisItem, GenesisTransition, HarkLeafVtxoPolicy, MaybePreimage, NoUserPubkeyError,
+	ServerVtxo, TapScriptClause,
+};
 use crate::vtxo::policy::{check_block_delta, check_block_height, HarkLeaf_v0_VtxoPolicy};
 use crate::vtxo::policy::clause::TimelockSignClause;
 
@@ -133,14 +136,28 @@ impl ProtocolEncoding for VtxoLeafSpec {
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let policy = VtxoPolicy::decode(r)?;
+		if policy.user_pubkey().is_none() {
+			return Err(ProtocolDecodingError::invalid("vtxo tree leaf policy has no user pubkey"));
+		}
 		Ok(VtxoLeafSpec {
 			vtxo: VtxoRequest {
-				policy: VtxoPolicy::decode(r)?,
+				policy: policy,
 				amount: Amount::from_sat(r.read_u64()?),
 			},
 			cosign_pubkey: Option::<PublicKey>::decode(r)?,
 			unlock_hash: sha256::Hash::decode(r)?,
 		})
+	}
+}
+
+impl VtxoLeafSpec {
+	/// The user pubkey of the leaf VTXO
+	///
+	/// Leaves without a user pubkey are rejected when a [VtxoTreeSpec] is
+	/// constructed or decoded, so this can't fail for a leaf of a spec.
+	fn user_pubkey(&self) -> PublicKey {
+		self.vtxo.policy.user_pubkey().expect("leaf policies are checked to have a user pubkey")
 	}
 }
 
@@ -169,18 +186,27 @@ enum ChildSpec<'a> {
 }
 
 impl VtxoTreeSpec {
+	/// Create a new [VtxoTreeSpec]
+	///
+	/// Fails if any of the leaf policies has no user pubkey, because the
+	/// leaf outputs are locked to the user key.
+	///
+	/// Panics if there are no leaves.
 	pub fn new(
 		vtxos: Vec<VtxoLeafSpec>,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		exit_delta: BlockDelta,
 		global_cosign_pubkeys: Vec<PublicKey>,
-	) -> VtxoTreeSpec {
+	) -> Result<VtxoTreeSpec, NoUserPubkeyError> {
 		assert_ne!(vtxos.len(), 0);
-		VtxoTreeSpec {
+		if vtxos.iter().any(|v| v.vtxo.policy.user_pubkey().is_none()) {
+			return Err(NoUserPubkeyError);
+		}
+		Ok(VtxoTreeSpec {
 			vtxos, server_pubkey, expiry_height, exit_delta, global_cosign_pubkeys,
 			hashlock_version: HashlockVersion::V1,
-		}
+		})
 	}
 
 	pub fn nb_leaves(&self) -> usize {
@@ -305,7 +331,7 @@ impl VtxoTreeSpec {
 			output: children.map(|child| match child {
 				ChildSpec::Leaf { spec } => {
 					let taproot = self.leaf_taproot(
-						spec.vtxo.policy.user_pubkey(),
+						spec.user_pubkey(),
 						spec.unlock_hash,
 					);
 					TxOut {
@@ -345,7 +371,7 @@ impl VtxoTreeSpec {
 		Tree::new(self.nb_leaves()).into_iter().map(|node| {
 			if node.is_leaf() {
 				musig::combine_keys([
-					self.vtxos[node.idx()].vtxo.policy.user_pubkey(),
+					self.vtxos[node.idx()].user_pubkey(),
 					self.server_pubkey,
 				])
 			} else {
@@ -1025,12 +1051,12 @@ impl CachedSignedVtxoTree {
 			let req = self.spec.spec.vtxos.get(node_idx).expect("Every leaf has a spec");
 			match self.spec.spec.hashlock_version {
 				HashlockVersion::V1 => GenesisTransition::new_hash_locked_cosigned(
-					req.vtxo.policy.user_pubkey(),
+					req.user_pubkey(),
 					None,
 					MaybePreimage::Hash(req.unlock_hash),
 				),
 				HashlockVersion::V0 => GenesisTransition::new_hash_locked_cosigned_v0(
-					req.vtxo.policy.user_pubkey(),
+					req.user_pubkey(),
 					None,
 					MaybePreimage::Hash(req.unlock_hash),
 				),
@@ -1080,10 +1106,10 @@ impl CachedSignedVtxoTree {
 			let req = spec.vtxos.get(node_idx).expect("one vtxo request for every leaf");
 			match spec.hashlock_version {
 				HashlockVersion::V1 => ServerVtxoPolicy::new_hark_leaf(
-					req.vtxo.policy.user_pubkey(), req.unlock_hash,
+					req.user_pubkey(), req.unlock_hash,
 				),
 				HashlockVersion::V0 => ServerVtxoPolicy::new_hark_leaf_v0(
-					req.vtxo.policy.user_pubkey(), req.unlock_hash,
+					req.user_pubkey(), req.unlock_hash,
 				),
 			}
 		} else {
@@ -1214,10 +1240,12 @@ pub struct NotHarkLeafError(VtxoId);
 /// This is used after the interactive part of the round is finished by
 /// both user and server to cosign the leaf input script-spend before
 /// exchanging forfeit signatures for the unlock preimage.
+///
+/// Also returns the user pubkey that cosigns the leaf.
 fn hashlocked_leaf_sighash_from_vtxo(
 	vtxo: &Vtxo<Full>,
 	chain_anchor: &Transaction,
-) -> Result<TapSighash, NotHarkLeafError> {
+) -> Result<(TapSighash, PublicKey), NotHarkLeafError> {
 	assert_eq!(chain_anchor.compute_txid(), vtxo.chain_anchor().txid);
 
 	// we need the penultimate TxOut and last tx
@@ -1241,18 +1269,20 @@ fn hashlocked_leaf_sighash_from_vtxo(
 	let last_genesis = vtxo.genesis.items.last().expect("at least one genesis item");
 	match &last_genesis.transition {
 		GenesisTransition::HashLockedCosigned(inner) => {
-			debug_assert_eq!(inner.user_pubkey, vtxo.user_pubkey());
-			Ok(hashlocked_leaf_sighash(
+			debug_assert_eq!(Some(inner.user_pubkey), vtxo.user_pubkey());
+			let sighash = hashlocked_leaf_sighash(
 				&leaf_tx, inner.user_pubkey, vtxo.server_pubkey(), inner.unlock.hash(),
 				&preleaf_txout,
-			))
+			);
+			Ok((sighash, inner.user_pubkey))
 		},
 		GenesisTransition::HashLockedCosigned_v0(inner) => {
-			debug_assert_eq!(inner.user_pubkey, vtxo.user_pubkey());
-			Ok(hashlocked_leaf_sighash_v0(
+			debug_assert_eq!(Some(inner.user_pubkey), vtxo.user_pubkey());
+			let sighash = hashlocked_leaf_sighash_v0(
 				&leaf_tx, inner.user_pubkey, vtxo.server_pubkey(), inner.unlock.hash(),
 				&preleaf_txout,
-			))
+			);
+			Ok((sighash, inner.user_pubkey))
 		},
 		_ => Err(NotHarkLeafError(vtxo.id())),
 	}
@@ -1266,6 +1296,8 @@ pub struct LeafVtxoCosignRequest {
 
 pub struct LeafVtxoCosignContext<'a> {
 	key: &'a Keypair,
+	/// The user pubkey of the leaf VTXO
+	user_pubkey: PublicKey,
 	pub_nonce: musig::PublicNonce,
 	sec_nonce: musig::SecretNonce,
 	sighash: TapSighash,
@@ -1282,11 +1314,11 @@ impl<'a> LeafVtxoCosignContext<'a> {
 		chain_anchor: &Transaction,
 		key: &'a Keypair,
 	) -> Result<(Self, LeafVtxoCosignRequest), NotHarkLeafError> {
-		let sighash = hashlocked_leaf_sighash_from_vtxo(&vtxo, chain_anchor)?;
+		let (sighash, user_pubkey) = hashlocked_leaf_sighash_from_vtxo(&vtxo, chain_anchor)?;
 		let (sec_nonce, pub_nonce) = musig::nonce_pair_with_msg(key, &sighash.to_byte_array());
 		let vtxo_id = vtxo.id();
 		let req = LeafVtxoCosignRequest { vtxo_id, pub_nonce };
-		let ret = Self { key, pub_nonce, sec_nonce, sighash };
+		let ret = Self { key, user_pubkey, pub_nonce, sec_nonce, sighash };
 		Ok((ret, req))
 	}
 
@@ -1298,7 +1330,7 @@ impl<'a> LeafVtxoCosignContext<'a> {
 	) -> bool {
 		let agg_nonce = musig::nonce_agg(&[&self.pub_nonce, &response.public_nonce]);
 		let (_part_sig, final_sig) = musig::partial_sign(
-			[vtxo.user_pubkey(), vtxo.server_pubkey()],
+			[self.user_pubkey, vtxo.server_pubkey()],
 			agg_nonce,
 			self.key,
 			self.sec_nonce,
@@ -1308,10 +1340,10 @@ impl<'a> LeafVtxoCosignContext<'a> {
 		);
 		let final_sig = final_sig.expect("has other sigs");
 
-		let pubkey = musig::combine_keys([vtxo.user_pubkey(), vtxo.server_pubkey()])
+		let pubkey = musig::combine_keys([self.user_pubkey, vtxo.server_pubkey()])
 			.x_only_public_key().0;
 		debug_assert_eq!(pubkey, leaf_cosign_taproot(
-			vtxo.user_pubkey(),
+			self.user_pubkey,
 			vtxo.server_pubkey(),
 			vtxo.expiry_height(),
 			vtxo.unlock_hash().expect("checked is hark vtxo"),
@@ -1341,10 +1373,10 @@ impl LeafVtxoCosignResponse {
 		server_key: &Keypair,
 	) -> Result<Self, NotHarkLeafError> {
 		debug_assert_eq!(server_key.public_key(), vtxo.server_pubkey());
-		let sighash = hashlocked_leaf_sighash_from_vtxo(&vtxo, chain_anchor)?;
+		let (sighash, user_pubkey) = hashlocked_leaf_sighash_from_vtxo(&vtxo, chain_anchor)?;
 		let (public_nonce, partial_signature) = musig::deterministic_partial_sign(
 			server_key,
-			[vtxo.user_pubkey()],
+			[user_pubkey],
 			&[&request.pub_nonce],
 			sighash.to_byte_array(),
 			None,
@@ -1516,7 +1548,7 @@ pub mod builder {
 			if reqs.len() < 2 {
 				return Err(SignedTreeBuilderError("need to have at least 2 VTXOs in tree"));
 			}
-			Ok(VtxoTreeSpec::new(
+			VtxoTreeSpec::new(
 				reqs,
 				server_pubkey,
 				expiry_height,
@@ -1524,7 +1556,7 @@ pub mod builder {
 				// NB we place server last because then it looks closer like
 				// a regular user-signed tree which Vtxo::validate relies on
 				vec![cosign_pubkey, server_cosign_pubkey],
-			))
+			).map_err(|_| SignedTreeBuilderError("VTXO policy has no user pubkey"))
 		}
 
 		/// Create a new [SignedTreeBuilder]
@@ -1913,7 +1945,7 @@ mod test {
 			BlockHeight::new(101_000),
 			BlockDelta::new(2016),
 			vec![server_cosign_key.public_key()],
-		);
+		).unwrap();
 		assert_eq!(spec.nb_leaves(), nb_leaves);
 		assert_eq!(spec.total_required_value().to_sat(), 2700000);
 		let nb_nodes = spec.nb_nodes();
@@ -2226,7 +2258,7 @@ mod test {
 		// then two identical leaves of the same participation
 		let spec = VtxoTreeSpec::new(
 			vec![leaf(hash2), leaf(hash1), leaf(hash1)], pk, BlockHeight::new(100_000), BlockDelta::new(2016), vec![],
-		);
+		).unwrap();
 
 		// identical requests are bound to the distinct leaves of their
 		// own participation
@@ -2262,7 +2294,7 @@ mod test {
 			cosign_pubkey: Some(pk2),
 			unlock_hash: hash,
 		};
-		let spec = VtxoTreeSpec::new(vec![leaf], pk1, BlockHeight::new(100_000), BlockDelta::new(2016), vec![]);
+		let spec = VtxoTreeSpec::new(vec![leaf], pk1, BlockHeight::new(100_000), BlockDelta::new(2016), vec![]).unwrap();
 		encoding_roundtrip(&spec);
 
 		// Empty the vtxos and verify decode rejects it.
@@ -2293,7 +2325,7 @@ mod test {
 		let spec = VtxoTreeSpec::new(
 			reqs.clone(), server_key.public_key(), BlockHeight::new(100_000),
 			BlockDelta::new(2016), vec![server_cosign_key.public_key()],
-		);
+		).unwrap();
 
 		// Two leaves have one internal node, the root.
 		let (secs, pubs): (Vec<_>, Vec<_>) = cosign_keys.iter()

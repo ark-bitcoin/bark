@@ -603,11 +603,11 @@ mod test {
 		let vtxos: Vec<Vtxo<Full>> = package_builder.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(670));
-		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[0].policy().user_pubkey(), Some(bob_public_key()));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(230));
-		assert_eq!(vtxos[1].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[1].policy().user_pubkey(), Some(bob_public_key()));
 		assert_eq!(vtxos[2].amount(), Amount::from_sat(100));
-		assert_eq!(vtxos[2].policy().user_pubkey(), alice_public_key());
+		assert_eq!(vtxos[2].policy().user_pubkey(), Some(alice_public_key()));
 	}
 
 	#[test]
@@ -634,7 +634,7 @@ mod test {
 		assert_eq!(vtxos[2].amount(), Amount::from_sat(2_000));
 		assert_eq!(
 			vtxos.iter().map(|v| v.policy().user_pubkey()).collect::<Vec<_>>(),
-			vec![bob_public_key(); 3],
+			vec![Some(bob_public_key()); 3],
 		);
 
 		let funding_map = HashMap::from([
@@ -674,10 +674,10 @@ mod test {
 			"Alice should receive a 1000 sats as change",
 		);
 
-		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
-		assert_eq!(vtxos[1].policy().user_pubkey(), bob_public_key());
-		assert_eq!(vtxos[2].policy().user_pubkey(), bob_public_key());
-		assert_eq!(vtxos[3].policy().user_pubkey(), alice_public_key());
+		assert_eq!(vtxos[0].policy().user_pubkey(), Some(bob_public_key()));
+		assert_eq!(vtxos[1].policy().user_pubkey(), Some(bob_public_key()));
+		assert_eq!(vtxos[2].policy().user_pubkey(), Some(bob_public_key()));
+		assert_eq!(vtxos[3].policy().user_pubkey(), Some(alice_public_key()));
 
 		let funding_map = HashMap::from([
 			(funding_tx_1.compute_txid(), funding_tx_1),
@@ -709,13 +709,13 @@ mod test {
 		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 4);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(5_000));
-		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[0].policy().user_pubkey(), Some(bob_public_key()));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(670));
-		assert_eq!(vtxos[1].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[1].policy().user_pubkey(), Some(bob_public_key()));
 		assert_eq!(vtxos[2].amount(), Amount::from_sat(30));
-		assert_eq!(vtxos[2].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[2].policy().user_pubkey(), Some(bob_public_key()));
 		assert_eq!(vtxos[3].amount(), Amount::from_sat(300));
-		assert_eq!(vtxos[3].policy().user_pubkey(), alice_public_key());
+		assert_eq!(vtxos[3].policy().user_pubkey(), Some(alice_public_key()));
 	}
 
 	#[test]
@@ -876,11 +876,11 @@ mod test {
 		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(600));
-		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[0].policy().user_pubkey(), Some(bob_public_key()));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(200));
-		assert_eq!(vtxos[1].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[1].policy().user_pubkey(), Some(bob_public_key()));
 		assert_eq!(vtxos[2].amount(), Amount::from_sat(300));
-		assert_eq!(vtxos[2].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[2].policy().user_pubkey(), Some(bob_public_key()));
 	}
 
 	#[test]

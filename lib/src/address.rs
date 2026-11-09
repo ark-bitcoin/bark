@@ -497,7 +497,7 @@ impl Builder {
 	) -> Result<Self, AddressBuilderError> {
 		// check the vtxo key
 		let pol = self.policy.as_ref().ok_or("set policy first")?;
-		if vtxo_key.public_key() != pol.user_pubkey() {
+		if pol.user_pubkey() != Some(vtxo_key.public_key()) {
 			return Err("VTXO key does not match policy".into());
 		}
 
@@ -631,7 +631,7 @@ mod test {
 		};
 
 		let unblinded = MailboxIdentifier::from_blinded(
-			blinded, addr.policy().user_pubkey(), &server_mailbox_key,
+			blinded, addr.policy().user_pubkey().unwrap(), &server_mailbox_key,
 		).expect("unblinding a valid blinded id should succeed");
 
 		assert_eq!(mailbox, unblinded);

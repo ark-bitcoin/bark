@@ -11,24 +11,28 @@ use crate::{musig, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, SECP};
 use crate::connectors::ConnectorChain;
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::tree::signed::UnlockHash;
-use crate::vtxo::{Full, GenesisItem, GenesisTransition};
+use crate::vtxo::{Full, GenesisItem, GenesisTransition, NoUserPubkeyError};
 use crate::vtxo::policy::HarkForfeitVtxoPolicy;
 use crate::vtxo::genesis::ArkoorGenesis;
 
 
 /// Construct the forfeit tx in the hArk forfeit protocol
+///
+/// The `user_pubkey` is the user pubkey of the VTXO, see [Vtxo::user_pubkey].
 #[inline]
 pub fn create_hark_forfeit_tx<G>(
 	vtxo: &Vtxo<G>,
+	user_pubkey: PublicKey,
 	unlock_hash: UnlockHash,
 	signature: Option<&schnorr::Signature>,
 ) -> Transaction {
+	debug_assert_eq!(vtxo.user_pubkey(), Some(user_pubkey));
 	let claim_policy = HarkForfeitVtxoPolicy {
-		user_pubkey: vtxo.user_pubkey(),
+		user_pubkey: user_pubkey,
 		unlock_hash: unlock_hash,
 	};
 	debug_assert_eq!(
-		musig::combine_keys([vtxo.user_pubkey(), vtxo.server_pubkey()]).x_only_public_key().0,
+		musig::combine_keys([user_pubkey, vtxo.server_pubkey()]).x_only_public_key().0,
 		vtxo.output_taproot().internal_key(),
 	);
 
@@ -58,10 +62,11 @@ pub fn create_hark_forfeit_tx<G>(
 #[inline]
 fn hark_forfeit_sighash<G>(
 	vtxo: &Vtxo<G>,
+	user_pubkey: PublicKey,
 	unlock_hash: UnlockHash,
 ) -> (TapSighash, Transaction) {
 	let exit_prevout = vtxo.txout();
-	let tx = create_hark_forfeit_tx(vtxo, unlock_hash, None);
+	let tx = create_hark_forfeit_tx(vtxo, user_pubkey, unlock_hash, None);
 	let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
 		0, &sighash::Prevouts::All(&[exit_prevout]), TapSighashType::Default,
 	).expect("sighash error");
@@ -74,23 +79,26 @@ fn hark_forfeit_sighash<G>(
 #[inline]
 fn build_internal_forfeit_vtxo(
 	vtxo: &Vtxo<Full>,
+	user_pubkey: PublicKey,
 	unlock_hash: UnlockHash,
 	forfeit_tx_sig: schnorr::Signature,
 	forfeit_txid: Option<Txid>,
 ) -> ServerVtxo<Full> {
 	let ff_txid = forfeit_txid.unwrap_or_else(|| {
-		create_hark_forfeit_tx(vtxo, unlock_hash, None).compute_txid()
+		create_hark_forfeit_tx(vtxo, user_pubkey, unlock_hash, None).compute_txid()
 	});
-	debug_assert_eq!(ff_txid, create_hark_forfeit_tx(vtxo, unlock_hash, None).compute_txid());
+	debug_assert_eq!(
+		ff_txid, create_hark_forfeit_tx(vtxo, user_pubkey, unlock_hash, None).compute_txid(),
+	);
 
 	Vtxo {
 		point: OutPoint::new(ff_txid, 0),
-		policy: ServerVtxoPolicy::new_hark_forfeit(vtxo.user_pubkey(), unlock_hash),
+		policy: ServerVtxoPolicy::new_hark_forfeit(user_pubkey, unlock_hash),
 		genesis: Full {
 			items: vtxo.genesis.items.iter().cloned().chain([
 				GenesisItem {
 					transition: GenesisTransition::Arkoor(ArkoorGenesis {
-						client_cosigners: vec![vtxo.user_pubkey()],
+						client_cosigners: vec![user_pubkey],
 						tap_tweak: vtxo.output_taproot().tap_tweak(),
 						signature: Some(forfeit_tx_sig),
 					}),
@@ -125,20 +133,23 @@ impl HashLockedForfeitBundle {
 	///
 	/// This is used to forfeit the VTXO to the server conditional on receiving
 	/// the unlock preimage corresponding to the given unlock hash.
+	///
+	/// Fails if the VTXO has no user pubkey.
 	pub fn new<G>(
 		vtxo: &Vtxo<G>,
 		unlock_hash: UnlockHash,
 		user_key: &Keypair,
 		server_nonce: &musig::PublicNonce,
-	) -> Self {
+	) -> Result<Self, NoUserPubkeyError> {
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
 		let vtxo_exit_taproot = vtxo.output_taproot();
-		let (ff_sighash, _) = hark_forfeit_sighash(vtxo, unlock_hash);
+		let (ff_sighash, _) = hark_forfeit_sighash(vtxo, user_pubkey, unlock_hash);
 		let (ff_sec_nonce, ff_pub_nonce) = musig::nonce_pair_with_msg(
 			user_key, &ff_sighash.to_byte_array(),
 		);
 		let ff_agg_nonce = musig::nonce_agg(&[&ff_pub_nonce, &server_nonce]);
 		let (ff_part_sig, _sig) = musig::partial_sign(
-			[vtxo.user_pubkey(), vtxo.server_pubkey()],
+			[user_pubkey, vtxo.server_pubkey()],
 			ff_agg_nonce,
 			user_key,
 			ff_sec_nonce,
@@ -147,12 +158,12 @@ impl HashLockedForfeitBundle {
 			None,
 		);
 
-		Self {
+		Ok(Self {
 			vtxo_id: vtxo.id(),
 			unlock_hash: unlock_hash,
 			user_nonce: ff_pub_nonce,
 			part_sig: ff_part_sig,
-		}
+		})
 	}
 
 	/// Used by the server to verify if the partial signature in the bundle
@@ -165,14 +176,15 @@ impl HashLockedForfeitBundle {
 		if vtxo.id() != self.vtxo_id {
 			return Err("VTXO mismatch");
 		}
+		let user_pubkey = vtxo.user_pubkey().ok_or("VTXO has unsupported policy")?;
 
 		let ff_agg_nonce = musig::nonce_agg(
 			&[&self.user_nonce, &server_nonce],
 		);
 		let vtxo_exit_taproot = vtxo.output_taproot();
-		let (ff_sighash, _) = hark_forfeit_sighash(vtxo, self.unlock_hash);
+		let (ff_sighash, _) = hark_forfeit_sighash(vtxo, user_pubkey, self.unlock_hash);
 		let (ff_key_agg, _) = musig::tweaked_key_agg(
-			[vtxo.user_pubkey(), vtxo.server_pubkey()],
+			[user_pubkey, vtxo.server_pubkey()],
 			vtxo_exit_taproot.tap_tweak().to_byte_array(),
 		);
 		let ff_session = musig::Session::new(
@@ -181,7 +193,7 @@ impl HashLockedForfeitBundle {
 			&ff_sighash.to_byte_array(),
 		);
 		let success = ff_session.partial_verify(
-			&ff_key_agg, &self.part_sig, &self.user_nonce, musig::pubkey_to(vtxo.user_pubkey()),
+			&ff_key_agg, &self.part_sig, &self.user_nonce, musig::pubkey_to(user_pubkey),
 		);
 		if !success {
 			return Err("invalid partial sig for forfeit tx");
@@ -193,22 +205,25 @@ impl HashLockedForfeitBundle {
 	/// nonce
 	///
 	/// NB users don't need to know this signature
+	///
+	/// Fails if the VTXO has no user pubkey.
 	pub fn finish(
 		&self,
 		vtxo: &Vtxo<Full>,
 		server_pub_nonce: &musig::PublicNonce,
 		server_sec_nonce: musig::SecretNonce,
 		server_key: &Keypair,
-	) -> (schnorr::Signature, Transaction, ServerVtxo<Full>) {
+	) -> Result<(schnorr::Signature, Transaction, ServerVtxo<Full>), NoUserPubkeyError> {
 		assert_eq!(vtxo.id(), self.vtxo_id);
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
 
 		let ff_agg_nonce = musig::nonce_agg(
 			&[&self.user_nonce, &server_pub_nonce],
 		);
 		let vtxo_exit_taproot = vtxo.output_taproot();
-		let (ff_sighash, mut ff_tx) = hark_forfeit_sighash(vtxo, self.unlock_hash);
+		let (ff_sighash, mut ff_tx) = hark_forfeit_sighash(vtxo, user_pubkey, self.unlock_hash);
 		let (_ff_part_sig, ff_sig) = musig::partial_sign(
-			[vtxo.user_pubkey(), vtxo.server_pubkey()],
+			[user_pubkey, vtxo.server_pubkey()],
 			ff_agg_nonce,
 			server_key,
 			server_sec_nonce,
@@ -219,7 +234,7 @@ impl HashLockedForfeitBundle {
 		let ff_sig = ff_sig.expect("forfeit tx sig error");
 		debug_assert!({
 			let (ff_key_agg, _) = musig::tweaked_key_agg(
-				[vtxo.user_pubkey(), vtxo.server_pubkey()],
+				[user_pubkey, vtxo.server_pubkey()],
 				vtxo_exit_taproot.tap_tweak().to_byte_array(),
 			);
 			let ff_session = musig::Session::new(
@@ -240,12 +255,16 @@ impl HashLockedForfeitBundle {
 
 		// fill in the signature in the tx
 		ff_tx.input[0].witness = Witness::from_slice(&[&ff_sig[..]]);
-		debug_assert_eq!(ff_tx, create_hark_forfeit_tx(vtxo, self.unlock_hash, Some(&ff_sig)));
+		debug_assert_eq!(
+			ff_tx, create_hark_forfeit_tx(vtxo, user_pubkey, self.unlock_hash, Some(&ff_sig)),
+		);
 
 		let ff_txid = ff_tx.compute_txid();
-		let ff_vtxo = build_internal_forfeit_vtxo(vtxo, self.unlock_hash, ff_sig, Some(ff_txid));
+		let ff_vtxo = build_internal_forfeit_vtxo(
+			vtxo, user_pubkey, self.unlock_hash, ff_sig, Some(ff_txid),
+		);
 
-		(ff_sig, ff_tx, ff_vtxo)
+		Ok((ff_sig, ff_tx, ff_vtxo))
 	}
 }
 
@@ -372,9 +391,12 @@ mod test {
 		assert_eq!(Ok(()), bundle.verify(vtxo, server_pub_nonce));
 
 		// finish it which triggers debug asserts on partial sigs
-		let (sig, tx, _vtxo) = bundle.finish(vtxo, server_pub_nonce, server_sec_nonce, &VTXO_VECTORS.server_key);
+		let (sig, tx, _vtxo) = bundle.finish(
+			vtxo, server_pub_nonce, server_sec_nonce, &VTXO_VECTORS.server_key,
+		).unwrap();
 
-		let (ff_sighash, ff_tx) = hark_forfeit_sighash(vtxo, unlock_hash);
+		let user_pubkey = vtxo.user_pubkey().unwrap();
+		let (ff_sighash, ff_tx) = hark_forfeit_sighash(vtxo, user_pubkey, unlock_hash);
 		SECP.verify_schnorr(
 			&sig,
 			&ff_sighash.into(),
@@ -384,7 +406,7 @@ mod test {
 
 		// validate the actual txs
 		let ff_input = vtxo.txout();
-		let ff_tx_expected = create_hark_forfeit_tx(vtxo, unlock_hash, Some(&sig));
+		let ff_tx_expected = create_hark_forfeit_tx(vtxo, user_pubkey, unlock_hash, Some(&sig));
 		assert_eq!(ff_tx_expected, tx);
 		verify_tx(&[ff_input], 0, &ff_tx_expected).expect("forfeit tx error");
 		assert_eq!(ff_tx_expected.compute_txid(), ff_point.txid);
@@ -407,7 +429,7 @@ mod test {
 			unlock_hash,
 			&VTXO_VECTORS.arkoor3_user_key,
 			&server_pub_nonce,
-		);
+		).unwrap();
 
 		// test encoding round trip
 		let encoded = bundle.serialize();
