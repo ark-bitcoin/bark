@@ -710,11 +710,11 @@ impl Server {
 				if tx.get_virtual_transaction_by_txid(utxo.txid).await?.is_some() {
 					return badarg!("invalid funding tx: known as virtual tx: {}", utxo.txid);
 				}
-				for inp in &funding_tx.input {
-					let vtxo_id = inp.previous_output.into();
-					if tx.try_get_bare_vtxo_by_id(vtxo_id).await?.is_some() {
-						return badarg!("invalid funding tx: input is a VTXO: {}", vtxo_id);
-					}
+				let input_ids = funding_tx.input.iter()
+					.map(|i| VtxoId::from(i.previous_output))
+					.collect::<Vec<_>>();
+				if let Some(vtxo_id) = tx.get_existing_vtxos_by_id(&input_ids).await?.into_keys().next() {
+					return badarg!("invalid funding tx: input is a VTXO: {}", vtxo_id);
 				}
 				Ok(())
 			}).await?;

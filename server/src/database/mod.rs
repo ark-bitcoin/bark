@@ -392,6 +392,13 @@ impl<'t> Tx<'t> {
 		query::try_get_bare_vtxo_by_id(&self, id).await
 	}
 
+	pub async fn get_existing_vtxos_by_id(
+		&self,
+		ids: &[VtxoId],
+	) -> anyhow::Result<HashMap<VtxoId, VtxoState<Full, ServerVtxoPolicy>>> {
+		query::get_existing_vtxos_by_id(&self, ids).await
+	}
+
 	pub async fn get_bare_vtxo_by_id(
 		&self,
 		id: VtxoId,
