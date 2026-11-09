@@ -1269,39 +1269,84 @@ async fn double_spend_round() {
 
 	let ctx = TestContext::new("server/double_spend_round").await;
 
-	/// This proxy will duplicate all round payment submission requests.
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark".to_string(), &srv).funded(sat(1_000_000)).create().await;
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let bark_client = bark.client().await;
+	let [vtxo] = bark.vtxos().await.try_into().unwrap();
+
+	/// This proxy submits every round payment twice. The second copy spends
+	/// the same input under another cosign key, with an attestation of its
+	/// own so that it gets past the attestation check.
 	#[derive(Clone)]
-	struct Proxy;
+	struct Proxy {
+		vtxo: WalletVtxoInfo,
+		wallet: Wallet,
+		challenge: Arc<Mutex<Option<Challenge>>>,
+	}
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn subscribe_rounds(
+			&self, upstream: &mut ArkClient, req: protos::Empty,
+		) -> Result<Box<
+			dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
+		>, tonic::Status> {
+			let stream = upstream.subscribe_rounds(req).await?.into_inner();
+
+			let shared = self.challenge.clone();
+
+			let s = stream.inspect_ok(move |event| {
+				if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
+					let challenge = Challenge::new(m.round_attempt_challenge.clone().try_into().unwrap());
+					shared.try_lock().unwrap().replace(challenge);
+				}
+			});
+
+			Ok(Box::new(s))
+		}
+
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
 		) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
-			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0].vtxo_id).unwrap();
-
 			let (mut c1, mut c2) = (upstream.clone(), upstream.clone());
 			let res1 = c1.submit_payment(req.clone()).await;
+
 			// avoid duplicate cosign key error
 			req.vtxo_requests[0].cosign_pubkey = Vec::<u8>::from_hex(
 				"028d887bb64dfea78040e7f94284245ea4468c003105d207f9b82cf8d6a66a9064",
 			).unwrap();
+			let vtxo_requests = req.vtxo_requests.iter().map(|r| {
+				SignedVtxoRequest {
+					vtxo: r.vtxo.clone().unwrap().try_into().unwrap(),
+					cosign_pubkey: PublicKey::from_slice(&r.cosign_pubkey).unwrap(),
+					nonces: vec![],
+				}
+			}).collect::<Vec<_>>();
+			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).await.unwrap().unwrap();
+			let challenge = *self.challenge.lock().await.as_ref().unwrap();
+			req.input_vtxos[0].attestation = RoundAttemptAttestation::new(
+				challenge, self.vtxo.id, &vtxo_requests, &keypair,
+			).serialize();
 			let res2 = c2.submit_payment(req).await;
 
-			assert!(res1.is_ok());
+			assert!(res1.is_ok(), "first submission failed: {:?}", res1.as_ref().err());
 			let err = res2.unwrap_err();
 			assert!(err.message().contains(
-				&format!("vtxo {} already registered", vtxoid),
+				&format!("vtxo {} already registered", self.vtxo.id),
 			), "err: {err}");
 			Ok(res1.unwrap().into_inner())
 		}
 	}
 
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
-	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
-
-	let bark = ctx.bark("bark".to_string(), &proxy.address).funded(sat(1_000_000)).create().await;
-	bark.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	let proxy = Proxy {
+		vtxo: vtxo.clone(),
+		wallet: bark_client,
+		challenge: Arc::new(Mutex::new(None)),
+	};
+	let proxy = srv.start_proxy_no_mailbox(proxy).await;
+	bark.set_ark_url(&proxy.address).await;
 
 	let mut l = srv.subscribe_log::<RoundUserVtxoAlreadyRegistered>();
 	tokio::join!(
