@@ -331,6 +331,10 @@ pub struct VtxoPool {
 	started: AtomicBool,
 
 	data: Arc<parking_lot::Mutex<Data>>,
+	/// Wakes the issuance process when a send finds the pool empty
+	issue_trigger: Arc<tokio::sync::Notify>,
+	/// Wakes the issuance process when a send takes vtxos from the pool
+	check_trigger: Arc<tokio::sync::Notify>,
 }
 
 impl VtxoPool {
@@ -524,14 +528,17 @@ impl VtxoPool {
 		F: AsyncFnOnce(&database::Tx<'_>, &[Vtxo<Full>]) -> anyhow::Result<()>,
 	{
 		let Some(inputs) = TakenInputs::take(&self.data, dest.total_amount) else {
+			self.issue_trigger.notify_one();
 			bail!("vtxo pool is empty");
 		};
 
 		let sent = self.prepare_arkoor(srv, dest, inputs, commit).await?;
 		update_all_bucket_metrics(&self.data);
+		self.check_trigger.notify_one();
 		Ok(sent)
 	}
 
+	/// Loads the pool from the database, call [Self::start] to begin issuance.
 	pub async fn new(config: Config, db: &database::Db) -> anyhow::Result<VtxoPool> {
 		let data = Data::load_from_db(db, config.max_vtxo_exit_depth).await?;
 
@@ -539,9 +546,12 @@ impl VtxoPool {
 			config,
 			started: false.into(),
 			data: Arc::new(parking_lot::Mutex::new(data)),
+			issue_trigger: Arc::new(tokio::sync::Notify::new()),
+			check_trigger: Arc::new(tokio::sync::Notify::new()),
 		})
 	}
 
+	/// Spawns the issuance process, later calls do nothing.
 	pub fn start(
 		&self,
 		srv: Arc<Server>,
@@ -561,6 +571,8 @@ impl VtxoPool {
 			srv: srv.clone(),
 			config: self.config.clone(),
 			data: self.data.clone(),
+			issue_trigger: self.issue_trigger.clone(),
+			check_trigger: self.check_trigger.clone(),
 			sync_height_rx,
 		};
 		tokio::spawn(proc.run());
@@ -572,6 +584,8 @@ struct Process {
 	config: Config,
 
 	data: Arc<parking_lot::Mutex<Data>>,
+	issue_trigger: Arc<tokio::sync::Notify>,
+	check_trigger: Arc<tokio::sync::Notify>,
 
 	/// Issuance occurs after a sync has completed
 	sync_height_rx: tokio::sync::watch::Receiver<BlockRef>,
@@ -739,11 +753,13 @@ impl Process {
 		Ok(())
 	}
 
+	/// Returns the vtxos to issue per target, and whether a target is below
+	/// its issue threshold.
 	fn calculate_required_issuance(
 		&self,
 		expiry_threshold: BlockHeight,
 	) -> (Vec<(Amount, usize)>, bool) {
-		info!("Checking vtxo pool issuance with expiry threshold {:?}", expiry_threshold);
+		debug!("Checking vtxo pool issuance with expiry threshold {:?}", expiry_threshold);
 		let mut data = self.data.lock();
 		data.prune_expiring(expiry_threshold);
 
@@ -765,12 +781,15 @@ impl Process {
 		(issuance, must_issue)
 	}
 
+	/// Issues vtxos if the pool is below its threshold, or if `force` is set.
+	///
+	/// Returns whether an issuance ran.
 	#[tracing::instrument(
 		name = "vtxo_pool_issuance"
 		skip(self),
 		fields(otel.kind = "server")
 	)]
-	async fn check_maybe_issue_vtxos(&self) -> anyhow::Result<()> {
+	async fn check_maybe_issue_vtxos(&self, force: bool) -> anyhow::Result<bool> {
 		let tip = self.srv.chain_tip().height;
 		let threshold = tip + self.config.vtxo_pre_expiry;
 
@@ -779,25 +798,45 @@ impl Process {
 		let (issuance, must_issue) = self.calculate_required_issuance(threshold);
 		update_all_bucket_metrics(&self.data);
 
-		if must_issue {
+		if must_issue || force {
 			self.issue_vtxos(issuance).await?;
+			return Ok(true);
 		}
 
-		Ok(())
+		Ok(false)
 	}
 
+	/// Checks issuance after every sync, and when a send wakes it.
 	async fn run(mut self) {
 		let _worker = self.srv.rtmgr.spawn_critical("VtxoPool");
 
+		let mut force_issue = false;
+		let mut last_forced = None;
+		let mut last_failed = None;
 		loop {
 			// Don't issue until we are fully caught up: the wallet only holds
 			// every confirmed utxo once we reach the tip. Comparing the whole
 			// block ref also holds off on an equal-height reorg, where the tip
 			// has moved to another block of the same height.
-			let synced = *self.sync_height_rx.borrow() == self.srv.chain_tip();
-			if synced {
-				if let Err(e) = self.check_maybe_issue_vtxos().await {
-					error!("Error from VTXO pool: {:#}", e);
+			let tip = self.srv.chain_tip();
+			let synced = *self.sync_height_rx.borrow() == tip;
+			// After a failed issuance, wait for the next block before trying
+			// again, so we don't retry on every send from the pool.
+			if synced && last_failed.as_ref() != Some(&tip) {
+				// Force at most once per block to bound issuance txs.
+				let force = force_issue && last_forced.as_ref() != Some(&tip);
+				if force {
+					last_forced = Some(tip);
+				}
+				match self.check_maybe_issue_vtxos(force).await {
+					// Any issuance refills the pool, so a pending force is no
+					// longer needed.
+					Ok(true) => force_issue = false,
+					Ok(false) => {},
+					Err(e) => {
+						error!("Error from VTXO pool: {:#}", e);
+						last_failed = Some(tip);
+					},
 				}
 			}
 
@@ -808,6 +847,11 @@ impl Process {
 						return;
 					}
 				},
+				_ = self.issue_trigger.notified() => {
+					info!("VTXO pool ran empty, requesting forced issuance");
+					force_issue = true;
+				},
+				_ = self.check_trigger.notified() => {},
 				_ = self.srv.rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting VtxoPool...");
 					return;
