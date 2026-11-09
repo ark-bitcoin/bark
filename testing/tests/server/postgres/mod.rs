@@ -2584,9 +2584,14 @@ async fn round_participation_mailbox() {
 	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, 0, 10).await).await.unwrap();
 	assert!(messages.is_empty());
 
-	// Store hash1
-	let cp1 = db.write(async |t| t.store_round_participation_in_mailbox(mailbox_id, hash1).await).await
-		.unwrap().expect("should return a checkpoint");
+	// Nothing to store yields no checkpoint
+	let cp = db.write(async |t| t.store_round_participations_in_mailbox([]).await).await.unwrap();
+	assert_eq!(cp, None);
+
+	// Store hash1, once for each of its outputs
+	let cp1 = db.write(async |t| t.store_round_participations_in_mailbox(
+		[(mailbox_id, hash1), (mailbox_id, hash1), (mailbox_id, hash1)],
+	).await).await.unwrap().expect("should return a checkpoint");
 
 	// Fetch from checkpoint 0 – should return hash1
 	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, 0, 10).await).await.unwrap();
@@ -2599,8 +2604,8 @@ async fn round_participation_mailbox() {
 	assert_eq!(unlock_hash, hash1);
 
 	// Store hash2
-	let cp2 = db.write(async |t| t.store_round_participation_in_mailbox(mailbox_id, hash2).await).await
-		.unwrap().expect("should return a checkpoint");
+	let cp2 = db.write(async |t| t.store_round_participations_in_mailbox([(mailbox_id, hash2)]).await)
+		.await.unwrap().expect("should return a checkpoint");
 	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
 
 	// Fetch from cp1 – should only return hash2

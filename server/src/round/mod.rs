@@ -1367,28 +1367,24 @@ async fn persist_round(
 			&state.interactive_participants,
 		).await?;
 
-		// Post VTXOs to mailboxes for wallet recovery support.
+		// Post participations to mailboxes for wallet recovery support.
 		// This is done after the round is persisted so VTXOs exist in the DB.
-		// Skip adding VTXOs which have None for their unblinded_mailbox_id.
-		for (vtxo, mailbox_id) in signed_vtxos.output_vtxos().zip(state.output_mailbox_ids.iter()) {
-			let Some(mailbox_id) = mailbox_id else {
-				continue; // Skip padding VTXOs
-			};
-			let Some(unlock_hash) = vtxo.unlock_hash() else {
-				continue; // Skip VTXOs without unlock hash
-			};
-			match t.store_round_participation_in_mailbox(*mailbox_id, unlock_hash).await {
-				Ok(checkpoint) => {
-					if let Some(cp) = checkpoint {
-						srv.mailbox_manager.notify(*mailbox_id, cp);
-					}
-					trace!("Posted round VTXO {} to mailbox", vtxo.id());
+		// Skip VTXOs without a mailbox id (padding) or unlock hash.
+		let participations = signed_vtxos.output_vtxos().zip(state.output_mailbox_ids.iter())
+			.filter_map(|(vtxo, mailbox_id)| Some(((*mailbox_id)?, vtxo.unlock_hash()?)))
+			.collect::<Vec<_>>();
+		match t.store_round_participations_in_mailbox(participations.iter().copied()).await {
+			Ok(Some(cp)) => {
+				let mailbox_ids = participations.iter().map(|(m, _)| *m).collect::<HashSet<_>>();
+				for mailbox_id in mailbox_ids {
+					srv.mailbox_manager.notify(mailbox_id, cp);
 				}
-				Err(e) => {
-					// Log but don't fail the round - mailbox delivery is best-effort
-					warn!("Failed to post round VTXO {} to mailbox: {:#}", vtxo.id(), e);
-				}
-			}
+				trace!("Posted {} round participations to mailboxes", participations.len());
+			},
+			Ok(None) => {},
+			Err(e) => {
+				warn!("Failed to post round participations to mailboxes: {:#}", e);
+			},
 		}
 
 		Ok(())
