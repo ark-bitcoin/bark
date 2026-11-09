@@ -489,7 +489,7 @@ bark-int-action-reentrancy:
 # to the current binary (migrations run on startup) and asserts the
 # payments keep succeeding.
 # REMINDER: update `tar-and-print-test-data` job when adding/removing compat jobs
-server-migrations-0.7.1:
+server-migrations-0.8.1:
   interruptible: true
   allow_failure: false
   stage: test
@@ -503,14 +503,14 @@ server-migrations-0.7.1:
     - build
     - build-test-archives
   variables:
-    TEST_DIRECTORY: ./test/server-migrations-0.7.1
+    TEST_DIRECTORY: ./test/server-migrations-0.8.1
     NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT_MILLIS: "30000"
-    OLD_CAPTAIND_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/server-0.7.1/downloads/captaind-0.7.1-linux-x86_64
-    OLD_CAPTAIND_RELEASE_SHA256: 38881e672f06751180f485e4d927487c4bd90363da69449ffee4ba57fde7212a
+    OLD_CAPTAIND_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/server-0.8.1/downloads/captaind-0.8.1-linux-x86_64
+    OLD_CAPTAIND_RELEASE_SHA256: 110991eec8e639dcb7c65cf184b6fe8878ce118ba710a718a0d507d9b9dd6213
   cache:
-    key: captaind-0.7.1
+    key: captaind-0.8.1
     paths:
       - .captaind-release-cache/
   script:
@@ -790,7 +790,7 @@ compat-bark-0.8.1:
 # Runs BOTH binaries, unlike the compat jobs: the release starts an action and
 # this build finishes it. Pinned to the newest release, the pair a new migration
 # has to survive.
-upgrade-bark-0.7.1:
+upgrade-bark-0.8.1:
   interruptible: true
   allow_failure: false
   stage: test
@@ -804,14 +804,14 @@ upgrade-bark-0.7.1:
     - build
     - build-test-archives
   variables:
-    TEST_DIRECTORY: ./test/upgrade-bark-0.7.1
+    TEST_DIRECTORY: ./test/upgrade-bark-0.8.1
     NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT_MILLIS: "30000"
-    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.7.1/downloads/bark-0.7.1-linux-x86_64
-    BARK_RELEASE_SHA256: ce12ba616bdd1a7f97ddcfeb070f44e79308842b529456e5b3947f1332fcdbaf
+    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.8.1/downloads/bark-0.8.1-linux-x86_64
+    BARK_RELEASE_SHA256: 50e715a795691588200580d9110019ea0f006fa35d068adc26cbb457c4e34265
   cache:
-    key: bark-0.7.1
+    key: bark-0.8.1
     paths:
       - .bark-release-cache/
   script:
@@ -831,7 +831,7 @@ upgrade-bark-0.7.1:
 # The same upgrades on filestore. Gated on the persistence code like
 # `bark-filestore`, since the sqlite job above covers the common path. Left on
 # the default chain source so a failure here reads as a persistence problem.
-upgrade-bark-0.7.1-filestore:
+upgrade-bark-0.8.1-filestore:
   interruptible: true
   allow_failure: false
   stage: test
@@ -851,14 +851,14 @@ upgrade-bark-0.7.1-filestore:
     - build-test-archives
   variables:
     USE_FILESTORE: "1"
-    TEST_DIRECTORY: ./test/upgrade-bark-0.7.1-filestore
+    TEST_DIRECTORY: ./test/upgrade-bark-0.8.1-filestore
     NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT_MILLIS: "30000"
-    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.7.1/downloads/bark-0.7.1-linux-x86_64
-    BARK_RELEASE_SHA256: ce12ba616bdd1a7f97ddcfeb070f44e79308842b529456e5b3947f1332fcdbaf
+    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.8.1/downloads/bark-0.8.1-linux-x86_64
+    BARK_RELEASE_SHA256: 50e715a795691588200580d9110019ea0f006fa35d068adc26cbb457c4e34265
   cache:
-    key: bark-0.7.1
+    key: bark-0.8.1
     paths:
       - .bark-release-cache/
   script:
@@ -912,11 +912,11 @@ tar-and-print-test-data:
       optional: true
     - job: compat-bark-0.8.1
       optional: true
-    - job: upgrade-bark-0.7.1
+    - job: upgrade-bark-0.8.1
       optional: true
-    - job: server-migrations-0.7.1
+    - job: server-migrations-0.8.1
       optional: true
-    - job: upgrade-bark-0.7.1-filestore
+    - job: upgrade-bark-0.8.1-filestore
       optional: true
   script:
     - |
