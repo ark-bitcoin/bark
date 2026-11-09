@@ -1,20 +1,21 @@
 
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Address, Network, OutPoint, Script, ScriptBuf, Transaction};
+use bitcoin::{Address, Network, OutPoint, Script, ScriptBuf, Transaction, Txid};
 use bitcoind_async_client::Client as BitcoindClient;
+use bitcoind_async_client::traits::Reader;
 use futures::StreamExt;
 use tokio::io::AsyncBufReadExt;
 use tokio_stream::wrappers::LinesStream;
 use tracing::{debug, error, info, warn};
 
-use crate::bitcoind as bcd;
 use crate::error::ContextExt;
 use crate::system::RuntimeManager;
 
@@ -235,6 +236,8 @@ impl BitcoinAddressBlocklist {
 		// hold up every other check behind them.
 		drop(list);
 
+		// Inputs often share a previous tx, fetch each only once.
+		let mut prev_txs = HashMap::<Txid, Transaction>::new();
 		for (idx, inp) in tx.input.iter().enumerate() {
 			let point = inp.previous_output;
 
@@ -243,14 +246,21 @@ impl BitcoinAddressBlocklist {
 				continue;
 			}
 
-			let utxo = match bcd::get_raw_txout(&self.bitcoind, point).await {
-				Ok(u) => u,
-				Err(e) if e.is_retriable() => {
-					return AddressBlocklistCheckResult::ChainError(e.into());
+			let prev_tx = match prev_txs.entry(point.txid) {
+				Entry::Occupied(e) => e.into_mut(),
+				Entry::Vacant(v) => match self.bitcoind.get_raw_transaction_verbosity_zero(&point.txid).await {
+					Ok(t) => v.insert(t.0),
+					Err(e) if e.is_retriable() => {
+						return AddressBlocklistCheckResult::ChainError(e.into());
+					},
+					Err(e) => {
+						return AddressBlocklistCheckResult::UnknownInput { idx, point, err: e.into() };
+					},
 				},
-				Err(e) => {
-					return AddressBlocklistCheckResult::UnknownInput { idx, point, err: e.into() };
-				},
+			};
+			let Some(utxo) = prev_tx.output.get(point.vout as usize) else {
+				let err = anyhow!("vout out of range");
+				return AddressBlocklistCheckResult::UnknownInput { idx, point, err };
 			};
 			if self.list.read().await.contains(&utxo.script_pubkey) {
 				let addr = Address::from_script(&utxo.script_pubkey, self.network).ok();
