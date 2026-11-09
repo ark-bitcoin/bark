@@ -788,6 +788,9 @@ impl rpc::server::ArkService for Server {
 				Message arrived late or round was full.");
 		};
 
+		if req.vtxo_requests.is_empty() {
+			macros::badarg!("invalid request: no outputs");
+		}
 		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
 		for r in req.vtxo_requests.clone() {
 			// Make sure users provided right number of nonces.
