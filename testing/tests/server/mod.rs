@@ -1548,6 +1548,30 @@ async fn bad_round_input() {
 		"[{}]: {}", err.code(), err.message(),
 	);
 
+	info!("too many inputs");
+	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
+		input_vtxos: vec![input.clone(); server_rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS + 1],
+		vtxo_requests: vec![],
+		#[allow(deprecated)]
+		offboard_requests: vec![],
+		unblinded_mailbox_id: None,
+	}).ready().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+	assert!(err.message().contains("too many inputs"), "[{}]: {}", err.code(), err.message());
+
+	info!("too many delegated inputs");
+	let err = rpc.submit_round_participation(protos::RoundParticipationRequest {
+		input_vtxos: vec![input.clone(); server_rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS + 1],
+		vtxo_requests: vec![protos::VtxoRequest {
+			amount: vtxo_req.vtxo.amount.to_sat(),
+			policy: vtxo_req.vtxo.policy.serialize(),
+		}],
+		unblinded_mailbox_id: None,
+		scheduled_height: None,
+	}).ready().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+	assert!(err.message().contains("too many inputs"), "[{}]: {}", err.code(), err.message());
+
 	info!("unknown input");
 	let fake_vtxo = VtxoId::from_slice(&rand::random::<[u8; 36]>()[..]).unwrap();
 	let fake_input = protos::InputVtxo {

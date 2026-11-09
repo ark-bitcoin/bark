@@ -771,6 +771,10 @@ impl rpc::server::ArkService for Server {
 				in order to be able to participate in rounds.");
 		}
 
+		if req.input_vtxos.len() > rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS {
+			macros::badarg!("too many inputs, max is {}", rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS);
+		}
+
 		let inputs = req.input_vtxos.iter().map(|input| {
 			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
 			let attestation = RoundAttemptAttestation::from_bytes(&input.attestation)?;
@@ -868,6 +872,10 @@ impl rpc::server::ArkService for Server {
 		if pver < server_rpc::pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES {
 			macros::badarg!("Your client version is too old, you need to update \
 				in order to be able to participate in rounds.");
+		}
+
+		if req.input_vtxos.len() > rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS {
+			macros::badarg!("too many inputs, max is {}", rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS);
 		}
 
 		let inputs =  req.input_vtxos.iter().map(|input| {

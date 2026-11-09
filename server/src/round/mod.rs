@@ -34,6 +34,7 @@ use ark::tree::signed::{
 	VtxoLeafSpec, VtxoTreeSpec,
 };
 use server_log::{LogMsg, RoundVtxoCreated};
+use server_rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS;
 
 use crate::database::rounds::{StoredRoundOutput, StoredRoundParticipation};
 use crate::database::tree::VtxoTreeUpdate;
@@ -2036,6 +2037,9 @@ impl Server {
 	) -> anyhow::Result<UnlockHash> {
 		if inputs.is_empty() {
 			return badarg!("invalid request: no inputs");
+		}
+		if inputs.len() > MAX_NB_ROUND_PARTICIPATION_INPUTS {
+			return badarg!("too many inputs, max is {}", MAX_NB_ROUND_PARTICIPATION_INPUTS);
 		}
 		if outputs.is_empty() {
 			return badarg!("invalid request: no outputs");
