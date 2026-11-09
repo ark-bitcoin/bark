@@ -89,6 +89,9 @@ impl Server {
 		api_key: uuid::Uuid,
 		token: &str,
 	) -> anyhow::Result<(Integration, IntegrationApiKey, IntegrationToken)> {
+		if is_hardcoded_captaind_key(api_key) {
+			return badarg!("Accessing tokens is not permitted for the built-in captaind API keys");
+		}
 		let integration_api_key = self.db.read(async |t| t.get_integration_api_key_by_api_key(api_key).await).await?;
 		let (integration, integration_api_key) =
 			self.verify_integration_api_key(client_address, &integration_api_key).await?;
@@ -96,12 +99,6 @@ impl Server {
 		let integration_token = self.verify_integration_token(
 			&integration, integration_token,
 		).await?;
-		if is_hardcoded_captaind_key(api_key)
-			&& integration_token.created_by_api_key_id != integration_api_key.id
-		{
-			return badarg!("Built-in captaind API keys may only operate on tokens they created");
-		}
-
 		Ok((integration, integration_api_key, integration_token))
 	}
 

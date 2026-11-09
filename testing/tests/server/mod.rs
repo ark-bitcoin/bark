@@ -406,6 +406,24 @@ async fn integration_preserves_operator_abuse_classification() {
 		token,
 	}).await.unwrap().into_inner();
 	assert_eq!(info.status, protos::intman::TokenStatus::Abused as i32);
+
+	// The built-in CLI key is public, so it can't touch tokens over RPC, not
+	// even the captaind tokens the CLI created with it.
+	srv.integration_cmd(&["configure-token-type", "captaind", "single-use-board", "1", "60"]).await;
+	let stdout = srv.integration_cmd(&["generate-token", "captaind", "single-use-board"]).await;
+	let cli_token = stdout.split_whitespace().last().unwrap().to_string();
+	let cli_key = server::CAPTAIND_CLI_API_KEY.to_string();
+	let err = client.update_token(protos::intman::UpdateTokenRequest {
+		api_key: cli_key.clone(),
+		token: cli_token.clone(),
+		status: protos::intman::TokenStatus::Abused.into(),
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err.message());
+	let err = client.get_token_info(protos::intman::TokenInfoRequest {
+		api_key: cli_key,
+		token: cli_token,
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err.message());
 }
 
 #[tokio::test]
