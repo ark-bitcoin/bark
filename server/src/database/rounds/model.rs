@@ -53,6 +53,9 @@ pub struct StoredRoundParticipation {
 	/// Block height at which the refresh is scheduled,
 	/// [None] for the next round.
 	pub scheduled_height: Option<BlockHeight>,
+	/// The raw `x-user-agent` of the client that submitted the
+	/// participation, [None] if it sent none.
+	pub user_agent: Option<String>,
 }
 
 #[derive(Debug, Clone)]
