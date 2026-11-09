@@ -371,9 +371,10 @@ async fn watchman_reindexes_frontier() {
 	// bitcoind: invalidate its block and mine empty blocks in its place, so
 	// the chain doesn't get shorter. We forget the invalidated blocks from
 	// the watchman's block index, so it never sees the reorg and syncs the
-	// replacement blocks as new ones: the board vtxo keeps its now stale
-	// confirmation height. The other nodes stay on the original chain
-	// until the watchman's node mines the longer one at the end.
+	// replacement blocks as new ones. Its startup rollback to the highest
+	// stored block clears the stale state above it, so we write that back
+	// after the restart. The other nodes stay on the original chain until the
+	// watchman's node mines the longer one at the end.
 	let wm_bitcoind = wm.bitcoind().sync_client();
 	let board3_block = wm_bitcoind.get_block_hash(board3_height.to_u32() as u64).unwrap();
 	wm_bitcoind.invalidate_block(&board3_block).unwrap();
@@ -483,6 +484,22 @@ async fn watchman_reindexes_frontier() {
 	generate_empty_blocks(&wm_bitcoind, 1);
 	wm.wait_for_sync_height(tip + 1).await;
 
+	// What the reorg the watchman never saw leaves behind: bark3's board vtxo
+	// keeps its confirmation, and the payment checkpoint its spend by bark3's
+	// board tx.
+	db.write(async |t| {
+		t.execute(
+			"UPDATE vtxo SET confirmed_height = $2, updated_at = NOW() WHERE vtxo_id = $1",
+			&[&board3_id, &(board3_height.to_u32() as i32)],
+		).await?;
+		t.execute(
+			"UPDATE vtxo SET onchain_spent_height = $2, onchain_spent_txid = $3, \
+			updated_at = NOW() WHERE vtxo_id = $1",
+			&[&payment_id, &(board3_height.to_u32() as i32), &board3_txid.to_string()],
+		).await?;
+		Ok(())
+	}).await.unwrap();
+
 	let stats = wm.reindex_frontier().await;
 	println!("Reindex stats: {:#?}", stats);
 	assert_eq!(1, stats.confirmations_repaired, "payment checkpoint confirmation");
@@ -513,7 +530,8 @@ async fn watchman_reindexes_frontier() {
 				FROM vtxo WHERE vtxo_id = $1) AND \
 			(SELECT onchain_spent_height IS NOT NULL FROM vtxo WHERE vtxo_id = $2) AND \
 			(SELECT frontier_at IS NOT NULL AND confirmed_height IS NOT NULL \
-				AND onchain_spent_height IS NULL FROM vtxo WHERE vtxo_id = $3) AND \
+				AND onchain_spent_height IS NULL AND onchain_spent_txid IS NULL \
+				FROM vtxo WHERE vtxo_id = $3) AND \
 			(SELECT frontier_at IS NOT NULL FROM vtxo WHERE vtxo_id = $4) AND \
 			(SELECT frontier_at IS NOT NULL AND onchain_spent_height IS NOT NULL \
 				FROM vtxo WHERE vtxo_id = $5) AND \

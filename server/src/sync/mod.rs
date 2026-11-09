@@ -70,6 +70,8 @@ pub trait ChainEventListener: Send + Sync {
 	///
 	/// Reorgs can be of arbitrary depth. Implementations should roll back any
 	/// state that depended on blocks after the fork point.
+	///
+	/// Also called once on startup with the indexed tip.
 	async fn on_reorg(&self, block_ref: BlockRef) -> anyhow::Result<()>;
 
 	/// Called when the mempool has been polled.
