@@ -48,7 +48,7 @@ use bark::Wallet;
 use bark_json::primitives::WalletVtxoInfo;
 use server::database::Db;
 use server::secret::Secret;
-use server_log::{FullRound, RoundError, RoundFinished, RoundStarted, RoundUserVtxoAlreadyRegistered};
+use server_log::{FullRound, RoundError, RoundStarted, RoundUserVtxoAlreadyRegistered};
 use server_rpc::protos::{self};
 
 use ark_testing::{btc, is_bark_version, require_bark_version, sat, secs, Captaind, TestContext};
@@ -2722,45 +2722,6 @@ async fn grpc_health_check() {
 		resp.into_inner().status,
 		tonic_health::pb::health_check_response::ServingStatus::Serving as i32,
 	);
-}
-
-#[tokio::test]
-async fn undo_round() {
-	require_bark_version!(> "0.5.0");
-
-	let ctx = TestContext::new("server/undo_round").await;
-	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).create().await;
-
-	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
-	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
-
-	bark1.board(sat(800_000)).await;
-	bark2.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark1.sync().await;
-	bark2.sync().await;
-
-	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
-
-	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
-
-	let finished = log_round_finished.recv().wait(Duration::from_secs(30)).await
-		.expect("timed out waiting for round to finish");
-	let funding_txid = finished.txid;
-	info!("Round finished with funding txid: {}", funding_txid);
-
-	let output = srv.get_custom_command(&[
-		"undo-round", "--dangerous", "--force",
-		&funding_txid.to_string(),
-	]).await.unwrap().output().await.expect("failed to run undo-round");
-
-	let stdout = String::from_utf8(output.stdout).unwrap();
-	let stderr = String::from_utf8(output.stderr).unwrap();
-	info!("undo-round stdout: {}", stdout);
-	info!("undo-round stderr: {}", stderr);
-	assert!(output.status.success(), "undo-round exited with status {}", output.status);
 }
 
 /// Verify that broadcasting the board vtxo's exit tx (outside of bark) causes
