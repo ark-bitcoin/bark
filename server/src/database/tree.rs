@@ -33,10 +33,6 @@ struct RoundForfeitUpdate {
 	txid: Txid,
 }
 
-struct UndoRoundUpdate {
-	round_id: i64,
-}
-
 // -- Internal types --
 
 /// Pre-built column arrays for a batched VTXO INSERT using UNNEST.
@@ -143,7 +139,6 @@ struct VtxoUpdates {
 	round_spends: Vec<RoundSpendUpdate>,
 	offboard_spends: Vec<OffboardSpendUpdate>,
 	round_forfeits: Vec<RoundForfeitUpdate>,
-	round_unspends: Vec<UndoRoundUpdate>,
 	claims: Vec<VtxoId>,
 	registrations: Vec<VtxoId>,
 }
@@ -156,7 +151,6 @@ impl VtxoUpdates {
 			round_spends: Vec::new(),
 			offboard_spends: Vec::new(),
 			round_forfeits: Vec::new(),
-			round_unspends: Vec::new(),
 			claims: Vec::new(),
 			registrations: Vec::new(),
 		}
@@ -379,18 +373,6 @@ impl VtxoTreeUpdate {
 		self
 	}
 
-	/// Undo a round spend: set vtxos spent in the given round back to spendable.
-	///
-	/// Clears `spent_in_round` and `oor_spent_txid` (which may have been set
-	/// by a subsequent forfeit recording) and resets `spend_state` to
-	/// `'spendable'`.
-	///
-	/// Idempotent: if no vtxos match the round, nothing happens.
-	pub fn undo_round(mut self, round_id: i64) -> Self {
-		self.vtxo_updates.round_unspends.push(UndoRoundUpdate { round_id });
-		self
-	}
-
 	/// Transition unclaimed vtxos to spendable.
 	///
 	/// Always idempotent: succeeds even if already claimed. Vtxos that
@@ -593,7 +575,6 @@ async fn apply_vtxo_updates(
 	do_round_spend_updates(tx, &vu.round_spends).await?;
 	do_offboard_spend_updates(tx, &vu.offboard_spends).await?;
 	do_round_forfeit_updates(tx, &vu.round_forfeits).await?;
-	do_undo_round_updates(tx, &vu.round_unspends).await?;
 	do_claim_updates(tx, &vu.claims).await?;
 	do_register_updates(tx, &vu.registrations).await?;
 
@@ -786,22 +767,6 @@ async fn do_round_forfeit_updates(
 		}
 		bail!("vtxo not round-spent or already forfeited differently: {}", vtxo_id);
 	}
-	Ok(())
-}
-
-/// Undo a round spend: reset vtxos spent in the given rounds back to spendable.
-/// Idempotent: if no vtxos match, nothing happens.
-async fn do_undo_round_updates(
-	tx: &tokio_postgres::Transaction<'_>,
-	unspends: &[UndoRoundUpdate],
-) -> anyhow::Result<()> {
-	if unspends.is_empty() { return Ok(()) }
-	let round_ids: Vec<i64> = unspends.iter().map(|s| s.round_id).collect();
-	tx.execute("
-		UPDATE vtxo
-		SET spend_state = 'spendable', spent_in_round = NULL, oor_spent_txid = NULL, updated_at = NOW()
-		WHERE spent_in_round = ANY($1::int8[])
-	", &[&round_ids]).await.context("failed to undo round spend on VTXOs")?;
 	Ok(())
 }
 
