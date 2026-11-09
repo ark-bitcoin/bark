@@ -204,7 +204,7 @@ async fn lightning_send_parked_at_start_completes_after_upgrade() {
 	let _ = old.try_pay_lightning(invoice.clone(), None, false).await;
 	old.unset_timeout();
 
-	assert_parked_at(&old, "ln_send.Start").await;
+	assert_parked_at(&old, "ln_send.InputsLocked").await;
 
 	let new = old.upgraded().await;
 	assert_upgrade_spans_builds(&old, &new).await;
