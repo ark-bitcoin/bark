@@ -177,7 +177,7 @@ alias int-server-migrations := test-integration-server-migrations
 # migration doesn't strand an in-flight payment. See
 # contrib/agents/skills/upgrade-tests.md.
 #
-#   OLD_BARK_EXEC=$(python3 contrib/fetch-bark-release.py --version 0.7.1) \
+#   OLD_BARK_EXEC=$(python3 contrib/fetch-bark-release.py --version 0.8.1) \
 #     just int-upgrade
 #
 # USE_FILESTORE=1 runs the same upgrades on the filestore backend. TEST is a
