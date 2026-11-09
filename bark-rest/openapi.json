@@ -3601,6 +3601,7 @@
           "fees",
           "max_vtxo_exit_depth",
           "max_offboard_inputs",
+          "max_round_participation_outputs",
           "vtxo_expiry_delta"
         ],
         "properties": {
@@ -3631,6 +3632,11 @@
           "max_offboard_inputs": {
             "type": "integer",
             "description": "The maximum number of inputs for an offboard",
+            "minimum": 0
+          },
+          "max_round_participation_outputs": {
+            "type": "integer",
+            "description": "The maximum number of outputs of a single round participation",
             "minimum": 0
           },
           "max_user_invoice_cltv_delta": {

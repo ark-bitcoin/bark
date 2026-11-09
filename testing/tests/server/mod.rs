@@ -36,7 +36,7 @@ use ark::{
 };
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
-use ark::attestations::ArkoorCosignAttestation;
+use ark::attestations::{ArkoorCosignAttestation, DelegatedRoundParticipationAttestation};
 use ark::attestations::VtxoStatusAttestation;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::rounds::{Challenge, RoundAttemptAttestation, RoundEvent, RoundSeq};
@@ -970,6 +970,7 @@ async fn full_round() {
 		cfg.round_submit_time = Duration::from_millis(15_000);
 		cfg.round_sign_time = Duration::from_millis(10_000);
 		cfg.nb_round_nonces = 2;
+		cfg.max_round_participation_outputs = 16;
 		cfg.min_board_amount = sat(0);
 	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
@@ -2785,6 +2786,7 @@ async fn scheduled_height_must_not_poison_round_loading() {
 		// Run the coordinator's database read in this test, not the daemon.
 		cfg.round_interval = Duration::from_secs(10_000_000);
 		cfg.fees.refresh.base_fee = Amount::ZERO;
+		cfg.max_round_participation_outputs = 4;
 	}).create().await;
 	let db = Db::connect(&srv.config().postgres).await.unwrap();
 
@@ -2805,6 +2807,29 @@ async fn scheduled_height_must_not_poison_round_loading() {
 		t.get_all_pending_round_participations(BlockHeight::ZERO).await
 	}).await.expect("a public request must not poison round loading");
 	assert!(pending.is_empty());
+
+	// A participation over the limit is refused before it is stored.
+	let outputs = (0..5).map(|_| VtxoRequest {
+		policy: VtxoPolicy::new_pubkey(Keypair::new(&SECP, &mut thread_rng()).public_key()),
+		amount: sat(1_000),
+	}).collect::<Vec<_>>();
+	let input_id = VtxoId::from(bitcoin::OutPoint::new(bitcoin::Txid::from_byte_array([1; 32]), 0));
+	let attestation = DelegatedRoundParticipationAttestation::new(
+		input_id, &outputs, &Keypair::new(&SECP, &mut thread_rng()),
+	);
+	let err = srv.get_public_rpc().await.submit_round_participation(
+		protos::RoundParticipationRequest {
+			input_vtxos: vec![protos::InputVtxo {
+				vtxo_id: input_id.to_bytes().to_vec(),
+				attestation: attestation.serialize(),
+			}],
+			vtxo_requests: outputs.iter().map(protos::VtxoRequest::from).collect(),
+			unblinded_mailbox_id: None,
+			scheduled_height: None,
+		},
+	).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err.message());
+	assert!(err.message().contains("too many outputs"), "{}", err.message());
 }
 
 #[tokio::test]

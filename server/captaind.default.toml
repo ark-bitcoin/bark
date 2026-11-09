@@ -111,6 +111,11 @@ round_sign_time = "2s"
 #   `radix ^ nb_round_nonces` (= 4 ^ 8 = 65 536)
 nb_round_nonces = 8
 
+# The maximum number of outputs of a single round participation
+#
+# It has to fit in a round, so at most `radix ^ nb_round_nonces`.
+max_round_participation_outputs = 4
+
 # The duration after which to drop forfeit nonces
 round_forfeit_nonces_timeout = "30s"
 

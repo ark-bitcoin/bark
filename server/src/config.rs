@@ -209,6 +209,9 @@ mod defaults {
 
 	/// Pending offboard sessions may lock a quarter of the rounds wallet.
 	pub fn offboard_max_locked_percent() -> u8 { 25 }
+
+	/// A round participation may have at most this many outputs.
+	pub fn max_round_participation_outputs() -> usize { 4 }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -283,6 +286,11 @@ pub struct Config {
 	#[serde(with = "utils::serde::duration")]
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
+	/// The maximum number of outputs of a single round participation.
+	///
+	/// Must fit in a round, so at most `4 ^ nb_round_nonces`.
+	#[serde(default = "defaults::max_round_participation_outputs")]
+	pub max_round_participation_outputs: usize,
 	/// The duration after which to drop forfeit nonces
 	#[serde(with = "utils::serde::duration")]
 	pub round_forfeit_nonces_timeout: Duration,
@@ -610,6 +618,16 @@ impl Config {
 			);
 		}
 
+		let round_capacity = 4_usize.saturating_pow(self.nb_round_nonces as u32);
+		if self.max_round_participation_outputs == 0
+			|| self.max_round_participation_outputs > round_capacity
+		{
+			bail!("Invalid configuration: max_round_participation_outputs ({}) must be \
+				between 1 and the round capacity 4 ^ nb_round_nonces ({})",
+				self.max_round_participation_outputs, round_capacity,
+			);
+		}
+
 		// At 0 the wallet trusts every unconfirmed tx, including deposits
 		// from third parties, so coin selection would spend outputs that
 		// a double-spend can still invalidate.
@@ -897,6 +915,21 @@ mod test {
 		let cfg = load(Path::new(DEFAULT_CAPTAIND_CONFIG_PATH), "10m");
 		assert_eq!(cfg.cln_xpay_max_retry_for, Duration::from_secs(5 * 60));
 		cfg.validate().expect_err("explicit maximum below the timeout");
+	}
+
+	#[test]
+	fn max_round_participation_outputs_must_fit_in_a_round() {
+		let mut cfg = Config::load(Path::new(DEFAULT_CAPTAIND_CONFIG_PATH)).unwrap();
+		cfg.bitcoind.cookie = Some(".cookie".into());
+		cfg.nb_round_nonces = 2;
+		cfg.max_round_participation_outputs = 16;
+		cfg.validate().expect("a whole round fits");
+
+		cfg.max_round_participation_outputs = 17;
+		cfg.validate().expect_err("more than a round holds");
+
+		cfg.max_round_participation_outputs = 0;
+		cfg.validate().expect_err("no outputs at all");
 	}
 
 	#[test]

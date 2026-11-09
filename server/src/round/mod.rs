@@ -173,6 +173,7 @@ fn check_round_inputs_spendable(
 #[derive(Clone)]
 pub struct RoundData {
 	max_output_vtxos: usize,
+	max_participation_outputs: usize,
 	nb_vtxo_nonces: usize,
 	max_vtxo_amount: Option<Amount>,
 	max_round_amount: Option<Amount>,
@@ -412,6 +413,10 @@ impl CollectingPayments {
 				amount: total_output_amount,
 			);
 			return Err(e);
+		}
+
+		if nb_outputs > self.round_data.max_participation_outputs {
+			return badarg!("too many outputs, maximum is {}", self.round_data.max_participation_outputs);
 		}
 
 		if self.all_outputs.len() + nb_outputs > self.round_data.max_output_vtxos {
@@ -709,6 +714,13 @@ impl CollectingPayments {
 		}
 
 		let nb_outputs = participation.outputs.len();
+		// Never fits, not even in an empty round, so drop it instead of retrying.
+		if nb_outputs > self.round_data.max_output_vtxos {
+			return Err(ProcessHarkParticipationError::BadParticipation(anyhow!(
+				"participation has {} outputs, a round holds at most {}",
+				nb_outputs, self.round_data.max_output_vtxos,
+			)));
+		}
 		if self.all_outputs.len() + nb_outputs > self.round_data.max_output_vtxos {
 			warn!("Got payment we don't have space for, dropping");
 			server_rslog!(FullRound, self.round_step,
@@ -1588,6 +1600,7 @@ async fn perform_round(
 		// of vtxo tree nonces we require users to provide.
 		//TODO(stevenroose) should probably reverse the config here
 		max_output_vtxos: 4_usize.saturating_pow(srv.config.nb_round_nonces as u32),
+		max_participation_outputs: srv.config.max_round_participation_outputs,
 		nb_vtxo_nonces: srv.config.nb_round_nonces,
 		max_vtxo_amount: srv.config.max_vtxo_amount,
 		max_round_amount: srv.config.max_round_amount,
@@ -1982,6 +1995,10 @@ impl Server {
 		if outputs.is_empty() {
 			return badarg!("invalid request: no outputs");
 		}
+		let max_outputs = self.config.max_round_participation_outputs;
+		if outputs.len() > max_outputs {
+			return badarg!("too many outputs, maximum is {}", max_outputs);
+		}
 
 		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
 
@@ -2129,6 +2146,7 @@ mod tests {
 	fn create_collecting_payments(max_output_vtxos: usize) -> CollectingPayments {
 		let round_data = RoundData {
 			max_output_vtxos: max_output_vtxos,
+			max_participation_outputs: max_output_vtxos,
 			nb_vtxo_nonces: max_output_vtxos / 3 + 1, // add 1 for rounding
 			max_vtxo_amount: None,
 			max_round_amount: None,
@@ -2346,6 +2364,21 @@ mod tests {
 		let outputs = vec![create_signed_req(
 			inputs[0].amount().to_sat() - 100, &state.round_data,
 		)];
+
+		state.validate_payment_data(&input_ids, &outputs).unwrap_err();
+	}
+
+	#[test]
+	fn test_register_payment_exceeds_max_participation_outputs() {
+		let mut state = create_collecting_payments(4);
+		state.round_data.max_participation_outputs = 1;
+
+		let input = VTXO_VECTORS.round1_vtxo.clone();
+		let input_ids = vec![SelfSignedInput { vtxo_id: input.id(), attestation: *TEST_ATTESTATION }];
+		let outputs = vec![
+			create_signed_req(100, &state.round_data),
+			create_signed_req(100, &state.round_data),
+		];
 
 		state.validate_payment_data(&input_ids, &outputs).unwrap_err();
 	}
