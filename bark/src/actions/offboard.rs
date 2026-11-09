@@ -421,7 +421,8 @@ impl WalletAction for Offboard {
 				Advance::Park {
 					state: Offboard { progress, ..self },
 					wake_after: Some(CONFIRMATION_POLL_INTERVAL),
-					error: None,
+					// Surface a definite rejection to the caller.
+					error: rejection_proves_inputs_spendable(&error).then_some(error),
 				}
 			},
 		}

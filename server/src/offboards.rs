@@ -198,14 +198,7 @@ impl Server {
 			v.check_spendable(tip)?;
 		}
 
-		// Check delivery address against blocklist
-		if let Some(ref list) = self.bitcoin_address_blocklist {
-			if list.check_spk(&request.script_pubkey).await {
-				let address = bitcoin::Address::from_script(&request.script_pubkey, self.config.network)
-					.map(|a| a.to_string()).unwrap_or_else(|_| "<unknown>".to_owned());
-				return badarg!("requested output address is blocked: {}", address);
-			}
-		}
+		self.check_offboard_destination(&request.script_pubkey).await?;
 
 		let valid_fee_duration = self.config.offboard_acceptable_fee_rate_duration;
 		match self.fee_estimator.check_offboard_fee_rate(request.fee_rate, valid_fee_duration) {
@@ -429,6 +422,18 @@ impl Server {
 		Ok(())
 	}
 
+	/// Refuse a delivery address on the blocklist.
+	async fn check_offboard_destination(&self, script_pubkey: &ScriptBuf) -> anyhow::Result<()> {
+		if let Some(ref list) = self.bitcoin_address_blocklist {
+			if list.check_spk(script_pubkey).await {
+				let address = bitcoin::Address::from_script(script_pubkey, self.config.network)
+					.map(|a| a.to_string()).unwrap_or_else(|_| "<unknown>".to_owned());
+				return badarg!("requested output address is blocked: {}", address);
+			}
+		}
+		Ok(())
+	}
+
 	#[tracing::instrument(skip(self, user_pub_nonces, user_partial_sigs))]
 	pub async fn finish_offboard(
 		&self,
@@ -485,6 +490,8 @@ impl Server {
 		).badarg("invalid partial forfeit signatures")?;
 
 		let mut wallet_guard = self.rounds_wallet.lock().await;
+		// The blocklist may have changed since the offboard was prepared.
+		self.check_offboard_destination(&state.request.script_pubkey).await?;
 		let onchain_fee = state.offboard_tx.fee().unwrap_or_else(|e| {
 			warn!("Error getting fee from offboard tx PSBT: {:#}", e);
 			Amount::ZERO
