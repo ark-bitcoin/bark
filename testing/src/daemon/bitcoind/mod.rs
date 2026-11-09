@@ -4,14 +4,15 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Instant;
 
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, Amount, FeeRate, Network, Transaction, Txid};
+use bitcoin::hashes::Hash;
 use bitcoind_async_client::traits::{Reader, Wallet};
 use log::{debug, info};
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use zeromq::{Socket, SocketRecv};
 
 use bark::chain::ChainSourceSpec;
 use bark::tip_watcher::{TipSource, TipWatcher};
@@ -23,6 +24,13 @@ use crate::constants::env::{BITCOIND_EXEC, BITCOINRPC_TIMEOUT_SECS};
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
 use crate::util::{FutureExt, poll_interval, resolve_path, get_tx_propagation_timeout_millis, wait_timeout};
+
+lazy_static! {
+	/// Receives block rewards. Paying an address outside the wallet keeps mining fast.
+	pub static ref RANDOM_ADDR: Address = Address::<NetworkUnchecked>::from_str(
+		"mzU8XRVhUdXtdxmSA3Vw8XeU2FDV4iBDRW"
+	).unwrap().assume_checked();
+}
 
 struct BitcoindRpcTipSource {
 	rpc: rpc::BitcoinRpcClient,
@@ -244,27 +252,34 @@ impl Bitcoind {
 	}
 
 	pub async fn generate(&self, block_num: u32) {
-		lazy_static! {
-			static ref RANDOM_ADDR: Address = Address::<NetworkUnchecked>::from_str(
-				"mzU8XRVhUdXtdxmSA3Vw8XeU2FDV4iBDRW"
-			).unwrap().assume_checked();
-		}
-
 		self.generate_to_address(block_num as u64, &*RANDOM_ADDR).await;
 	}
 
 	pub async fn await_transaction(&self, txid: Txid) -> Transaction {
+		let mut socket = zeromq::SubSocket::new();
+		socket.connect(&self.zmq_url()).await.expect("failed to connect to zmq");
+		socket.subscribe("hashtx").await.expect("failed to subscribe to hashtx");
+
+		// Subscribe before the first lookup, so a tx that arrives in between isn't missed.
 		let client = self.async_client();
-		let start = Instant::now();
-		let timeout = get_tx_propagation_timeout_millis();
-		while Instant::now().duration_since(start).as_millis() < timeout as u128 {
-			if let Ok(result) = client.get_raw_transaction_verbosity_zero(&txid).await {
-				return result.0;
-			} else {
-				tokio::time::sleep(poll_interval()).await;
+		let wait = async {
+			loop {
+				if let Ok(result) = client.get_raw_transaction_verbosity_zero(&txid).await {
+					return result.0;
+				}
+				loop {
+					let msg = socket.recv().await.expect("zmq receive failed");
+					let mut hash = <[u8; 32]>::try_from(msg.get(1).expect("hashtx has a hash").as_ref())
+						.expect("hashtx hash is 32 bytes");
+					hash.reverse();
+					if Txid::from_byte_array(hash) == txid {
+						break;
+					}
+				}
 			}
-		}
-		panic!("Failed to get raw transaction: {}", txid);
+		};
+		wait.try_wait_millis(get_tx_propagation_timeout_millis()).await
+			.unwrap_or_else(|_| panic!("Failed to get raw transaction: {}", txid))
 	}
 
 	pub async fn prepare_funds(&self) {

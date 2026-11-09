@@ -232,7 +232,8 @@ impl Server {
 				request.fee_rate,
 				fee_info,
 			).context("unable to calculate fee for offboard")?;
-			let net_amount = validate_and_subtract_fee_min_dust(gross_amount, fee, dust)?;
+			let net_amount = validate_and_subtract_fee_min_dust(gross_amount, fee, dust)
+				.badarg("offboard leaves too little after the fee")?;
 			if request.net_amount > net_amount {
 				return badarg!(
 					"offboard net amount does not match expected amount: provided = {}, expected = {}",

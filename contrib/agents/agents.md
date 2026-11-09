@@ -8,6 +8,12 @@ Run `which captaind` or `echo $IN_NIX_SHELL`. If the flake isn't loaded, remind 
 
 Do not write code until the environment is confirmed.
 
+## Project Guides
+
+Each project can have a `CONTRIBUTING.MD` file and a `CONTRIBUTING/` folder,
+for example `testing/CONTRIBUTING.MD` and `testing/CONTRIBUTING/`.
+Read each guide that exists before working in that project.
+
 ## Skills
 
 Use the skills in `contrib/agents/skills/` extensively:
