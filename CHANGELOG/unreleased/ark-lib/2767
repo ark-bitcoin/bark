@@ -1,0 +1,4 @@
+- Refuse a board expiry height or exit delta that a policy doesn't accept
+  `BoardBuilder` panicked on an expiry at or above `LOCK_TIME_THRESHOLD`.
+  [#2767](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2767)
+  - **BREAKING:** `BoardBuilder::new` now returns `Result<BoardBuilder, PolicyError>`
