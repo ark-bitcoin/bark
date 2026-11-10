@@ -81,6 +81,8 @@ lightning_test!(ln_receive_via_mailbox, |cfg| {
 /// hash the wallet has never seen and rejects invalid identifiers.
 #[tokio::test]
 async fn lightning_send_status_unknown_for_unseen_hash() {
+	require_bark_version!(>= "0.6.2");
+
 	let ctx = TestContext::new("barkd/lightning_send_status_unknown_for_unseen_hash").await;
 
 	let srv = ctx.captaind("server").create().await;
@@ -102,6 +104,8 @@ async fn lightning_send_status_unknown_for_unseen_hash() {
 /// wallet does not know, which includes a receive that ended without settling.
 #[tokio::test]
 async fn lightning_receive_status_not_found_for_unseen_hash() {
+	require_bark_version!(>= "0.8.1");
+
 	let ctx = TestContext::new("barkd/lightning_receive_status_not_found_for_unseen_hash").await;
 
 	let srv = ctx.captaind("server").create().await;

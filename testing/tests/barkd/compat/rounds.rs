@@ -96,7 +96,7 @@ async fn setup_barkd_with_rejected_vtxo(
 /// call) and replace the expiring VTXO.
 #[tokio::test]
 async fn maintenance_refresh_auto_barkd() {
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(>= "0.7.0");
 
 	let ctx = TestContext::new("barkd/maintenance_refresh_auto_barkd").await;
 
@@ -152,7 +152,7 @@ async fn maintenance_refresh_auto_barkd() {
 /// maintenance is allowed to skip rejected inputs (see the test below).
 #[tokio::test]
 async fn manual_refresh_does_not_drop_rejected_vtxo_barkd() {
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(>= "0.7.0");
 
 	let ctx = TestContext::new("barkd/manual_refresh_does_not_drop_rejected_vtxo_barkd").await;
 	let srv = ctx.captaind("server").funded(btc(1)).create().await;

@@ -63,6 +63,8 @@ async fn bip321_uri_ark_only_barkd() {
 /// default, and the amount can come from the URI.
 #[tokio::test]
 async fn send_to_bip321_uri_barkd() {
+	require_bark_version!(>= "0.8.1");
+
 	let ctx = TestContext::new("barkd/send_to_bip321_uri_barkd").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;

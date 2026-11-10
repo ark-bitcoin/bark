@@ -1,7 +1,7 @@
 
 use std::time::Duration;
 
-use ark_testing::{TestContext, btc, sat};
+use ark_testing::{TestContext, btc, require_bark_version, sat};
 use ark_testing::daemon::barkd::{Barkd, BarkdChainSource};
 use ark_testing::util::FutureExt;
 use bark_json::movements::PaymentMethod;
@@ -157,6 +157,8 @@ async fn barkd_long_poll_rejects_unauthenticated() {
 /// and closing the websocket. The ticket is consumed either way.
 #[tokio::test]
 async fn barkd_websocket_handshake_without_wallet() {
+	require_bark_version!(>= "0.8.1");
+
 	let ctx = TestContext::new_minimal("barkd/barkd_websocket_handshake_without_wallet").await;
 	// No wallet is created, so neither endpoint is contacted.
 	let barkd = Barkd::new("barkd", ctx.datadir.join("barkd"), "http://127.0.0.1:1".into(),
