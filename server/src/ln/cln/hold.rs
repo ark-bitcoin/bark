@@ -66,33 +66,42 @@ pub struct ClnHoldConfig {
 	pub max_track_all_delay: Duration,
 }
 
+/// The number of payment hashes in one `hold.list` request.
+///
+/// The plugin answers a `hold.list` with one message that holds every invoice
+/// asked for, and tonic refuses a message over its 4 MiB default instead of
+/// truncating it. An invoice without HTLCs takes about 400 bytes, so a page
+/// stays under one megabyte with room for the HTLCs of accepted invoices.
+const HOLD_LIST_PAGE_SIZE: usize = 1000;
+
 /// Ask `hold.list` for exactly the payment hashes we care about and return
 /// the subset whose invoice is in Accepted state. Replaces a full-list
 /// pagination + client-side filter.
+///
+/// The hashes go out in pages of [HOLD_LIST_PAGE_SIZE], so the size of a
+/// response does not grow with the number of open invoices.
 async fn fetch_accepted_payment_hashes(
 	hold_client: &mut HoldClient<Channel>,
-	payment_hashes: Vec<Vec<u8>>,
+	payment_hashes: &[Vec<u8>],
 ) -> anyhow::Result<HashSet<sha256::Hash>> {
-	if payment_hashes.is_empty() {
-		return Ok(HashSet::new());
-	}
-
-	let req = hold::ListRequest {
-		constraint: Some(hold::list_request::Constraint::PaymentHashes(
-			hold::list_request::PaymentHashes { payment_hashes },
-		)),
-	};
-	let res = hold_client.list(req).await?.into_inner();
-
 	let mut accepted = HashSet::new();
-	for inv in &res.invoices {
-		if inv.state != InvoiceState::Accepted as i32 {
-			continue;
-		}
-		match sha256::Hash::from_slice(&inv.payment_hash) {
-			Ok(h) => { accepted.insert(h); },
-			Err(e) => warn!("hold plugin returned invalid payment_hash \
-				(len {}, id {}): {}", inv.payment_hash.len(), inv.id, e),
+	for page in payment_hashes.chunks(HOLD_LIST_PAGE_SIZE) {
+		let req = hold::ListRequest {
+			constraint: Some(hold::list_request::Constraint::PaymentHashes(
+				hold::list_request::PaymentHashes { payment_hashes: page.to_vec() },
+			)),
+		};
+		let res = hold_client.list(req).await?.into_inner();
+
+		for inv in &res.invoices {
+			if inv.state != InvoiceState::Accepted as i32 {
+				continue;
+			}
+			match sha256::Hash::from_slice(&inv.payment_hash) {
+				Ok(h) => { accepted.insert(h); },
+				Err(e) => warn!("hold plugin returned invalid payment_hash \
+					(len {}, id {}): {}", inv.payment_hash.len(), inv.id, e),
+			}
 		}
 	}
 	Ok(accepted)
@@ -526,7 +535,7 @@ impl ClnHoldProcess {
 			.map(|s| s.invoice.payment_hash().to_byte_array().to_vec())
 			.collect::<Vec<_>>();
 		let accepted_hashes = fetch_accepted_payment_hashes(
-			&mut hold_client, payment_hashes,
+			&mut hold_client, &payment_hashes,
 		).await?;
 
 		debug!("poll_htlc_state_updates: {} created subs, {} accepted invoices in plugin",
