@@ -269,7 +269,7 @@ async fn board_output_is_bound_to_one_exit_tx() {
 	let amount = sat(100_000);
 	let script = BoardBuilder::new(
 		user.public_key(), expiry, info.server_pubkey, info.vtxo_exit_delta,
-	).funding_script_pubkey();
+	).unwrap().funding_script_pubkey();
 	let address = Address::from_script(&script, Network::Regtest).unwrap();
 	let txid = ctx.bitcoind().fund_addr(&address, amount).await;
 	let funding = ctx.bitcoind().await_transaction(txid).await;
@@ -280,7 +280,7 @@ async fn board_output_is_bound_to_one_exit_tx() {
 	let cosign = async |fee: Amount| {
 		let builder = BoardBuilder::new(
 			user.public_key(), expiry, info.server_pubkey, info.vtxo_exit_delta,
-		).set_funding_details(amount, fee, utxo).unwrap().generate_user_nonces();
+		).unwrap().set_funding_details(amount, fee, utxo).unwrap().generate_user_nonces();
 		let resp = srv.get_public_rpc().await.request_board_cosign(protos::BoardCosignRequest {
 			amount: amount.to_sat(),
 			utxo: utxo.serialize(),

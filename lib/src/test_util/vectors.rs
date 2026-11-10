@@ -125,7 +125,7 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 		expiry_height,
 		server_key.public_key(),
 		exit_delta,
-	);
+	).unwrap();
 	let anchor_tx = Transaction {
 		version: Version::TWO,
 		lock_time: LockTime::ZERO,
