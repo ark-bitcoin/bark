@@ -33,7 +33,7 @@ use std::borrow::Borrow;
 use std::str::FromStr;
 use std::task;
 use std::backtrace::Backtrace;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -713,11 +713,23 @@ impl<'t> Tx<'t> {
 		Ok(res)
 	}
 
-	pub async fn store_round_participation_in_mailbox(
+	/// Store the completed round participations in their mailboxes, one
+	/// message per distinct pair, all under a single checkpoint.
+	///
+	/// Returns `None` if there is nothing to store.
+	pub async fn store_round_participations_in_mailbox(
 		&self,
-		mailbox_id: MailboxIdentifier,
-		unlock_hash: UnlockHash,
+		participations: impl IntoIterator<Item = (MailboxIdentifier, UnlockHash)>,
 	) -> anyhow::Result<Option<Checkpoint>> {
+		let mut seen = HashSet::new();
+		let (mailbox_ids, unlock_hashes): (Vec<_>, Vec<_>) = participations.into_iter()
+			.filter(|p| seen.insert(*p))
+			.map(|(m, h)| (m.to_string(), h.to_string()))
+			.unzip();
+		if mailbox_ids.is_empty() {
+			return Ok(None);
+		}
+
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
@@ -727,17 +739,18 @@ impl<'t> Tx<'t> {
 
 		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 
-		let statement = self.prepare("
+		let statement = self.prepare_typed("
 			INSERT INTO mailbox (unblinded_mailbox_id, unlock_hash, checkpoint, mailbox_type, created_at)
-			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
-		").await?;
+			SELECT m, h, $3, $4::TEXT::mailbox_type, NOW()
+			FROM unnest($1::TEXT[], $2::TEXT[]) AS p(m, h);
+		", &[Type::TEXT_ARRAY, Type::TEXT_ARRAY, Type::INT8, Type::TEXT]).await?;
 		let rows_updated = self.execute(&statement, &[
-			&mailbox_id.to_string(),
-			&unlock_hash.to_string(),
+			&mailbox_ids,
+			&unlock_hashes,
 			&checkpoint,
 			&MailboxType::RoundParticipationCompleted.as_str(),
 		]).await?;
-		debug_assert_eq!(rows_updated, 1);
+		debug_assert_eq!(rows_updated, mailbox_ids.len() as u64);
 
 		Ok(Some(checkpoint as u64))
 	}
