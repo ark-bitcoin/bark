@@ -1,11 +1,12 @@
 """
 Download a release binary, verify its sha256, and cache it.
 
-  --version 0.7.1        resolve the bark asset for this platform, hash from
+  --version 0.7.1        resolve the --name asset (bark, barkd, bark-cli, ...)
+                         for this platform, hash from
                          the release's SHA256SUMS; use locally. Refetches
                          SHA256SUMS every run, so it needs the network.
   --url ... --sha256 ... name the asset outright; use in CI, to pin one
-                         artifact, and for any binary other than bark
+                         artifact, and for binaries outside bark releases
 
 Cache layout: <cache-dir>/<sha256>/<name>
 
@@ -47,10 +48,10 @@ def host_platform():
 		)
 
 
-def resolve(version, plat):
-	"""URL and expected hash of the bark asset for `plat` in release `version`."""
+def resolve(name, version, plat):
+	"""URL and expected hash of the `name` asset for `plat` in bark release `version`."""
 	base = RELEASE_URL.format(version=version)
-	asset = f"bark-{version}-{plat}"
+	asset = f"{name}-{version}-{plat}"
 
 	sums_url = f"{base}/SHA256SUMS"
 	print(f"Resolving {asset} from {sums_url}", file=sys.stderr)
@@ -78,11 +79,7 @@ def main():
 	if args.version:
 		if args.url or args.sha256:
 			parser.error("--version cannot be combined with --url/--sha256")
-		# `resolve` only knows the bark release layout, so it would happily
-		# fetch bark and cache it under another binary's name.
-		if args.name != "bark":
-			parser.error(f"--version only resolves bark releases, not {args.name}; pass --url/--sha256")
-		url, sha256 = resolve(args.version, args.platform or host_platform())
+		url, sha256 = resolve(args.name, args.version, args.platform or host_platform())
 	else:
 		if not (args.url and args.sha256):
 			parser.error("pass --version, or both --url and --sha256")
