@@ -9,7 +9,7 @@ use tokio::io::AsyncReadExt;
 use bark_json::notifications::WalletNotification;
 use bark_rest_client::apis::lightning_api;
 
-use ark_testing::{btc, sat, BarkClient, Barkd, TestContext};
+use ark_testing::{btc, require_bark_version, sat, BarkClient, Barkd, TestContext};
 use ark_testing::util::{poll_interval, wait_timeout};
 
 async fn wait_for_spendable(barkd: &Barkd, expected: Amount) {
@@ -30,6 +30,8 @@ async fn wait_for_spendable(barkd: &Barkd, expected: Amount) {
 /// `--method`.
 #[tokio::test]
 async fn send_to_bip321_uri() {
+	require_bark_version!(>= "0.8.1");
+
 	let ctx = TestContext::new("bark_client/send_to_bip321_uri").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -46,6 +48,8 @@ async fn send_to_bip321_uri() {
 /// `bip321` prints a URI with the requested destinations.
 #[tokio::test]
 async fn bip321_prints_uri() {
+	require_bark_version!(>= "0.8.1");
+
 	let ctx = TestContext::new("bark_client/bip321_prints_uri").await;
 
 	let srv = ctx.captaind("server").create().await;
@@ -61,6 +65,8 @@ async fn bip321_prints_uri() {
 /// `watch` prints the notification for an incoming arkoor payment.
 #[tokio::test]
 async fn watch_prints_received_payment() {
+	require_bark_version!(>= "0.8.1");
+
 	let ctx = TestContext::new("bark_client/watch_prints_received_payment").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -103,6 +109,8 @@ async fn watch_prints_received_payment() {
 /// rather than waiting for a payment that cannot come.
 #[tokio::test]
 async fn invoice_wait_stops_on_canceled_receive() {
+	require_bark_version!(>= "0.8.1");
+
 	let ctx = TestContext::new("bark_client/invoice_wait_stops_on_canceled_receive").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;

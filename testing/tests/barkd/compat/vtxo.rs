@@ -1,5 +1,5 @@
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::util::ToAltString;
 use bark_json::primitives::VtxoStateInfo;
 
@@ -67,6 +67,8 @@ async fn import_vtxo_barkd() {
 /// indices.
 #[tokio::test]
 async fn import_vtxo_gap_limit_barkd() {
+	require_bark_version!(>= "0.7.1");
+
 	let ctx = TestContext::new("barkd/import_vtxo_gap_limit_barkd").await;
 
 	// Without the server's xpub lookup, seed recovery is bound by the gap
@@ -125,6 +127,8 @@ async fn import_vtxo_gap_limit_barkd() {
 /// one outcome.
 #[tokio::test]
 async fn import_vtxo_skips_status_check_barkd() {
+	require_bark_version!(>= "0.7.1");
+
 	let ctx = TestContext::new("barkd/import_vtxo_skips_status_check_barkd").await;
 
 	// Without the server's xpub lookup, seed recovery is bound by the gap
@@ -193,6 +197,8 @@ async fn import_vtxo_skips_status_check_barkd() {
 /// kept.
 #[tokio::test]
 async fn import_vtxo_partial_barkd() {
+	require_bark_version!(>= "0.7.1");
+
 	let ctx = TestContext::new("barkd/import_vtxo_partial_barkd").await;
 
 	// Without the server's xpub lookup, seed recovery is bound by the gap

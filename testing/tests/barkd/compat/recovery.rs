@@ -261,7 +261,7 @@ async fn recovered_wallet_finds_delegated_refresh_output_expired_output() {
 /// was spent in the round, so the server reports it spent and recovery skips it.
 #[tokio::test]
 async fn recovered_wallet_finds_round_vtxo() {
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(>= "0.7.1");
 
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_round_vtxo").await;
 
@@ -318,6 +318,8 @@ async fn recovered_wallet_finds_round_vtxo() {
 /// than resurrecting them.
 #[tokio::test]
 async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
+	require_bark_version!(>= "0.7.1");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_arkoor_receive_and_change_vtxos").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -404,7 +406,7 @@ async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
 /// topologies via the `lightning_test!` harness.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_receive() {
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(>= "0.7.1");
 
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_receive").await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -462,7 +464,7 @@ async fn recovered_wallet_finds_lightning_receive() {
 /// pieces must be rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_send_change() {
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(>= "0.7.1");
 
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_send_change").await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -522,7 +524,7 @@ async fn recovered_wallet_finds_lightning_send_change() {
 /// After recovering from the seed, all must be rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_lightning_send_revocation() {
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(>= "0.7.1");
 
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_send_revocation").await;
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
@@ -576,6 +578,8 @@ async fn recovered_wallet_finds_lightning_send_revocation() {
 /// this exercises arkoor-change recovery.
 #[tokio::test]
 async fn recovered_wallet_finds_offboard_change() {
+	require_bark_version!(>= "0.8.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_offboard_change").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -624,6 +628,8 @@ async fn recovered_wallet_finds_offboard_change() {
 /// seed: the spent board VTXO must not be resurrected.
 #[tokio::test]
 async fn recovered_wallet_is_empty_when_fully_spent() {
+	require_bark_version!(>= "0.8.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_is_empty_when_fully_spent").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -701,7 +707,7 @@ async fn recovered_wallet_skips_exited_vtxo() {
 /// from the seed and assert all three are rediscovered.
 #[tokio::test]
 async fn recovered_wallet_finds_mixed_origin_vtxos() {
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(>= "0.7.1");
 
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_mixed_origin_vtxos").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -833,6 +839,8 @@ async fn recovered_wallet_skips_unownable_vtxo() {
 /// offer a vtxo that may well be spent as an input.
 #[tokio::test]
 async fn recovered_wallet_locks_vtxos_without_a_status() {
+	require_bark_version!(>= "0.8.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_locks_vtxos_without_a_status").await;
 	// The xpub lookup carries each VTXO's body and status itself, so it is
 	// turned off to send recovery through the mailbox path under test.
@@ -889,6 +897,8 @@ async fn recovered_wallet_locks_vtxos_without_a_status() {
 /// not stored.
 #[tokio::test]
 async fn recovered_wallet_stores_spent_vtxos_on_the_servers_word() {
+	require_bark_version!(>= "0.8.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_stores_spent_vtxos_on_the_servers_word").await;
 	// The xpub lookup carries each VTXO's body and status itself, so it is
 	// turned off to send recovery through the mailbox path under test.
@@ -945,6 +955,8 @@ async fn recovered_wallet_stores_spent_vtxos_on_the_servers_word() {
 /// than import unspendable junk.
 #[tokio::test]
 async fn recovered_wallet_skips_invalid_vtxo() {
+	require_bark_version!(>= "0.8.0");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_skips_invalid_vtxo").await;
 	// The xpub lookup carries each VTXO's body and status itself, so it is
 	// turned off to send recovery through the mailbox path under test.
@@ -1092,6 +1104,8 @@ async fn recovered_wallet_reads_paginated_mailbox() {
 /// find nothing and the wide one must find the VTXO.
 #[tokio::test]
 async fn recovered_wallet_finds_vtxo_only_within_the_gap_limit() {
+	require_bark_version!(>= "0.7.1");
+
 	let ctx = TestContext::new("barkd/recovered_wallet_finds_vtxo_only_within_the_gap_limit").await;
 	let srv = ctx.captaind("server").funded(btc(10))
 		.cfg(|c| c.recovery_xpub_nb_keys = 0)
