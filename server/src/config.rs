@@ -500,13 +500,6 @@ pub struct Config {
 	#[serde(default, with = "utils::serde::duration::opt")]
 	pub bitcoin_address_blocklist_refresh_interval: Option<Duration>,
 
-	/// Require the board funding tx from users
-	///
-	/// This should be enforced always in prod, but in order to test backwards
-	/// compatibility, we allow disabling it in tests.
-	#[serde(default)]
-	pub require_board_funding_tx: bool,
-
 	/// Build round vtxo trees with the legacy v0 hashlock clauses.
 	///
 	/// Only intended for testing.
@@ -657,10 +650,6 @@ impl Config {
 		// At 0 every xpub scan is rejected; recovery_xpub_nb_keys = 0 disables the rpc instead.
 		if self.max_concurrent_xpub_recoveries == 0 {
 			bail!("Invalid configuration: max_concurrent_xpub_recoveries must be at least 1");
-		}
-
-		if self.network == bitcoin::Network::Bitcoin && !self.require_board_funding_tx {
-			bail!("Cannot turn off require_board_funding_tx on mainnet");
 		}
 
 		if self.network == bitcoin::Network::Bitcoin && self.round_legacy_hashlock_clauses {
@@ -824,7 +813,6 @@ mod test {
 		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
 		cfg.bitcoind.cookie = Some(".cookie".into());
 		cfg.network = bitcoin::Network::Bitcoin;
-		cfg.require_board_funding_tx = true;
 		cfg.validate().expect("default config on mainnet");
 
 		cfg.htlc_expiry_delta = BlockDelta::ZERO;

@@ -646,7 +646,7 @@ impl Server {
 		user_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		utxo: OutPoint,
-		funding_tx: Option<&Transaction>,
+		funding_tx: &Transaction,
 		user_pub_nonce: PublicNonce,
 	) -> anyhow::Result<ark::board::BoardCosignResponse> {
 		check_max_amount("board", amount, self.config.max_board_amount)?;
@@ -687,67 +687,63 @@ impl Server {
 			);
 		}
 
-		if self.config.require_board_funding_tx {
-			let funding_tx = funding_tx.context("missing funding_tx")?;
+		if funding_tx.input.len() > MAX_NB_BOARD_FUNDING_INPUTS {
+			return badarg!("invalid funding tx: too many inputs (max is {})",
+				MAX_NB_BOARD_FUNDING_INPUTS,
+			);
+		}
 
-			if funding_tx.input.len() > MAX_NB_BOARD_FUNDING_INPUTS {
-				return badarg!("invalid funding tx: too many inputs (max is {})",
-					MAX_NB_BOARD_FUNDING_INPUTS,
-				);
-			}
+		// validate utxo against funding tx
+		if utxo.vout as usize >= funding_tx.output.len() {
+			return badarg!("board outpoint does not match funding tx (vout)");
+		}
+		if utxo.txid != funding_tx.compute_txid() {
+			return badarg!("board outpoint does not match funding tx (txid)");
+		}
+		// The exit tx we cosign commits to `amount` as the funding output's
+		// value, so a funding output paying anything else yields a board
+		// that can neither be registered nor unilaterally exited.
+		let funding_value = funding_tx.output[utxo.vout as usize].value;
+		if funding_value != amount {
+			return badarg!("board amount {} does not match funding tx output value {}",
+				amount, funding_value,
+			);
+		}
 
-			// validate utxo against funding tx
-			if utxo.vout as usize >= funding_tx.output.len() {
-				return badarg!("board outpoint does not match funding tx (vout)");
+		// validate funding tx is real
+		// check that any of the inputs is a vtxo
+		self.db.read(async |tx| {
+			// check the funding tx itself first, obviously can't exist
+			if tx.get_virtual_transaction_by_txid(utxo.txid).await?.is_some() {
+				return badarg!("invalid funding tx: known as virtual tx: {}", utxo.txid);
 			}
-			if utxo.txid != funding_tx.compute_txid() {
-				return badarg!("board outpoint does not match funding tx (txid)");
+			let input_ids = funding_tx.input.iter()
+				.map(|i| VtxoId::from(i.previous_output))
+				.collect::<Vec<_>>();
+			if let Some(vtxo_id) = tx.get_existing_vtxos_by_id(&input_ids).await?.into_keys().next() {
+				return badarg!("invalid funding tx: input is a VTXO: {}", vtxo_id);
 			}
-			// The exit tx we cosign commits to `amount` as the funding output's
-			// value, so a funding output paying anything else yields a board
-			// that can neither be registered nor unilaterally exited.
-			let funding_value = funding_tx.output[utxo.vout as usize].value;
-			if funding_value != amount {
-				return badarg!("board amount {} does not match funding tx output value {}",
-					amount, funding_value,
-				);
+			Ok(())
+		}).await?;
+		// check that all the inputs is known
+		for inp in &funding_tx.input {
+			let txid = inp.previous_output.txid;
+			let status = bcd::tx_status(&self.bitcoind, txid).await?;
+			if !status.is_known() {
+				return badarg!("invalid funding tx: unknown input tx {}", txid);
 			}
+		}
 
-			// validate funding tx is real
-			// check that any of the inputs is a vtxo
-			self.db.read(async |tx| {
-				// check the funding tx itself first, obviously can't exist
-				if tx.get_virtual_transaction_by_txid(utxo.txid).await?.is_some() {
-					return badarg!("invalid funding tx: known as virtual tx: {}", utxo.txid);
+		if let Some(ref list) = self.bitcoin_address_blocklist {
+			let res = list.check_tx(funding_tx).await;
+			if !res.is_ok() {
+				if let Some(addr) = res.violating_address() {
+					let amount = funding_tx.output[utxo.vout as usize].value;
+					slog!(BoardAttemptBlockedAddress, vtxo: None, amount: amount,
+						address: addr.as_unchecked().clone(),
+					);
 				}
-				let input_ids = funding_tx.input.iter()
-					.map(|i| VtxoId::from(i.previous_output))
-					.collect::<Vec<_>>();
-				if let Some(vtxo_id) = tx.get_existing_vtxos_by_id(&input_ids).await?.into_keys().next() {
-					return badarg!("invalid funding tx: input is a VTXO: {}", vtxo_id);
-				}
-				Ok(())
-			}).await?;
-			// check that all the inputs is known
-			for inp in &funding_tx.input {
-				let txid = inp.previous_output.txid;
-				let status = bcd::tx_status(&self.bitcoind, txid).await?;
-				if !status.is_known() {
-					return badarg!("invalid funding tx: unknown input tx {}", txid);
-				}
-			}
-
-			if let Some(ref list) = self.bitcoin_address_blocklist {
-				let res = list.check_tx(&funding_tx).await;
-				if !res.is_ok() {
-					if let Some(addr) = res.violating_address() {
-						let amount = funding_tx.output[utxo.vout as usize].value;
-						slog!(BoardAttemptBlockedAddress, vtxo: None, amount: amount,
-							address: addr.as_unchecked().clone(),
-						);
-					}
-					res.into_user_result().context("address blocklist check failed")?;
-				}
+				res.into_user_result().context("address blocklist check failed")?;
 			}
 		}
 

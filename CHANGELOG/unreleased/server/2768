@@ -1,0 +1,2 @@
+- Always require the funding tx on board cosign and drop `require_board_funding_tx`
+  [#2768](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2768)
