@@ -725,7 +725,7 @@ pub async fn remaining_exit_transactions(
 		Err(ExitError::VtxoAlreadyExited { vtxo }) => badarg!("Provided VTXO {} has already exited", vtxo),
 		Err(ExitError::VtxoAlreadySpent { vtxo }) => badarg!("Provided VTXO {} has already been spent", vtxo),
 		Err(ExitError::VtxoSwept { vtxo }) => badarg!(
-			"An intermediate output of VTXO {} has been swept and the exit cannot be completed. \\
+			"An intermediate output of VTXO {} has been swept and the exit cannot be completed. \
 			You can still attempt to do a refresh and get a fresh VTXO", vtxo,
 		),
 		_ => result.context("Failed to list remaining exit transactions")?,
@@ -800,7 +800,7 @@ pub async fn exit_presign(
 		Err(ExitError::VtxoAlreadyExited { vtxo }) => badarg!("Provided VTXO {} has already exited", vtxo),
 		Err(ExitError::VtxoAlreadySpent { vtxo }) => badarg!("Provided VTXO {} has already been spent", vtxo),
 		Err(ExitError::VtxoSwept { vtxo }) => badarg!(
-			"An intermediate output of VTXO {} has been swept and the exit cannot be completed. \\
+			"An intermediate output of VTXO {} has been swept and the exit cannot be completed. \
 			You can still attempt to do a refresh and get a fresh VTXO", vtxo,
 		),
 		_ => result.context("Failed to presign emergency exit")?,
