@@ -864,6 +864,11 @@ async fn send_onchain_skips_vtxos_at_exit_depth_limit() {
 	// selection skips them and the send fails as insufficient funds instead
 	// of a doomed cosign request.
 	let addr = bark2.get_onchain_address().await;
+	bark1.sync().await;
+	// The estimate skips the same VTXO instead of quoting an input the send refuses.
+	let estimate = bark1.estimate_send_onchain_fee(&addr, sat(500_000)).await;
+	assert!(estimate.vtxos_spent.is_empty(), "{:?}", estimate.vtxos_spent);
+
 	let err = bark1.try_send_onchain(&addr, sat(500_000)).await
 		.unwrap_err().to_alt_string();
 	assert!(
