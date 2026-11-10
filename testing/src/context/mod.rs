@@ -542,7 +542,6 @@ impl TestContext {
 			},
 			bitcoin_address_blocklist: None,
 			bitcoin_address_blocklist_refresh_interval: None,
-			require_board_funding_tx: true,
 			round_legacy_hashlock_clauses: false,
 		}
 	}

@@ -71,7 +71,6 @@ async fn blocklist_board_cosign_rejected() {
 	let bitcoind = ctx.bitcoind_arc();
 	let srv = ctx.captaind("server").bitcoind(bitcoind).cfg(|cfg| {
 		cfg.bitcoin_address_blocklist = Some(blocklist_path);
-		cfg.require_board_funding_tx = true;
 	}).create().await;
 
 	// Fund the blocked address and confirm it so we have a UTXO to spend.
@@ -124,23 +123,20 @@ async fn blocklist_board_cosign_rejected() {
 	assert_eq!(log.amount, board_amount);
 }
 
-/// Reject board registration when the funding tx spends from a blocked address.
-///
-/// Clients too old to send their funding tx get cosigned without a blocklist
-/// check, so registration is the only place left to catch them.
+/// Reject board registration when the funding tx spends from an address blocked after the cosign.
 #[tokio::test]
 async fn blocklist_board_register_rejected() {
 	let ctx = TestContext::new("server/blocklist_board_register_rejected").await;
 
 	let blocked_addr = ctx.bitcoind().get_new_address();
 	let blocklist_path = ctx.datadir.join("blocklist.txt");
-	tokio::fs::write(&blocklist_path, format!("{}\n", blocked_addr)).await.unwrap();
+	tokio::fs::write(&blocklist_path, "").await.unwrap();
 
 	// Share the bitcoind so the server can look up txs via get_raw_transaction_info.
 	let bitcoind = ctx.bitcoind_arc();
-	let srv = ctx.captaind("server").bitcoind(bitcoind).cfg(|cfg| {
-		cfg.bitcoin_address_blocklist = Some(blocklist_path);
-		cfg.require_board_funding_tx = false;
+	let cfg_path = blocklist_path.clone();
+	let srv = ctx.captaind("server").bitcoind(bitcoind).cfg(move |cfg| {
+		cfg.bitcoin_address_blocklist = Some(cfg_path);
 	}).create().await;
 
 	// Fund the blocked address and confirm it so we have a UTXO to spend.
@@ -161,7 +157,7 @@ async fn blocklist_board_register_rejected() {
 	).unwrap();
 
 	let funding_script = board_builder.funding_script_pubkey();
-	let (_funding_tx, board_utxo) = blocked_board_funding_tx(
+	let (funding_tx, board_utxo) = blocked_board_funding_tx(
 		&ctx, &srv, &blocked_addr, &funding_script, board_amount,
 	).await;
 
@@ -169,7 +165,6 @@ async fn blocklist_board_register_rejected() {
 		.set_funding_details(board_amount, Amount::ZERO, board_utxo).unwrap()
 		.generate_user_nonces();
 
-	// An old client sends no funding tx, so the cosign has nothing to check.
 	let mut rpc = srv.get_public_rpc().await;
 	let cosign_response = rpc.request_board_cosign(protos::BoardCosignRequest {
 		amount: board_amount.to_sat(),
@@ -177,11 +172,14 @@ async fn blocklist_board_register_rejected() {
 		expiry_height: expiry_height.into(),
 		user_pubkey: user_key.public_key().serialize().to_vec(),
 		pub_nonce: board_builder.user_pub_nonce().serialize().to_vec(),
-		funding_tx: vec![],
+		funding_tx: bitcoin::consensus::serialize(&funding_tx),
 	}).await.unwrap().into_inner();
 
 	let board_cosign: ark::board::BoardCosignResponse = cosign_response.try_into().unwrap();
 	let vtxo = board_builder.build_vtxo(&board_cosign, &user_key).unwrap();
+
+	tokio::fs::write(&blocklist_path, format!("{}\n", blocked_addr)).await.unwrap();
+	srv.get_blocklist_rpc().await.reload_blocklist(protos::Empty {}).await.unwrap();
 
 	// Subscribe to the log BEFORE the request so we don't miss the event.
 	let mut blocked_log_rx = srv.subscribe_log::<BoardAttemptBlockedAddress>();
