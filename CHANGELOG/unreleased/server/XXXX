@@ -1,0 +1,7 @@
+- Verify round input attestations before they reach the round coordinator
+  Checking them costs inputs times outputs, so `SubmitPayment` now does it on
+  its own task and the coordinator only compares the attempt challenge. A
+  large request no longer stalls the round for everyone else. `SubmitPayment`
+  also fails with `InvalidArgument` when no round attempt is collecting
+  payments instead of dropping the request silently.
+  [#XXXX](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/XXXX)

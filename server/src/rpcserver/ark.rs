@@ -777,12 +777,20 @@ impl rpc::server::ArkService for Server {
 				in order to be able to participate in rounds.");
 		}
 
-		let inputs =  req.input_vtxos.iter().map(|input| {
+		let inputs = req.input_vtxos.iter().map(|input| {
 			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
 			let attestation = RoundAttemptAttestation::from_bytes(&input.attestation)?;
 			Ok(SelfSignedInput { vtxo_id, attestation })
-		}).collect::<Result<_, tonic::Status>>()?;
+		}).collect::<Result<Vec<_>, tonic::Status>>()?;
 
+		let Some(challenge) = self.rounds.current_attempt_challenge() else {
+			macros::badarg!("No round attempt is collecting payments. \
+				Message arrived late or round was full.");
+		};
+
+		if req.vtxo_requests.is_empty() {
+			macros::badarg!("invalid request: no outputs");
+		}
 		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
 		for r in req.vtxo_requests.clone() {
 			// Make sure users provided right number of nonces.
@@ -797,12 +805,16 @@ impl rpc::server::ArkService for Server {
 			return Err(tonic::Status::unimplemented("offboards in rounds are no longer supported"));
 		}
 
+		self.verify_round_input_attestations(challenge, &inputs, &vtxo_requests).await
+			.to_status()?;
+
 		let unlock_preimage = rand::random::<UnlockPreimage>();
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 
 		let (tx, rx) = oneshot::channel();
 		let inp = RoundInput::RegisterPayment {
-			inputs,
+			challenge,
+			inputs: inputs.into_iter().map(|i| i.vtxo_id).collect(),
 			vtxo_requests,
 			unlock_preimage: Secret::new(unlock_preimage),
 			user_agent: crate::telemetry::current_user_agent(),

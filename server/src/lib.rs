@@ -67,6 +67,7 @@ use tracing::{info, trace, warn};
 
 use ark::{ProtocolEncoding, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::vtxo::Full;
+use ark::attestations::Challenge;
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxBlindingError, MailboxIdentifier};
@@ -181,6 +182,15 @@ impl RoundHandle {
 
 	pub fn last_event(&self) -> Option<Arc<RoundEvent>> {
 		self.last_round_event.lock().clone()
+	}
+
+	/// The challenge of the round attempt that is collecting payments,
+	/// or None while no attempt is.
+	pub fn current_attempt_challenge(&self) -> Option<Challenge> {
+		match self.last_round_event.lock().as_deref() {
+			Some(RoundEvent::Attempt(attempt)) => Some(attempt.challenge),
+			_ => None,
+		}
 	}
 }
 
