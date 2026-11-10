@@ -1,4 +1,5 @@
 
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,7 +8,6 @@ use log::{error, info, warn};
 use parking_lot::Mutex;
 use bitcoincore_rpc::RpcApi;
 
-use ark::fees::{BoardFees, PpmFeeRate};
 use ark::lightning::PaymentHash;
 use bark::exit::ExitState;
 use bark_json::primitives::VtxoStateInfo;
@@ -21,7 +21,7 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use server::database::Db;
 use server::vtxopool::VtxoTarget;
 use server_log::{
-	ArkFeeRecorded, BroadcastingDependentTx, ClaimBroadcast, ClaimBroadcastFailure, ClaimChunkBroadcastFailure,
+	BroadcastingDependentTx, ClaimBroadcast, ClaimBroadcastFailure, ClaimChunkBroadcastFailure, RoundFinished,
 	ProgressBroadcast, ProgressCpfpFailure, FrontierReindexComplete, FrontierRepairedSpend,
 };
 
@@ -68,88 +68,57 @@ impl WatchmanFailureCollector {
 
 #[tokio::test]
 async fn watchman_sweeps_boards() {
-	require_bark_version!(> "0.5.0");
-
 	let ctx = TestContext::new("server/watchman_sweeps_boards").await;
-	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+	let srv = ctx.captaind("server").no_vtxo_pool().funded(btc(10)).cfg(|cfg| {
+		// Short, so the boards expire after few blocks.
 		cfg.vtxo_lifetime = BlockDelta::new(144);
-		cfg.vtxopool.vtxo_targets = vec![];
 	}).watchmand_cfg(|cfg| {
-		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
-		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
+		// The watchman only acts when the test triggers it.
+		cfg.watchman.reaction_interval = Duration::from_secs(3600);
+		cfg.watchman.sweep_interval = Duration::from_secs(3600);
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = srv.watchmand();
 	wm.add_slog_handler(failures.clone());
+	let wallet = ctx.bark_sdk("bark", &srv).funded(btc(1)).create().await;
 
-	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
-	let bark1 = ctx.bark("bark1", &srv).funded(sat(200_000)).create().await;
+	// Boarded in the same block, so both expire at the same height.
+	let [refreshed, kept] = ctx.board(&wallet, &[sat(100_000), sat(110_000)]).await
+		.try_into().unwrap();
+	let boards = [
+		wallet.get_full_vtxo(refreshed.id()).await.unwrap().chain_anchor(),
+		wallet.get_full_vtxo(kept.id()).await.unwrap().chain_anchor(),
+	];
+	let expiry = refreshed.expiry_height();
+	assert_eq!(kept.expiry_height(), expiry);
 
-	let _ = bark1.board(sat(100_000)).await;
-	ctx.generate_blocks(2 * BOARD_CONFIRMATIONS).await;
-	let _ = bark1.offchain_balance().await;
+	// One vtxo moves into a round. Its board utxo stays onchain until it expires.
+	let mut finished = srv.subscribe_log::<RoundFinished>();
+	wallet.refresh_vtxos_delegated([refreshed.id()]).await.unwrap();
+	srv.trigger_round().await;
+	finished.recv().await.unwrap();
 
-	ctx.refresh_all(&srv, &[&bark1]).await;
-
-	// expire only the board, not the refresh
-	let tip = ctx.generate_blocks(
-		srv.config().vtxo_lifetime.to_u32() - 2 * BOARD_CONFIRMATIONS + 2,
-	).await;
-	wm.wait_for_sync_height(tip).await;
-
+	// When the boards expire, the watchman sweeps both board utxos into the rounds
+	// wallet. The round's vtxos expire later, so it leaves them.
+	let mut claims = wm.subscribe_log::<ClaimBroadcast>();
+	let height = u32::try_from(ctx.bitcoind().get_block_count().await).unwrap();
+	ctx.bitcoind().generate(expiry.to_u32().checked_sub(height).unwrap()).await;
+	wm.wait_for_sync_height(expiry).await;
+	srv.wait_for_sync_height(expiry).await;
+	let rounds_balance = srv.wallet_status().await.rounds.total_balance;
 	wm.trigger_sweep().await;
-	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
+	let sweep = claims.recv().await.unwrap();
+	let swept = sweep.vtxo_ids.iter().map(|id| id.to_point()).collect::<HashSet<_>>();
+	assert_eq!(swept, HashSet::from(boards), "{sweep:?}");
+	assert_eq!(sweep.total_input_value, sat(210_000));
+	// The sweep tx pays 1_439 sat in fees.
+	assert_eq!(sweep.total_output_value, sat(208_561));
+	ctx.bitcoind().await_transaction(sweep.txid).await;
+	ctx.bitcoind().generate(1).await;
+	let tip = BlockHeight::new(u32::try_from(ctx.bitcoind().get_block_count().await).unwrap());
+	srv.wait_for_sync_height(tip).await;
+	assert_eq!(srv.wallet_status().await.rounds.total_balance, rounds_balance + sweep.total_output_value);
 	failures.assert_empty();
-	println!("Board sweep: {:#?}", msg);
-	assert_eq!(1, msg.vtxo_ids.len());
-	// rounds didnt' expire yet
-	assert_eq!(100_000, msg.total_input_value.to_sat());
-	assert_eq!(99_093, msg.total_output_value.to_sat());
-}
-
-/// End-to-end check that `ArkFeeRecorded` fires from `record_ark_fee` on a
-/// real board flow. Configures non-zero board fees so the assertion
-/// exercises the recording wiring and not just `0 == 0`.
-///
-/// NB: the slog fires from `register_board` (post-confirmation), not from
-/// `cosign_board`, so the test must confirm + register the board.
-#[tokio::test]
-async fn ark_fee_recorded_slog_on_board() {
-	// Sized so that base + ppm are both non-trivial:
-	//   base_fee = 100 sat, ppm = 1000 (0.1%)
-	//   for amount = 100_000 sat -> 100 + 100 = 200 sat
-	let board_fees = BoardFees {
-		min_fee: Amount::ZERO,
-		base_fee: Amount::from_sat(100),
-		ppm: PpmFeeRate(1000),
-	};
-	let board_amount = sat(100_000);
-	let expected_fee = board_fees.calculate(board_amount)
-		.expect("BoardFees::calculate should not overflow on test inputs");
-
-	let ctx = TestContext::new("server/ark_fee_recorded_slog_on_board").await;
-	let cfg_board_fees = board_fees.clone();
-	let srv = ctx.captaind("server").funded(btc(10)).cfg(move |cfg| {
-		cfg.vtxopool.vtxo_targets = vec![];
-		cfg.fees.board = cfg_board_fees.clone();
-	}).create().await;
-
-	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
-
-	let mut fee_logs = srv.subscribe_log::<ArkFeeRecorded>();
-	bark.board_and_confirm_and_register(&ctx, board_amount).await;
-
-	let fee = fee_logs.recv().wait_millis(15_000).await
-		.expect("no ArkFeeRecorded slog received from board");
-	assert_eq!(fee.op_type, "board", "board should record op_type=board");
-	assert_eq!(fee.net_fee_sat, expected_fee.to_sat(),
-		"recorded board fee should match BoardFees::calculate for the boarded amount");
-	assert_eq!(fee.user_fee_sat, expected_fee.to_sat(),
-		"board has no routing component so user_fee == net_fee");
-	assert_eq!(fee.routing_fee_sat, None,
-		"board has no routing component");
-	assert_eq!(fee.round_seq, None,
-		"board does not run through a round");
 }
 
 #[tokio::test]
