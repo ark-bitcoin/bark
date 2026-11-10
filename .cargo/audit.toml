@@ -1,0 +1,6 @@
+[advisories]
+ignore = [
+	# bdk_chain pins rusqlite 0.31 (libsqlite3-sys 0.28); only a db with a -wal
+	# written by a less trusted party is affected, and bark opens its own.
+	"RUSTSEC-2026-0459",
+]
