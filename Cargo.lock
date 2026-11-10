@@ -3396,9 +3396,9 @@ dependencies = [
 
 [[package]]
 name = "nostr"
-version = "0.45.5"
+version = "0.45.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38ca5c25a6df8d4d78fdf39b42792438f6ce22b4809ccbfdb27582ed9ca45407"
+checksum = "b7a55567533eb00df5a6e2855f229e2092f593ab67c97aff7521fdfe55cf0383"
 dependencies = [
  "aes 0.8.4",
  "base64 0.22.1",
@@ -3454,9 +3454,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-sdk"
-version = "0.45.5"
+version = "0.45.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f01e3d4fc102ddbb1cf0098a8257046aaeb24ec168bb4298f0274084a152faf7"
+checksum = "6241efa2469244b0c40ad9b32172d07e363a537cb822d3d5ba8c3a78e2829746"
 dependencies = [
  "async-utility",
  "async-wsocket",
