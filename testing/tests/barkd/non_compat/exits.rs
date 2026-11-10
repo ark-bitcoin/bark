@@ -20,7 +20,7 @@ use bark_json::exit::remaining::RemainingExitTransactions;
 use bark_json::exit::states::ExitTxStatus;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 
-use super::helpers::{
+use ark_testing::barkd_helpers::{
 	progress_exits_until_claimable, wait_for_boards_synced, wait_for_exits_claimable,
 	wait_for_onchain_balance, wait_for_rounds_complete,
 };

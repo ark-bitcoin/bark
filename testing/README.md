@@ -8,7 +8,7 @@ the in-process wallet SDK.
 When a test must drive a CLI binary, use `bark-cli`, the thin REST client
 that drives barkd. Use the [`BarkClient`](src/bark_client.rs) wrapper. It
 resolves the binary through `BARK_CLIENT_EXEC`. See
-[tests/bark_client/lifecycle.rs](tests/bark_client/lifecycle.rs) for
+[tests/barkd/non_compat/cli_lifecycle.rs](tests/barkd/non_compat/cli_lifecycle.rs) for
 examples.
 
 Do not write new code against `bark-legacy`, the in-process CLI behind

@@ -10,10 +10,8 @@ use bitcoin::Amount;
 use bitcoin_ext::BlockDelta;
 use server_rpc::protos;
 
-use crate::helpers::wait_for_boards_synced;
-
-use super::helpers::{
-	wait_for_exits_claimable, wait_for_rounds_complete, wait_for_spendable,
+use ark_testing::barkd_helpers::{
+	wait_for_boards_synced, wait_for_exits_claimable, wait_for_rounds_complete, wait_for_spendable,
 	wait_for_spendable_vtxos, wait_for_vtxos,
 };
 

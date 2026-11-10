@@ -3,7 +3,7 @@ use ark_testing::{sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use bitcoin::Amount;
 
-use super::helpers::{wait_for_boards_synced, wait_for_onchain_balance};
+use ark_testing::barkd_helpers::{wait_for_boards_synced, wait_for_onchain_balance};
 
 /// Verify that `barkd` can board all on-chain funds via the REST API.
 #[tokio::test]

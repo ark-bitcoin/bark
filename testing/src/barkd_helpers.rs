@@ -9,10 +9,10 @@ use bark_json::primitives::{VtxoStateInfo, WalletVtxoInfo};
 
 use bitcoin_ext::BlockHeight;
 
-use ark_testing::TestContext;
-use ark_testing::constants::ROUND_CONFIRMATIONS;
-use ark_testing::daemon::barkd::Barkd;
-use ark_testing::util::poll_interval;
+use crate::TestContext;
+use crate::constants::ROUND_CONFIRMATIONS;
+use crate::daemon::barkd::Barkd;
+use crate::util::poll_interval;
 
 /// Poll until the on-chain balance reaches the expected amount. Relies on
 /// the daemon's background `run_onchain_sync` to detect new transactions.
