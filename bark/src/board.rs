@@ -164,7 +164,7 @@ impl Wallet {
 			expiry_height,
 			ark_info.server_pubkey,
 			ark_info.vtxo_exit_delta,
-		);
+		).context("invalid board parameters")?;
 
 		let addr = bitcoin::Address::from_script(
 			&builder.funding_script_pubkey(),
@@ -222,7 +222,7 @@ impl Wallet {
 			expiry_height,
 			ark_info.server_pubkey,
 			ark_info.vtxo_exit_delta,
-		);
+		).context("invalid board parameters")?;
 
 		// The server caps funding inputs. `board` checks this for txs we build; a
 		// tx built elsewhere has to be checked here too.

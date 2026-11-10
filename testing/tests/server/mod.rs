@@ -2588,7 +2588,7 @@ async fn test_register_board() {
 		expiry_height,
 		ark_info.server_pubkey,
 		ark_info.vtxo_exit_delta,
-	);
+	).unwrap();
 
 	// Create the funding tx that pays to the board's funding script
 	// NB: In production, you should get the server's cosignature BEFORE funding.
@@ -2671,7 +2671,7 @@ async fn test_register_board() {
 		expiry_height,
 		fake_server_keypair.public_key(),
 		ark_info.vtxo_exit_delta,
-	);
+	).unwrap();
 
 	// Fund the board
 	let funding_script = board_builder.funding_script_pubkey();

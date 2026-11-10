@@ -89,7 +89,7 @@ async fn blocklist_board_cosign_rejected() {
 		expiry_height,
 		ark_info.server_pubkey,
 		ark_info.vtxo_exit_delta,
-	);
+	).unwrap();
 
 	let funding_script = board_builder.funding_script_pubkey();
 	let (funding_tx, board_utxo) = blocked_board_funding_tx(
@@ -158,7 +158,7 @@ async fn blocklist_board_register_rejected() {
 		expiry_height,
 		ark_info.server_pubkey,
 		ark_info.vtxo_exit_delta,
-	);
+	).unwrap();
 
 	let funding_script = board_builder.funding_script_pubkey();
 	let (_funding_tx, board_utxo) = blocked_board_funding_tx(

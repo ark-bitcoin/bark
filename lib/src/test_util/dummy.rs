@@ -55,7 +55,7 @@ impl DummyTestVtxoSpec {
 			self.expiry_height,
 			self.server_keypair.public_key(),
 			self.exit_delta,
-		);
+		).unwrap();
 
 		let funding_tx = Transaction {
 			version: Version(3),
