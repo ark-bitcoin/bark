@@ -42,6 +42,18 @@ impl Server {
 		params: ArkoorCosignRequestValidationParams,
 		cosign_req: ArkoorPackageCosignRequest<Vtxo<Full>>,
 	) -> anyhow::Result<ArkoorPackageBuilder<ServerCanCosign>> {
+		let ret = self.build_cosign_request(params.use_checkpoints, cosign_req)?;
+		self.check_cosign_request_limits(&params, &ret)?;
+		Ok(ret)
+	}
+
+	/// Create the arkoor builder for the cosign request, without applying
+	/// the limits of [Server::check_cosign_request_limits].
+	pub(crate) fn build_cosign_request(
+		&self,
+		use_checkpoints: bool,
+		cosign_req: ArkoorPackageCosignRequest<Vtxo<Full>>,
+	) -> anyhow::Result<ArkoorPackageBuilder<ServerCanCosign>> {
 		// this we can check before creating the builder
 
 		if cosign_req.requests.is_empty() {
@@ -51,21 +63,31 @@ impl Server {
 		let use_checkpoint = cosign_req.requests.iter()
 			.all_same(|r| r.use_checkpoint)
 			.context("not all requests have the same use_checkpoints value")?;
-		if params.use_checkpoints && !use_checkpoint {
+		if use_checkpoints && !use_checkpoint {
 			bail!("should use arkoor checkpoints");
-		} else if !params.use_checkpoints && use_checkpoint {
+		} else if !use_checkpoints && use_checkpoint {
 			bail!("should not use arkoor checkpoints");
 		}
 
 		// then we create the builder
-		let ret = match ArkoorPackageBuilder::from_cosign_request(cosign_req) {
-			Ok(ret) => ret,
+		match ArkoorPackageBuilder::from_cosign_request(cosign_req) {
+			Ok(ret) => Ok(ret),
 			Err((idx, e)) => {
-				return badarg!("invalid cosign request at index #{idx}: {e}");
+				badarg!("invalid cosign request at index #{idx}: {e}")
 			}
-		};
+		}
+	}
 
-		for (idx, b) in ret.builders.iter().enumerate() {
+	/// Check the builder of a cosign request against the configured limits.
+	///
+	/// These limits can change between restarts, so they only apply to
+	/// requests that the server did not cosign before.
+	pub(crate) fn check_cosign_request_limits(
+		&self,
+		params: &ArkoorCosignRequestValidationParams,
+		builder: &ArkoorPackageBuilder<ServerCanCosign>,
+	) -> anyhow::Result<()> {
+		for (idx, b) in builder.builders.iter().enumerate() {
 			if let Some(max_exit_depth) = params.max_input_exit_depth {
 				let depth = b.input().exit_depth();
 				if depth >= max_exit_depth {
@@ -85,7 +107,7 @@ impl Server {
 			}
 		}
 
-		Ok(ret)
+		Ok(())
 	}
 
 	/// Returns the signed builder along with the number of VTXO rows actually

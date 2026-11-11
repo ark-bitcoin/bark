@@ -202,7 +202,6 @@ impl Server {
 		request: ArkoorPackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let input_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
 
 		let htlc_vtxos = request.all_outputs()
 			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
@@ -221,11 +220,14 @@ impl Server {
 		let payment_hash = requested_policy.payment_hash;
 
 		let htlc_amount = htlc_vtxos.iter().map(|v| v.total_amount).sum::<Amount>();
-		check_max_amount("lightning send", htlc_amount, self.config.max_ln_send_amount)?;
 
 		// Held for the whole call, so no other call decides on this payment
 		// while these HTLCs are validated and cosigned.
 		let _guard = self.payment_guards.lock(payment_hash).await;
+
+		// Read the inputs under the guard: an earlier call for this payment
+		// may have spent them while we were waiting for it.
+		let input_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
 
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
 		// We will mask the old value
@@ -236,7 +238,7 @@ impl Server {
 			max_outputs_per_input: self.config.max_arkoor_fanout,
 			max_input_exit_depth: Some(self.config.max_vtxo_exit_depth),
 		};
-		let builder = self.validate_cosign_request(validation, request)
+		let builder = self.build_cosign_request(validation.use_checkpoints, request)
 			.badarg("invalid cosign request")?;
 
 		let spend_map = builder.spend_info().collect::<HashMap<VtxoId, bitcoin::Txid>>();
@@ -249,14 +251,19 @@ impl Server {
 
 		// A client that lost our response sends the same request again. We
 		// marked its inputs as spent the first time, so we have to give it the
-		// HTLCs whatever changed since. Refusing would leave the client with
-		// inputs that it can't spend and no HTLCs to revoke.
+		// HTLCs whatever changed since, our configured limits included.
+		// Refusing would leave the client with inputs that it can't spend and
+		// no HTLCs to revoke.
 		let replay = spends.iter().all(|(vtxo, txid)| vtxo.is_oor_spent_by(*txid));
 
 		let tip = self.sync_manager.chain_tip().height;
 		let expiry = tip + self.config.htlc_send_expiry_delta;
 
 		if !replay {
+			check_max_amount("lightning send", htlc_amount, self.config.max_ln_send_amount)?;
+			self.check_cosign_request_limits(&validation, &builder)
+				.badarg("invalid cosign request")?;
+
 			// Locking value for a lightning payment whose payment hash is an
 			// hArk unlock hash would put the same secret in two domains at once.
 			if self.db.read(async |t| t.get_round_participation_by_unlock_hash(payment_hash.to_sha256_hash()).await).await?.is_some() {
