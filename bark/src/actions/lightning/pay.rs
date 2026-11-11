@@ -231,7 +231,7 @@ impl WalletAction for LightningSend {
 	/// exiting) them.
 	async fn on_retry(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		match &self.progress {
-			Progress::Start | Progress::InputsLocked { .. } => {
+			Progress::Start => {
 				if or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
 					or_retry!(self, fail_lightning_send_movement(wallet, &self).await);
 					Advance::Failed(error.context(
@@ -241,6 +241,11 @@ impl WalletAction for LightningSend {
 					Advance::Retry { state: self, error }
 				}
 			},
+			// The server may have cosigned the HTLCs and marked the inputs as
+			// spent without us getting the response. Giving up here would
+			// release inputs that we can no longer spend, so keep asking: the
+			// server either hands out the HTLCs again or rejects the request.
+			Progress::InputsLocked { .. } => Advance::Retry { state: self, error },
 			Progress::HtlcReceived(htlcs) | Progress::PaymentInitiated(htlcs) => {
 				if or_retry!(self, self.is_htlc_near_expiry(wallet).await) {
 					let htlcs = htlcs.clone();
@@ -278,7 +283,9 @@ impl WalletAction for LightningSend {
 	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
 		match &self.progress {
 			// Nothing committed server-side: close the movement and let the
-			// executor release the input locks and remove the row.
+			// executor release the input locks and remove the row. This holds
+			// in `InputsLocked` because the server never rejects a request
+			// that it cosigned before.
 			Progress::Start | Progress::InputsLocked { .. } => {
 				error!("Could not start lightning send {}: {:?}", self.id(), error);
 				or_retry!(self, fail_lightning_send_movement(wallet, &self).await);
