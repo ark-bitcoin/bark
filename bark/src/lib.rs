@@ -2663,6 +2663,9 @@ impl Wallet {
 
 	/// Starts a daemon for the wallet.
 	///
+	/// The daemon begins by replacing the wallet's connection to the Ark
+	/// server, and replaces it again whenever it has to reconnect.
+	///
 	/// The daemon uses the onchain wallet stored in [OpenWalletArgs::onchain] (if any)
 	/// for background onchain syncing and exit fee-bumping.
 	///
@@ -2685,6 +2688,42 @@ impl Wallet {
 		#[cfg(feature = "nwc")]
 		if let Some(manager) = self.inner.nwc.lock().as_ref() {
 			manager.start_all();
+		}
+
+		Ok(())
+	}
+
+	/// Restarts the daemon for the wallet on a new connection to the Ark
+	/// server, or starts one if none is running.
+	///
+	/// A connection can die without the daemon noticing for over a minute,
+	/// for example when a mobile app is suspended in the background. Call
+	/// this when the app returns to the foreground: the new daemon
+	/// reconnects and, unless [crate::Config::daemon_manual_sync] is set, syncs
+	/// right away instead of waiting on the stale connection. While the
+	/// server is unreachable it keeps trying to reconnect and does not use
+	/// the stale connection.
+	///
+	/// This returns right away. The new daemon first gives the previous one
+	/// a few seconds to finish its work in flight. Whatever is still
+	/// running after that is aborted, because a request stuck on the dead
+	/// connection would otherwise keep holding wallet locks the new daemon
+	/// needs. The interrupted work is picked up again by the new daemon's
+	/// sync, like after a crash.
+	pub fn restart_daemon(&self) -> anyhow::Result<()> {
+		let mut daemon = self.inner.daemon.lock();
+		let previous = daemon.take();
+		// NWC serving survives a restart, so it only starts here when no
+		// daemon was running, as in [Wallet::start_daemon].
+		#[cfg(feature = "nwc")]
+		let start_nwc = previous.is_none();
+		*daemon = Some(crate::daemon::restart_daemon(self, previous));
+
+		#[cfg(feature = "nwc")]
+		if start_nwc {
+			if let Some(manager) = self.inner.nwc.lock().as_ref() {
+				manager.start_all();
+			}
 		}
 
 		Ok(())
@@ -2728,12 +2767,14 @@ impl Wallet {
 
 	/// Stops the daemon for the wallet if it is running, otherwise does nothing.
 	pub fn stop_daemon(&self) {
+		// NWC stops under the daemon lock, so a concurrent
+		// [Wallet::start_daemon] cannot restart it in between.
+		let mut daemon = self.inner.daemon.lock();
 		#[cfg(feature = "nwc")]
 		if let Some(manager) = self.inner.nwc.lock().as_ref() {
 			manager.stop_all();
 		}
 
-		let mut daemon = self.inner.daemon.lock();
 		if let Some(handle) = daemon.take() {
 			handle.stop();
 		}
@@ -2742,12 +2783,15 @@ impl Wallet {
 	/// Stops the daemon for the wallet if it is running and waits until its
 	/// tasks have finished.
 	pub async fn stop_daemon_wait(&self) -> anyhow::Result<()> {
-		#[cfg(feature = "nwc")]
-		if let Some(manager) = self.inner.nwc.lock().as_ref() {
-			manager.stop_all();
-		}
-
-		let handle = self.inner.daemon.lock().take();
+		let handle = {
+			// See [Wallet::stop_daemon] for why NWC stops under the daemon lock.
+			let mut daemon = self.inner.daemon.lock();
+			#[cfg(feature = "nwc")]
+			if let Some(manager) = self.inner.nwc.lock().as_ref() {
+				manager.stop_all();
+			}
+			daemon.take()
+		};
 		if let Some(handle) = handle {
 			handle.stop_wait().await?;
 		}
