@@ -916,8 +916,9 @@ struct WalletInner {
 	/// Lazily initialised on first use via [`Wallet::require_server`]. A
 	/// [`OnceCell`] is the right primitive here: concurrent callers on a
 	/// cold cell all await the same in-flight `connect_to_server` future
-	/// instead of each opening a fresh gRPC channel.
-	server: tokio::sync::OnceCell<ServerConnection>,
+	/// instead of each opening a fresh gRPC channel. The cell itself is
+	/// swapped out by [`Wallet::reconnect_server`].
+	server: parking_lot::RwLock<Arc<tokio::sync::OnceCell<ServerConnection>>>,
 
 	/// Onchain wallet used for boarding, exit fee-bumping, and onchain syncing.
 	///
@@ -1463,7 +1464,7 @@ impl Wallet {
 		chain.require_version().await
 			.context("provided chain source doesn't meet version requirement")?;
 
-		let server = tokio::sync::OnceCell::new();
+		let server = parking_lot::RwLock::new(Arc::new(tokio::sync::OnceCell::new()));
 
 		let notifications = NotificationDispatch::new();
 		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
@@ -1551,7 +1552,7 @@ impl Wallet {
 		let wallet = Wallet { inner: Arc::new(WalletInner {
 			config, db, seed, exit, movements, notifications, chain,
 			lock_manager: Box::new(crate::lock_manager::memory::MemoryLockManager::new()),
-			server: tokio::sync::OnceCell::new(),
+			server: parking_lot::RwLock::new(Arc::new(tokio::sync::OnceCell::new())),
 			onchain: None,
 			daemon: parking_lot::Mutex::new(None),
 			finished_recovery: parking_lot::Mutex::new(None),
@@ -1626,7 +1627,7 @@ impl Wallet {
 		// Connect lazily if not yet connected. `get_or_try_init` ensures
 		// concurrent callers on a cold cell all await the same in-flight
 		// connect future instead of each opening a fresh gRPC channel.
-		let conn = self.inner.server.get_or_try_init(|| async {
+		let conn = self.server_cell().get_or_try_init(|| async {
 			let network = self.properties().await?.network;
 			Self::connect_to_server(&self.inner.config, network).await
 				.context("You should be connected to Ark server to perform this action")
@@ -1643,18 +1644,50 @@ impl Wallet {
 		Ok((conn, ark_info))
 	}
 
+	/// The cell holding the current connection to the Ark server.
+	///
+	/// Returns a clone so the lock on [WalletInner::server]
+	/// is never held across an await point.
+	pub(crate) fn server_cell(&self) -> Arc<tokio::sync::OnceCell<ServerConnection>> {
+		self.inner.server.read().clone()
+	}
+
+	/// Replace the connection to the Ark server with a newly established one.
+	///
+	/// [Wallet::refresh_server] keeps using the existing connection, which
+	/// only notices that its network path died once its keepalive times
+	/// out. Use this instead when the connection is likely stale, for
+	/// example after the process was suspended or the network changed.
+	///
+	/// The existing connection is kept if the new one cannot be established
+	/// or if the server behind it is rejected.
+	pub async fn reconnect_server(&self) -> anyhow::Result<()> {
+		let network = self.properties().await?.network;
+		let conn = Self::connect_to_server(&self.inner.config, network).await?;
+		self.check_server(&conn).await?;
+		*self.inner.server.write() = Arc::new(tokio::sync::OnceCell::new_with(Some(conn)));
+
+		Ok(())
+	}
+
 	pub async fn refresh_server(&self) -> anyhow::Result<()> {
 		// If the cell is still cold, initialise it with a fresh connection.
 		// If it is already initialised, run a heartbeat against the existing
-		// one — `OnceCell` does not support replacing a stored value, but
-		// `ServerConnection` is built around a tonic `Channel` which
-		// transparently reconnects, so we don't need to swap it.
-		let srv = self.inner.server.get_or_try_init(|| async {
+		// one: `ServerConnection` is built around a tonic `Channel` which
+		// transparently reconnects once it notices the connection broke.
+		let cell = self.server_cell();
+		let srv = cell.get_or_try_init(|| async {
 			let properties = self.properties().await?;
 			Self::connect_to_server(&self.inner.config, properties.network).await
 				.map_err(anyhow::Error::from)
 		}).await?;
 
+		self.check_server(srv).await
+	}
+
+	/// Check that `srv` is reachable and that the
+	/// Ark server behind it is safe to use.
+	async fn check_server(&self, srv: &ServerConnection) -> anyhow::Result<()> {
 		srv.check_connection().await?;
 		let ark_info = srv.ark_info().await;
 		ark_info.fees.validate().context("invalid fee schedule")?;
@@ -1715,7 +1748,7 @@ impl Wallet {
 
 	/// Return [ArkInfo] fetched on last handshake with the Ark server
 	pub async fn ark_info(&self) -> anyhow::Result<Option<ArkInfo>> {
-		match self.inner.server.get() {
+		match self.server_cell().get() {
 			Some(srv) => Ok(Some(srv.ark_info().await)),
 			None => Ok(None),
 		}
