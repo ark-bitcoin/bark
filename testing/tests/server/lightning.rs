@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bitcoin::Amount;
@@ -1191,6 +1192,144 @@ async fn unfunded_htlc_revocation_keeps_receive() {
 		.await.unwrap().unwrap();
 	assert_eq!(after.id, before.id);
 	assert_eq!(after.status, before.status, "unfunded refund canceled the receive");
+}
+
+/// A client that lost the response to its HTLC cosign request sends the same
+/// request again. The server marked the inputs as spent the first time, so it
+/// must cosign again even when the HTLC expiry is no longer acceptable for a
+/// new request.
+#[tokio::test]
+async fn htlc_cosign_is_replayed_after_blocks_were_mined() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/htlc_cosign_is_replayed_after_blocks_were_mined").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
+	let mut rpc = srv.get_public_rpc().await;
+
+	// The wallet only provides the vtxos and their keys; the test talks to the server itself.
+	let bark = ctx.bark("bark", &srv).funded(sat(500_000)).create().await;
+	let lost_ids = bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
+	let fresh_ids = bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
+	let client = bark.client().await;
+	let lost_input = client.get_full_vtxo(lost_ids[0]).await.unwrap();
+	let lost_key = client.get_vtxo_key(&lost_input).await.unwrap();
+	let fresh_input = client.get_full_vtxo(fresh_ids[0]).await.unwrap();
+	let fresh_key = client.get_vtxo_key(&fresh_input).await.unwrap();
+
+	// The lowest HTLC expiry the server accepts at this tip.
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+	let htlc_expiry = tip + srv.config().htlc_send_expiry_delta;
+	let htlc_key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let payment_hash = PaymentHash::from(sha256::Hash::hash(b"lost response").to_byte_array());
+	let policy = ark::VtxoPolicy::new_server_htlc_send(htlc_key.public_key(), payment_hash, htlc_expiry);
+
+	// The first response never reaches the client.
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		[lost_input.clone()], policy.clone(),
+	).unwrap().generate_user_nonces(&[lost_key]).unwrap();
+	rpc.request_lightning_pay_htlc_cosign(protos::LightningPayHtlcCosignRequest {
+		parts: protos::ArkoorPackageCosignRequest::from(builder.cosign_request()).parts,
+	}).await.expect("the first request is cosigned");
+
+	let tip = ctx.generate_blocks(3).await;
+	srv.wait_for_sync_height(tip).await;
+
+	// A request with this expiry that the server never cosigned is too late now.
+	let other_hash = PaymentHash::from(sha256::Hash::hash(b"too late").to_byte_array());
+	let other_policy = ark::VtxoPolicy::new_server_htlc_send(htlc_key.public_key(), other_hash, htlc_expiry);
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		[fresh_input], other_policy,
+	).unwrap().generate_user_nonces(&[fresh_key]).unwrap();
+	let status = rpc.request_lightning_pay_htlc_cosign(protos::LightningPayHtlcCosignRequest {
+		parts: protos::ArkoorPackageCosignRequest::from(builder.cosign_request()).parts,
+	}).await.expect_err("a new request with a stale expiry is refused");
+	assert!(status.message().contains("requested expiry is too low"), "unexpected error: {status:?}");
+
+	// The client sends the lost request again, with new nonces like bark does.
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		[lost_input], policy,
+	).unwrap().generate_user_nonces(&[lost_key]).unwrap();
+	let response = rpc.request_lightning_pay_htlc_cosign(protos::LightningPayHtlcCosignRequest {
+		parts: protos::ArkoorPackageCosignRequest::from(builder.cosign_request()).parts,
+	}).await.expect("the repeated request is cosigned again").into_inner();
+
+	// The client now holds the HTLCs, so it can take its money back.
+	let response = ark::arkoor::package::ArkoorPackageCosignResponse::try_from(response).unwrap();
+	let htlcs = builder.user_cosign(&[lost_key], response).unwrap().build_signed_vtxos();
+	client.register_vtxo_transactions_with_server(&htlcs).await.unwrap();
+	let keys = vec![htlc_key; htlcs.len()];
+	revoke_htlc_vtxos(&srv, htlcs, &keys).await.expect("the HTLCs can be revoked");
+}
+
+/// The wallet never sees the server's response to its HTLC cosign request and
+/// asks again a few blocks later. It must get its HTLCs and complete the
+/// payment, not end up with inputs that the server considers spent.
+#[tokio::test]
+async fn lightning_send_completes_after_lost_htlc_cosign_response() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("server/lightning_send_completes_after_lost_htlc_cosign_response").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	/// Forwards the HTLC cosign request to the server, but drops the
+	/// response for as long as `drop_response` is set.
+	#[derive(Clone)]
+	struct Proxy {
+		drop_response: Arc<AtomicBool>,
+		cosigned: Arc<AtomicBool>,
+	}
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn request_lightning_pay_htlc_cosign(
+			&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			let response = upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner();
+			self.cosigned.store(true, Ordering::Relaxed);
+			if self.drop_response.load(Ordering::Relaxed) {
+				return Err(tonic::Status::unavailable("proxy: dropped the cosign response"));
+			}
+			Ok(response)
+		}
+	}
+	let drop_response = Arc::new(AtomicBool::new(true));
+	let cosigned = Arc::new(AtomicBool::new(false));
+	let proxy = srv.start_proxy_no_mailbox(Proxy {
+		drop_response: drop_response.clone(),
+		cosigned: cosigned.clone(),
+	}).await;
+
+	let board_amount = btc(2);
+	let mut bark = ctx.bark("bark", &proxy).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	lightning.sync().await;
+	let invoice_amount = btc(0.5);
+	let invoice = lightning.external.invoice(Some(invoice_amount), "lost_response", "lost response").await;
+
+	// Cut the wallet off while it keeps asking for a response that never comes.
+	bark.set_timeout(Duration::from_secs(5));
+	let _ = bark.try_pay_lightning(invoice, None, false).await;
+	bark.unset_timeout();
+	assert!(cosigned.load(Ordering::Relaxed), "the server should have cosigned the HTLCs");
+	assert_eq!(bark.checkpoint_steps().await, vec!["ln_send.InputsLocked".to_string()]);
+
+	let tip = ctx.generate_blocks(3).await;
+	srv.wait_for_sync_height(tip).await;
+
+	drop_response.store(false, Ordering::Relaxed);
+	async {
+		loop {
+			bark.maintain().await;
+			if bark.offchain_balance().await.pending_lightning_send == Amount::ZERO {
+				break;
+			}
+			tokio::time::sleep(poll_interval()).await;
+		}
+	}.wait(wait_timeout()).await;
+
+	assert_eq!(bark.spendable_balance().await, board_amount - invoice_amount);
 }
 
 /// A malicious sender must not be able to hand a victim a `ServerHtlcSend` vtxo
