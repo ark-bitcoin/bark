@@ -3,11 +3,14 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use tokio::fs;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::watch;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy};
 use ark::vtxo::Full;
 
 use ark_testing::{TestContext, sat};
+use ark_testing::util::{FutureExt, poll_interval};
 use bark::vtxo::VtxoState;
 use server::database::Db;
 
@@ -178,4 +181,142 @@ async fn arkoor_receive_replay_does_not_restore_a_spent_vtxo() {
 	let stored = recovered.get_vtxo_by_id(received_id).await
 		.expect("the replayed vtxo should be stored");
 	assert_eq!(stored.state, VtxoState::Spent);
+}
+
+/// A TCP forwarder whose established connections can be frozen: they stay
+/// open but stop carrying bytes, like a connection whose network path died
+/// without either end being told. Connections made afterwards work normally,
+/// unless the proxy is set to refuse them, like a network that is still down.
+struct FreezableTcpProxy {
+	url: String,
+	/// The number of times [Self::freeze_connections] was called.
+	freezes: watch::Sender<u64>,
+	/// Whether new connections are closed as soon as they are accepted.
+	refusing: watch::Sender<bool>,
+	/// The number of connections closed because the proxy was refusing.
+	refused: watch::Sender<u64>,
+}
+
+impl FreezableTcpProxy {
+	async fn start(upstream_url: &str) -> FreezableTcpProxy {
+		let upstream = upstream_url.strip_prefix("http://").expect("http upstream").to_owned();
+		let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind tcp proxy");
+		let url = format!("http://{}", listener.local_addr().expect("tcp proxy address"));
+		let (freezes, _) = watch::channel(0);
+		let (refusing, _) = watch::channel(false);
+		let (refused, _) = watch::channel(0);
+
+		let freezes_rx = freezes.subscribe();
+		let refusing_rx = refusing.subscribe();
+		let refused_tx = refused.clone();
+		tokio::spawn(async move {
+			loop {
+				let (mut client, _) = listener.accept().await.expect("accept on tcp proxy");
+				if *refusing_rx.borrow() {
+					drop(client);
+					refused_tx.send_modify(|refused| *refused += 1);
+					continue;
+				}
+				let mut freezes = freezes_rx.clone();
+				let accepted_at = *freezes.borrow();
+				let upstream = upstream.clone();
+				tokio::spawn(async move {
+					let mut server = TcpStream::connect(&upstream).await
+						.expect("connect to tcp proxy upstream");
+					let frozen = tokio::select! {
+						_ = tokio::io::copy_bidirectional(&mut client, &mut server) => false,
+						_ = freezes.wait_for(|freezes| *freezes > accepted_at) => true,
+					};
+					if frozen {
+						// Keep both sockets open without forwarding anything.
+						std::future::pending::<()>().await;
+					}
+				});
+			}
+		});
+
+		FreezableTcpProxy { url, freezes, refusing, refused }
+	}
+
+	/// Freeze every connection established so far.
+	fn freeze_connections(&self) {
+		self.freezes.send_modify(|freezes| *freezes += 1);
+	}
+
+	/// Close new connections as soon as they are accepted, or stop doing so.
+	fn refuse_connections(&self, refuse: bool) {
+		self.refusing.send_replace(refuse);
+	}
+
+	/// Wait until more than `count` connections were refused.
+	async fn wait_for_refused_above(&self, count: u64) {
+		self.refused.subscribe().wait_for(|refused| *refused > count).await
+			.expect("sender is alive");
+	}
+}
+
+/// Restarting the daemon leaves a working daemon behind, whether or not one
+/// was running and whether or not the server is reachable at that moment,
+/// and it does so on a new server connection: a connection that
+/// silently died is only noticed once its keepalive times out, which takes
+/// over a minute, and a payment waiting in the mailbox must not wait for that.
+#[tokio::test]
+async fn restart_daemon_resumes_mailbox_delivery() {
+	let ctx = TestContext::new("bark_sdk/restart_daemon_resumes_mailbox_delivery").await;
+	let srv = ctx.captaind("server").create().await;
+	let proxy = FreezableTcpProxy::start(&srv.ark_url()).await;
+
+	let sender = ctx.bark_sdk("sender", &srv)
+		.boarded(sat(400_000))
+		.create().await;
+	// Long enough that the periodic connection check never runs, so only the
+	// daemon's startup sync and its mailbox subscription can deliver a payment.
+	let sync_interval = Duration::from_secs(24 * 60 * 60);
+	let receiver = ctx.bark_sdk("receiver", &proxy.url)
+		.cfg(move |cfg| cfg.daemon_sync_interval_secs = sync_interval.as_secs())
+		.create().await;
+
+	let wait_for_spendable = |expected, timeout| {
+		let receiver = &receiver;
+		async move {
+			loop {
+				let vtxos = receiver.spendable_vtxos().await.expect("list receiver VTXOs");
+				if vtxos.iter().map(|v| v.amount()).sum::<bitcoin::Amount>() == expected {
+					break;
+				}
+				tokio::time::sleep(poll_interval()).await;
+			}
+		}.wait(timeout)
+	};
+
+	// Restart a stopped daemon: a payment sent while it was stopped arrives.
+	receiver.stop_daemon_wait().await.expect("stop daemon");
+	let address = receiver.new_address().await.expect("new address");
+	sender.send_arkoor_payment(&address, sat(100_000)).await.expect("first arkoor send");
+	receiver.restart_daemon().expect("restart stopped daemon");
+	wait_for_spendable(sat(100_000), Duration::from_secs(15)).await;
+
+	// Restart a running daemon whose connection died. The address is
+	// generated up front, because the wallet cannot reach the server once
+	// its connection is frozen.
+	let address = receiver.new_address().await.expect("new address");
+	proxy.freeze_connections();
+	sender.send_arkoor_payment(&address, sat(50_000)).await.expect("second arkoor send");
+	receiver.restart_daemon().expect("restart running daemon");
+	// Well below the time the keepalive needs to give up on the connection.
+	wait_for_spendable(sat(150_000), Duration::from_secs(15)).await;
+
+	// Restart while the network is still down, so the new connection fails
+	// and only the frozen one is left. Connections are allowed again only
+	// after two were refused, which the first attempt to replace it does not
+	// survive, so the payment arrives in time only if the daemon tries again.
+	let address = receiver.new_address().await.expect("new address");
+	proxy.freeze_connections();
+	proxy.refuse_connections(true);
+	let refused = *proxy.refused.borrow();
+	sender.send_arkoor_payment(&address, sat(25_000)).await.expect("third arkoor send");
+	receiver.restart_daemon().expect("restart running daemon");
+	proxy.wait_for_refused_above(refused + 1).wait(Duration::from_secs(15)).await;
+	proxy.refuse_connections(false);
+	wait_for_spendable(sat(175_000), Duration::from_secs(15)).await;
 }
