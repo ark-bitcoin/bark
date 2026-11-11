@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ark::rounds::RoundEvent;
+use bark_runtime::Instant;
 use futures::{FutureExt, StreamExt};
 use log::{info, trace, warn};
 #[cfg(not(feature = "wasm-web"))]
@@ -12,7 +13,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::{Wallet, WalletInner};
-use crate::utils::ReconnectBackoff;
+use crate::utils::{RECONNECT_BACKOFF_MAX, ReconnectBackoff};
 
 
 
@@ -119,32 +120,56 @@ impl DaemonProcess {
 		}
 	}
 
-	/// Recursively resubscribe to mailbox message stream by waiting and
-	/// calling [Wallet::subscribe_store_mailbox_messages] again until
-	/// the daemon is shutdown.
+	/// Keep the mailbox message subscription alive for the lifetime of
+	/// the daemon, reconnecting as needed.
 	///
-	/// The mailbox stream is always-on and sets `connected` to `false`
-	/// when it breaks, so other processes can back off.
+	/// When the stream breaks or the server is marked unreachable, this
+	/// process checks the server connection itself and resubscribes after
+	/// a reconnect backoff, which grows while attempts keep failing.
+	///
+	/// `connected` follows the outcome of that check, so other processes
+	/// back off while the server is unreachable.
 	async fn run_mailbox_messages_process(&self) {
+		let mut backoff = ReconnectBackoff::new();
 		loop {
-			let shutdown = self.shutdown.clone();
-			if self.connected.load(Ordering::Relaxed) {
+			let mut needs_server_check = !self.connected.load(Ordering::Relaxed);
+			if !needs_server_check {
 				trace!("Daemon subscribing to mailbox message stream");
+				let subscribed_at = Instant::now();
 				let r = Wallet::subscribe_process_mailbox_messages_weak(
-					self.wallet.clone(), None, shutdown,
+					self.wallet.clone(), None, self.shutdown.clone(),
 				).await;
 				if let Err(e) = r {
 					warn!("An error occurred while processing mailbox messages: {e:#}");
-					self.connected.store(false, Ordering::Relaxed);
+					needs_server_check = true;
+				}
+
+				// A subscription that outlived the longest backoff step was
+				// healthy, so the next reconnect is prompt again.
+				if subscribed_at.elapsed() >= RECONNECT_BACKOFF_MAX {
+					backoff.reset();
 				}
 			}
 
 			futures::select! {
-				_ = bark_runtime::sleep(self.sync_interval).fuse() => {},
+				_ = backoff.wait().fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting mailbox messages process...");
 					break;
 				},
+			}
+
+			if needs_server_check {
+				let Some(wallet) = self.wallet() else { break };
+				match wallet.refresh_server().await {
+					Ok(()) => self.connected.store(true, Ordering::Relaxed),
+					Err(e) => {
+						// The server connection check process reports
+						// an unreachable server at a higher log level.
+						trace!("Ark server check before mailbox resubscribe failed: {e:#}");
+						self.connected.store(false, Ordering::Relaxed);
+					},
+				}
 			}
 		}
 	}
