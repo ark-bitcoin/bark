@@ -90,7 +90,7 @@ use tracing::{info, trace, warn};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId};
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{fee, BlockHeight, BlockRef, TxStatus, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::BitcoinAsyncRpcExt;
 use bitcoin_ext::bdk::KEYCHAIN;
 use bitcoin_ext::cpfp::MakeCpfpFees;
@@ -105,26 +105,18 @@ use crate::utils::InstrumentedLock;
 use crate::wallet::PersistedWallet;
 use crate::watchman::policy::ActionContextFetcher;
 
-/// The kind of mempool spend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(unused)]
-enum SpendKind {
-	/// A claim transaction built by the watchman.
-	Claim,
-	/// A progress transaction built by the watchman.
-	Progress,
-	/// A foreign spend (e.g. user exit).
-	Foreign,
-}
-
 /// A transaction spending a vtxo that is currently in the mempool.
 #[derive(Debug, Clone)]
 struct MempoolSpend {
-	txid: Txid,
+	/// Chunk feerate of the spend.
 	fee_rate: FeeRate,
-	#[allow(unused)]
-	kind: SpendKind,
 }
+
+/// The mempool spends of the vtxos handled in one pass, by vtxo.
+///
+/// `None` means nothing in the mempool spends the vtxo. A vtxo without an
+/// entry couldn't be looked up, so it is left alone for this pass.
+type MempoolSpends = HashMap<VtxoId, Option<MempoolSpend>>;
 
 /// The action the watchman should take for a VTXO.
 ///
@@ -163,15 +155,6 @@ struct FrontierWork {
 	sweeps: Vec<ServerVtxo>,
 }
 
-impl FrontierWork {
-	/// All VTXOs for which we intend to broadcast a transaction.
-	fn actionable_vtxos(&self) -> impl Iterator<Item = &ServerVtxo> {
-		self.claims.iter()
-			.chain(self.sweeps.iter())
-			.chain(self.progress.iter().map(|(_, v)| v))
-	}
-}
-
 /// VTXO processing watchman that handles claim and progress txs.
 pub struct Watchman {
 	/// Configuration parameters controlling watchman behavior.
@@ -194,10 +177,6 @@ pub struct Watchman {
 	frontier: FrontierChainListener,
 	/// The latest chain tip from the sync manager
 	sync_height: watch::Receiver<BlockRef>,
-	/// Cache of transactions spending frontier vtxos, keyed by vtxo id.
-	///
-	/// Includes claims, progress txs, and foreign spends (e.g. user exits).
-	mempool_spends: parking_lot::RwLock<HashMap<VtxoId, MempoolSpend>>,
 }
 
 impl Watchman {
@@ -224,7 +203,6 @@ impl Watchman {
 			watchman_wallet: wallet,
 			frontier,
 			sync_height,
-			mempool_spends: parking_lot::RwLock::new(HashMap::new()),
 		}
 	}
 
@@ -583,9 +561,8 @@ impl Watchman {
 
 	/// Scan the frontier and collect the work to be done, grouped by loop.
 	///
-	/// This determines the action for every VTXO in the frontier, reports the
-	/// frontier telemetry and drops cached mempool spends for VTXOs that no
-	/// longer need any action.
+	/// This determines the action for every VTXO in the frontier and reports
+	/// the frontier telemetry.
 	async fn scan_frontier(&self) -> anyhow::Result<FrontierWork> {
 		let frontier = self.db.read(async |t| t.get_frontier().await).await?;
 
@@ -631,15 +608,11 @@ impl Watchman {
 		claims.sort_by_key(|(d, _)| *d);
 		progress.sort_by_key(|(d, _, _)| *d);
 
-		let work = FrontierWork {
+		Ok(FrontierWork {
 			claims: claims.into_iter().map(|(_, v)| v).collect(),
 			progress: progress.into_iter().map(|(_, txid, v)| (txid, v)).collect(),
 			sweeps,
-		};
-
-		self.clean_mempool_spends(work.actionable_vtxos().map(|v| v.id()));
-
-		Ok(work)
+		})
 	}
 
 	/// React to on-chain exit activity: progress exit chains and claim VTXOs
@@ -650,16 +623,16 @@ impl Watchman {
 	pub async fn process_reactions(&self) -> anyhow::Result<()> {
 		let work = self.scan_frontier().await?;
 
-		let vtxos = work.claims.iter().chain(work.progress.iter().map(|(_, v)| v));
-		for vtxo in vtxos {
-			self.update_mempool_spend(vtxo.id()).await;
-		}
+		let vtxo_ids = work.claims.iter().chain(work.progress.iter().map(|(_, v)| v))
+			.map(|v| v.id())
+			.collect();
+		let spends = self.measure_mempool_spends(vtxo_ids).await;
 
 		if !work.claims.is_empty() {
-			self.process_claims(work.claims).await?;
+			self.process_claims(work.claims, &spends).await?;
 		}
 		if !work.progress.is_empty() {
-			self.process_progress_txs(work.progress).await?;
+			self.process_progress_txs(work.progress, &spends).await?;
 		}
 
 		Ok(())
@@ -672,12 +645,10 @@ impl Watchman {
 	pub async fn process_sweeps(&self) -> anyhow::Result<()> {
 		let work = self.scan_frontier().await?;
 
-		for vtxo in &work.sweeps {
-			self.update_mempool_spend(vtxo.id()).await;
-		}
+		let spends = self.measure_mempool_spends(work.sweeps.iter().map(|v| v.id()).collect()).await;
 
 		if !work.sweeps.is_empty() {
-			self.process_claims(work.sweeps).await?;
+			self.process_claims(work.sweeps, &spends).await?;
 		}
 
 		Ok(())
@@ -688,7 +659,11 @@ impl Watchman {
 	///
 	/// Filters vtxos by broadcast status (skipping those already broadcast with good feerate),
 	/// then builds and broadcasts claim txs in chunks.
-	async fn process_claims(&self, mut vtxos: Vec<ServerVtxo>) -> anyhow::Result<()> {
+	async fn process_claims(
+		&self,
+		mut vtxos: Vec<ServerVtxo>,
+		spends: &MempoolSpends,
+	) -> anyhow::Result<()> {
 		//TODO(stevenroose) adapt feerate to how close the deadline is
 		let min_feerate = self.fee_estimator.regular();
 
@@ -696,9 +671,11 @@ impl Watchman {
 		let mut feerate = min_feerate;
 
 		// filter VTXOs to claim
-		vtxos.retain(|v| match self.get_mempool_spend(v.id()) {
-			None => true,
-			Some(spend) => {
+		vtxos.retain(|v| match spends.get(&v.id()) {
+			// Unknown mempool state, try again next pass.
+			None => false,
+			Some(None) => true,
+			Some(Some(spend)) => {
 				if spend.fee_rate < min_feerate {
 					feerate = feerate.max(saturating_add_feerates(
 						spend.fee_rate, self.config.incremental_relay_fee,
@@ -729,92 +706,53 @@ impl Watchman {
 		Ok(())
 	}
 
-	/// Update the cached MempoolSpend for a vtxo based on current mempool state.
+	/// Look up what spends each of `vtxo_ids` in the mempool and measure its
+	/// chunk feerate.
 	///
-	/// Detects the spend kind by checking:
-	/// - If txid is in virtual_transaction table → Progress
-	/// - If all non-anchor outputs go to drain_address → Claim
-	/// - Otherwise → Foreign
-	async fn update_mempool_spend(&self, vtxo_id: VtxoId) {
-		let cached = self.mempool_spends.read().get(&vtxo_id).cloned();
+	/// Measured on every pass, since a chunk feerate drops when a descendant
+	/// that paid for it leaves the mempool. A spender of several vtxos is
+	/// measured once. A vtxo whose lookup fails gets no entry.
+	async fn measure_mempool_spends(&self, vtxo_ids: Vec<VtxoId>) -> MempoolSpends {
+		let mut spends = HashMap::new();
+		let mut measured = HashMap::<Txid, Option<MempoolSpend>>::new();
+		for vtxo_id in vtxo_ids {
+			let spending_txid = match bcd::get_mempool_spending_tx(
+				&self.bitcoind, vtxo_id.to_point(),
+			).await {
+				Ok(Some(txid)) => txid,
+				Ok(None) => {
+					spends.insert(vtxo_id, None);
+					continue;
+				},
+				Err(e) => {
+					warn!("Failed to look up mempool spend of vtxo {}: {:#}", vtxo_id, e);
+					continue;
+				},
+			};
 
-		// Check what's currently spending this vtxo in the mempool
-		let spending_txid = match bcd::get_mempool_spending_tx(
-			&self.bitcoind, vtxo_id.to_point(),
-		).await {
-			Ok(Some(txid)) => txid,
-			Ok(None) => {
-				self.mempool_spends.write().remove(&vtxo_id);
-				return;
-			},
-			Err(e) => {
-				warn!("bitcoind err: {:#}", e);
-				return;
-			},
-		};
-
-		// Same as cached - nothing to update
-		if cached.as_ref().is_some_and(|c| c.txid == spending_txid) {
-			return;
+			let spend = match measured.get(&spending_txid) {
+				Some(spend) => spend.clone(),
+				// None if the spend left the mempool between the two calls.
+				None => match bcd::chunk_fee_rate(&self.bitcoind, spending_txid).await {
+					Ok(fee_rate) => {
+						let spend = fee_rate.map(|fee_rate| MempoolSpend { fee_rate });
+						measured.insert(spending_txid, spend.clone());
+						spend
+					},
+					Err(e) => {
+						warn!("Failed to fetch feerate of mempool spend {} of vtxo {}: {:#}",
+							spending_txid, vtxo_id, e,
+						);
+						continue;
+					},
+				},
+			};
+			spends.insert(vtxo_id, spend);
 		}
-
-		let feerate = match bcd::chunk_fee_rate(&self.bitcoind, spending_txid).await {
-			Ok(Some(feerate)) => feerate,
-			// The spend left the mempool between the two calls.
-			Ok(None) => {
-				self.mempool_spends.write().remove(&vtxo_id);
-				return;
-			},
-			// Any cached entry is a previous spender's, so it is stale; drop it.
-			Err(e) => {
-				warn!("Failed to fetch feerate of mempool spend {} of vtxo {}: {:#}",
-					spending_txid, vtxo_id, e,
-				);
-				self.mempool_spends.write().remove(&vtxo_id);
-				return;
-			},
-		};
-
-		// Detect spend kind
-		let kind = self.detect_spend_kind(spending_txid).await;
-
-		let spend = MempoolSpend { txid: spending_txid, fee_rate: feerate, kind };
-		self.mempool_spends.write().insert(vtxo_id, spend);
+		spends
 	}
 
-	/// Detect the kind of spend for a transaction.
-	async fn detect_spend_kind(&self, txid: Txid) -> SpendKind {
-		// Check if it's a progress tx (in virtual_transaction table)
-		if let Ok(Some(_)) = self.db.read(async |t| t.get_virtual_transaction_by_txid(txid).await).await {
-			return SpendKind::Progress;
-		}
-
-		// Check if it's a claim (all non-anchor outputs go to drain_address)
-		if let Ok(tx) = self.bitcoind.get_raw_transaction_verbosity_zero(&txid).await {
-			let tx = tx.0;
-			let is_claim = tx.output.iter()
-				.filter(|o| !o.script_pubkey.is_op_return() && o.script_pubkey != *fee::P2A_SCRIPT)
-				.all(|o| o.script_pubkey == self.drain_spk);
-			if is_claim {
-				return SpendKind::Claim;
-			}
-		}
-
-		SpendKind::Foreign
-	}
-
-	/// Remove mempool spends for vtxos not in the provided list.
-	fn clean_mempool_spends(&self, vtxos: impl IntoIterator<Item = VtxoId>) {
-		let vtxo_ids = vtxos.into_iter().collect::<HashSet<_>>();
-		self.mempool_spends.write().retain(|id, _| vtxo_ids.contains(id));
-	}
-
-	/// Get the cached mempool spend for a vtxo, if any.
-	fn get_mempool_spend(&self, vtxo: VtxoId) -> Option<MempoolSpend> {
-		self.mempool_spends.read().get(&vtxo).cloned()
-	}
-
-	/// Build, broadcast, and cache a claim tx for the given vtxos.
+	/// Build and broadcast a claim tx for the given vtxos.
 	async fn build_and_broadcast_claim(
 		&self,
 		vtxos: &[ServerVtxo],
@@ -831,16 +769,6 @@ impl Watchman {
 		slog!(ClaimBroadcast, txid, fee_rate, total_output_value, fee,
 			total_input_value, vtxo_ids: vtxos.iter().map(|v| v.id()).collect(),
 		);
-
-		let claim = MempoolSpend {
-			txid,
-			fee_rate,
-			kind: SpendKind::Claim,
-		};
-		let mut mempool_spends = self.mempool_spends.write();
-		for vtxo in vtxos {
-			mempool_spends.insert(vtxo.id(), claim.clone());
-		}
 		Ok(())
 	}
 
@@ -970,7 +898,11 @@ impl Watchman {
 	///
 	/// The input contains (progress_txid, vtxo) pairs, where progress_txid
 	/// is the pre-computed progress transaction that should be broadcast.
-	async fn process_progress_txs(&self, mut txs: Vec<(Txid, ServerVtxo)>) -> anyhow::Result<()> {
+	async fn process_progress_txs(
+		&self,
+		mut txs: Vec<(Txid, ServerVtxo)>,
+		spends: &MempoolSpends,
+	) -> anyhow::Result<()> {
 		//TODO(stevenroose) adapt feerate to how close the deadline is
 		let min_fee_rate = self.fee_estimator.regular();
 
@@ -984,9 +916,11 @@ impl Watchman {
 		txs.retain(|(txid, _)| seen.insert(*txid));
 
 		// filter txs that are already in the mempool with sufficient fee
-		txs.retain(|(_, v)| match self.get_mempool_spend(v.id()) {
-			None => true,
-			Some(spend) => if spend.fee_rate < min_fee_rate {
+		txs.retain(|(_, v)| match spends.get(&v.id()) {
+			// Unknown mempool state, try again next pass.
+			None => false,
+			Some(None) => true,
+			Some(Some(spend)) => if spend.fee_rate < min_fee_rate {
 				fee_rate = fee_rate.max(saturating_add_feerates(
 					spend.fee_rate, self.config.incremental_relay_fee,
 				));
