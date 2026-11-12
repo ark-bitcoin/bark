@@ -25,6 +25,13 @@ use crate::daemon::{Daemon, DaemonHelper};
 use crate::ports::pick_port;
 use crate::util::{FutureExt, poll_interval, resolve_path, get_tx_propagation_timeout_millis, wait_timeout};
 
+/// The RPC connection limit of a test bitcoind.
+///
+/// bitcoind needs one file descriptor for each connection it allows.
+/// Only on Linux can it use more than 1024 in total, and it refuses to
+/// start when its limits need more than it can use.
+const RPC_MAX_CONNECTIONS: usize = if cfg!(target_os = "linux") { 1024 } else { 512 };
+
 lazy_static! {
 	/// Receives block rewards. Paying an address outside the wallet keeps mining fast.
 	pub static ref RANDOM_ADDR: Address = Address::<NetworkUnchecked>::from_str(
@@ -461,7 +468,7 @@ impl DaemonHelper for BitcoindHelper {
 			"-whitelist=noban,in,out@127.0.0.1", // whitelist our peers for instant relay
 			// tests run many RPC clients (barks, server, electrs) that keep
 			// idle keep-alive connections open, the default of 16 is too low
-			"-rpcmaxconnections=1024",
+			&format!("-rpcmaxconnections={}", RPC_MAX_CONNECTIONS),
 			"-listenonion=0",
 			&format!("-rpcauth={}", BITCOINRPC_TEST_AUTH),
 			&format!("-datadir={}", self.config.datadir.display()),
