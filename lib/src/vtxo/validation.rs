@@ -198,11 +198,71 @@ pub fn validate_unsigned<P: Policy>(
 
 #[cfg(test)]
 mod test {
-	use bitcoin::{OutPoint, Transaction};
+	use bitcoin::{Amount, OutPoint, Transaction};
+	use bitcoin::hashes::{sha256, Hash};
+	use bitcoin::secp256k1::{rand, Keypair};
 
-	use crate::{ProtocolEncoding, Vtxo};
+	use crate::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest, SECP};
 	use crate::vtxo::Full;
-	use crate::test_util::VTXO_VECTORS;
+	use crate::test_util::{build_signed_tree, VTXO_VECTORS};
+	use crate::tree::signed::{
+		HashlockVersion, LeafVtxoCosignContext, LeafVtxoCosignResponse, UnlockPreimage,
+	};
+
+	use super::VtxoValidationError;
+
+	/// A fully signed round VTXO whose last transition is the v0 hash lock.
+	fn hark_leaf_v0_vtxo() -> (Vtxo<Full>, Transaction) {
+		let user_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let user_cosign_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_cosign_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let preimage = rand::random::<UnlockPreimage>();
+		let outputs = vec![VtxoRequest {
+			amount: Amount::from_sat(10_000),
+			policy: VtxoPolicy::new_pubkey(user_key.public_key()),
+		}; 2];
+
+		let (tree, funding_tx) = build_signed_tree(
+			HashlockVersion::V0, outputs, &user_cosign_key, &server_key, &server_cosign_key,
+			sha256::Hash::hash(&preimage),
+		);
+		let mut vtxo = tree.into_cached_tree().output_vtxos().next().unwrap();
+		let (ctx, req) = LeafVtxoCosignContext::new(&vtxo, &funding_tx, &user_key).unwrap();
+		let resp = LeafVtxoCosignResponse::new_cosign(&req, &vtxo, &funding_tx, &server_key).unwrap();
+		assert!(ctx.finalize(&mut vtxo, resp));
+		assert!(vtxo.provide_unlock_preimage(preimage));
+		(vtxo, funding_tx)
+	}
+
+	#[test]
+	fn validate_sigs_rejects_an_invalid_signature() {
+		let (v0_vtxo, v0_funding_tx) = hark_leaf_v0_vtxo();
+		// One VTXO for each genesis transition kind: cosigned, arkoor,
+		// hash-locked cosigned and hash-locked cosigned v0.
+		let cases = [
+			(&VTXO_VECTORS.board_vtxo, &VTXO_VECTORS.anchor_tx),
+			(&VTXO_VECTORS.arkoor2_vtxo, &VTXO_VECTORS.anchor_tx),
+			(&VTXO_VECTORS.round1_vtxo, &VTXO_VECTORS.round_tx),
+			(&v0_vtxo, &v0_funding_tx),
+		];
+		for (vtxo, anchor_tx) in cases {
+			vtxo.validate(anchor_tx).expect("the fixture is valid");
+
+			let mut vtxo = vtxo.clone();
+			vtxo.invalidate_final_sig();
+
+			// The test-only script check also rejects the signature, with
+			// "transaction validation failed". Release builds only have
+			// validate_sigs, so the error must come from it.
+			match vtxo.validate(anchor_tx) {
+				Err(VtxoValidationError::GenesisTransition { error, .. }) => {
+					assert_eq!(error, "invalid signature", "vtxo {}", vtxo.id());
+				},
+				other => panic!("vtxo {} with an invalid signature: {:?}", vtxo.id(), other),
+			}
+		}
+	}
 
 	#[test]
 	pub fn validate_vtxos() {
