@@ -202,7 +202,6 @@ impl Server {
 		request: ArkoorPackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let input_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
 
 		let htlc_vtxos = request.all_outputs()
 			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
@@ -221,61 +220,81 @@ impl Server {
 		let payment_hash = requested_policy.payment_hash;
 
 		let htlc_amount = htlc_vtxos.iter().map(|v| v.total_amount).sum::<Amount>();
-		check_max_amount("lightning send", htlc_amount, self.config.max_ln_send_amount)?;
 
 		// Held for the whole call, so no other call decides on this payment
 		// while these HTLCs are validated and cosigned.
 		let _guard = self.payment_guards.lock(payment_hash).await;
 
+		// Read the inputs under the guard: an earlier call for this payment
+		// may have spent them while we were waiting for it.
+		let input_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
+
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
 		// We will mask the old value
 		let request = request.set_vtxos(input_vtxos.iter().map(|v| v.vtxo.clone()))?;
-
-		// Locking value for a lightning payment whose payment hash is an
-		// hArk unlock hash would put the same secret in two domains at once.
-		if self.db.read(async |t| t.get_round_participation_by_unlock_hash(payment_hash.to_sha256_hash()).await).await?.is_some() {
-			return badarg!("payment hash collides with an existing unlock hash");
-		}
-
-		// Bail early if this invoice was already paid to avoid setting up HTLCs
-		// just to have them revoked some time later.
-		if self.htlc_settler.is_settled(payment_hash).await?.is_some() {
-			return badarg!("invoice has already been paid");
-		}
-
-		// Verify that the proposed expiry makes sense for us
-		let tip = self.sync_manager.chain_tip().height;
-		let expiry = tip + self.config.htlc_send_expiry_delta;
-		if requested_policy.htlc_expiry < expiry.saturating_sub(BlockDelta::new(1)) {
-			return badarg!(
-				"requested expiry is too low. our tip is {tip}. \
-				sync your node and try again",
-			);
-		}
-
-		if self.db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
-			payment_hash,
-		).await).await?.is_some()
-		{
-			return badarg!("payment already in progress for this invoice");
-		}
 
 		let validation = ArkoorCosignRequestValidationParams {
 			use_checkpoints: true,
 			max_outputs_per_input: self.config.max_arkoor_fanout,
 			max_input_exit_depth: Some(self.config.max_vtxo_exit_depth),
 		};
-		let builder = self.validate_cosign_request(validation, request)
+		let builder = self.build_cosign_request(validation.use_checkpoints, request)
 			.badarg("invalid cosign request")?;
 
-		// Check that the input vtxos are actually spendable
-		// We have to do this at the end to ensure idempotency
-		let chain_tip = self.sync_manager.chain_tip().height;
 		let spend_map = builder.spend_info().collect::<HashMap<VtxoId, bitcoin::Txid>>();
-		for vtxo in input_vtxos {
+		let mut spends = Vec::with_capacity(input_vtxos.len());
+		for vtxo in &input_vtxos {
 			let spending_txid = spend_map.get(&vtxo.vtxo_id)
 				.context("missing spend info for input vtxo")?;
-			vtxo.check_spendable_for_oor(chain_tip, *spending_txid)?;
+			spends.push((vtxo, *spending_txid));
+		}
+
+		// A client that lost our response sends the same request again. We
+		// marked its inputs as spent the first time, so we have to give it the
+		// HTLCs whatever changed since, our configured limits included.
+		// Refusing would leave the client with inputs that it can't spend and
+		// no HTLCs to revoke.
+		let replay = spends.iter().all(|(vtxo, txid)| vtxo.is_oor_spent_by(*txid));
+
+		let tip = self.sync_manager.chain_tip().height;
+		let expiry = tip + self.config.htlc_send_expiry_delta;
+
+		if !replay {
+			check_max_amount("lightning send", htlc_amount, self.config.max_ln_send_amount)?;
+			self.check_cosign_request_limits(&validation, &builder)
+				.badarg("invalid cosign request")?;
+
+			// Locking value for a lightning payment whose payment hash is an
+			// hArk unlock hash would put the same secret in two domains at once.
+			if self.db.read(async |t| t.get_round_participation_by_unlock_hash(payment_hash.to_sha256_hash()).await).await?.is_some() {
+				return badarg!("payment hash collides with an existing unlock hash");
+			}
+
+			// Bail early if this invoice was already paid to avoid setting up HTLCs
+			// just to have them revoked some time later.
+			if self.htlc_settler.is_settled(payment_hash).await?.is_some() {
+				return badarg!("invoice has already been paid");
+			}
+
+			// Verify that the proposed expiry makes sense for us
+			if requested_policy.htlc_expiry < expiry.saturating_sub(BlockDelta::new(1)) {
+				return badarg!(
+					"requested expiry is too low. our tip is {tip}. \
+					sync your node and try again",
+				);
+			}
+
+			if self.db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
+				payment_hash,
+			).await).await?.is_some()
+			{
+				return badarg!("payment already in progress for this invoice");
+			}
+
+			// Check that the input vtxos are actually spendable
+			for (vtxo, spending_txid) in &spends {
+				vtxo.check_spendable_for_oor(tip, *spending_txid)?;
+			}
 		}
 
 		slog!(LightningPayHtlcsRequested, payment_hash, expiry);

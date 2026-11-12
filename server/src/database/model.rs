@@ -242,12 +242,16 @@ impl<G, P: Policy> VtxoState<G, P> {
 	/// Like [Self::check_spendable] but tolerates a vtxo that was already
 	/// OOR-spent by the same `oor_txid` (idempotent cosign retry).
 	pub fn check_spendable_for_oor(&self, chain_tip: BlockHeight, oor_txid: Txid) -> anyhow::Result<()> {
-		let idempotent = self.spend_state == SpendState::Spent
-			&& self.oor_spent_txid == Some(oor_txid);
-		if !idempotent {
+		if !self.is_oor_spent_by(oor_txid) {
 			self.check_spendable(chain_tip)?;
 		}
 		Ok(())
+	}
+
+	/// Whether this vtxo was already OOR-spent by the given `oor_txid`,
+	/// meaning the server cosigned that exact spend before.
+	pub fn is_oor_spent_by(&self, oor_txid: Txid) -> bool {
+		self.spend_state == SpendState::Spent && self.oor_spent_txid == Some(oor_txid)
 	}
 }
 
