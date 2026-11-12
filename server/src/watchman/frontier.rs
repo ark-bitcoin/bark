@@ -77,28 +77,10 @@ impl FrontierChainListener {
 		}
 	}
 
-	/// Remove a vtxo from the frontier because its output was spent on-chain.
+	/// Remove a vtxo from the frontier because its output was spent on-chain,
+	/// writing through the given db tx.
 	///
 	/// Returns whether the vtxo was in the frontier.
-	async fn spend(
-		&self,
-		frontier: &mut Frontier,
-		vtxo_id: VtxoId,
-		spent_height: BlockHeight,
-		spent_txid: Txid,
-		witness: &Witness,
-	) -> anyhow::Result<bool> {
-		self.db.write(async |t| {
-			let mut preimages = Vec::new();
-			let spent = self.spend_in_tx(
-				t, frontier, vtxo_id, spent_height, spent_txid, witness, &mut preimages,
-			).await?;
-			self.store_preimages_in_tx(t, preimages).await?;
-			Ok(spent)
-		}).await
-	}
-
-	/// Like [Self::spend], but writing through the given db tx.
 	///
 	/// A preimage revealed by the spend is pushed to `preimages`, for the
 	/// caller to store with [Self::store_preimages_in_tx] right before it
@@ -364,30 +346,34 @@ impl ChainEventListener for FrontierChainListener {
 			// Check if any unconfirmed VTXOs in frontier have this txid as their funding tx
 			self.confirm_txid(&mut frontier, txid, height).await?;
 
-			// Find vtxos in the frontier that are spent by this tx
-			let mut removed_any = false;
-			for input in &tx.input {
-				if self.spend(
-					&mut frontier, input.previous_output.into(), height, txid, &input.witness,
-				).await? {
-					removed_any = true;
-				}
-			}
-
-			// Find new vtxos originating from this tx and add to frontier;
-			// register_in_tx() skips vtxos already in the frontier, and a vtxo
-			// with a recorded spend was already advanced past (this block
-			// is being replayed), so it must not re-enter the frontier.
-			if removed_any {
-				let new_vtxos = self.db.read(async |t| t.get_vtxos_by_txid(txid).await).await?;
-				for (vtxo, spent_height, _) in new_vtxos {
-					if spent_height.is_none() {
-						self.db.write(async |t| {
-							self.register_in_tx(t, &mut frontier, vtxo, Some(height)).await
-						}).await?;
+			// Spend and register the children in one db tx, so a failure can't
+			// leave a spent parent whose children were never registered.
+			self.db.write(async |t| {
+				// Find vtxos in the frontier that are spent by this tx
+				let mut removed_any = false;
+				let mut preimages = Vec::new();
+				for input in &tx.input {
+					if self.spend_in_tx(
+						t, &mut frontier, input.previous_output.into(), height, txid, &input.witness,
+						&mut preimages,
+					).await? {
+						removed_any = true;
 					}
 				}
-			}
+
+				// Find new vtxos originating from this tx and add to frontier;
+				// register_in_tx() skips vtxos already in the frontier, and a vtxo
+				// with a recorded spend was already advanced past (this block
+				// is being replayed), so it must not re-enter the frontier.
+				if removed_any {
+					for (vtxo, spent_height, _) in t.get_vtxos_by_txid(txid).await? {
+						if spent_height.is_none() {
+							self.register_in_tx(t, &mut frontier, vtxo, Some(height)).await?;
+						}
+					}
+				}
+				self.store_preimages_in_tx(t, preimages).await
+			}).await?;
 		}
 
 		Ok(())
