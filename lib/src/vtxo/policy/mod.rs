@@ -1359,7 +1359,7 @@ mod tests {
 	use bitcoin::taproot::{self, TapLeafHash};
 	use bitcoin_ext::{TaprootSpendInfoExt, fee};
 
-	use crate::{SECP, musig};
+	use crate::{ProtocolEncoding, SECP, musig};
 	use crate::test_util::verify_tx;
 	use crate::vtxo::policy::clause::TapScriptClause;
 
@@ -1511,5 +1511,26 @@ mod tests {
 
 		// Verify the transaction
 		verify_tx(&[tx_in], 0, &tx).expect("expiry clause spending should be valid");
+	}
+
+	#[test]
+	fn htlc_policy_decoding_rejects_values_above_the_maximum() {
+		let encoded_policy = |htlc_expiry: u32, htlc_expiry_delta: u16| {
+			VtxoPolicy::new_server_htlc_recv(
+				USER_KEYPAIR.public_key(),
+				PaymentHash::from(sha256::Hash::hash(b"htlc")),
+				BlockHeight::new(htlc_expiry),
+				BlockDelta::new(htlc_expiry_delta),
+			).serialize()
+		};
+		let max_height = MAX_BLOCK_HEIGHT.to_u32();
+		let max_delta = MAX_BLOCK_DELTA.to_u16();
+
+		VtxoPolicy::deserialize(&encoded_policy(max_height, max_delta))
+			.expect("the maximum values are accepted");
+		VtxoPolicy::deserialize(&encoded_policy(max_height + 1, max_delta))
+			.expect_err("htlc_expiry above MAX_BLOCK_HEIGHT");
+		VtxoPolicy::deserialize(&encoded_policy(max_height, max_delta + 1))
+			.expect_err("htlc_expiry_delta above MAX_BLOCK_DELTA");
 	}
 }
