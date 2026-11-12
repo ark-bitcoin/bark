@@ -187,10 +187,11 @@ fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 /// The server can claim with preimage after `exit_delta` from confirmation.
 /// The user can reclaim after `htlc_expiry` AND `2*exit_delta` from confirmation.
 ///
-/// Deadline is `min(htlc_expiry, confirmed_at + 2*exit_delta)`.
+/// Deadline is `max(htlc_expiry, confirmed_at + 2*exit_delta)`, as the user
+/// needs both.
 fn decide_action_server_htlc_send(params: &ActionParams<HtlcSendExtra>) -> Action {
 	let confirmed_plus_2x = params.confirmed_at + params.exit_delta * 2;
-	let deadline = std::cmp::min(params.policy_extras.htlc_expiry, confirmed_plus_2x);
+	let deadline = std::cmp::max(params.policy_extras.htlc_expiry, confirmed_plus_2x);
 
 	if let Some(action) = try_progress(params, params.policy_extras.next_tx, deadline) {
 		return action;
@@ -743,7 +744,7 @@ mod tests {
 	#[test]
 	fn htlc_send_continues_after_wait_period() {
 		let txid = Txid::from_byte_array([1; 32]);
-		let params = ActionParams {
+		let mut params = ActionParams {
 			vtxo_id: test_vtxo_id(),
 			chain_tip_height: BlockHeight::new(106),
 			progress_grace_period: Some(BlockDelta::new(6)),
@@ -756,7 +757,11 @@ mod tests {
 				has_preimage: false,
 			},
 		};
-		// deadline = min(htlc_expiry, confirmed_at + 2*exit_delta) = min(500, 100 + 288) = 388
+		// deadline = max(htlc_expiry, confirmed_at + 2*exit_delta) = max(500, 100 + 288) = 500
+		assert_eq!(decide_action_server_htlc_send(&params), Action::Progress { txid, deadline: BlockHeight::new(500) });
+
+		// With an earlier expiry, the CSV decides: max(200, 388) = 388
+		params.policy_extras.htlc_expiry = BlockHeight::new(200);
 		assert_eq!(decide_action_server_htlc_send(&params), Action::Progress { txid, deadline: BlockHeight::new(388) });
 	}
 
@@ -799,8 +804,8 @@ mod tests {
 			},
 		};
 		// claim_height = 100 + 144 - 1 = 243, chain_tip >= claim_height
-		// deadline = min(500, 100 + 288) = 388
-		assert_eq!(decide_action_server_htlc_send(&params), Action::Claim { deadline: BlockHeight::new(388) });
+		// deadline = max(500, 100 + 288) = 500
+		assert_eq!(decide_action_server_htlc_send(&params), Action::Claim { deadline: BlockHeight::new(500) });
 	}
 
 	/// Without a preimage or progress tx, the server can only wait.
