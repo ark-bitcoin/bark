@@ -221,8 +221,11 @@ fn decide_action_server_htlc_recv(params: &ActionParams<HtlcRecvExtra>) -> Actio
 	let confirmed_plus_exit = params.confirmed_at + params.exit_delta;
 	let deadline = confirmed_plus_exit + params.policy_extras.htlc_expiry_delta;
 
-	if let Some(action) = try_progress(params, params.policy_extras.next_tx, deadline) {
-		return action;
+	// A next tx, e.g. the user's claim, means the HTLC is no longer ours.
+	// If unsigned, wait rather than claim after the HTLC expiry.
+	if params.policy_extras.next_tx.is_some() {
+		return try_progress(params, params.policy_extras.next_tx, deadline)
+			.unwrap_or(Action::Wait);
 	}
 
 	// A CSV spend can confirm at `confirmed_plus_exit`, so broadcast a block
@@ -932,6 +935,11 @@ mod tests {
 		params.policy_extras.htlc_expiry = BlockHeight::new(200);
 		params.chain_tip_height = BlockHeight::new(243);
 		assert_eq!(decide_action_server_htlc_recv(&params), Action::Claim { deadline: BlockHeight::new(284) });
+
+		// A user claim whose signature we don't have isn't ours to claim.
+		let txid = Txid::from_byte_array([1; 32]);
+		params.policy_extras.next_tx = Some(ProgressSpec { next_txid: txid, is_signed: false });
+		assert_eq!(decide_action_server_htlc_recv(&params), Action::Wait);
 	}
 
 	fn p2tr_spk() -> bitcoin::ScriptBuf {
