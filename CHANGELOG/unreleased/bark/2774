@@ -1,0 +1,6 @@
+- The daemon resubscribes to the mailbox within seconds after the stream breaks
+  Apps can call `Wallet::restart_daemon` when they return from the
+  background to replace a server connection that died while they were
+  suspended. This fixes Lightning receives that took minutes to arrive.
+  [#2774](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2774)
+  - Add `Wallet::restart_daemon` and `Wallet::reconnect_server`
