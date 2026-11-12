@@ -3046,6 +3046,91 @@ mod test {
 	}
 
 	#[test]
+	fn round_vtxos_must_match_the_participation() {
+		let secp = Secp256k1::new();
+		let mut rng = rand::thread_rng();
+		let user_key = Keypair::new(&secp, &mut rng);
+		let user_cosign_key = Keypair::new(&secp, &mut rng);
+		let server_key = Keypair::new(&secp, &mut rng);
+		let server_cosign_key = Keypair::new(&secp, &mut rng);
+		let preimage: UnlockPreimage = rand::random();
+		let unlock_hash = UnlockHash::hash(&preimage);
+
+		// Two identical requests, so only the duplicate check can tell a
+		// duplicate VTXO apart.
+		let outputs = vec![VtxoRequest {
+			amount: Amount::from_sat(10_000),
+			policy: VtxoPolicy::new_pubkey(user_key.public_key()),
+		}; 2];
+		let (tree, funding_tx) = ark::test_util::build_signed_tree(
+			HashlockVersion::V1, outputs.iter().cloned(),
+			&user_cosign_key, &server_key, &server_cosign_key, unlock_hash,
+		);
+		let vtxos = tree.into_cached_tree().output_vtxos().collect::<Vec<_>>();
+		let part = RoundParticipation {
+			inputs: vec![ark::test_util::VTXO_VECTORS.board_vtxo.clone()],
+			outputs,
+			unblinded_mailbox_id: None,
+		};
+		#[allow(deprecated)]
+		let ark_info = ArkInfo {
+			network: bitcoin::Network::Regtest,
+			server_pubkey: server_key.public_key(),
+			mailbox_pubkey: server_key.public_key(),
+			round_interval: Duration::from_secs(60),
+			nb_round_nonces: 8,
+			vtxo_exit_delta: BlockDelta::new(24),
+			vtxo_lifetime: BlockDelta::new(1000),
+			htlc_send_expiry_delta: BlockDelta::new(100),
+			htlc_expiry_delta: BlockDelta::new(100),
+			max_vtxo_amount: None,
+			required_board_confirmations: 1,
+			max_user_invoice_cltv_delta: BlockDelta::new(100),
+			min_board_amount: Amount::from_sat(1000),
+			vtxo_expiry_delta: BlockDelta::new(1000),
+			offboard_feerate: bitcoin::FeeRate::ZERO,
+			max_offboard_inputs: 1,
+			max_round_participation_outputs: 4,
+			ln_receive_anti_dos_required: false,
+			fees: Default::default(),
+			max_vtxo_exit_depth: 10,
+			tos_link: None,
+		};
+
+		// The tree expires at height 101_000. With an exit margin of 12
+		// (counted twice) plus the input exit delta of 2016, the last
+		// acceptable tip is 98_960.
+		let check = |
+			part: &RoundParticipation,
+			vtxos: &[Vtxo<Full>],
+			ark_info: &ArkInfo,
+			scheduled_height: Option<BlockHeight>,
+			tip: u32,
+		| check_round_matches_participation(
+			part, unlock_hash, vtxos, &funding_tx, ark_info, scheduled_height,
+			BlockHeight::new(tip), BlockDelta::new(12),
+		);
+
+		check(&part, &vtxos, &ark_info, None, 98_960).expect("the round matches");
+
+		check(&part, &vtxos[..1], &ark_info, None, 98_960).expect_err("a missing vtxo");
+
+		let duplicate = [vtxos[0].clone(), vtxos[0].clone()];
+		check(&part, &duplicate, &ark_info, None, 98_960).expect_err("a duplicate vtxo");
+
+		let mut other_amount = part.clone();
+		other_amount.outputs[0].amount = Amount::from_sat(10_001);
+		check(&other_amount, &vtxos, &ark_info, None, 98_960).expect_err("another amount");
+
+		let other_server = ArkInfo { server_pubkey: user_key.public_key(), ..ark_info.clone() };
+		check(&part, &vtxos, &other_server, None, 98_960).expect_err("another server pubkey");
+
+		check(&part, &vtxos, &ark_info, None, 98_961).expect_err("no room for an exit");
+		check(&part, &vtxos, &ark_info, Some(BlockHeight::new(101_000)), 98_960)
+			.expect_err("the tree expires at the scheduled height");
+	}
+
+	#[test]
 	fn stash_and_take() {
 		let store = RoundSecretNonces::new();
 		let k = pubkey();
