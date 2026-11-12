@@ -197,7 +197,8 @@ fn decide_action_server_htlc_send(params: &ActionParams<HtlcSendExtra>) -> Actio
 	}
 
 	if params.policy_extras.has_preimage {
-		let claim_height = params.confirmed_at + params.exit_delta;
+		// A CSV spend can confirm at `confirmed_at + exit_delta`, so broadcast a block earlier.
+		let claim_height = (params.confirmed_at + params.exit_delta).saturating_sub(BlockDelta::new(1));
 		if params.chain_tip_height >= claim_height {
 			return Action::Claim { deadline };
 		}
@@ -220,7 +221,12 @@ fn decide_action_server_htlc_recv(params: &ActionParams<HtlcRecvExtra>) -> Actio
 		return action;
 	}
 
-	let claim_height = std::cmp::max(params.policy_extras.htlc_expiry, confirmed_plus_exit);
+	// A CSV spend can confirm at `confirmed_plus_exit`, so broadcast a block
+	// earlier. Our claim's locktime is the tip, so the CLTV holds at the expiry.
+	let claim_height = std::cmp::max(
+		params.policy_extras.htlc_expiry,
+		confirmed_plus_exit.saturating_sub(BlockDelta::new(1)),
+	);
 	if params.chain_tip_height >= claim_height {
 		return Action::Claim { deadline };
 	}
@@ -760,6 +766,27 @@ mod tests {
 	fn htlc_send_waits_with_preimage_before_claim_height() {
 		let params = ActionParams {
 			vtxo_id: test_vtxo_id(),
+			chain_tip_height: BlockHeight::new(242),
+			progress_grace_period: Some(BlockDelta::new(6)),
+			expiry_height: BlockHeight::new(1000),
+			exit_delta: BlockDelta::new(144),
+			confirmed_at: BlockHeight::new(100),
+			policy_extras: HtlcSendExtra {
+				next_tx: None,
+				htlc_expiry: BlockHeight::new(500),
+				has_preimage: true,
+			},
+		};
+		// the claim can confirm at 100 + 144 = 244, so claim_height = 243
+		// chain_tip (242) < claim_height (243), so wait
+		assert_eq!(decide_action_server_htlc_send(&params), Action::Wait);
+	}
+
+	/// Server claims using the preimage once the claim height is reached.
+	#[test]
+	fn htlc_send_claims_with_preimage_at_claim_height() {
+		let params = ActionParams {
+			vtxo_id: test_vtxo_id(),
 			chain_tip_height: BlockHeight::new(243),
 			progress_grace_period: Some(BlockDelta::new(6)),
 			expiry_height: BlockHeight::new(1000),
@@ -771,28 +798,7 @@ mod tests {
 				has_preimage: true,
 			},
 		};
-		// claim_height = confirmed_at + exit_delta = 100 + 144 = 244
-		// chain_tip (243) < claim_height (244), so wait
-		assert_eq!(decide_action_server_htlc_send(&params), Action::Wait);
-	}
-
-	/// Server claims using the preimage once the claim height is reached.
-	#[test]
-	fn htlc_send_claims_with_preimage_at_claim_height() {
-		let params = ActionParams {
-			vtxo_id: test_vtxo_id(),
-			chain_tip_height: BlockHeight::new(244),
-			progress_grace_period: Some(BlockDelta::new(6)),
-			expiry_height: BlockHeight::new(1000),
-			exit_delta: BlockDelta::new(144),
-			confirmed_at: BlockHeight::new(100),
-			policy_extras: HtlcSendExtra {
-				next_tx: None,
-				htlc_expiry: BlockHeight::new(500),
-				has_preimage: true,
-			},
-		};
-		// claim_height = 100 + 144 = 244, chain_tip >= claim_height
+		// claim_height = 100 + 144 - 1 = 243, chain_tip >= claim_height
 		// deadline = min(500, 100 + 288) = 388
 		assert_eq!(decide_action_server_htlc_send(&params), Action::Claim { deadline: BlockHeight::new(388) });
 	}
@@ -862,10 +868,10 @@ mod tests {
 	}
 
 	/// Server must wait until the claim height before it can claim.
-	/// claim_height = max(htlc_expiry, confirmed_at + exit_delta)
+	/// claim_height = max(htlc_expiry, confirmed_at + exit_delta - 1)
 	#[test]
 	fn htlc_recv_waits_before_claim_height() {
-		let params = ActionParams {
+		let mut params = ActionParams {
 			vtxo_id: test_vtxo_id(),
 			chain_tip_height: BlockHeight::new(499),
 			progress_grace_period: Some(BlockDelta::new(6)),
@@ -878,15 +884,20 @@ mod tests {
 				htlc_expiry_delta: BlockDelta::new(40),
 			},
 		};
-		// claim_height = max(500, 100 + 144) = max(500, 244) = 500
+		// claim_height = max(500, 100 + 144 - 1) = max(500, 243) = 500
 		// chain_tip (499) < claim_height (500), so wait
+		assert_eq!(decide_action_server_htlc_recv(&params), Action::Wait);
+
+		// With an earlier expiry, the CSV decides: claim_height = 243
+		params.policy_extras.htlc_expiry = BlockHeight::new(200);
+		params.chain_tip_height = BlockHeight::new(242);
 		assert_eq!(decide_action_server_htlc_recv(&params), Action::Wait);
 	}
 
 	/// Server claims once the claim height is reached.
 	#[test]
 	fn htlc_recv_claims_at_claim_height() {
-		let params = ActionParams {
+		let mut params = ActionParams {
 			vtxo_id: test_vtxo_id(),
 			chain_tip_height: BlockHeight::new(500),
 			progress_grace_period: Some(BlockDelta::new(6)),
@@ -899,8 +910,14 @@ mod tests {
 				htlc_expiry_delta: BlockDelta::new(40),
 			},
 		};
-		// claim_height = max(500, 244) = 500, chain_tip >= claim_height
+		// claim_height = max(500, 243) = 500, chain_tip >= claim_height
 		// deadline = 100 + 40 + 144 = 284
+		assert_eq!(decide_action_server_htlc_recv(&params), Action::Claim { deadline: BlockHeight::new(284) });
+
+		// With an earlier expiry, the CSV decides: the claim can confirm at
+		// 100 + 144 = 244, so claim_height = 243
+		params.policy_extras.htlc_expiry = BlockHeight::new(200);
+		params.chain_tip_height = BlockHeight::new(243);
 		assert_eq!(decide_action_server_htlc_recv(&params), Action::Claim { deadline: BlockHeight::new(284) });
 	}
 
