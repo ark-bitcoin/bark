@@ -2275,6 +2275,49 @@ mod test {
 	}
 
 	#[test]
+	fn verify_branch_cosign_partial_sigs_rejects_another_signers_sigs() {
+		let secp = secp256k1::Secp256k1::new();
+		let mut rand = rand::rngs::StdRng::seed_from_u64(44);
+		let server_key = Keypair::new(&secp, &mut rand);
+		let server_cosign_key = Keypair::new(&secp, &mut rand);
+		let cosign_keys = iter::repeat_with(|| Keypair::new(&secp, &mut rand))
+			.take(2).collect::<Vec<_>>();
+		let reqs = cosign_keys.iter().map(|key| VtxoLeafSpec {
+			vtxo: VtxoRequest {
+				amount: Amount::from_sat(100_000),
+				policy: VtxoPolicy::new_pubkey(key.public_key()),
+			},
+			cosign_pubkey: Some(key.public_key()),
+			unlock_hash: sha256::Hash::hash(b"unlock"),
+		}).collect::<Vec<_>>();
+		let spec = VtxoTreeSpec::new(
+			reqs.clone(), server_key.public_key(), BlockHeight::new(100_000),
+			BlockDelta::new(2016), vec![server_cosign_key.public_key()],
+		);
+
+		// Two leaves have one internal node, the root.
+		let (secs, pubs): (Vec<_>, Vec<_>) = cosign_keys.iter()
+			.map(|key| musig::nonce_pair(key))
+			.unzip();
+		let (_, server_pub) = musig::nonce_pair(&server_cosign_key);
+		let leaf_nonces = cosign_keys.iter().zip(&pubs)
+			.map(|(key, pub_nonce)| (key.public_key(), vec![*pub_nonce]))
+			.collect::<HashMap<_, _>>();
+		let agg_nonces = spec.calculate_cosign_agg_nonces(&leaf_nonces, &[[server_pub]]).unwrap();
+
+		let point = "0000000000000000000000000000000000000000000000000000000000000001:1".parse().unwrap();
+		let tree = spec.into_unsigned_tree(point);
+		let sigs = cosign_keys.iter().zip(secs).enumerate().map(|(idx, (key, sec))| {
+			tree.cosign_branch(&agg_nonces, idx, key, vec![sec]).unwrap()
+		}).collect::<Vec<_>>();
+
+		tree.verify_branch_cosign_partial_sigs(&agg_nonces, &reqs[0], &pubs[0..1], &sigs[0])
+			.expect("the signer's own partial signatures are valid");
+		tree.verify_branch_cosign_partial_sigs(&agg_nonces, &reqs[0], &pubs[0..1], &sigs[1])
+			.expect_err("the partial signatures of another signer are invalid");
+	}
+
+	#[test]
 	fn test_compat_u32_size_signed_spec() {
 		//! check the backwards compatibility of parsing SignedVtxoTreeSpec with u32 as size prefix
 		let hex = "0102888a0100035b0ef8c9bd756af433edc3129975888f6f18b8185b2afbaabc8bb3029a00cf81e0070102f8112234026e68b1e4d1565540d7b791ced1b64c5f30525cbe14f21dd7aa8c78030003c48b53afac0d2d5169cd6848f03f67a21db6f506f8b8fc2dbef2552b6a7dc111a08601000000000002c6c80e198e170ca6f8fa17810d8ee23c7c0d85c5d2febc95c3e24b1878ca733fbfd032abc31b253f5063521fd5b4c431f2cdd3fee1b4ec00a9b00f69d3b033e7000296dfec4c92e831ffe3619285646a46c545577f19dbc27c2fc0950bffb0f4a362a08601000000000003850a7d2bf22e6ba669695410a8b03c5800a0d4c2bec814b9eb21b0cddd2af5c935395dea8bd6dcac26a8a417b553b18d13027c23e8016c3466b81e70832254360002415f712d6e551b715542422b975a2ae7c635b44a1e3747d5a8674231fa10a841a08601000000000002a3d4de26a87f8bb9d5c0b9f1e3409a635b35f656575d8ad60a6a2294ac4e50b87c0cc2177dfce6432efa42ca6c04c0b774dbb3c5ca2573cd893443e10e393bfd0100000000000000000000000000000000000000000000000000000000000000010000000400000002cc1980aba21f65a51342cbaa3beb69d930eac87fe3086c45df4e642f2dd07cd19e0e4c7b9584b9e952eb4fb02e7f43364ee9bbfc667236aa166fd10a97dcbb02cc1980aba21f65a51342cbaa3beb69d930eac87fe3086c45df4e642f2dd07cd19e0e4c7b9584b9e952eb4fb02e7f43364ee9bbfc667236aa166fd10a97dcbb02cc1980aba21f65a51342cbaa3beb69d930eac87fe3086c45df4e642f2dd07cd19e0e4c7b9584b9e952eb4fb02e7f43364ee9bbfc667236aa166fd10a97dcbb02cc1980aba21f65a51342cbaa3beb69d930eac87fe3086c45df4e642f2dd07cd19e0e4c7b9584b9e952eb4fb02e7f43364ee9bbfc667236aa166fd10a97dcbb";
