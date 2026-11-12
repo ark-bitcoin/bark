@@ -39,7 +39,7 @@ Below is a more detailed summary for each version.
     [#2512](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2512)
   - Fix lightning sends that stay pending after they are paid
     The wallet now finishes these sends from the stored preimage.
-    [#2663](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2663)
+    [#2701](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2701)
   - Add `Wallet::bolt11_invoice_builder` to create lightning receive invoices
     Besides the description, token and claim destination, it can set the
     invoice expiry, at most the server's `invoice_expiry`. If the server
@@ -60,6 +60,16 @@ Below is a more detailed summary for each version.
   - Do not panic on a BOLT12 offer with an amount in a fiat currency
     The payment request parser now treats the offer amount as unknown.
     [#2686](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2686)
+  - Write wallet action checkpoints only under the action lock
+    A driver that wrote back a checkpoint it read before taking the action
+    lock could undo the work of another driver. Creating, changing, driving,
+    finishing and removing an action now all hold the action lock and start
+    from the stored checkpoint.
+    [#2697](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2697)
+    - **BREAKING:** `Wallet::stop_wallet_action` is removed
+    - **BREAKING:** `Wallet::drive_action` is no longer public
+    - **BREAKING:** `WalletAction` has a new required method,
+      `from_checkpoint`
 
 - `bark-cli`
   - Add `bark-cli`, a thin client that drives a running barkd over its REST API
@@ -67,8 +77,10 @@ Below is a more detailed summary for each version.
     can move to the daemon model without new commands. `bark-cli` reaches
     the barkd on its datadir through the recorded listen address or an
     explicit `--url`. It authenticates with the bearer token in the datadir.
-    Release builds do not ship `bark-cli` yet. Build it from source.
+    Release builds ship `bark-cli` and `bark-legacy` alongside `bark` and
+    `barkd`.
     [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
+    [#2705](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2705)
 
   - Add `bark-legacy`, an alias of the in-process `bark` CLI
     `bark` does not change. The integration tests run the in-process CLI as
@@ -107,7 +119,7 @@ Below is a more detailed summary for each version.
     [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)
 
 - `bark-rest`
-  - Add `POST /v1/exits/presign` to presign emergency exit chains
+  - Add `POST /api/v1/exits/presign` to presign emergency exit chains
     Signs, without broadcasting, the CPFP child of every transaction still
     needed to unilaterally exit the given VTXOs (or the whole wallet), for as
     long as confirmed on-chain funds last, and returns a self-contained
@@ -129,7 +141,7 @@ Below is a more detailed summary for each version.
     This includes a receive that ended without settling, for example a
     canceled one. It used to return 500.
     [#2357](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2357)
-  - Add `GET /v1/exits/remaining` to list remaining exit transactions
+  - Add `GET /api/v1/exits/remaining` to list remaining exit transactions
     Read-only twin of the presign endpoint: per VTXO, the transaction ids it
     needs confirmed in broadcast order, plus each pending exit transaction
     exactly once with parents before children.
@@ -179,6 +191,10 @@ Below is a more detailed summary for each version.
     invoices need their bolt11 decoded, so port them with
     `captaind data backfill-cln-hold` after upgrading.
     [#2576](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2576)
+  - Raise the default `htlc_send_expiry_delta` from 258 to 1008
+    With the old default, two servers on default settings could not pay each
+    other's invoices over lightning. The new default is one week of blocks.
+    [#2654](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2654)
   - Don't write history records for updates that change nothing
     [#2660](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2660)
   - Require mailbox authorization to post recovery VTXO IDs
