@@ -103,7 +103,7 @@ use crate::database::{BlockTable, Db, Tx};
 use crate::fee_estimator::FeeEstimator;
 use crate::system::RuntimeManager;
 use crate::utils::InstrumentedLock;
-use crate::wallet::PersistedWallet;
+use crate::wallet::{BdkWalletExt, PersistedWallet};
 use crate::watchman::policy::ActionContextFetcher;
 
 /// A transaction spending a vtxo that is currently in the mempool.
@@ -1020,7 +1020,14 @@ impl Watchman {
 
 		// Broadcast the progress tx and CPFP as a package
 		let cpfp_txid = cpfp_tx.compute_txid();
-		bcd::submit_package(&self.bitcoind, &[progress_tx, cpfp_tx]).await?;
+		let res = bcd::submit_package(&self.bitcoind, &[&progress_tx, &cpfp_tx]).await?;
+		ensure!(res.package_msg == "success",
+			"progress package rejected: {} ({:?})", res.package_msg, res.tx_results,
+		);
+
+		// Spend the fee input in our wallet, so the next CPFP picks another.
+		wallet.commit_tx(&cpfp_tx);
+		wallet.persist().await.context("failed to persist progress CPFP")?;
 
 		slog!(ProgressBroadcast, vtxo_id: vtxo.id(), txid, cpfp_txid);
 
