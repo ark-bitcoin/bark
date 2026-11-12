@@ -11,19 +11,6 @@ CREATE TABLE bark_vtxo_state (
 				state_kind TEXT NOT NULL,
 				state BLOB NOT NULL
 			);
-CREATE VIEW most_recent_vtxo_state
-				(id, last_updated_at, vtxo_id, state_kind, state)
-			AS
-			WITH most_recent AS (SELECT MAX(id) as id FROM bark_vtxo_state GROUP BY vtxo_id)
-			SELECT
-				most_recent.id,
-				vs.created_at,
-				vs.vtxo_id,
-				vs.state_kind,
-				vs.state
-			FROM most_recent JOIN bark_vtxo_state as vs
-				ON vs.id = most_recent.id
-/* most_recent_vtxo_state(id,last_updated_at,vtxo_id,state_kind,state) */;
 CREATE TABLE bark_properties (
 				id TEXT PRIMARY KEY,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
@@ -221,3 +208,20 @@ CREATE VIEW vtxo_view AS
 			JOIN most_recent_vtxo_state as vs
 				ON v.id = vs.vtxo_id
 /* vtxo_view(id,expiry_height,amount_sat,raw_bare,exit_depth,exit_tx_weight,registered,created_at,state,state_kind,last_updated_at) */;
+CREATE INDEX vtxo_state_vtxo_id_idx
+			ON bark_vtxo_state (vtxo_id, id);
+CREATE VIEW most_recent_vtxo_state
+				(id, last_updated_at, vtxo_id, state_kind, state)
+			AS
+			WITH most_recent AS (
+				SELECT vtxo_id, MAX(id) as id FROM bark_vtxo_state GROUP BY vtxo_id
+			)
+			SELECT
+				most_recent.id,
+				vs.created_at,
+				most_recent.vtxo_id,
+				vs.state_kind,
+				vs.state
+			FROM most_recent JOIN bark_vtxo_state as vs
+				ON vs.id = most_recent.id
+/* most_recent_vtxo_state(id,last_updated_at,vtxo_id,state_kind,state) */;
