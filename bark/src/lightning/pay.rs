@@ -10,7 +10,8 @@ use log::{info, warn};
 use server_rpc::protos;
 
 use ark::lightning::{
-	offer_request_amount, Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage,
+	offer_request_amount, Bolt11Invoice, Bolt11InvoiceExt, Bolt12Invoice, Bolt12InvoiceExt, Invoice,
+	Offer, PaymentHash, Preimage,
 };
 
 use crate::Wallet;
@@ -344,6 +345,18 @@ impl Wallet {
 		self.make_lightning_payment_with(invoice, original_payment_method, user_amount, opts).await
 	}
 
+	/// The Ark address in the route hints of `invoice` that we can pay
+	/// it on with an arkoor, see [crate::Config::lightning_ark_address_hints].
+	async fn ark_address_to_pay(&self, invoice: &Bolt11Invoice) -> anyhow::Result<Option<ark::Address>> {
+		if !self.config().lightning_ark_address_hints {
+			return Ok(None);
+		}
+		let Some(address) = invoice.ark_address() else { return Ok(None) };
+
+		let (_, ark_info) = self.require_server().await?;
+		Ok(address.is_for_server(ark_info.server_pubkey).then_some(address))
+	}
+
 	/// Same as [`Self::make_lightning_payment`], with [`LightningSendOptions`].
 	pub async fn make_lightning_payment_with(
 		&self,
@@ -358,6 +371,17 @@ impl Wallet {
 
 		let payment_hash = invoice.payment_hash();
 		let mode = if opts.wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
+
+		if let Invoice::Bolt11(bolt11) = invoice {
+			if let Some(address) = self.ark_address_to_pay(bolt11).await? {
+				let amount = invoice.get_payment_amount(user_amount)?;
+				info!("Paying invoice {} with an arkoor of {} to {}", payment_hash, amount, address);
+				// Boxed so every lightning payment's future does not carry the
+				// arkoor send's state machine inline.
+				Box::pin(self.send_arkoor(&address, amount, Some(bolt11.clone()))).await?;
+				return Ok(());
+			}
+		}
 
 		// An invoice paid earlier gets this error even while a drive holds
 		// the lock of its send.

@@ -7,7 +7,9 @@ use lightning_invoice::Bolt11Invoice;
 use log::{error, info, warn};
 use server_rpc::protos;
 
+use ark::{Vtxo, VtxoId};
 use ark::lightning::{Bolt11InvoiceExt, Preimage, PaymentHash};
+use ark::vtxo::Full;
 
 use crate::Wallet;
 use crate::actions::{DriveMode, WalletAction};
@@ -15,8 +17,9 @@ use crate::actions::lightning::receive::{
 	Htlcs, LightningReceive, LightningReceiveState, Progress,
 	ln_recv_action_id, start_lightning_receive
 };
-use crate::movement::MovementStatus;
+use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
+use crate::subsystem::{LightningMovement, LightningReceiveMovement, Subsystem};
 use crate::vtxo::VtxoStateKind;
 
 /// Builds a [`Bolt11Invoice`] for an incoming lightning payment, see
@@ -167,6 +170,80 @@ impl Wallet {
 			}
 		}
 		Ok(())
+	}
+
+	/// Credit the VTXOs that paid one of our invoices on the Ark address in
+	/// its route hints as the lightning receive of that invoice.
+	///
+	/// Only an arkoor that the server settled the receive with paid the
+	/// invoice; other VTXOs on that address are an ordinary arkoor receive.
+	/// The server settles the receive when it co-signs the arkoor, and the
+	/// payer can then send other VTXOs to that address, so VTXOs that pay
+	/// less than the invoice amount are an ordinary arkoor receive too, and
+	/// the receive stays pending. Returns the VTXOs that paid no invoice.
+	pub(crate) async fn credit_lightning_receives_paid_by_arkoor(
+		&self,
+		vtxos: &[Vtxo<Full>],
+	) -> anyhow::Result<Vec<Vtxo<Full>>> {
+		let mut rest = vtxos.to_vec();
+		for recv in self.pending_lightning_receives().await? {
+			if recv.progress != Progress::AwaitingPayment || recv.invoice.ark_address().is_none() {
+				continue;
+			}
+
+			let claim_pubkey = self.peek_keypair(recv.key_index).await?.public_key();
+			let (paid, other) = rest.into_iter()
+				.partition::<Vec<_>, _>(|v| v.user_pubkey() == claim_pubkey);
+			rest = other;
+			if paid.is_empty() {
+				continue;
+			}
+
+			let (mut srv, _) = self.require_server().await?;
+			let status = srv.client.check_lightning_receive(protos::CheckLightningReceiveRequest {
+				hash: recv.payment_hash.to_vec(),
+				wait: false,
+			}).await?.into_inner().status;
+			if status != protos::LightningReceiveStatus::Settled as i32 {
+				rest.extend(paid);
+				continue;
+			}
+
+			let received = paid.iter().map(|v| v.amount()).sum::<Amount>();
+			let amount = recv.invoice.get_payment_amount(None).unwrap_or(received);
+			if received < amount {
+				warn!("Arkoor of {} on the Ark address of settled invoice {} pays less than its {}",
+					received, recv.payment_hash, amount,
+				);
+				rest.extend(paid);
+				continue;
+			}
+			self.store_spendable_vtxos(paid.iter()).await?;
+
+			// The settled record goes first, so a consumer of the movement
+			// notification finds the receive settled. See
+			// claim_lightning_receive_htlcs.
+			self.inner.db.record_settled_lightning_receive(
+				recv.payment_hash, recv.payment_preimage, &recv.invoice, amount,
+			).await?;
+			let movement_id = self.inner.movements.new_finished_movement(
+				Subsystem::LIGHTNING_RECEIVE,
+				LightningReceiveMovement::Receive.to_string(),
+				MovementStatus::Successful,
+				MovementUpdate::new()
+					.produced_vtxos(&paid)
+					.intended_balance(amount.to_signed()?)
+					.effective_balance(received.to_signed()?)
+					.metadata(LightningMovement::metadata(
+						recv.payment_hash, Vec::<VtxoId>::new(), Some(recv.payment_preimage),
+					))
+					.received_on([MovementDestination::new(recv.invoice.clone().into(), received)]),
+			).await?;
+			info!("Invoice {} paid by arkoor (movement {}) for {}",
+				recv.payment_hash, movement_id, received,
+			);
+		}
+		Ok(rest)
 	}
 
 	/// Fetches the current checkpoint for the given payment hash, if any.

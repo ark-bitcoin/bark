@@ -541,6 +541,20 @@ impl Wallet {
 			warn!("Failed to register received arkoor vtxo transactions with server: {:#}", e);
 		}
 
+		self.credit_received_arkoor_vtxos(&new_vtxos).await?;
+		Ok(true)
+	}
+
+	/// Store VTXOs received by arkoor as spendable and record their receive.
+	pub(crate) async fn credit_received_arkoor_vtxos(
+		&self,
+		new_vtxos: &[Vtxo<Full>],
+	) -> anyhow::Result<()> {
+		let new_vtxos = self.credit_lightning_receives_paid_by_arkoor(new_vtxos).await?;
+		if new_vtxos.is_empty() {
+			return Ok(());
+		}
+
 		// TODO: Make sure we don't effectively skip the entire package if the movement fails to
 		//       be recorded due to bark getting killed after this point.
 		let balance = new_vtxos
@@ -575,7 +589,7 @@ impl Wallet {
 
 		info!("Received arkoor (movement {}) for {}", movement_id, balance);
 
-		Ok(true)
+		Ok(())
 	}
 
 	/// Handle a mailbox notice that a delegated round participation completed.

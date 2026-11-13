@@ -132,6 +132,17 @@ impl WalletAction for LightningReceive {
 					IncomingStatus::Ready => {
 						Progress::HtlcsReady(prepare_lightning_receive_htlcs(wallet, &self).await?)
 					},
+					IncomingStatus::PaidByArkoor => {
+						// The arkoor is credited as this receive when it
+						// arrives in our mailbox, see
+						// Wallet::credit_lightning_receives_paid_by_arkoor.
+						let settled = wallet.inner.db.get_settled_lightning_receive(self.payment_hash)
+							.await.retry()?;
+						if settled.is_some() {
+							return Ok(Advance::Done);
+						}
+						return Ok(Advance::Park { state: self, wake_after: None, error: None });
+					},
 				}
 			},
 			Progress::HtlcsReady(htlcs) => {
@@ -315,6 +326,8 @@ pub(crate) enum IncomingStatus {
 	Ready,
 	/// The server canceled the hold invoice; nothing to claim.
 	Canceled,
+	/// An arkoor to the Ark address in the route hints of the invoice paid it.
+	PaidByArkoor,
 }
 
 /// Mint a bolt11 invoice and build a fresh [`LightningReceive`] in
@@ -380,7 +393,9 @@ pub(crate) async fn start_lightning_receive(
 		description,
 		expiry_secs: expiry.map(|e| e.as_secs()),
 		claim_pubkey: Some(claim_keypair.public_key().serialize().to_vec()),
-		ark_address_hint: false,
+		// A forwarded receive must be claimed over lightning to reach its
+		// destination.
+		ark_address_hint: config.lightning_ark_address_hints && claim_destination.is_none(),
 	};
 
 	let resp = srv.client.start_lightning_receive(req).await?.into_inner();
@@ -399,6 +414,13 @@ pub(crate) async fn start_lightning_receive(
 		}
 	}
 
+	// Other users of the server pay the Ark address in the invoice instead
+	// of the invoice, so it must be ours.
+	if let Some(address) = invoice.ark_address() {
+		if address != wallet.peek_address(key_index).await? {
+			bail!("Ark server returned an invoice with an Ark address that is not ours: {}", address);
+		}
+	}
 
 	Ok(LightningReceive {
 		invoice,
@@ -464,6 +486,9 @@ async fn check_incoming_lightning_payment(
 		protos::LightningReceiveStatus::HtlcsReady => IncomingStatus::Ready,
 		protos::LightningReceiveStatus::Created => IncomingStatus::Pending,
 		protos::LightningReceiveStatus::Canceled => IncomingStatus::Canceled,
+		protos::LightningReceiveStatus::Settled if recv.invoice.ark_address().is_some() => {
+			IncomingStatus::PaidByArkoor
+		},
 		// We never claimed, yet the server has the preimage. Polling
 		// won't change that, so fail the receive and surface it.
 		protos::LightningReceiveStatus::Settled => abort!("payment already settled"),
