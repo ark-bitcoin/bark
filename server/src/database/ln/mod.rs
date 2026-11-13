@@ -214,6 +214,25 @@ impl<'t> Tx<'t> {
 		}
 	}
 
+	/// Get the payment attempt initiated against the given htlc
+	/// subscription that is open or succeeded.
+	///
+	/// The expiry payout cancellation guard must also find succeeded attempts.
+	pub async fn get_lightning_payment_attempt_by_subscription_id(
+		&self,
+		lightning_htlc_subscription_id: i64,
+	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
+		let stmt = self.prepare(&format!("
+			SELECT {LIGHTNING_PAYMENT_ATTEMPT_COLUMNS}
+			FROM lightning_payment_attempt lpa
+			WHERE lpa.lightning_htlc_subscription_id = $1 AND lpa.status != $2
+			ORDER BY lpa.created_at DESC
+			LIMIT 1;
+		")).await?;
+		let row = self.query_opt(&stmt, &[&lightning_htlc_subscription_id, &LightningPaymentStatus::Failed]).await?;
+		row.map(TryInto::try_into).transpose()
+	}
+
 	/// Stores data after lightning payment start.
 	///
 	/// Creates a new payment attempt for the given invoice and links the
