@@ -46,13 +46,21 @@ fn inject_pver(mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic:
 	Ok(req)
 }
 
+/// [inject_pver] for a server in expiry payout mode, which accepts only its
+/// own protocol version.
+fn inject_expiry_payout_pver(mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
+	rpc::RequestExt::set_pver(&mut req, rpc::pver::PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT);
+	Ok(req)
+}
+
 /// Connect an [ArkClient] to `url` with the [inject_pver] interceptor attached.
-async fn connect_ark_client(url: &str) -> anyhow::Result<ArkClient> {
+async fn connect_ark_client(url: &str, expiry_payouts: bool) -> anyhow::Result<ArkClient> {
 	let channel = tonic::transport::Endpoint::from_shared(url.to_owned())
 		.context("invalid ark url")?
 		.connect().await
 		.context("connecting ark rpc")?;
-	Ok(rpc::ArkServiceClient::with_interceptor(channel, inject_pver as PverInterceptor))
+	let interceptor = if expiry_payouts { inject_expiry_payout_pver } else { inject_pver };
+	Ok(rpc::ArkServiceClient::with_interceptor(channel, interceptor as PverInterceptor))
 }
 
 pub type ArkClient = rpc::ArkServiceClient<
@@ -152,6 +160,15 @@ impl Captaind {
 		self.inner.cfg.lock()
 	}
 
+	/// Derive the test server's mailbox key for independent link verification.
+	pub fn mailbox_keypair(&self) -> bitcoin::secp256k1::Keypair {
+		let cfg = self.config();
+		let seed = server::wallet::read_mnemonic_from_datadir(&cfg.data_dir).unwrap().to_seed("");
+		let master = bitcoin::bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
+		let path = bitcoin::bip32::DerivationPath::from_str("m/2'/1'").unwrap();
+		master.derive_priv(&ark::SECP, &path).unwrap().to_keypair(&ark::SECP)
+	}
+
 	pub fn config_mut(&self) -> parking_lot::MutexGuard<'_, Config> {
 		self.inner.cfg.lock()
 	}
@@ -245,7 +262,8 @@ impl Captaind {
 	}
 
 	pub async fn get_public_rpc(&self) -> ArkClient {
-		connect_ark_client(&self.ark_url()).await.expect("can't connect server public rpc")
+		let expiry_payouts = self.config().expiry_payouts;
+		connect_ark_client(&self.ark_url(), expiry_payouts).await.expect("can't connect server public rpc")
 	}
 
 	pub async fn get_mailbox_public_rpc(&self) -> MailboxClient {
@@ -650,7 +668,8 @@ impl CaptaindHelper {
 	}
 
 	async fn try_is_ready(&self) -> anyhow::Result<()> {
-		let mut public = connect_ark_client(&self.ark_url()).await.context("public rpc")?;
+		let expiry_payouts = self.cfg.lock().expiry_payouts;
+		let mut public = connect_ark_client(&self.ark_url(), expiry_payouts).await.context("public rpc")?;
 		// Mirror a real bark client so the server classifies as Known.
 		let req = protos::HandshakeRequest {
 			bark_version: Some(rpc::BARK_CRATE_VERSION.to_string()),

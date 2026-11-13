@@ -17,6 +17,7 @@ pub mod bark_client;
 pub mod barkd_helpers;
 pub mod postgres;
 pub mod exit;
+pub mod payout_wallet;
 pub mod control_server;
 
 pub use context::TestContext;
