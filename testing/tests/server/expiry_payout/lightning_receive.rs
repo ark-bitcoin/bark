@@ -16,14 +16,17 @@ use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::MailboxIdentifier;
 use ark::vtxo::Full;
 use ark::vtxo::policy::signing::VtxoSigner;
-use bark::actions::lightning::receive::LightningReceiveState;
+use bark::actions::lightning::receive::{LightningReceiveState, Progress};
 use server::database::Db;
 use server::database::htlc_vtxo::HtlcResolution;
 use server::database::expiry_payout::ownership::OwnershipDisposition;
+use server::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
 use server::vtxopool::VtxoTarget;
 use server_rpc::protos;
 
 use ark_testing::{btc, sat, Captaind, TestContext};
+use ark_testing::daemon::captaind::ArkClient;
+use ark_testing::daemon::captaind::proxy::ArkRpcProxy;
 use ark_testing::util::{poll_interval, FutureExt};
 
 use crate::lightning::{lightning_subscription_status, wait_for_subscription_status};
@@ -363,6 +366,155 @@ async fn expiry_payout_decided_grant_claim_stores_no_preimage() {
 	assert_eq!(refusal.metadata().get("expiry-payout-reason").unwrap(), "decided_for_payout");
 	assert!(db.read(async |t| t.get_htlc_settlement_by_payment_hash(hash).await).await.unwrap().is_none());
 	payment.abort();
+}
+
+/// Holds the first receive claim until released.
+#[derive(Clone)]
+struct HoldClaim {
+	arrived: Arc<tokio::sync::Notify>,
+	release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl ArkRpcProxy for HoldClaim {
+	async fn claim_lightning_receive(
+		&self, upstream: &mut ArkClient, req: protos::ClaimLightningReceiveRequest,
+	) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		self.arrived.notify_one();
+		self.release.notified().await;
+		Ok(upstream.claim_lightning_receive(req).await?.into_inner())
+	}
+}
+
+/// An intra-Ark payment succeeds, then the server crashes before it settles
+/// the receive. The hold timer must not cancel the receive of a payment
+/// that went through.
+#[tokio::test]
+async fn expiry_payout_succeeded_payment_prevents_receive_cancellation() {
+	let ctx = TestContext::new("server/expiry_payout_succeeded_payment_prevents_receive_cancellation").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).watchmand()
+		.cfg(|cfg| {
+			cfg.expiry_payouts = true;
+			cfg.htlc_settlement_poll_interval = Duration::from_millis(50);
+			cfg.invoice_check_interval = Duration::from_secs(1);
+		}).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+	srv.watchmand().stop().await.unwrap();
+	let config = |cfg: &mut bark::Config| cfg.daemon_manual_sync = true;
+	let (payer_seed, receiver_seed) = (bip39::Mnemonic::generate(12).unwrap(), bip39::Mnemonic::generate(12).unwrap());
+	let payer = ctx.bark_sdk("payer", &srv).mnemonic(payer_seed.clone()).boarded(sat(100_000)).cfg(config).create().await;
+	let gate = HoldClaim { arrived: Arc::new(tokio::sync::Notify::new()), release: Arc::new(tokio::sync::Notify::new()) };
+	let proxy = srv.start_proxy_no_mailbox(gate.clone()).await;
+	let receiver = Arc::new(ctx.bark_sdk("receiver", &proxy).mnemonic(receiver_seed.clone()).cfg(config).create().await);
+	payer.stop_daemon_wait().await.unwrap();
+	receiver.stop_daemon_wait().await.unwrap();
+	let invoice = receiver.bolt11_invoice(sat(10_000), None, None).await.unwrap();
+	let hash = PaymentHash::from(&invoice);
+	payer.pay_lightning_invoice(invoice, None, false).await.unwrap();
+	srv.wait_for_lightning_receive_accepted(hash).await;
+	let claim = tokio::spawn({
+		let receiver = receiver.clone();
+		async move { receiver.try_claim_lightning_receive(hash, false).await }
+	});
+	gate.arrived.notified().wait_millis(30_000).await;
+	let checkpoint = receiver.lightning_receive_checkpoint(hash).await.unwrap().unwrap();
+	let Progress::PreimageRevealed(held) = &checkpoint.progress else {
+		panic!("the claim stores its checkpoint before the request");
+	};
+	let grant_ids = held.vtxo_ids.iter().map(ToString::to_string).collect::<Vec<_>>();
+	let mut deadline = BlockHeight::new(0);
+	for id in &held.vtxo_ids {
+		let grant = receiver.get_full_vtxo(*id).await.unwrap();
+		deadline = deadline.max(grant.policy().as_server_htlc_recv().unwrap().htlc_expiry);
+		assert!(grant.expiry_height() > deadline + BlockDelta::new(1));
+	}
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let sub = db.read(async |t| t.get_htlc_subscription_by_payment_hash(hash).await).await.unwrap().unwrap();
+	let receiver_mailbox = receiver.mailbox_keypair().public_key();
+	// Fail the claim when it binds its output, after the preimage was stored,
+	// and fail the write that settles the receive, after the sender's attempt
+	// succeeded in its own transaction.
+	db.write(async |t| Ok(t.batch_execute(&format!("
+		CREATE FUNCTION test_refuse_claim() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.mailbox_pk = '{receiver_mailbox}' THEN RAISE EXCEPTION 'claim refused'; END IF;
+			RETURN NEW;
+		END; $$ LANGUAGE plpgsql;
+		CREATE TRIGGER test_refuse_claim BEFORE INSERT ON vtxo_owner_mailbox
+			FOR EACH ROW EXECUTE FUNCTION test_refuse_claim();
+		CREATE SEQUENCE test_settle_attempts;
+		CREATE FUNCTION test_refuse_settle() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.id = {sub} AND OLD.status = 'htlcs-ready' AND NEW.status = 'settled' THEN
+				PERFORM nextval('test_settle_attempts');
+				RAISE EXCEPTION 'settlement refused';
+			END IF;
+			RETURN NEW;
+		END; $$ LANGUAGE plpgsql;
+		CREATE TRIGGER test_refuse_settle BEFORE UPDATE ON lightning_htlc_subscription
+			FOR EACH ROW EXECUTE FUNCTION test_refuse_settle();
+	", sub = sub.id)).await?)).await.unwrap();
+	gate.release.notify_one();
+	assert!(claim.wait_millis(30_000).await.unwrap().is_err());
+	async {
+		loop {
+			let ready = db.read(async |t| Ok(t.query_one("SELECT is_called FROM test_settle_attempts", &[]).await?
+				.get::<_, bool>(0))).await.unwrap();
+			if ready && db.read(async |t| t.get_lightning_payment_attempt_by_subscription_id(sub.id).await)
+				.await.unwrap().unwrap().status == LightningPaymentStatus::Succeeded {
+				break;
+			}
+			tokio::time::sleep(poll_interval()).await;
+		}
+	}.wait_millis(30_000).await;
+	let assert_unsettled = async || {
+		let current = db.read(async |t| t.get_htlc_subscription_by_id(sub.id).await).await.unwrap().unwrap();
+		assert_eq!(current.status, LightningHtlcSubscriptionStatus::HtlcsReady);
+		let attempt = db.read(async |t| t.get_lightning_payment_attempt_by_subscription_id(sub.id).await)
+			.await.unwrap().unwrap();
+		assert_eq!(attempt.status, LightningPaymentStatus::Succeeded);
+		assert_eq!(db.read(async |t| t.get_htlc_settlement_by_payment_hash(hash).await).await.unwrap(),
+			Some(checkpoint.payment_preimage));
+		let unspent = db.read(async |t| Ok(t.query_one("
+			SELECT COUNT(*) FROM vtxo v JOIN htlc_vtxo h ON h.id = v.id
+			WHERE v.vtxo_id = ANY($1) AND v.oor_spent_txid IS NULL AND h.offchain_resolution IS NULL
+		", &[&grant_ids]).await?.get::<_, i64>(0))).await.unwrap();
+		assert_eq!(unspent, grant_ids.len() as i64, "the refused claim spent no grant");
+	};
+	assert_unsettled().await;
+	drop(payer);
+	drop(receiver);
+	drop(proxy);
+	srv.crash_stop().await.unwrap();
+	assert_unsettled().await;
+
+	// Only the claim fault goes away. The settlement keeps failing while the
+	// hold timer of the expired receive runs.
+	db.write(async |t| Ok(t.batch_execute("
+		DROP TRIGGER test_refuse_claim ON vtxo_owner_mailbox; DROP FUNCTION test_refuse_claim();
+	").await?)).await.unwrap();
+	let tip = ctx.bitcoind().get_block_count().await as u32;
+	let expired = ctx.generate_blocks(deadline.to_u32() + 1 - tip).await;
+	// The expiry of a receive is measured on the watchman's tip.
+	srv.watchmand().start().await.unwrap();
+	srv.watchmand().wait_for_sync_height(expired).await;
+	super::wait_watchman_tip(&db, server::bitcoind::tip(&ctx.bitcoind().async_client()).await.unwrap()).await;
+	srv.watchmand().stop().await.unwrap();
+	let (guard_tx, mut guard_rx) = tokio::sync::mpsc::unbounded_channel();
+	srv.start().await.unwrap();
+	srv.add_stdout_handler(move |line: &str| {
+		let refused = server_log::parse_record(line).is_ok_and(|record| record.message
+			.contains("the payment funding this receive succeeded, refusing to cancel it"));
+		if refused {
+			let _ = guard_tx.send(());
+		}
+		refused
+	});
+	srv.wait_for_sync_height(expired).await;
+	guard_rx.recv().wait_millis(30_000).await.unwrap();
+	assert_unsettled().await;
+	assert!(payout_shares(&db, held.vtxo_ids[0]).await.is_empty());
 }
 
 /// A receive paid over Lightning does not become the collateral of an Ark

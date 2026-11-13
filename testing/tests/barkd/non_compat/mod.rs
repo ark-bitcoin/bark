@@ -2,6 +2,7 @@ mod boards;
 mod cli_lifecycle;
 mod core;
 mod exits;
+mod expiry_payout;
 mod history;
 mod lifecycle;
 mod mnemonic;
