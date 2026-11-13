@@ -10,13 +10,15 @@ use std::str::FromStr;
 use bitcoin::{Amount, Network};
 use bitcoin::bech32::{encode_to_fmt, EncodeError, Hrp, NoChecksum, primitives::decode::CheckedHrpstring};
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::secp256k1::Message;
+use bitcoin::secp256k1::{Message, PublicKey};
 use lightning::offers::parse::Bolt12ParseError;
 use lightning::util::ser::Writeable;
 
 use bitcoin_ext::{AmountExt, P2TR_DUST};
 
-use crate::SECP;
+use crate::{Address, SECP, VtxoPolicy};
+use crate::address::{ArkId, VtxoDelivery};
+use crate::mailbox::BlindedMailboxIdentifier;
 
 const BECH32_BOLT12_INVOICE_HRP: &str = "lni";
 
@@ -374,9 +376,71 @@ pub trait Bolt11InvoiceExt: Borrow<Bolt11Invoice> {
 
 		get_invoice_payment_amount(invoice_amount, user_amount)
 	}
+
+	/// The Ark address a route hint of this invoice asks to be paid on
+	/// instead, see [ark_address_route_hints].
+	fn ark_address(&self) -> Option<Address> {
+		let invoice = self.borrow();
+		let hop = |prefix: [u8; 4]| invoice.route_hints().into_iter().find_map(|hint| {
+			let [hop] = hint.0.as_slice() else { return None };
+			let scid = hop.short_channel_id.to_be_bytes();
+			let ark_id: [u8; 4] = scid[4..].try_into().expect("4 bytes");
+			(scid[..4] == prefix).then(|| (hop.src_node_id, ArkId::from(ark_id)))
+		});
+
+		let (user_pubkey, ark_id) = hop(ARK_ADDRESS_KEY_HINT)?;
+		let (mailbox, mailbox_ark_id) = hop(ARK_ADDRESS_MAILBOX_HINT)?;
+		if ark_id != mailbox_ark_id {
+			return None;
+		}
+
+		let testnet = invoice.network() != Network::Bitcoin;
+		let blinded_id = BlindedMailboxIdentifier::from_pubkey(mailbox);
+		Some(Address::new(
+			testnet,
+			ark_id,
+			VtxoPolicy::new_pubkey(user_pubkey),
+			vec![VtxoDelivery::ServerMailbox { blinded_id }],
+		))
+	}
 }
 
 impl Bolt11InvoiceExt for Bolt11Invoice {}
+
+/// Short channel id prefix of the route hint that carries the user public key
+/// of an Ark address. The last four bytes are the [ArkId].
+pub const ARK_ADDRESS_KEY_HINT: [u8; 4] = *b"ark\x01";
+
+/// Short channel id prefix of the route hint that carries the blinded mailbox
+/// identifier of an Ark address. The last four bytes are the [ArkId].
+pub const ARK_ADDRESS_MAILBOX_HINT: [u8; 4] = *b"ark\x02";
+
+/// The route hints that put an Ark address in a BOLT-11 invoice.
+///
+/// Each is a single hop over a channel that does not exist, returned as its
+/// node id and short channel id. Lightning payers find no route through
+/// them and pay the invoice as usual. A wallet on the same Ark server reads
+/// the address back with [Bolt11InvoiceExt::ark_address] and can pay it
+/// directly instead.
+///
+/// Only addresses with a public key policy and a single server mailbox
+/// delivery can be encoded.
+pub fn ark_address_route_hints(address: &Address) -> Option<[(PublicKey, u64); 2]> {
+	let VtxoPolicy::Pubkey(policy) = address.policy() else { return None };
+	let [VtxoDelivery::ServerMailbox { blinded_id }] = address.delivery() else { return None };
+
+	let scid = |prefix: [u8; 4]| {
+		let mut bytes = [0u8; 8];
+		bytes[..4].copy_from_slice(&prefix);
+		bytes[4..].copy_from_slice(&address.ark_id().to_byte_array());
+		u64::from_be_bytes(bytes)
+	};
+
+	Some([
+		(policy.user_pubkey, scid(ARK_ADDRESS_KEY_HINT)),
+		(blinded_id.as_pubkey(), scid(ARK_ADDRESS_MAILBOX_HINT)),
+	])
+}
 
 /// Extension trait for the [Bolt12Invoice] type
 pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
@@ -499,7 +563,13 @@ mod test {
 	use lightning::offers::invoice_request::InvoiceRequest;
 	use lightning::offers::offer::{CurrencyCode, OfferBuilder};
 	use lightning::sign::EntropySource;
+	use lightning::routing::gossip::RoutingFees;
+	use lightning::routing::router::{RouteHint, RouteHintHop};
 	use lightning::types::features::BlindedHopFeatures;
+	use lightning::types::payment::PaymentSecret;
+	use lightning_invoice::{Currency, InvoiceBuilder};
+
+	use crate::mailbox::MailboxIdentifier;
 
 	struct FixedEntropy;
 
@@ -513,6 +583,65 @@ mod test {
 			&secp,
 			&SecretKey::from_slice(&[byte; 32]).unwrap(),
 		)
+	}
+
+	/// A signet invoice with the specified route hints.
+	fn invoice_with_hints(hints: &[(PublicKey, u64)]) -> Bolt11Invoice {
+		let secp = Secp256k1::new();
+		let node_key = SecretKey::from_slice(&[1; 32]).unwrap();
+		let mut builder = InvoiceBuilder::new(Currency::Signet)
+			.description("test".into())
+			.payment_hash(sha256::Hash::hash(&[0; 32]))
+			.payment_secret(PaymentSecret([0; 32]))
+			.duration_since_epoch(std::time::Duration::from_secs(1_700_000_000))
+			.min_final_cltv_expiry_delta(144)
+			.amount_milli_satoshis(1_000_000);
+		for (src_node_id, short_channel_id) in hints {
+			builder = builder.private_route(RouteHint(vec![RouteHintHop {
+				src_node_id: *src_node_id,
+				short_channel_id: *short_channel_id,
+				fees: RoutingFees { base_msat: 0, proportional_millionths: 0 },
+				cltv_expiry_delta: 0,
+				htlc_minimum_msat: None,
+				htlc_maximum_msat: None,
+			}]));
+		}
+		builder.build_signed(|hash| secp.sign_ecdsa_recoverable(hash, &node_key)).unwrap()
+	}
+
+	fn hint_address() -> Address {
+		let secp = Secp256k1::new();
+		let vtxo_key = Keypair::from_secret_key(&secp, &SecretKey::from_slice(&[2; 32]).unwrap());
+		Address::builder()
+			.testnet(true)
+			.server_pubkey(pubkey(3))
+			.pubkey_policy(vtxo_key.public_key())
+			.mailbox(pubkey(4), MailboxIdentifier::from_pubkey(pubkey(5)), &vtxo_key).unwrap()
+			.into_address().unwrap()
+	}
+
+	#[test]
+	fn ark_address_route_hints_roundtrip() {
+		let address = hint_address();
+		let hints = ark_address_route_hints(&address).unwrap();
+		assert_eq!(invoice_with_hints(&hints).ark_address(), Some(address.clone()));
+
+		// The order of the hints in the invoice does not matter, nor do
+		// hints for actual channels.
+		let reversed = [hints[1], (pubkey(6), 42), hints[0]];
+		assert_eq!(invoice_with_hints(&reversed).ark_address(), Some(address));
+	}
+
+	#[test]
+	fn ark_address_needs_both_route_hints() {
+		let hints = ark_address_route_hints(&hint_address()).unwrap();
+		assert_eq!(invoice_with_hints(&[]).ark_address(), None);
+		assert_eq!(invoice_with_hints(&hints[..1]).ark_address(), None);
+		assert_eq!(invoice_with_hints(&hints[1..]).ark_address(), None);
+
+		// a mailbox hint for another Ark does not complete the address
+		let other_ark = [hints[0], (hints[1].0, hints[1].1 ^ 1)];
+		assert_eq!(invoice_with_hints(&other_ark).ark_address(), None);
 	}
 
 	fn payment_paths() -> Vec<BlindedPaymentPath> {
