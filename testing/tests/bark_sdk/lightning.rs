@@ -670,6 +670,105 @@ fn invoice_arkoor(
 	}
 }
 
+/// The receive row of `hash` and the number of its history rows.
+async fn receive_rows(db: &Db, hash: PaymentHash) -> (String, i64) {
+	db.read(async |t| {
+		let row = t.query_one("
+			SELECT to_jsonb(s)::TEXT FROM lightning_htlc_subscription s WHERE payment_hash = $1
+		", &[&hash.to_string()]).await?;
+		let history = t.query_one("
+			SELECT COUNT(*) FROM lightning_htlc_subscription_history WHERE payment_hash = $1
+		", &[&hash.to_string()]).await?;
+		Ok((row.get(0), history.get(0)))
+	}).await.unwrap()
+}
+
+/// Only a new arkoor settles an invoice on its Ark address. An arkoor that
+/// the server co-signed before as a plain arkoor cannot settle it. A retry
+/// of the arkoor that settled it is co-signed again and changes nothing,
+/// and the settled receive takes no other arkoor.
+#[tokio::test]
+async fn ark_address_invoice_is_settled_by_a_new_arkoor_only() {
+	let ctx = TestContext::new("bark_sdk/ark_address_invoice_is_settled_by_a_new_arkoor_only").await;
+	let (_lightning, srv, payer, receiver) = ark_address_hint_setup(&ctx).await;
+	let second_payer = ctx.bark_sdk("second_payer", &srv).boarded(sat(200_000))
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	let invoice = receiver.bolt11_invoice(sat(100_000), None, None).await.unwrap();
+	let hash = PaymentHash::from(&invoice);
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let mut rpc = srv.get_public_rpc().await;
+
+	let (plain, _) = arkoor_to_invoice_address(&payer, &invoice).await;
+	rpc.request_arkoor_cosign(protos::ArkoorPackageCosignRequest::from(plain.cosign_request())).await.unwrap();
+	let error = rpc.request_lightning_receive_arkoor_cosign(invoice_arkoor(hash, &plain)).await.unwrap_err();
+	assert_eq!(error.code(), tonic::Code::InvalidArgument, "{error}");
+	assert_eq!(server_receive_status(&srv, hash).await, protos::LightningReceiveStatus::Created);
+
+	let (new, _) = arkoor_to_invoice_address(&second_payer, &invoice).await;
+	rpc.request_lightning_receive_arkoor_cosign(invoice_arkoor(hash, &new)).await.unwrap();
+	assert_eq!(server_receive_status(&srv, hash).await, protos::LightningReceiveStatus::Settled);
+	let settled = receive_rows(&db, hash).await;
+
+	rpc.request_lightning_receive_arkoor_cosign(invoice_arkoor(hash, &new)).await
+		.expect("a retry of the arkoor that settled the receive is co-signed");
+	assert_eq!(receive_rows(&db, hash).await, settled);
+
+	let error = rpc.request_lightning_receive_arkoor_cosign(invoice_arkoor(hash, &plain)).await.unwrap_err();
+	assert_eq!(error.code(), tonic::Code::InvalidArgument, "{error}");
+	assert_eq!(receive_rows(&db, hash).await, settled);
+}
+
+/// The state of the hold invoice of `hash`.
+async fn hold_invoice_state(
+	hold_client: &mut hold::hold_client::HoldClient<tonic::transport::Channel>,
+	hash: PaymentHash,
+) -> hold::InvoiceState {
+	let invoices = hold_client.list(hold::ListRequest {
+		constraint: Some(hold::list_request::Constraint::PaymentHash(hash.as_ref().to_vec())),
+	}).await.unwrap().into_inner().invoices;
+	invoices.first().expect("hold invoice exists").state()
+}
+
+/// An arkoor that the server co-signed as a plain arkoor to the Ark address
+/// of an invoice cannot cancel a Lightning payment of that invoice: the
+/// server refuses it while it holds the payment, and after the receiver
+/// claimed it.
+#[tokio::test]
+async fn ark_address_arkoor_cannot_cancel_a_lightning_payment() {
+	let ctx = TestContext::new("bark_sdk/ark_address_arkoor_cannot_cancel_a_lightning_payment").await;
+	let (lightning, srv, payer, _) = ark_address_hint_setup(&ctx).await;
+	let receiver = manual_hint_receiver(&ctx, &srv).await;
+	let invoice = receiver.bolt11_invoice(sat(100_000), None, None).await.unwrap();
+	let hash = PaymentHash::from(&invoice);
+	let (arkoor, _) = arkoor_to_invoice_address(&payer, &invoice).await;
+	let mut rpc = srv.get_public_rpc().await;
+	rpc.request_arkoor_cosign(protos::ArkoorPackageCosignRequest::from(arkoor.cosign_request())).await.unwrap();
+
+	let mut hold_client = lightning.internal.hold_client().await;
+	let (paid, ()) = tokio::join!(
+		lightning.external.try_pay_bolt11(invoice.to_string()),
+		async {
+			async {
+				while server_receive_status(&srv, hash).await != protos::LightningReceiveStatus::Accepted {
+					tokio::time::sleep(poll_interval()).await;
+				}
+			}.wait_millis(30_000).await;
+			let error = rpc.request_lightning_receive_arkoor_cosign(invoice_arkoor(hash, &arkoor)).await
+				.unwrap_err();
+			assert_eq!(error.code(), tonic::Code::InvalidArgument, "{error}");
+			assert_eq!(hold_invoice_state(&mut hold_client, hash).await, hold::InvoiceState::Accepted);
+			assert_eq!(server_receive_status(&srv, hash).await, protos::LightningReceiveStatus::Accepted);
+			assert!(matches!(receiver.try_claim_lightning_receive(hash, true).await.unwrap(),
+				LightningReceiveState::Settled(_)));
+		},
+	);
+	paid.expect("the Lightning payment succeeds");
+
+	let error = rpc.request_lightning_receive_arkoor_cosign(invoice_arkoor(hash, &arkoor)).await.unwrap_err();
+	assert_eq!(error.code(), tonic::Code::InvalidArgument, "{error}");
+	assert_eq!(server_receive_status(&srv, hash).await, protos::LightningReceiveStatus::Settled);
+}
+
 /// The receiver credits VTXOs on the Ark address of a settled invoice as
 /// the Lightning receive only when they pay the invoice amount. The payer
 /// settles the invoice with an arkoor that it holds back and sends a small
