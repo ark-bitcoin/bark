@@ -425,6 +425,7 @@ impl Watchman {
 	) -> anyhow::Result<(ReindexStats, Vec<Amount>)> {
 		let mut stats = ReindexStats::default();
 		let mut newly_confirmed = Vec::new();
+		let mut preimages = Vec::new();
 
 		// Phase 1: register unfrontiered funding vtxos, so the phases below
 		// verify and repair them like any other entry.
@@ -531,7 +532,9 @@ impl Watchman {
 					for input in &btx.input {
 						let id = VtxoId::from(input.previous_output);
 						if wanted.remove(&id) {
-							if self.frontier.spend_in_tx(tx, frontier, id, height, txid, &input.witness).await? {
+							if self.frontier.spend_in_tx(
+								tx, frontier, id, height, txid, &input.witness, &mut preimages,
+							).await? {
 								stats.spends_repaired += 1;
 								slog!(FrontierRepairedSpend, vtxo_id: id,
 									spending_txid: txid, height,
@@ -581,6 +584,9 @@ impl Watchman {
 				slog!(FrontierUnresolvedSpend, vtxo_id: id);
 			}
 		}
+
+		// Last, as storing holds the global settlement lock until commit.
+		self.frontier.store_preimages_in_tx(tx, preimages).await?;
 
 		Ok((stats, newly_confirmed))
 	}

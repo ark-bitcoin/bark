@@ -7,6 +7,7 @@ use bitcoin::taproot::LeafVersion;
 use tracing::{error, trace};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
+use ark::lightning::Preimage;
 use ark::vtxo::policy::clause::{HashDelaySignClause, HashDelaySignClause_v0, TapScriptClause};
 use bitcoin_ext::BlockHeight;
 
@@ -88,11 +89,20 @@ impl FrontierChainListener {
 		witness: &Witness,
 	) -> anyhow::Result<bool> {
 		self.db.write(async |t| {
-			self.spend_in_tx(t, frontier, vtxo_id, spent_height, spent_txid, witness).await
+			let mut preimages = Vec::new();
+			let spent = self.spend_in_tx(
+				t, frontier, vtxo_id, spent_height, spent_txid, witness, &mut preimages,
+			).await?;
+			self.store_preimages_in_tx(t, preimages).await?;
+			Ok(spent)
 		}).await
 	}
 
 	/// Like [Self::spend], but writing through the given db tx.
+	///
+	/// A preimage revealed by the spend is pushed to `preimages`, for the
+	/// caller to store with [Self::store_preimages_in_tx] right before it
+	/// commits: storing takes the global settlement lock until commit.
 	pub async fn spend_in_tx(
 		&self,
 		tx: &Tx<'_>,
@@ -101,19 +111,17 @@ impl FrontierChainListener {
 		spent_height: BlockHeight,
 		spent_txid: Txid,
 		witness: &Witness,
+		preimages: &mut Vec<Preimage>,
 	) -> anyhow::Result<bool> {
 		let Some((_height, vtxo)) = frontier.get(&vtxo_id) else {
 			return Ok(false);
 		};
 		// Try to extract a preimage from the spending witness if this is an HTLC vtxo.
-		// This must succeed before we proceed — if persisting the preimage fails,
-		// block processing will error and the sync manager will retry. On retry the
-		// frontier is read from the DB again, restoring this VTXO entry.
-		// If the HTLC tx gets unconfirmed and re-confirmed in a reorg, settle()
-		// is called again but the DB insert is idempotent (ON CONFLICT DO NOTHING).
+		// It is stored in the same db tx, so if that fails, block processing
+		// will error and the sync manager will retry. On retry the frontier is
+		// read from the DB again, restoring this VTXO entry.
 		if let Some(preimage) = try_extract_preimage(vtxo, witness) {
-			self.htlc_settler.settle(preimage).await
-				.context("failed to record HTLC settlement from on-chain spend")?;
+			preimages.push(preimage);
 		}
 
 		let chain_resolution = classify_htlc_spend(vtxo, witness);
@@ -201,6 +209,23 @@ impl FrontierChainListener {
 		Ok(cleared)
 	}
 
+	/// Store the preimages collected by [Self::spend_in_tx] through `tx`.
+	///
+	/// A separate db tx would wait on the settlement lock while `tx` holds
+	/// vtxo rows, a cycle postgres can't see. If the HTLC tx is reorged out
+	/// and confirms again, the insert is a no-op.
+	pub async fn store_preimages_in_tx(
+		&self,
+		tx: &Tx<'_>,
+		preimages: Vec<Preimage>,
+	) -> anyhow::Result<()> {
+		for preimage in preimages {
+			self.htlc_settler.settle_in_tx(tx, preimage).await
+				.context("failed to record HTLC settlement from on-chain spend")?;
+		}
+		Ok(())
+	}
+
 	/// Put the VTXOs spent by a tx that is no longer confirmed back into
 	/// the frontier, writing through the given db tx.
 	///
@@ -283,7 +308,7 @@ fn classify_htlc_spend(vtxo: &ServerVtxo, witness: &Witness) -> Option<HtlcResol
 ///
 /// ServerHtlcSend is not checked because the server already learns the
 /// preimage from the downstream Lightning node when the payment succeeds.
-fn try_extract_preimage(vtxo: &ServerVtxo, witness: &Witness) -> Option<ark::lightning::Preimage> {
+fn try_extract_preimage(vtxo: &ServerVtxo, witness: &Witness) -> Option<Preimage> {
 	let exit_delta = vtxo.exit_delta();
 	let (payment_hash, user_preimage_claim_script, preimage) = match vtxo.policy() {
 		ServerVtxoPolicy::User(VtxoPolicy::ServerHtlcRecv(p)) => (

@@ -8,7 +8,7 @@ use tracing::{error, info};
 
 use ark::lightning::{PaymentHash, Preimage};
 
-use crate::database::{Checkpoint, Db};
+use crate::database::{Checkpoint, Db, Tx};
 use crate::system::RuntimeManager;
 
 const DEFAULT_BATCH_SIZE: usize = 100;
@@ -84,6 +84,17 @@ impl HtlcSettler {
 		if let Some(checkpoint) = self.db.write(async |t| t.store_htlc_settlement(preimage).await).await? {
 			slog!(HtlcSettled, payment_hash: preimage.compute_payment_hash());
 			self.watch.update(checkpoint);
+		}
+		Ok(())
+	}
+
+	/// Like [Self::settle], but writing through the caller's db tx.
+	///
+	/// Watchers are not notified: they can't see the row before the tx
+	/// commits, and the poller picks it up afterwards.
+	pub async fn settle_in_tx(&self, tx: &Tx<'_>, preimage: Preimage) -> anyhow::Result<()> {
+		if tx.store_htlc_settlement(preimage).await?.is_some() {
+			slog!(HtlcSettled, payment_hash: preimage.compute_payment_hash());
 		}
 		Ok(())
 	}
