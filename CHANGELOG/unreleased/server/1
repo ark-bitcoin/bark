@@ -1,0 +1,38 @@
+- Add expiry payouts, off by default with `expiry_payouts`
+  In expiry payout mode the server records an owner mailbox key `M` for
+  every VTXO, and the watchman pays the VTXOs of an expired tree to
+  `tr(M)` instead of to the operator. The fee is the higher of 2,000 sats
+  and 1% of the value of the owner in the tree, once for each owner in each
+  tree. The mode is fixed when the database is created. Without it, the
+  server behaves as upstream. See `docs/expiry-payouts.md`.
+  [#1](https://github.com/SatoshiPortal/scuttle/pull/1)
+  - `watchman.expiry_payout_max_fee_rate` caps the feerate of a payout
+    transaction and of its replacements.
+  - The watchman preserves pending payout fee inputs across mempool updates
+    and restores a stored payout to its wallet when needed.
+  - In expiry payout mode the server refuses an HTLC send or an HTLC receive
+    grant that expires more than six blocks after the tip plus
+    `htlc_send_expiry_delta`, and a round output with the key of round
+    padding.
+  - Recovery mailbox posts are stored as upstream does, for any VTXO. The
+    owner mailbox that the server records when it creates a VTXO decides its
+    payout.
+  - `ln_receive_ark_address_hints` lets a receiver put its Ark address in
+    the route hints of an invoice, so a payer on this server pays the invoice
+    with an arkoor. Only a new arkoor settles the receive, and a retry of
+    that arkoor is co-signed again.
+  - In expiry payout mode an arkoor can create only pubkey outputs. A
+    Lightning send can also create HTLC-send outputs whose expiry the
+    server caps.
+  - A round drops a stored delegated participation whose outputs cannot
+    bind to owner mailboxes, so it does not fail each next round.
+  - A retry of an arkoor that paid a receive also notifies the receiver and
+    cancels the hold invoice after a server restart.
+  - An invoice can be paid by arkoor only if its route hints carry an Ark
+    address, even if its receive has a claim key.
+  - An unregistered arkoor output to the key of round padding pays its
+    sender at expiry. Only an unclaimed round padding output pays the
+    operator.
+  - The server posts a round result only to the mailbox of a delegated
+    participation, as upstream does. A wallet with a delegated and an
+    interactive participation in one round can read its mailbox after it.

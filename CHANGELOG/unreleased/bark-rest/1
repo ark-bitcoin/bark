@@ -1,0 +1,3 @@
+- Add `GET /wallet/vtxos/{id}/expiry-payout`
+  It returns the expiry payout that the Ark server reports for a VTXO.
+  [#1](https://github.com/SatoshiPortal/scuttle/pull/1)

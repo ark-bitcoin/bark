@@ -1,0 +1,4 @@
+- Check existing owner mailbox bindings on database upgrade
+  The payout-mode migration reports preexisting held VTXOs without a binding,
+  and its policy check exempts terminal spend states before unknown tags.
+  [#9](https://github.com/SatoshiPortal/scuttle/pull/9)

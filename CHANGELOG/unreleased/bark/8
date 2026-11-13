@@ -1,0 +1,5 @@
+- Finish a Lightning send whose inputs were decided for an expiry payout
+  A registration refusal now reaches the idempotent co-sign check. A prior
+  co-sign can still be recovered after a lost reply; a fresh rejected spend
+  releases its inputs instead of retrying forever.
+  [#8](https://github.com/SatoshiPortal/scuttle/pull/8)

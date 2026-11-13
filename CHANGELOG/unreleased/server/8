@@ -1,0 +1,5 @@
+- Make expiry payout recovery and decisions more reliable
+  A completed round can retry registration of its already stored signed inputs
+  without changing decided coins. The watchman checks earlier payouts once per
+  branch, and a conflicting owner mailbox returns a precondition error.
+  [#8](https://github.com/SatoshiPortal/scuttle/pull/8)

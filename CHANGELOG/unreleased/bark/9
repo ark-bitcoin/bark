@@ -1,0 +1,4 @@
+- Recover a released round after an old input is paid out
+  The wallet checks that the server released the participation before
+  canceling a pending round whose input has an expiry payout decision.
+  [#8](https://github.com/SatoshiPortal/scuttle/pull/8)

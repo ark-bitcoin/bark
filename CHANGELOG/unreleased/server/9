@@ -1,0 +1,4 @@
+- Require owner mailbox bindings at database commit for expiry payouts
+  New owner-held VTXOs cannot commit without a mailbox binding, and normal
+  writes cannot change or remove a stored binding.
+  [#9](https://github.com/SatoshiPortal/scuttle/pull/9)

@@ -1,0 +1,4 @@
+- Publish round mailbox notifications after database commit
+  Subscribers wake only for stored participations, and a conflicting owner
+  binding fails the round without stopping the coordinator.
+  [#8](https://github.com/SatoshiPortal/scuttle/pull/8)
