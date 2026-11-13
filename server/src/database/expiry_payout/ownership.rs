@@ -2,15 +2,56 @@
 //! created.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use anyhow::Context;
 use bitcoin::OutPoint;
 use bitcoin::secp256k1::PublicKey;
+use tokio_postgres::error::SqlState;
 
 use ark::VtxoId;
 use ark::mailbox::MailboxIdentifier;
 
 use crate::database::Tx;
+
+/// The owner mailboxes of a write differ from the new VTXOs that need one.
+/// The write stores nothing, so its caller can drop it: a round with such
+/// an output fails, and the server keeps running rounds.
+#[derive(Debug)]
+pub struct OwnerBindingMismatch;
+
+impl fmt::Display for OwnerBindingMismatch {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str("mailbox binding set differs from the owner VTXOs")
+	}
+}
+
+impl std::error::Error for OwnerBindingMismatch {}
+
+impl OwnerBindingMismatch {
+	/// Recognize the deferred check without treating other constraint or
+	/// commit errors as a recoverable missing binding.
+	pub(crate) fn is_constraint_violation(error: &tokio_postgres::Error) -> bool {
+		error.as_db_error().is_some_and(|error| {
+			error.code() == &SqlState::FOREIGN_KEY_VIOLATION
+				&& error.constraint() == Some("vtxo_require_owner_mailbox")
+		})
+	}
+}
+
+/// A replay tried to change the owner mailbox of an existing VTXO.
+/// The original binding remains in place. This is a precondition failure
+/// rather than a terminal bad argument because a co-sign reply may be lost.
+#[derive(Debug)]
+pub struct StoredMailboxConflict(pub VtxoId);
+
+impl fmt::Display for StoredMailboxConflict {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "owner VTXO {} has a conflicting mailbox binding", self.0)
+	}
+}
+
+impl std::error::Error for StoredMailboxConflict {}
 
 impl Tx<'_> {
 	/// The owner mailbox recorded for each VTXO when it was created. The
@@ -48,18 +89,22 @@ impl Tx<'_> {
 		let mut ids = Vec::with_capacity(owned.len());
 		let mut mailboxes = Vec::with_capacity(owned.len());
 		for id in owned {
-			let mailbox = bindings.get(id)
+			let mailbox = bindings.get(id).ok_or(OwnerBindingMismatch)
 				.with_context(|| format!("owner VTXO {id} has no registered mailbox"))?;
 			ids.push(id.to_string());
 			mailboxes.push(mailbox.to_string());
 		}
-		ensure!(bindings.len() == owned.len(), "mailbox binding set differs from the owner VTXOs");
+		if bindings.len() != owned.len() {
+			return Err(OwnerBindingMismatch.into());
+		}
 		self.execute("INSERT INTO vtxo_owner_mailbox (vtxo_id, mailbox_pk) \
 			SELECT u.vtxo_id, u.mailbox_pk FROM UNNEST($1::TEXT[], $2::TEXT[]) AS u(vtxo_id, mailbox_pk) \
 			ON CONFLICT (vtxo_id) DO NOTHING", &[&ids, &mailboxes]).await?;
 		let stored = self.vtxo_owner_mailboxes(owned).await?;
 		for id in owned {
-			ensure!(stored.get(id) == bindings.get(id), "owner VTXO {id} has a conflicting mailbox binding");
+			if stored.get(id) != bindings.get(id) {
+				return Err(StoredMailboxConflict(*id).into());
+			}
 		}
 		Ok(())
 	}

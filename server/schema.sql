@@ -500,6 +500,40 @@ $$;
 
 
 --
+-- Name: preserve_vtxo_owner_mailbox(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_vtxo_owner_mailbox() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+	RAISE EXCEPTION 'VTXO owner mailbox bindings are immutable'
+		USING ERRCODE = 'integrity_constraint_violation';
+END;
+$$;
+
+
+--
+-- Name: require_vtxo_owner_mailbox(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_vtxo_owner_mailbox() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+	payouts BOOLEAN;
+BEGIN
+	SELECT expiry_payouts INTO STRICT payouts FROM server_mode WHERE id = 1;
+	IF payouts AND NOT EXISTS (SELECT 1 FROM vtxo_owner_mailbox WHERE vtxo_id = NEW.vtxo_id) THEN
+		RAISE EXCEPTION 'VTXO % has no owner mailbox', NEW.vtxo_id
+			USING ERRCODE = 'foreign_key_violation', CONSTRAINT = 'vtxo_require_owner_mailbox';
+	END IF;
+	RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: virtual_transaction_history_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -549,6 +583,15 @@ CREATE FUNCTION public.vtxo_late_sweeps(chain_tip integer, margin integer DEFAUL
     WHERE NOT conflicted
       AND expiry + margin <= chain_tip;
 $$;
+
+
+--
+-- Name: vtxo_requires_owner_mailbox(public.spend_state, bytea); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.vtxo_requires_owner_mailbox(state public.spend_state, policy bytea) RETURNS boolean
+    LANGUAGE sql IMMUTABLE STRICT
+    RETURN CASE WHEN (state = ANY (ARRAY['spent'::public.spend_state, 'pool'::public.spend_state, 'ln-spent'::public.spend_state, 'round-forfeit'::public.spend_state, 'offboard-forfeit'::public.spend_state, 'offboard-connector'::public.spend_state])) THEN false WHEN (octet_length(policy) = 0) THEN true WHEN (get_byte(policy, 0) > 11) THEN true WHEN (state = ANY (ARRAY['spendable'::public.spend_state, 'unregistered'::public.spend_state, 'unclaimed'::public.spend_state, 'htlc-recv-unclaimed'::public.spend_state])) THEN (NOT ((policy = '\x07'::bytea) OR ((get_byte(policy, 0) = 4) AND (octet_length(policy) = 33)) OR ((state = 'unclaimed'::public.spend_state) AND (policy = '\x0002dfa52f6690299d2d6a08323083e290597b56fee125063e5f4e2957731639c42c'::bytea)))) ELSE true END;
 
 
 --
@@ -3080,6 +3123,27 @@ CREATE TRIGGER lightning_payment_attempt_update BEFORE UPDATE ON public.lightnin
 --
 
 CREATE TRIGGER virtual_transaction_history_update BEFORE UPDATE ON public.virtual_transaction FOR EACH ROW EXECUTE FUNCTION public.virtual_transaction_history_trigger();
+
+
+--
+-- Name: vtxo_owner_mailbox vtxo_owner_mailbox_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER vtxo_owner_mailbox_immutable BEFORE DELETE OR UPDATE ON public.vtxo_owner_mailbox FOR EACH ROW EXECUTE FUNCTION public.preserve_vtxo_owner_mailbox();
+
+
+--
+-- Name: vtxo_owner_mailbox vtxo_owner_mailbox_no_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER vtxo_owner_mailbox_no_truncate BEFORE TRUNCATE ON public.vtxo_owner_mailbox FOR EACH STATEMENT EXECUTE FUNCTION public.preserve_vtxo_owner_mailbox();
+
+
+--
+-- Name: vtxo vtxo_require_owner_mailbox; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER vtxo_require_owner_mailbox AFTER INSERT OR UPDATE OF vtxo_id, spend_state, policy ON public.vtxo DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (public.vtxo_requires_owner_mailbox(new.spend_state, new.policy)) EXECUTE FUNCTION public.require_vtxo_owner_mailbox();
 
 
 --

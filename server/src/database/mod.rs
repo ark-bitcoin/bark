@@ -32,6 +32,7 @@ mod query;
 pub use self::block::BlockTable;
 pub use self::model::*;
 
+use self::expiry_payout::ownership::OwnerBindingMismatch;
 
 use std::borrow::Borrow;
 use std::str::FromStr;
@@ -333,7 +334,11 @@ impl Db {
 			pgtx.commit().await.context("db tx commit error")?;
 		} else {
 			if ret.is_ok() {
-				pgtx.commit().await.context("db tx commit error")?;
+				pgtx.commit().await.map_err(|error| {
+					let missing_owner = OwnerBindingMismatch::is_constraint_violation(&error);
+					let error = anyhow::Error::new(error).context("db tx commit error");
+					if missing_owner { error.context(OwnerBindingMismatch) } else { error }
+				})?;
 			} else {
 				pgtx.rollback().await.context("db tx rollback error")?;
 			}

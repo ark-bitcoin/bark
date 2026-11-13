@@ -6,8 +6,10 @@ use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use tracing::debug;
 
-use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId};
+use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
 use ark::vtxo::{Bare, Full};
+
+use crate::round::UNSPENDABLE;
 
 use super::model::{SpendState, VirtualTransaction};
 use super::Tx;
@@ -56,6 +58,21 @@ struct VtxoInserts {
 	anchor_points: Vec<String>,
 	spend_states: Vec<String>,
 	oor_spent_txids: Vec<Option<String>>,
+}
+
+/// The round output used only for padding has no owner to recover to.
+#[doc(hidden)]
+pub fn round_padding_policy() -> ServerVtxoPolicy {
+	ServerVtxoPolicy::User(VtxoPolicy::new_pubkey(*UNSPENDABLE))
+}
+
+/// Keep this classification aligned with the database's deferred check.
+#[doc(hidden)]
+pub fn vtxo_requires_owner_mailbox(state: SpendState, policy: &ServerVtxoPolicy) -> bool {
+	let held = matches!(state, SpendState::Spendable | SpendState::Unregistered
+		| SpendState::Unclaimed | SpendState::HtlcRecvUnclaimed);
+	let padding = state == SpendState::Unclaimed && policy == &round_padding_policy();
+	held && !padding && policy.user_pubkey().is_some()
 }
 
 impl VtxoInserts {
@@ -135,19 +152,13 @@ impl VtxoInserts {
 	}
 
 	/// The inserted VTXOs that an owner holds, each of which needs an owner
-	/// mailbox: the user VTXOs not spent at insertion.
+	/// mailbox: the user VTXOs not spent at insertion, except round padding.
 	fn owned_vtxo_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
 		let mut ret = Vec::new();
 		for ((id, state), policy) in self.vtxo_ids.iter().zip(&self.spend_states).zip(&self.policies) {
 			let state = state.parse::<SpendState>()?;
-			let held = match state {
-				SpendState::Spendable | SpendState::Unregistered | SpendState::Unclaimed
-					| SpendState::HtlcRecvUnclaimed => true,
-				SpendState::Spent | SpendState::Pool | SpendState::LnSpent | SpendState::RoundForfeit
-					| SpendState::OffboardForfeit | SpendState::OffboardConnector => false,
-			};
 			let policy = ServerVtxoPolicy::deserialize(policy)?;
-			if held && policy.user_pubkey().is_some() {
+			if vtxo_requires_owner_mailbox(state, &policy) {
 				ret.push(id.parse()?);
 			}
 		}
