@@ -4,15 +4,20 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use anyhow::Context;
 use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, FeeRate, ScriptBuf, Transaction, TxOut};
 
-use ark::{ProtocolEncoding, ServerVtxo, VtxoId};
+use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId};
 use bitcoin_ext::{BlockRef, TxOutExt};
 
 use crate::database::Tx;
+use crate::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution};
+use crate::database::ln::LightningHtlcSubscriptionStatus;
 use crate::error::ExpiryPayoutRefusal;
+
+use super::ownership::{htlc_terms, LightningSourceState};
 
 /// The largest payout transaction that is still standard.
 const MAX_PAYOUT_VSIZE: usize = 100_000;
@@ -32,6 +37,25 @@ pub(crate) struct ExpiryPayoutReceipt {
 	pub gross: Amount,
 	pub fee: Amount,
 	pub payout: Amount,
+}
+
+/// Whether the watchman can take back a receive grant after its timeout:
+/// the receive is canceled, or its HTLCs are ready and no preimage is
+/// known. A fulfilled grant is never taken back.
+fn receive_timeout_allowed(
+	status: LightningHtlcSubscriptionStatus,
+	offchain: Option<HtlcResolution>,
+	onchain: Option<HtlcResolution>,
+	preimage_known: bool,
+) -> bool {
+	if offchain == Some(HtlcResolution::Fulfilled) || onchain == Some(HtlcResolution::Fulfilled) {
+		return false;
+	}
+	match status {
+		LightningHtlcSubscriptionStatus::Canceled => true,
+		LightningHtlcSubscriptionStatus::HtlcsReady => !preimage_known,
+		_ => false,
+	}
 }
 
 /// An expiry payout that is not confirmed and not conflicted.
@@ -196,11 +220,52 @@ impl Tx<'_> {
 		Ok(())
 	}
 
-	/// Lock the inputs of a watchman claim through its broadcast.
+	/// Lock the inputs of a watchman claim through its broadcast, and check
+	/// that each HTLC input is the server's to claim. A known preimage does
+	/// not make the server the owner of an HTLC send whose own payment did
+	/// not succeed.
 	pub async fn lock_watchman_claim_inputs(&self, vtxos: &[ServerVtxo]) -> anyhow::Result<()> {
 		if !self.expiry_payouts() { return Ok(()); }
 		let ids = vtxos.iter().map(|vtxo| vtxo.id()).collect::<Vec<_>>();
-		self.lock_unallocated_watchman_inputs(&ids).await
+		self.lock_unallocated_watchman_inputs(&ids).await?;
+		for candidate in vtxos {
+			let ServerVtxoPolicy::User(policy) = candidate.policy() else { continue };
+			let Some((hash, expiry, sending)) = htlc_terms(policy) else { continue };
+			let state = self.get_server_vtxo_by_id(candidate.id()).await?;
+			ensure!(state.vtxo.to_bare().serialize() == candidate.to_bare().serialize(),
+				"lightning claim source differs from its retained contract");
+			ensure!(state.confirmed_height.is_some() && state.oor_spent_txid.is_none()
+				&& state.spent_in_round.is_none() && state.offboarded_in.is_none(),
+				"lightning claim source has a successor or lacks confirmation");
+			let unspent = self.query_one("SELECT onchain_spent_height IS NULL AND onchain_spent_txid IS NULL AS unspent \
+				FROM vtxo WHERE id=$1", &[&state.id]).await?.get::<_, bool>("unspent");
+			ensure!(unspent, "lightning claim source is already spent on-chain");
+			let htlc = htlc_vtxo::get_htlc_vtxo(self, candidate.id()).await?
+				.context("lightning claim source has no registered HTLC")?;
+			let direction = if sending { HtlcDirection::Incoming } else { HtlcDirection::Outgoing };
+			ensure!(htlc.htlc.direction == direction
+				&& htlc.htlc.payment_hash == hash && htlc.htlc.htlc_expiry == expiry,
+				"lightning claim source has a different HTLC");
+			if sending {
+				ensure!(htlc.htlc.offchain_resolution != Some(HtlcResolution::Revoked)
+					&& htlc.htlc.chain_resolution != Some(HtlcResolution::Revoked),
+					"lightning claim source was revoked");
+				ensure!(self.lightning_source_state(candidate.id(), hash).await? == LightningSourceState::Discharged,
+					"lightning source is not discharged");
+			} else {
+				// A preimage can be stored before the receive is settled.
+				self.lock_htlc_settlements().await?;
+				let subscription = self.query_opt("SELECT s.status,s.payment_hash FROM lightning_htlc_subscription s \
+					JOIN vtxo v ON v.lightning_htlc_subscription_id=s.id WHERE v.id=$1 FOR UPDATE OF s",
+					&[&state.id]).await?.context("receive claim source has no subscription")?;
+				ensure!(subscription.get::<_, &str>("payment_hash") == hash.to_string(),
+					"receive claim source has a different subscription");
+				let preimage_known = self.get_htlc_settlement_by_payment_hash(hash).await?.is_some();
+				ensure!(receive_timeout_allowed(subscription.get("status"), htlc.htlc.offchain_resolution,
+					htlc.htlc.chain_resolution, preimage_known), "receive grant may have been collected");
+			}
+		}
+		Ok(())
 	}
 
 	/// Lock the inputs of a watchman claim through its broadcast, and refuse
@@ -222,5 +287,29 @@ impl Tx<'_> {
 			return Err(ExpiryPayoutRefusal::DecidedForPayout(row.get::<_, &str>("vtxo_id").parse()?).into());
 		}
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use LightningHtlcSubscriptionStatus::{Canceled, Created, Accepted, HtlcsReady, Settled};
+	use HtlcResolution::{Fulfilled, Revoked};
+
+	#[test]
+	fn receive_timeout_keeps_collected_and_inflight_grants() {
+		assert!(receive_timeout_allowed(HtlcsReady, None, None, false));
+		assert!(!receive_timeout_allowed(HtlcsReady, None, None, true));
+		for known in [false, true] {
+			assert!(receive_timeout_allowed(Canceled, None, None, known));
+			assert!(receive_timeout_allowed(Canceled, Some(Revoked), None, known));
+			for status in [Created, Accepted, HtlcsReady, Settled, Canceled] {
+				assert!(!receive_timeout_allowed(status, Some(Fulfilled), None, known));
+				assert!(!receive_timeout_allowed(status, None, Some(Fulfilled), known));
+			}
+			for status in [Created, Accepted, Settled] {
+				assert!(!receive_timeout_allowed(status, None, None, known));
+			}
+		}
 	}
 }

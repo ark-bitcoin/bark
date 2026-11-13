@@ -566,7 +566,10 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.hash)?;
-		let res = self.check_lightning_payment(payment_hash, req.wait).await.to_status()?;
+		let source_ids = req.htlc_vtxo_ids.iter().filter(|_| self.config.expiry_payouts)
+			.map(VtxoId::from_bytes)
+			.collect::<Result<Vec<_>, _>>()?;
+		let res = self.check_lightning_payment(payment_hash, req.wait, &source_ids).await.to_status()?;
 		Ok(tonic::Response::new(protos::LightningPaymentStatus { payment_status: Some(res) }))
 	}
 

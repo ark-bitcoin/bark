@@ -11,6 +11,7 @@ use tracing::{error, warn};
 
 use crate::bitcoind as bcd;
 use crate::database::Db;
+use crate::database::expiry_payout::ownership::LightningSourceState;
 use super::{Action, Config};
 
 /// How many blocks before a claim's deadline we start alerting that it is
@@ -275,7 +276,7 @@ impl ActionContextFetcher<'_> {
 				let params = params.with_policy_extras(HtlcSendExtra {
 					next_tx: self.fetch_progress(vtxo).await,
 					htlc_expiry: p.htlc_expiry,
-					has_preimage: self.check_have_payment_preimage(p.payment_hash).await,
+					has_preimage: self.check_have_payment_preimage(p.payment_hash, vtxo.id()).await,
 				});
 				decide_action_server_htlc_send(&params)
 			},
@@ -283,7 +284,7 @@ impl ActionContextFetcher<'_> {
 				let params = params.with_policy_extras(HtlcSendExtra {
 					next_tx: self.fetch_progress(vtxo).await,
 					htlc_expiry: p.htlc_expiry,
-					has_preimage: self.check_have_payment_preimage(p.payment_hash).await,
+					has_preimage: self.check_have_payment_preimage(p.payment_hash, vtxo.id()).await,
 				});
 				decide_action_server_htlc_send(&params)
 			},
@@ -415,13 +416,21 @@ impl ActionContextFetcher<'_> {
 		})
 	}
 
-	async fn check_have_payment_preimage(&self, payment_hash: PaymentHash) -> bool {
+	async fn check_have_payment_preimage(&self, payment_hash: PaymentHash, source: VtxoId) -> bool {
 		// Check the htlc_settlement table (populated by the settler),
 		// which is the single source of truth for preimages.
-		self.db.read(async |t| t.get_htlc_settlement_by_payment_hash(payment_hash).await).await
+		// In payout mode, a preimage counts only for a source whose own
+		// payment succeeded. The payment of another payer on the same hash
+		// does not give the server this payer's VTXO.
+		self.db.read(async |t| {
+			if t.get_htlc_settlement_by_payment_hash(payment_hash).await?.is_none() {
+				return Ok(false);
+			}
+			Ok(!t.expiry_payouts()
+				|| t.lightning_source_state(source, payment_hash).await? == LightningSourceState::Discharged)
+		}).await
 			.inspect_err(|e| error!("DB error: {:#}", e))
-			.ok().flatten()
-			.is_some()
+			.unwrap_or(false)
 	}
 
 	async fn check_server_knows_pubkey(&self, pk: PublicKey) -> bool {

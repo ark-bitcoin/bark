@@ -424,6 +424,8 @@ message InitiateLightningPaymentRequest {
 message CheckLightningPaymentRequest {
 	bytes hash = 1;
 	bool wait = 2;
+	// Expiry payout mode only: all HTLC VTXOs of the payment.
+	repeated bytes htlc_vtxo_ids = 1000;
 }
 
 message PaymentSuccessStatus {

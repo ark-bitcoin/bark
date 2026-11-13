@@ -680,6 +680,22 @@ pub(super) fn htlc_terms(policy: &VtxoPolicy) -> Option<(PaymentHash, BlockHeigh
 	}
 }
 
+/// Whether the HTLC-recv grants of a payment expired, by the rule of the
+/// server mode: [payout_htlc_recvs_expired] in payout mode, else
+/// [crate::ln::htlc_recvs_expired].
+pub(crate) fn htlc_recvs_expired_in_mode(
+	expiry_payouts: bool,
+	htlc_vtxos: &[HtlcVtxo],
+	tip: BlockHeight,
+	watchman_tip: Option<BlockHeight>,
+) -> bool {
+	if expiry_payouts {
+		payout_htlc_recvs_expired(htlc_vtxos, tip, watchman_tip)
+	} else {
+		crate::ln::htlc_recvs_expired(htlc_vtxos, tip, watchman_tip)
+	}
+}
+
 /// The payout-mode form of [crate::ln::htlc_recvs_expired]. A collected
 /// grant never expires, and a grant that the operator took back on-chain
 /// counts only when that spend is six blocks deep, so a reorg cannot both
