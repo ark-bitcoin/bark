@@ -66,7 +66,9 @@ pub struct ClnHoldConfig {
 	pub max_track_all_delay: Duration,
 }
 
-/// The number of payment hashes in one `hold.list` request.
+/// The number of Created subscriptions the invoice poll reads from the
+/// database at once, and so the number of payment hashes in one `hold.list`
+/// request.
 ///
 /// The plugin answers a `hold.list` with one message that holds every invoice
 /// asked for, and tonic refuses a message over its 4 MiB default instead of
@@ -78,30 +80,28 @@ const HOLD_LIST_PAGE_SIZE: usize = 1000;
 /// the subset whose invoice is in Accepted state. Replaces a full-list
 /// pagination + client-side filter.
 ///
-/// The hashes go out in pages of [HOLD_LIST_PAGE_SIZE], so the size of a
-/// response does not grow with the number of open invoices.
+/// The response holds every invoice asked for, so callers pass at most
+/// [HOLD_LIST_PAGE_SIZE] hashes.
 async fn fetch_accepted_payment_hashes(
 	hold_client: &mut HoldClient<Channel>,
-	payment_hashes: &[Vec<u8>],
+	payment_hashes: Vec<Vec<u8>>,
 ) -> anyhow::Result<HashSet<sha256::Hash>> {
-	let mut accepted = HashSet::new();
-	for page in payment_hashes.chunks(HOLD_LIST_PAGE_SIZE) {
-		let req = hold::ListRequest {
-			constraint: Some(hold::list_request::Constraint::PaymentHashes(
-				hold::list_request::PaymentHashes { payment_hashes: page.to_vec() },
-			)),
-		};
-		let res = hold_client.list(req).await?.into_inner();
+	let req = hold::ListRequest {
+		constraint: Some(hold::list_request::Constraint::PaymentHashes(
+			hold::list_request::PaymentHashes { payment_hashes },
+		)),
+	};
+	let res = hold_client.list(req).await?.into_inner();
 
-		for inv in &res.invoices {
-			if inv.state != InvoiceState::Accepted as i32 {
-				continue;
-			}
-			match sha256::Hash::from_slice(&inv.payment_hash) {
-				Ok(h) => { accepted.insert(h); },
-				Err(e) => warn!("hold plugin returned invalid payment_hash \
-					(len {}, id {}): {}", inv.payment_hash.len(), inv.id, e),
-			}
+	let mut accepted = HashSet::new();
+	for inv in &res.invoices {
+		if inv.state != InvoiceState::Accepted as i32 {
+			continue;
+		}
+		match sha256::Hash::from_slice(&inv.payment_hash) {
+			Ok(h) => { accepted.insert(h); },
+			Err(e) => warn!("hold plugin returned invalid payment_hash \
+				(len {}, id {}): {}", inv.payment_hash.len(), inv.id, e),
 		}
 	}
 	Ok(accepted)
@@ -519,34 +519,48 @@ impl ClnHoldProcess {
 			},
 		};
 
-		let htlc_subscriptions = self.db.read(async |t| t.get_open_lightning_htlc_subscriptions(
-			self.node_id,
-		).await).await?;
+		// Created subscriptions are read in pages of [HOLD_LIST_PAGE_SIZE] by
+		// ascending id, and each page is checked with one `hold.list` request.
+		let mut after_id = 0;
+		let mut nb_created = 0;
+		let mut nb_accepted = 0;
+		loop {
+			let created_subs = self.db.read(async |t| {
+				t.get_created_lightning_htlc_subscriptions_after(
+					self.node_id, after_id, HOLD_LIST_PAGE_SIZE,
+				).await
+			}).await?;
+			let Some(last) = created_subs.last() else {
+				break;
+			};
+			after_id = last.id;
 
-		let created_subs = htlc_subscriptions.into_iter()
-			.filter(|s| s.status == LightningHtlcSubscriptionStatus::Created)
-			.collect::<Vec<_>>();
+			let payment_hashes = created_subs.iter()
+				.map(|s| s.invoice.payment_hash().to_byte_array().to_vec())
+				.collect::<Vec<_>>();
+			let accepted_hashes = fetch_accepted_payment_hashes(
+				&mut hold_client, payment_hashes,
+			).await?;
+			nb_created += created_subs.len();
+			nb_accepted += accepted_hashes.len();
 
-		if created_subs.is_empty() {
-			return Ok(());
+			let is_last_page = created_subs.len() < HOLD_LIST_PAGE_SIZE;
+			for htlc_subscription in created_subs {
+				let payment_hash = htlc_subscription.invoice.payment_hash();
+				if accepted_hashes.contains(payment_hash) {
+					self.handle_invoice_accepted(&htlc_subscription).await?;
+				}
+			}
+
+			if is_last_page {
+				break;
+			}
 		}
 
-		let payment_hashes = created_subs.iter()
-			.map(|s| s.invoice.payment_hash().to_byte_array().to_vec())
-			.collect::<Vec<_>>();
-		let accepted_hashes = fetch_accepted_payment_hashes(
-			&mut hold_client, &payment_hashes,
-		).await?;
-
-		debug!("poll_htlc_state_updates: {} created subs, {} accepted invoices in plugin",
-			created_subs.len(), accepted_hashes.len(),
-		);
-
-		for htlc_subscription in created_subs {
-			let payment_hash = htlc_subscription.invoice.payment_hash();
-			if accepted_hashes.contains(payment_hash) {
-				self.handle_invoice_accepted(&htlc_subscription).await?;
-			}
+		if nb_created > 0 {
+			debug!("poll_htlc_state_updates: {} created subs, {} accepted invoices in plugin",
+				nb_created, nb_accepted,
+			);
 		}
 
 		Ok(())

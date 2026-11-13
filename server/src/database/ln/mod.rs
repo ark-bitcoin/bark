@@ -764,6 +764,34 @@ impl<'t> Tx<'t> {
 		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
 	}
 
+	/// Retrieve up to `limit` htlc subscriptions of the given node that are
+	/// still in Created state and have an id above `after_id`, ordered by id.
+	///
+	/// This method DOES NOT fetch the htlc vtxos for the subscription.
+	pub async fn get_created_lightning_htlc_subscriptions_after(
+		&self,
+		node_id: LightningNodeId,
+		after_id: i64,
+		limit: usize,
+	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
+		let stmt = self.prepare("
+			SELECT id, lightning_node_id, payment_hash, invoice,
+				status, lowest_incoming_htlc_expiry, accepted_at, user_agent, claim_pubkey,
+				created_at, updated_at
+			FROM lightning_htlc_subscription
+			WHERE status = $1 AND lightning_node_id = $2 AND id > $3
+			ORDER BY id ASC
+			LIMIT $4;
+		").await?;
+
+		let status_created = LightningHtlcSubscriptionStatus::Created;
+		let rows = self.query(
+			&stmt, &[&status_created, &node_id, &after_id, &i64::try_from(limit)?],
+		).await?;
+
+		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
+	}
+
 	/// Retrieve the htlc subscription for the provided payment hash
 	///
 	/// This method DOES retrieve the htlc vtxos for the subscription.
