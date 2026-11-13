@@ -4,12 +4,15 @@ use bitcoin::{Amount, FeeRate, OutPoint};
 use bitcoin_ext::{BlockDelta, BlockHeight, TxOutExt};
 use bitcoin_ext::rpc::RpcApi;
 
-use ark::{Vtxo, VtxoId};
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::attestations::VtxoStatusAttestation;
 use ark::fees::{BoardFees, PpmFeeRate};
 use ark::lightning::PaymentHash;
 use ark::vtxo::Full;
+use bark::vtxo::{ExpiryPayoutState, VtxoState};
 use server::database::Db;
 use server_log::ExpiryHoldObserved;
+use server_rpc::protos;
 
 use ark_testing::{btc, sat, Captaind, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
@@ -18,7 +21,7 @@ use ark_testing::util::{poll_interval, FutureExt};
 
 use super::{
 	assert_paid, current_share, fund_watchman, htlc_send, input_allocations, miner_fee, mine,
-	mine_past, operator_script, payout_attempts, payout_output, payout_shares,
+	mine_past, mine_until_payout, operator_script, payout_attempts, payout_output, payout_shares,
 	wait_decided, wait_payout,
 };
 
@@ -256,6 +259,107 @@ async fn expiry_payout_error_on_one_root_does_not_stop_the_pass() {
 	assert!(payout.input.iter().all(|input| input.previous_output != broken.chain_anchor()));
 	payout_output(&payout, &script, ready.amount() - sat(2_000));
 	assert!(input_allocations(&db, broken_root).await.is_empty());
+}
+
+/// One root holds arkoor outputs of four recipients and the change of their
+/// sender. The fee takes a 1,500-sat VTXO whole, and leaves 329, 330 and 331
+/// sats of the others. A remainder below the 330-sat dust limit cannot be
+/// paid, so its owner forfeits it. The sender's change is paid in one output
+/// and charged one fee. Every wallet then reports its VTXOs paid or
+/// forfeited, with no new movement.
+#[tokio::test]
+async fn expiry_payout_fee_boundaries_and_one_fee_per_owner() {
+	let ctx = TestContext::new("server/expiry_payout_fee_boundaries_and_one_fee_per_owner").await;
+	let srv = ctx.captaind("server").bitcoind(ctx.bitcoind_arc()).no_vtxo_pool().watchmand().cfg(|cfg| {
+		cfg.expiry_payouts = true;
+		cfg.vtxo_lifetime = BlockDelta::new(40);
+		cfg.vtxo_exit_delta = BlockDelta::new(2);
+	}).create().await;
+	let sender = ctx.bark_sdk("sender", &srv).boarded(sat(100_000))
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	sender.stop_daemon_wait().await.unwrap();
+	let amounts = [1_500, 2_329, 2_330, 2_331].map(sat);
+	let mut recipients = Vec::new();
+	for (index, amount) in amounts.iter().enumerate() {
+		let recipient = ctx.bark_sdk(format!("recipient{index}"), &srv)
+			.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+		recipient.stop_daemon_wait().await.unwrap();
+		sender.send_arkoor_payment(&recipient.new_address().await.unwrap(), *amount).await.unwrap();
+		recipient.sync_mailbox().await.unwrap();
+		let mut leaf = super::full_vtxos(&recipient).await;
+		assert_eq!(leaf.len(), 1);
+		recipients.push((recipient, leaf.remove(0)));
+	}
+	let change = super::full_vtxos(&sender).await;
+	let change_total = change.iter().map(|vtxo| vtxo.amount()).sum::<Amount>();
+	assert_eq!(change_total + amounts.iter().copied().sum::<Amount>(), sat(100_000));
+	let mut history = Vec::new();
+	for wallet in std::iter::once(&sender).chain(recipients.iter().map(|(wallet, _)| wallet)) {
+		history.push(wallet.history().await.unwrap());
+	}
+
+	fund_watchman(&ctx, &srv, sat(100_000)).await;
+	mine_past(&ctx, &srv, change[0].expiry_height()).await;
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let payout = mine_until_payout(&ctx, &srv, &db, change[0].id()).await;
+	for vtxo in change.iter().chain(recipients.iter().map(|(_, vtxo)| vtxo)) {
+		let share = current_share(&db, vtxo.id()).await.expect("every VTXO of the root is decided");
+		assert_eq!(share.tx.as_ref(), Some(&payout), "one payout pays the whole root");
+	}
+	let dust = sat(330);
+	// The VTXOs that leave nothing or 329 sats have no output.
+	let expected = [None, None, Some(dust), Some(dust + sat(1))];
+	for ((wallet, vtxo), expected) in recipients.iter().zip(expected) {
+		let script = wallet.payout_script();
+		match expected {
+			Some(amount) => { payout_output(&payout, &script, amount); },
+			None => assert!(payout.output.iter().all(|output| output.script_pubkey != script)),
+		}
+		let share = current_share(&db, vtxo.id()).await.unwrap();
+		let fee = if expected.is_some() { sat(2_000) } else { vtxo.amount() };
+		assert_eq!(share.fee, fee);
+	}
+	payout_output(&payout, &sender.payout_script(), change_total - sat(2_000));
+	let mut change_fee = Amount::ZERO;
+	for vtxo in &change {
+		change_fee += current_share(&db, vtxo.id()).await.unwrap().fee;
+	}
+	assert_eq!(change_fee, sat(2_000), "one fee for all VTXOs of one owner in one root");
+	let operator = operator_script(&srv);
+	let remainder = payout.output.iter().filter(|output| output.script_pubkey == operator)
+		.map(|output| output.value).sum::<Amount>();
+	assert_eq!(remainder + miner_fee(&ctx, &payout).await, sat(1_500 + 2_329 + 2 * 2_000 + 2_000));
+	mine(&ctx, &srv, 6).await;
+	async {
+		while current_share(&db, change[0].id()).await.unwrap().status != "confirmed" {
+			tokio::time::sleep(poll_interval()).await;
+		}
+	}.wait_millis(30_000).await;
+
+	let (forfeited, leaf) = &recipients[0];
+	let key = forfeited.get_vtxo_key(leaf).await.unwrap();
+	let status = srv.get_public_rpc().await.get_vtxo_status(protos::GetVtxoStatusRequest {
+		vtxo_id: leaf.id().to_bytes().to_vec(),
+		attestation: VtxoStatusAttestation::new(leaf.id(), &key).serialize(),
+	}).await.unwrap().into_inner();
+	assert_eq!(status.expiry_payout, Some(protos::ExpiryPayout {
+		state: protos::ExpiryPayoutState::Forfeited as i32, gross_sat: 1_500, fee_sat: 1_500, payout_sat: 0,
+	}));
+	let leaves = std::iter::once((&sender, change.clone()))
+		.chain(recipients.iter().map(|(wallet, vtxo)| (wallet, vec![vtxo.clone()])));
+	for ((wallet, vtxos), history) in leaves.zip(history) {
+		wallet.sync_expiry_payouts().await.unwrap();
+		for vtxo in vtxos {
+			let state = wallet.get_vtxo_by_id(vtxo.id()).await.unwrap();
+			let expected = if vtxo.amount() < sat(2_000) + dust { ExpiryPayoutState::Forfeited } else { ExpiryPayoutState::Paid };
+			assert_eq!((state.state, state.expiry_payout_state), (VtxoState::Spent, Some(expected)));
+		}
+		assert_eq!(wallet.balance().await.unwrap().total(), Amount::ZERO);
+		assert_eq!(wallet.history().await.unwrap(), history, "a payout is not an Ark movement");
+	}
+	let payout = forfeited.expiry_payout(leaf.id()).await.unwrap().unwrap();
+	assert_eq!((payout.status, payout.gross, payout.fee, payout.payout),
+		(ExpiryPayoutState::Forfeited, sat(1_500), sat(1_500), Amount::ZERO));
 }
 
 /// Two owners in one round root are each paid once, in one payout.
