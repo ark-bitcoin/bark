@@ -316,6 +316,8 @@ impl DaemonProcess {
 						warn!("An error occurred while syncing pending lightning sends: {e:#}");
 					}
 
+					wallet.sync_expiry_payouts_if_connected().await;
+
 					if let Err(e) = wallet.sync_pending_arkoor_sends().await {
 						warn!("An error occurred while syncing pending arkoor sends: {e:#}");
 					}

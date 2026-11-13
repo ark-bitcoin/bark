@@ -87,6 +87,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**debug_info**](docs/WalletApi.md#debug_info) | **GET** /api/v1/wallet/debug-info | Get wallet debug info
 *WalletApi* | [**get_vtxo**](docs/WalletApi.md#get_vtxo) | **GET** /api/v1/wallet/vtxos/{id} | Get VTXO detail
 *WalletApi* | [**get_vtxo_encoded**](docs/WalletApi.md#get_vtxo_encoded) | **GET** /api/v1/wallet/vtxos/{id}/encoded | Get encoded VTXO
+*WalletApi* | [**get_vtxo_expiry_payout**](docs/WalletApi.md#get_vtxo_expiry_payout) | **GET** /api/v1/wallet/vtxos/{id}/expiry-payout | Get the expiry payout of a VTXO
 *WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history (deprecated)
 *WalletApi* | [**import_vtxo**](docs/WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
 *WalletApi* | [**mnemonic**](docs/WalletApi.md#mnemonic) | **GET** /api/v1/wallet/mnemonic | Get wallet mnemonic
@@ -222,6 +223,8 @@ Class | Method | HTTP request | Description
  - [ExitTxStatusOneOf4](docs/ExitTxStatusOneOf4.md)
  - [ExitVtxoAlreadySpentState](docs/ExitVtxoAlreadySpentState.md)
  - [ExitVtxoSweptState](docs/ExitVtxoSweptState.md)
+ - [ExpiryPayoutInfo](docs/ExpiryPayoutInfo.md)
+ - [ExpiryPayoutStateInfo](docs/ExpiryPayoutStateInfo.md)
  - [FeeEstimateQuery](docs/FeeEstimateQuery.md)
  - [FeeEstimateResponse](docs/FeeEstimateResponse.md)
  - [FeeInfo](docs/FeeInfo.md)

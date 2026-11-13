@@ -212,6 +212,9 @@ impl WalletAction for LightningReceive {
 	/// The step failed transiently. Retry it, unless the claim window
 	/// has closed or the claim retry budget is spent.
 	async fn on_retry(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		if wallet.finish_paid_out_lightning_receive(&self).await {
+			return Advance::Done;
+		}
 		match &self.progress {
 			// No money committed; just back off. Expiry reaping happens in
 			// the step.
@@ -243,6 +246,9 @@ impl WalletAction for LightningReceive {
 	/// The step can't be completed as-is: the server rejected the request
 	/// or our own state is inconsistent.
 	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		if wallet.finish_paid_out_lightning_receive(&self).await {
+			return Advance::Done;
+		}
 		match &self.progress {
 			// Nothing committed server-side: the executor removes the row
 			// when the action fails.

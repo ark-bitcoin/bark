@@ -209,6 +209,9 @@ impl WalletAction for LightningSend {
 			},
 			Progress::RevocableHtlcs { htlcs, revocation } |
 			Progress::RevocationStuck { htlcs, revocation } => {
+				if wallet.finish_paid_out_lightning_send(htlcs).await.retry()? {
+					return Ok(Advance::Done);
+				}
 				revoke_lightning_send_htlcs(wallet, &self, htlcs, revocation).await?;
 				return Ok(Advance::Done);
 			},

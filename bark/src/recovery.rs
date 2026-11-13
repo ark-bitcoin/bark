@@ -609,6 +609,7 @@ impl Wallet {
 				debug!("Recovery vtxo {} already spent, skipping", vtxo.id());
 				report.push_skipped(vtxo);
 			}
+			self.record_expiry_payouts(spent.iter().map(|v| v.id())).await;
 		}
 
 		// An unclaimed output of a delegated round participation lacks its

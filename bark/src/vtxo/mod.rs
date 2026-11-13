@@ -5,6 +5,7 @@ mod state;
 
 pub use self::selection::{FilterVtxos, RefreshStrategy, VtxoFilter};
 pub use self::state::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
+pub use crate::expiry_payout::{ExpiryPayout, ExpiryPayoutState};
 
 use anyhow::Context;
 use bitcoin::secp256k1::PublicKey;

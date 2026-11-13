@@ -407,7 +407,8 @@ pub fn get_pending_round_state_ids(
 /// Columns the `vtxo_view`-based listings always select, in the order
 /// [`row_to_wallet_vtxo`] expects them.
 const VTXO_VIEW_COLUMNS: &str =
-	"raw_bare, exit_depth, exit_tx_weight, state, registered";
+	"raw_bare, exit_depth, exit_tx_weight, state, registered,
+	(SELECT status FROM expiry_payout_vtxo f WHERE f.vtxo_id = vtxo_view.id) AS expiry_payout_state";
 
 pub fn get_wallet_vtxo_by_id(
 	conn: &Connection,
@@ -567,6 +568,7 @@ pub fn delete_vtxo(
 	// Delete all vtxo-states
 	let query = "DELETE FROM bark_vtxo_state WHERE vtxo_id = ?1";
 	tx.execute(query, [id.to_string()])?;
+	expiry_payout::delete_vtxo_expiry_payout_state(tx, id)?;
 
 	let query = "DELETE FROM bark_vtxo WHERE id = ?1 RETURNING raw_bare, raw_genesis";
 	let mut statement = tx.prepare(query)?;

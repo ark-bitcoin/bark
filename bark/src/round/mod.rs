@@ -697,6 +697,18 @@ impl RoundState {
 	/// When success or failure is returned, the round state can be eliminated
 	//TODO(stevenroose) make RoundState manage its own db record
 	pub async fn sync(&mut self, wallet: &Wallet) -> anyhow::Result<RoundStatus> {
+		// A server in expiry payout mode cancels a participation when it
+		// pays out one of its inputs, and accepts no forfeit for it.
+		let awaits_forfeit = match self.flow {
+			RoundFlowState::NonInteractivePending { .. } => true,
+			RoundFlowState::Finished { .. } => !self.done,
+			_ => false,
+		};
+		if awaits_forfeit && wallet.has_expiry_payout_input(&self.participation).await? {
+			info!("Server pays out an input of this round at its expiry, canceling the round");
+			self.flow = RoundFlowState::Canceled;
+		}
+
 		match self.flow {
 			RoundFlowState::Finished { ref funding_tx, .. } if self.done => {
 				Ok(RoundStatus::Confirmed {

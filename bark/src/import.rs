@@ -135,6 +135,9 @@ impl Wallet {
 		self.inner.db.store_vtxos(&rows).await
 			.context("failed to store imported VTXOs")?;
 
+		let spent = to_store.iter().filter(|(_, state)| *state == VtxoState::Spent);
+		self.record_expiry_payouts(spent.map(|(vtxo, _)| vtxo.id())).await;
+
 		for (vtxo, state) in &to_store {
 			info!("Successfully imported VTXO {} as {}", vtxo.id(), state.kind());
 			ids.push(vtxo.id());

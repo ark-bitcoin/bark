@@ -118,6 +118,8 @@ docs/ExitTxStatusOneOf4.md
 docs/ExitVtxoAlreadySpentState.md
 docs/ExitVtxoSweptState.md
 docs/ExitsApi.md
+docs/ExpiryPayoutInfo.md
+docs/ExpiryPayoutStateInfo.md
 docs/FeeEstimateQuery.md
 docs/FeeEstimateResponse.md
 docs/FeeInfo.md
@@ -346,6 +348,8 @@ src/models/exit_tx_status_one_of_3.rs
 src/models/exit_tx_status_one_of_4.rs
 src/models/exit_vtxo_already_spent_state.rs
 src/models/exit_vtxo_swept_state.rs
+src/models/expiry_payout_info.rs
+src/models/expiry_payout_state_info.rs
 src/models/fee_estimate_query.rs
 src/models/fee_estimate_response.rs
 src/models/fee_info.rs

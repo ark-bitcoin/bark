@@ -76,7 +76,7 @@ use crate::persist::models::{
 	SettledLightningReceive, StoredExit, StoredRoundState, Unlocked, wallet_vtxo_from_full,
 };
 use crate::round::RoundState;
-use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
+use crate::vtxo::{ExpiryPayoutState, VtxoLockHolder, VtxoState, VtxoStateKind};
 use crate::{WalletProperties, WalletVtxo};
 
 
@@ -424,7 +424,9 @@ async fn update_vtxo_state_checked<S: StorageAdaptor>(
 		adaptor.put(updated_record).await?;
 	}
 
-	Ok(wallet_vtxo_from_full(&serde_vtxo.vtxo, new_state, serde_vtxo.registered))
+	Ok(wallet_vtxo_from_full(
+		&serde_vtxo.vtxo, new_state, serde_vtxo.registered, serde_vtxo.expiry_payout_state,
+	))
 }
 
 pub struct StorageAdaptorWrapper<S: StorageAdaptor> {
@@ -713,6 +715,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 				vtxo: (*vtxo).clone(),
 				states: vec![(*state).clone()],
 				registered: false,
+				expiry_payout_state: None,
 			};
 
 			let sk = sort::vtxo_sort_key(
@@ -736,7 +739,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 				let state = serde_vtxo.current_state()
 					.context("vtxo has no state")?.clone();
 				Ok(Some(wallet_vtxo_from_full(
-					&serde_vtxo.vtxo, state, serde_vtxo.registered,
+					&serde_vtxo.vtxo, state, serde_vtxo.registered, serde_vtxo.expiry_payout_state,
 				)))
 			},
 			None => Ok(None),
@@ -752,7 +755,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			let state = serde_vtxo.current_state()
 				.context("vtxo has no state")?.clone();
 			out.push(wallet_vtxo_from_full(
-				&serde_vtxo.vtxo, state, serde_vtxo.registered,
+				&serde_vtxo.vtxo, state, serde_vtxo.registered, serde_vtxo.expiry_payout_state,
 			));
 		}
 		Ok(out)
@@ -771,7 +774,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 					.cloned()
 					.context("vtxo has no state")?;
 				Ok(wallet_vtxo_from_full(
-					&serde_vtxo.vtxo, state, serde_vtxo.registered,
+					&serde_vtxo.vtxo, state, serde_vtxo.registered, serde_vtxo.expiry_payout_state,
 				))
 			})
 			.collect()
@@ -801,6 +804,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 				debug_assert_eq!(current_state.kind(), *state);
 				records.push(wallet_vtxo_from_full(
 					&serde_vtxo.vtxo, current_state, serde_vtxo.registered,
+					serde_vtxo.expiry_payout_state,
 				));
 			}
 		}
@@ -854,6 +858,27 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	) -> anyhow::Result<WalletVtxo> {
 		let mut lock = self.inner.write().await;
 		update_vtxo_state_checked(&mut *lock, vtxo_id, new_state, allowed_old_states).await
+	}
+
+	async fn set_vtxo_expiry_payout_state(
+		&self,
+		vtxo_id: VtxoId,
+		payout_state: ExpiryPayoutState,
+	) -> anyhow::Result<WalletVtxo> {
+		let mut lock = self.inner.write().await;
+		let mut serde_vtxo = get_vtxo(&*lock, vtxo_id).await?.context("the VTXO is not stored")?;
+		let current = serde_vtxo.current_state().context("vtxo has no state")?;
+		let state = ExpiryPayoutState::vtxo_state(current);
+		if state != *current {
+			serde_vtxo.states.push(state.clone());
+		}
+		serde_vtxo.expiry_payout_state = Some(payout_state);
+
+		let sk = sort::vtxo_sort_key(
+			state.kind(), serde_vtxo.vtxo.expiry_height().to_u32(), serde_vtxo.vtxo.amount(),
+		);
+		lock.put(Record::from_data(partition::VTXO, &vtxo_id.to_bytes(), Some(sk), &serde_vtxo)?).await?;
+		Ok(serde_vtxo.to_wallet_vtxo()?)
 	}
 
 	async fn release_vtxo_lock(

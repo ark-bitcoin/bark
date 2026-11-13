@@ -329,9 +329,24 @@ impl WalletAction for Offboard {
 		}
 	}
 
+	/// The step failed transiently. Retry it, unless the server paid out
+	/// one of its VTXOs and the offboard cannot complete.
+	async fn on_retry(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		if or_retry!(self, wallet.is_paid_out_offboard(&self).await) {
+			or_retry!(self, fail_offboard_movement(wallet, &self).await);
+			return Advance::Failed(error);
+		}
+		Advance::Retry { state: self, error }
+	}
+
 	/// The step can't be completed as-is: the server rejected the request
 	/// or our own state is inconsistent.
 	async fn on_abort(self, wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		if or_retry!(self, wallet.is_paid_out_offboard(&self).await) {
+			or_retry!(self, fail_offboard_movement(wallet, &self).await);
+			return Advance::Failed(error);
+		}
+
 		match &self.progress {
 			// Nothing is locked yet, so the user is better served by a fresh
 			// attempt than by a lingering checkpoint.
