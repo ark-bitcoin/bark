@@ -1094,10 +1094,13 @@ impl Server {
 		let mut htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&sub.htlc_vtxos).await).await?;
 		htlc_vtxos.sort_by_key(|v| v.vtxo_id);
 
-		// check that cosign request input vtxos and htlc vtxos match
+		// check that cosign request input vtxos and htlc vtxos match, and
+		// that none is banned: the claim outputs don't inherit a ban
+		let chain_tip = self.sync_manager.chain_tip().height;
 		let mut htlc_amount = Amount::ZERO;
 		let mut htlc_ids = Vec::with_capacity(htlc_vtxos.len());
 		for htlc in &htlc_vtxos {
+			htlc.check_not_banned(chain_tip)?;
 			htlc_amount += htlc.vtxo.amount();
 			htlc_ids.push(htlc.vtxo_id);
 		}
