@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bdk_wallet::coin_selection::SingleRandomDraw;
-use bitcoin::secp256k1::{rand, Keypair};
+use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin::{Amount, OutPoint, Transaction};
 use futures::{stream, StreamExt, TryStreamExt};
 use tracing::{debug, error, info, warn};
@@ -350,6 +350,7 @@ impl VtxoPool {
 		&self,
 		srv: &Server,
 		dest: ArkoorDestination,
+		owner_mailbox: Option<PublicKey>,
 		mut inputs: TakenInputs,
 		commit: F,
 	) -> anyhow::Result<Vec<Vtxo<Full>>>
@@ -427,6 +428,9 @@ impl VtxoPool {
 
 		let change = check_change_outputs(change)?;
 
+		let bindings = owner_mailbox.into_iter()
+			.flat_map(|mailbox| sent.iter().map(move |vtxo| (vtxo.id(), mailbox)))
+			.collect::<Vec<_>>();
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_vtxs)
 			.insert_oor_spent_vtxos(internal_vtxos)
@@ -438,7 +442,8 @@ impl VtxoPool {
 				change.iter().cloned().map(ServerVtxo::from),
 				database::SpendState::Pool,
 			)
-			.mark_vtxos_oor_spent(input_spend_info);
+			.mark_vtxos_oor_spent(input_spend_info)
+			.bind_owner_mailboxes(bindings)?;
 
 		// An htlc-recv vtxo exists as soon as we hand out our signatures,
 		// so its htlc_vtxo row is written together with the vtxo itself.
@@ -523,6 +528,7 @@ impl VtxoPool {
 		&self,
 		srv: &Server,
 		dest: ArkoorDestination,
+		owner_mailbox: Option<PublicKey>,
 		commit: F,
 	) -> anyhow::Result<Vec<Vtxo<Full>>>
 	where
@@ -533,7 +539,7 @@ impl VtxoPool {
 			bail!("vtxo pool is empty");
 		};
 
-		let sent = self.prepare_arkoor(srv, dest, inputs, commit).await?;
+		let sent = self.prepare_arkoor(srv, dest, owner_mailbox, inputs, commit).await?;
 		update_all_bucket_metrics(&self.data);
 		self.check_trigger.notify_one();
 		Ok(sent)

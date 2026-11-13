@@ -92,6 +92,10 @@ pub struct LightningSend {
 	/// leaves it to the server, and for checkpoints predating this field.
 	#[serde(default)]
 	pub retry_for: Option<Duration>,
+	/// The nonce of the payment request that a server in expiry payout mode
+	/// requires to be signed. A retry sends the same signed request.
+	#[serde(default)]
+	pub intent_nonce: Option<[u8; 32]>,
 
 	// Mutable state:
 	pub progress: Progress,
@@ -427,6 +431,7 @@ pub(crate) async fn start_lightning_send(
 		movement_id: None,
 		revocation_key: revocation_keypair.public_key(),
 		retry_for,
+		intent_nonce: wallet.expiry_payouts().await.then(rand::random),
 		allow_exit_of_htlcs: false,
 		progress: Progress::Start,
 	})
@@ -623,14 +628,18 @@ async fn initiate_lightning_send_payment(
 ) -> Result<(), AdvanceError> {
 	let (mut srv, _) = wallet.require_server().await.retry()?;
 
-	let req = protos::InitiateLightningPaymentRequest {
+	let mut req = protos::InitiateLightningPaymentRequest {
 		invoice: send.invoice.to_string(),
 		htlc_vtxo_ids: htlcs.vtxo_ids.iter().map(|v| v.to_bytes().to_vec()).collect(),
 		payment_amount_sat: send.payment_amount.to_sat(),
 		mailbox_id: Some(htlcs.mailbox_id.serialize()),
 		// The server caps it to its own maximum.
 		retry_for_secs: send.retry_for.map(|d| d.as_secs().try_into().unwrap_or(u32::MAX)),
+		..Default::default()
 	};
+	if srv.expiry_payouts().await {
+		wallet.sign_lightning_payment(send, htlcs, &mut req).await.retry()?;
+	}
 	// A rejection aborts: `abort` then revokes the HTLCs.
 	srv.client.initiate_lightning_payment(req).await.retry_unless_rejected()?;
 
@@ -911,6 +920,7 @@ mod test {
 			movement_id: None,
 			revocation_key: key,
 			retry_for: None,
+			intent_nonce: None,
 			progress: Progress::Start,
 			allow_exit_of_htlcs: false,
 		};

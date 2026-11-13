@@ -244,6 +244,8 @@ impl<'t> Tx<'t> {
 		retry_for: Duration,
 		// `None` for intra-Ark self-payments, which never reach CLN.
 		max_routing_fee: Option<Amount>,
+		// The id of the signed send intent, in payout mode.
+		intent_id: Option<&str>,
 	) -> anyhow::Result<i64> {
 		let payment_hash = invoice.payment_hash();
 
@@ -276,11 +278,12 @@ impl<'t> Tx<'t> {
 				user_fee_sat,
 				user_agent,
 				retry_for_secs,
+				intent_id,
 				max_routing_fee_msat,
 				created_at,
 				updated_at,
 				lightning_htlc_subscription_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW(), $11)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), $12)
 			RETURNING id, updated_at;
 		").await?;
 
@@ -298,7 +301,7 @@ impl<'t> Tx<'t> {
 				&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64),
 				&mailbox_str, &requested_status,
 				&block_height_i32, &user_fee_sat_i64, &user_agent, &retry_for_secs_i32,
-				&max_routing_fee_msat_i64,
+				&intent_id, &max_routing_fee_msat_i64,
 				&lightning_htlc_subscription_id,
 			],
 		).await?;
