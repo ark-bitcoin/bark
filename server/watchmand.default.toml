@@ -53,6 +53,8 @@ sweep_interval = "2h"
 progress_grace_period = 2
 claim_chunksize = 20
 incremental_relay_fee = "100 sat/kvb"
+# The highest feerate that an expiry payout or its replacement can pay.
+expiry_payout_max_fee_rate = "1000 sat/vb"
 min_cpfp_amount = "10000 sat"
 
 

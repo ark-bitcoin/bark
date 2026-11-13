@@ -241,6 +241,10 @@ impl Daemon {
 		})
 	}
 
+	pub(crate) fn watchman_wallet(&self) -> &InstrumentedLock<PersistedWallet> {
+		&self.watchman_wallet
+	}
+
 	pub fn watchman_handle(&self) -> &WatchmanHandle {
 		&self.watchman_handle
 	}

@@ -9,7 +9,7 @@ use bitcoin_ext::BlockRef;
 use crate::sync::{ChainEventListener, BlockData, RawMempool};
 use crate::telemetry;
 use crate::utils::InstrumentedLock;
-use crate::wallet::PersistedWallet;
+use crate::wallet::{PersistedWallet, WalletKind};
 
 /// Implementation of [ChainEventListener] for wallets wrapped in [InstrumentedLock].
 ///
@@ -183,8 +183,8 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 		let observed_at = mempool.observed_at.timestamp() as u64;
 		// unconfirmed_txids canonicalizes the entire tx graph, so it runs on the
 		// blocking pool; the owned guard moves along and comes back with the result
-		let (mut wallet, evicted) = tokio::task::spawn_blocking(move || {
-			let evicted: Vec<_> = wallet.wallet.unconfirmed_txids()
+		let (mut wallet, candidates) = tokio::task::spawn_blocking(move || {
+			let candidates: Vec<_> = wallet.wallet.unconfirmed_txids()
 				.filter(|txid| !wallet.is_fully_owned_tx(*txid))
 				.filter(|txid| !mempool_set.contains(txid))
 				.filter(|txid| {
@@ -193,8 +193,14 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 					last_seen.map_or(true, |t| t < observed_at)
 				})
 				.collect();
-			(wallet, evicted)
+			(wallet, candidates)
 		}).await.context("unconfirmed txids task panicked")?;
+		let protected = if !candidates.is_empty() && wallet.kind == WalletKind::Watchman && wallet.db.expiry_payouts() {
+			wallet.db.read(async |t| t.stored_expiry_payout_txids(&candidates).await).await?
+		} else {
+			HashSet::new()
+		};
+		let evicted = candidates.into_iter().filter(|txid| !protected.contains(txid)).collect::<Vec<_>>();
 
 		if evicted.is_empty() {
 			return Ok(());
