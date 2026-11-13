@@ -633,6 +633,17 @@ impl Config {
 			);
 		}
 
+		// A lightning send is an arkoor that pays the HTLC, so a lightning
+		// limit above the arkoor one would never be reached.
+		if self.max_ln_send_amount.unwrap_or(Amount::MAX)
+			> self.max_arkoor_amount.unwrap_or(Amount::MAX)
+		{
+			bail!("Invalid configuration: max_ln_send_amount ({:?}) may not exceed \
+				max_arkoor_amount ({:?}), since a lightning send is limited by both.",
+				self.max_ln_send_amount, self.max_arkoor_amount,
+			);
+		}
+
 		// At 0 the wallet trusts every unconfirmed tx, including deposits
 		// from third parties, so coin selection would spend outputs that
 		// a double-spend can still invalidate.
@@ -1041,6 +1052,8 @@ mod test {
 	fn validate_max_offboard_amount_against_arkoor() {
 		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
 		cfg.bitcoind.cookie = Some(".cookie".into());
+		// keep the lightning limit out of the way
+		cfg.max_ln_send_amount = Some(Amount::ZERO);
 
 		cfg.max_arkoor_amount = Some(Amount::from_sat(100_000));
 		cfg.max_offboard_amount = Some(Amount::from_sat(100_000));

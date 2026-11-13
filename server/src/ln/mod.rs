@@ -261,6 +261,9 @@ impl Server {
 
 		if !replay {
 			check_max_amount("lightning send", htlc_amount, self.config.max_ln_send_amount)?;
+			// The non-HTLC outputs can pay any key, so this is an arkoor send too.
+			let input_amount = input_vtxos.iter().map(|v| v.vtxo.amount()).sum::<Amount>();
+			check_max_amount("arkoor send", input_amount, self.config.max_arkoor_amount)?;
 			self.check_cosign_request_limits(&validation, &builder)
 				.badarg("invalid cosign request")?;
 
