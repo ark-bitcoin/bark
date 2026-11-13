@@ -258,6 +258,12 @@ pub struct Config {
 	/// Default value: false
 	#[serde(default)]
 	pub lightning_ark_address_hints: bool,
+
+	/// Open the wallet only with an Ark server in expiry payout mode.
+	///
+	/// Default value: false
+	#[serde(default)]
+	pub require_expiry_payouts: bool,
 }
 
 impl Config {
@@ -291,6 +297,7 @@ impl Config {
 			change_vtxo_split_factor: 2,
 			vtxo_key_gap_limit: DEFAULT_VTXO_KEY_GAP_LIMIT,
 			lightning_ark_address_hints: false,
+			require_expiry_payouts: false,
 		};
 
 		if network != Network::Bitcoin {

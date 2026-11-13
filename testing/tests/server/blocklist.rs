@@ -104,6 +104,7 @@ async fn blocklist_board_cosign_rejected() {
 
 	let mut rpc = srv.get_public_rpc().await;
 	let err = rpc.request_board_cosign(protos::BoardCosignRequest {
+		owner_mailbox: None,
 		amount: board_amount.to_sat(),
 		utxo: board_utxo.serialize(),
 		expiry_height: expiry_height.into(),
@@ -167,6 +168,7 @@ async fn blocklist_board_register_rejected() {
 
 	let mut rpc = srv.get_public_rpc().await;
 	let cosign_response = rpc.request_board_cosign(protos::BoardCosignRequest {
+		owner_mailbox: None,
 		amount: board_amount.to_sat(),
 		utxo: board_utxo.serialize(),
 		expiry_height: expiry_height.into(),

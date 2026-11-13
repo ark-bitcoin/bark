@@ -370,6 +370,11 @@ impl rpc::server::ArkService for Server {
 
 		let amount = Amount::from_sat(req.amount);
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
+		let owner_mailbox = req.owner_mailbox.as_deref()
+			.filter(|_| self.config.expiry_payouts)
+			.map(MailboxIdentifier::deserialize)
+			.transpose().badarg("invalid board mailbox")?
+			.map(|id| id.as_pubkey());
 		let expiry_height = check_block_height(req.expiry_height)
 			.map_err(|e| tonic::Status::invalid_argument(format!("expiry_height: {e}")))?;
 		let utxo = OutPoint::from_bytes(&req.utxo)?;
@@ -377,7 +382,7 @@ impl rpc::server::ArkService for Server {
 		let funding_tx = bitcoin::Transaction::from_bytes(&req.funding_tx)?;
 
 		let resp = self.cosign_board(
-			amount, user_pubkey, expiry_height, utxo, &funding_tx, pub_nonce,
+			amount, user_pubkey, expiry_height, utxo, &funding_tx, pub_nonce, owner_mailbox,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp.into()))

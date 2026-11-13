@@ -332,6 +332,23 @@ impl<S: state::CanSign> BoardBuilder<S> {
 }
 
 impl BoardBuilder<state::ServerCanCosign> {
+	/// The expiry VTXO of the board funding output, which the server tracks
+	/// before the user registers the signed board VTXO.
+	pub fn funding_vtxo(&self) -> ServerVtxo<Full> {
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey])
+			.x_only_public_key().0;
+		Vtxo {
+			policy: ServerVtxoPolicy::new_expiry(combined_pubkey),
+			amount: self.amount.expect("state invariant"),
+			expiry_height: self.expiry_height,
+			server_pubkey: self.server_pubkey,
+			exit_delta: self.exit_delta,
+			anchor_point: self.utxo.expect("state invariant"),
+			genesis: Full { items: vec![] },
+			point: self.utxo.expect("state invariant"),
+		}
+	}
+
 	/// This constructor is to be used by the server with the information provided
 	/// by the user.
 	pub fn new_for_cosign(

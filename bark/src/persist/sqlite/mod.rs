@@ -9,6 +9,7 @@
 //! lifecycle data, Lightning receives, exit tracking, and sync metadata.
 
 mod convert;
+mod expiry_payout;
 mod migrations;
 mod query;
 
@@ -102,6 +103,11 @@ impl BarkPersister for SqliteClient {
 	async fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
 		let conn = self.connect()?;
 		Ok(query::fetch_properties(&conn)?)
+	}
+
+	async fn set_mailbox_key(&self, mailbox_pubkey: PublicKey) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		expiry_payout::store_mailbox_pubkey(&conn, &mailbox_pubkey)
 	}
 
 	async fn set_server_pubkey(&self, server_pubkey: PublicKey) -> anyhow::Result<()> {

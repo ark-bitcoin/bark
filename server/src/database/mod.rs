@@ -325,7 +325,7 @@ impl Db {
 			.read_only(read_only)
 			.start().await
 			.context("unable to start db tx")?;
-		let tx = Tx { inner: &pgtx };
+		let tx = Tx { inner: &pgtx, expiry_payouts: self.expiry_payouts };
 		let ret = f(&tx).await;
 		if read_only {
 			// We want to commit read queries regardless of error because it's the
@@ -361,6 +361,7 @@ impl Db {
 /// A managed postgres DB transaction
 pub struct Tx<'t> {
 	inner: &'t tokio_postgres::Transaction<'t>,
+	expiry_payouts: bool,
 }
 
 impl<'t> std::ops::Deref for Tx<'t> {

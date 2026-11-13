@@ -642,7 +642,11 @@ CREATE TABLE public.board_exit (
     funding_outpoint text NOT NULL,
     funding_spk bytea NOT NULL,
     exit_txid text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    owner_mailbox text,
+    user_pubkey text,
+    CONSTRAINT board_exit_owner_mailbox_check CHECK (((owner_mailbox IS NULL) OR (length(owner_mailbox) = 66))),
+    CONSTRAINT board_exit_user_pubkey_check CHECK (((user_pubkey IS NULL) OR (length(user_pubkey) = 66)))
 );
 
 
@@ -2101,6 +2105,17 @@ ALTER SEQUENCE public.vtxo_mailbox_id_seq OWNED BY public.mailbox.id;
 
 
 --
+-- Name: vtxo_owner_mailbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vtxo_owner_mailbox (
+    vtxo_id text NOT NULL,
+    mailbox_pk text NOT NULL,
+    CONSTRAINT vtxo_owner_mailbox_mailbox_pk_check CHECK ((length(mailbox_pk) = 66))
+);
+
+
+--
 -- Name: vtxo_pool; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2576,6 +2591,14 @@ ALTER TABLE ONLY public.virtual_transaction
 
 ALTER TABLE ONLY public.mailbox
     ADD CONSTRAINT vtxo_mailbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: vtxo_owner_mailbox vtxo_owner_mailbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo_owner_mailbox
+    ADD CONSTRAINT vtxo_owner_mailbox_pkey PRIMARY KEY (vtxo_id);
 
 
 --
@@ -3264,6 +3287,14 @@ ALTER TABLE ONLY public.vtxo
 
 ALTER TABLE ONLY public.mailbox
     ADD CONSTRAINT vtxo_mailbox_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
+
+
+--
+-- Name: vtxo_owner_mailbox vtxo_owner_mailbox_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo_owner_mailbox
+    ADD CONSTRAINT vtxo_owner_mailbox_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
 
 
 --

@@ -61,6 +61,7 @@ macro_rules! bark_persister_tests {
 			test_init_and_read_properties,
 			test_set_server_pubkey,
 			test_set_server_mailbox_pubkey,
+			test_set_mailbox_key,
 
 			test_mailbox_checkpoint_empty_db,
 			test_mailbox_checkpoint_roundtrip,
@@ -123,6 +124,7 @@ fn test_properties() -> WalletProperties {
 		fingerprint: Fingerprint::default(),
 		server_pubkey: None,
 		server_mailbox_pubkey: None,
+		mailbox_pubkey: None,
 	}
 }
 
@@ -312,6 +314,16 @@ pub async fn test_set_server_mailbox_pubkey(db: &impl BarkPersister) {
 
 	let read = db.read_properties().await.expect("read_properties").expect("properties present");
 	assert_eq!(read, WalletProperties { server_mailbox_pubkey: Some(pk), ..test_properties() });
+}
+
+pub async fn test_set_mailbox_key(db: &impl BarkPersister) {
+	db.init_wallet(&test_properties()).await.expect("init_wallet");
+	let pk = test_pubkey();
+
+	db.set_mailbox_key(pk).await.expect("set_mailbox_key");
+
+	let read = db.read_properties().await.expect("read_properties").expect("properties present");
+	assert_eq!(read, WalletProperties { mailbox_pubkey: Some(pk), ..test_properties() });
 }
 
 // ---------------------------------------------------------------------------

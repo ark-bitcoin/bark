@@ -643,6 +643,7 @@ impl TestContext {
 		#[allow(deprecated)]
 		bark::Config {
 			server_address: srv.ark_url(),
+			require_expiry_payouts: false,
 			server_access_token: None,
 			user_agent: None,
 			esplora_address: if bitcoind.is_none() {

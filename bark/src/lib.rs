@@ -397,6 +397,7 @@ mod balance;
 mod board;
 mod config;
 mod daemon;
+mod expiry_payout;
 mod fees;
 mod import;
 mod lightning;
@@ -675,6 +676,14 @@ pub struct WalletProperties {
 	/// successful handshake. If the key changes, the wallet refuses to
 	/// connect until the user resolves the rotation.
 	pub server_mailbox_pubkey: Option<PublicKey>,
+
+	/// The public key of the wallet's mailbox keypair.
+	///
+	/// Stored when the wallet first connects to an Ark server in expiry
+	/// payout mode, which pays the expired VTXOs of the wallet to this key.
+	/// From then on the wallet refuses to open with another mailbox keypair.
+	#[serde(default)]
+	pub mailbox_pubkey: Option<PublicKey>,
 }
 
 /// Struct representing an extended private key derived from a
@@ -685,6 +694,7 @@ pub struct WalletProperties {
 pub struct WalletSeed {
 	master: bip32::Xpriv,
 	vtxo: bip32::Xpriv,
+	mailbox_keypair: Option<Keypair>,
 }
 
 impl WalletSeed {
@@ -700,12 +710,24 @@ impl WalletSeed {
 		let vtxo = master.derive_priv(&SECP, &vtxo_path)
 			.expect("vtxo path is valid");
 
-		Self { master, vtxo }
+		Self { master, vtxo, mailbox_keypair: None }
 	}
 
 	/// Create a new [WalletSeed] from a given BIP-39 [Mnemonic]
 	pub fn new_from_mnemonic(network: Network, mnemonic: &Mnemonic) -> Self {
 		Self::new_from_seed(network, &mnemonic.to_seed(""))
+	}
+
+	/// Use the specified mailbox keypair instead of the one derived from the
+	/// seed. The VTXO keys stay derived from the seed.
+	///
+	/// A server in expiry payout mode pays the expired VTXOs of the wallet to
+	/// `tr(M)`, where `M` is the public key of this keypair. The wallet keeps
+	/// only the public key. You must supply the same keypair on every open
+	/// and back it up yourself.
+	pub fn with_mailbox_keypair(mut self, keypair: Keypair) -> Self {
+		self.mailbox_keypair = Some(keypair);
+		self
 	}
 
 	pub fn fingerprint(&self) -> Fingerprint {
@@ -717,6 +739,9 @@ impl WalletSeed {
 	}
 
 	fn to_mailbox_keypair(&self) -> Keypair {
+		if let Some(keypair) = self.mailbox_keypair {
+			return keypair;
+		}
 		let mailbox_path = [ChildNumber::from_hardened_idx(MAILBOX_KEY_INDEX).unwrap()];
 		self.master.derive_priv(&SECP, &mailbox_path).unwrap().to_keypair(&SECP)
 	}
@@ -1253,7 +1278,7 @@ impl Wallet {
 				let ark_info = conn.ark_info().await;
 				match check_ark_info_safe(&ark_info, config.vtxo_exit_margin) {
 					Ok(()) => (Some(ark_info.server_pubkey), Some(ark_info.mailbox_pubkey)),
-					Err(err) if allow_unreachable_server => {
+					Err(err) if allow_unreachable_server && !config.require_expiry_payouts => {
 						warn!("server-advertised ArkInfo is unsafe, \
 							treating as unavailable: {:#}", err);
 						(None, None)
@@ -1261,7 +1286,7 @@ impl Wallet {
 					Err(err) => return Err(err),
 				}
 			},
-			Err(_) if allow_unreachable_server => (None, None),
+			Err(_) if allow_unreachable_server && !config.require_expiry_payouts => (None, None),
 			Err(err) => {
 				bail!("Failed to connect to provided server: {:#}", err);
 			},
@@ -1272,6 +1297,7 @@ impl Wallet {
 			fingerprint: wallet_fingerprint,
 			server_pubkey,
 			server_mailbox_pubkey: mailbox_pubkey,
+			mailbox_pubkey: None,
 		};
 
 		// write the config to db
@@ -1342,6 +1368,10 @@ impl Wallet {
 		if properties.fingerprint != fingerprint {
 			bail!("incorrect mnemonic")
 		}
+		if let Some(mailbox_pubkey) = properties.mailbox_pubkey {
+			ensure!(mailbox_pubkey == seed.to_mailbox_keypair().public_key(),
+				"the mailbox keypair is not the mailbox key of this wallet");
+		}
 
 		let chain_source = if let Some(ref url) = config.esplora_address {
 			ChainSourceSpec::Esplora {
@@ -1391,6 +1421,9 @@ impl Wallet {
 			round_secret_nonces: RoundSecretNonces::new(),
 			finished_recovery: parking_lot::Mutex::new(None),
 		})};
+		if ret.inner.config.require_expiry_payouts {
+			ret.require_server().await?;
+		}
 
 		ret.inner.exit.load().await
 			.context("error loading exit system after opening wallet")?;
@@ -1453,6 +1486,7 @@ impl Wallet {
 			fingerprint: seed.fingerprint(),
 			server_pubkey: None,
 			server_mailbox_pubkey: None,
+			mailbox_pubkey: None,
 		}).await.unwrap();
 
 		let chain = Arc::new(ChainSource::offline_for_test(network));
@@ -1527,8 +1561,12 @@ impl Wallet {
 			builder = builder.user_agent(ua);
 		}
 
-		builder.connect().await.map_err(wrap_server_connect_error)
-			.context("Failed to connect to Ark server")
+		let conn = builder.connect().await.map_err(wrap_server_connect_error)
+			.context("Failed to connect to Ark server")?;
+		if config.require_expiry_payouts && !conn.expiry_payouts().await {
+			bail!("the Ark server does not offer expiry payouts");
+		}
+		Ok(conn)
 	}
 
 	async fn require_server(&self) -> anyhow::Result<(ServerConnection, ArkInfo)> {
@@ -1544,6 +1582,7 @@ impl Wallet {
 		let ark_info = conn.ark_info().await;
 		check_ark_info_safe(&ark_info, self.inner.config.vtxo_exit_margin)?;
 		self.check_and_store_server_keys(&ark_info).await?;
+		self.store_mailbox_key(&conn).await?;
 
 		Ok((conn, ark_info))
 	}
@@ -1565,6 +1604,7 @@ impl Wallet {
 		ark_info.fees.validate().context("invalid fee schedule")?;
 		check_ark_info_safe(&ark_info, self.inner.config.vtxo_exit_margin)?;
 		self.check_and_store_server_keys(&ark_info).await?;
+		self.store_mailbox_key(srv).await?;
 
 		Ok(())
 	}
@@ -2695,16 +2735,30 @@ impl std::ops::Drop for WalletInner {
 #[cfg(test)]
 mod tests {
 	use bitcoin::{Amount, FeeRate, Network};
-	use bitcoin::secp256k1::PublicKey;
+	use bitcoin::secp256k1::{Keypair, PublicKey};
 
 	use ark::ArkInfo;
 	use bitcoin_ext::BlockDelta;
 	use server_rpc::client::CreateEndpointError;
 
 	use super::{
-		check_ark_info_safe, wrap_server_connect_error,
-		MAX_NB_ROUND_NONCES, MIN_MAINNET_VTXO_EXIT_DELTA, MISSING_SERVER_TRANSPORT_HELP,
+		check_ark_info_safe, wrap_server_connect_error, WalletSeed,
+		MAX_NB_ROUND_NONCES, MIN_MAINNET_VTXO_EXIT_DELTA, MISSING_SERVER_TRANSPORT_HELP, SECP,
 	};
+
+	#[test]
+	fn mailbox_keypair_replaces_only_the_mailbox_key() {
+		let keypair = Keypair::from_seckey_slice(&SECP, &[1; 32]).unwrap();
+		let derived = WalletSeed::new_from_seed(Network::Regtest, &[17; 64]);
+		let supplied = WalletSeed::new_from_seed(Network::Regtest, &[17; 64])
+			.with_mailbox_keypair(keypair);
+
+		assert_eq!(supplied.to_mailbox_keypair(), keypair);
+		assert_ne!(derived.to_mailbox_keypair(), keypair);
+		assert_eq!(supplied.fingerprint(), derived.fingerprint());
+		assert_eq!(supplied.derive_vtxo_keypair(0), derived.derive_vtxo_keypair(0));
+		assert_eq!(supplied.to_recovery_mailbox_keypair(), derived.to_recovery_mailbox_keypair());
+	}
 
 	#[test]
 	fn no_transport_connect_error_is_reworded_for_wallet_users() {

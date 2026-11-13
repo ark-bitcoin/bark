@@ -221,3 +221,7 @@ CREATE VIEW vtxo_view AS
 			JOIN most_recent_vtxo_state as vs
 				ON v.id = vs.vtxo_id
 /* vtxo_view(id,expiry_height,amount_sat,raw_bare,exit_depth,exit_tx_weight,registered,created_at,state,state_kind,last_updated_at) */;
+CREATE TABLE mailbox_key (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		mailbox_pubkey TEXT NOT NULL CHECK (length(mailbox_pubkey) = 66)
+	);

@@ -33,6 +33,7 @@ mod intman;
 pub mod ln;
 pub mod nursery;
 mod offboards;
+mod owner_mailbox;
 pub mod recovery;
 mod round;
 pub mod telemetry;
@@ -650,6 +651,7 @@ impl Server {
 		utxo: OutPoint,
 		funding_tx: &Transaction,
 		user_pub_nonce: PublicNonce,
+		owner_mailbox: Option<PublicKey>,
 	) -> anyhow::Result<ark::board::BoardCosignResponse> {
 		check_max_amount("board", amount, self.config.max_board_amount)?;
 
@@ -715,8 +717,11 @@ impl Server {
 		// validate funding tx is real
 		// check that any of the inputs is a vtxo
 		self.db.read(async |tx| {
+			// In payout mode the co-sign stores the funding transaction of a
+			// board, so a retry of the co-sign finds it.
+			let retry = self.config.expiry_payouts && tx.board_cosign_retry(utxo).await?;
 			// check the funding tx itself first, obviously can't exist
-			if tx.get_virtual_transaction_by_txid(utxo.txid).await?.is_some() {
+			if !retry && tx.get_virtual_transaction_by_txid(utxo.txid).await?.is_some() {
 				return badarg!("invalid funding tx: known as virtual tx: {}", utxo.txid);
 			}
 			let input_ids = funding_tx.input.iter()
@@ -760,6 +765,10 @@ impl Server {
 			user_pub_nonce,
 		);
 
+		if self.config.expiry_payouts && owner_mailbox.is_none() {
+			return badarg!("board output requires a payout mailbox");
+		}
+
 		// Fees and the exit delta can change, so bind the output to one exit
 		// before signing, or two signed exits could spend it.
 		let spk = builder.funding_script_pubkey();
@@ -767,6 +776,9 @@ impl Server {
 		let bound = self.db.write(async |t| t.bind_board_exit(utxo, &spk, exit_txid).await).await?;
 		if bound != exit_txid {
 			return badarg!("board utxo {} is already cosigned for another exit tx", utxo);
+		}
+		if let Some(mailbox) = owner_mailbox.filter(|_| self.config.expiry_payouts) {
+			self.record_board_owner(builder.funding_vtxo(), exit_txid, user_pubkey, mailbox).await?;
 		}
 
 		info!("Cosigning board request for utxo {}", utxo);
@@ -864,6 +876,14 @@ impl Server {
 					vtxo.chain_anchor(),
 				);
 			}
+			let update = if self.config.expiry_payouts {
+				let mailbox = t.board_owner_mailbox(vtxo.chain_anchor(), vtxo.user_pubkey()).await?;
+				update.bind_owner_mailboxes(builder.build_server_vtxos().into_iter()
+					.filter(|output| output.policy().user_pubkey().is_some())
+					.map(|output| (output.id(), mailbox)))?
+			} else {
+				update
+			};
 			let inserted = t.execute_vtxo_tree_update(update).await?;
 			t.add_funding_vtxos_to_frontier(funding_txid, Some(confirmed_height)).await
 				.context("failed to add board vtxos to frontier")?;

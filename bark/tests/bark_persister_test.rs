@@ -62,6 +62,7 @@ impl BarkPersister for Dummy {
 			fingerprint: Fingerprint::default(),
 			server_pubkey: None,
 			server_mailbox_pubkey: None,
+			mailbox_pubkey: None,
 		}))
 	}
 
@@ -70,6 +71,10 @@ impl BarkPersister for Dummy {
 	}
 
 	async fn set_server_mailbox_pubkey(&self, _server_mailbox_pubkey: PublicKey) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn set_mailbox_key(&self, _mailbox_pubkey: PublicKey) -> anyhow::Result<()> {
 		Ok(())
 	}
 
