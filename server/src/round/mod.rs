@@ -42,7 +42,8 @@ use crate::database::VtxoState;
 use crate::{check_max_amount, telemetry, Server, SECP};
 use crate::secret::Secret;
 use crate::error::{BadArgument, ContextExt, NotFound};
-use crate::database::expiry_payout::ownership::OwnerBindingMismatch;
+use crate::error::ExpiryPayoutRefusal;
+use crate::database::expiry_payout::ownership::{OwnerBindingMismatch, StoredMailboxConflict};
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
 use crate::nursery::NurseryTxKind;
 use crate::owner_mailbox::{check_stored_round_outputs, round_owner_bindings};
@@ -171,6 +172,7 @@ fn check_round_inputs_spendable(
 	let mut unusable = Vec::new();
 	for v in vtxos {
 		if let Err(e) = v.check_spendable(chain_tip) {
+			if e.is::<ExpiryPayoutRefusal>() { return Err(e); }
 			debug!("round input vtxo {} is not spendable: {:#}", v.vtxo_id, e);
 			unusable.push(v.vtxo_id);
 		} else {
@@ -1397,6 +1399,11 @@ fn create_signed_vtxo_tree(
 	signed_vtxos
 }
 
+fn recoverable_persist_error(error: &anyhow::Error) -> bool {
+	error.is::<ExpiryPayoutRefusal>() || error.is::<OwnerBindingMismatch>()
+		|| error.is::<StoredMailboxConflict>()
+}
+
 #[tracing::instrument(
 	skip(state, srv, signed_vtxos),
 	name = "Persist",
@@ -1457,54 +1464,60 @@ async fn persist_round(
 		match t.store_round_participations_in_mailbox(participations.iter().copied()).await {
 			Ok(Some(cp)) => {
 				let mailbox_ids = participations.iter().map(|(m, _)| *m).collect::<HashSet<_>>();
-				for mailbox_id in mailbox_ids {
-					srv.mailbox_manager.notify(mailbox_id, cp);
-				}
-				trace!("Posted {} round participations to mailboxes", participations.len());
+				trace!("Stored {} round participations in the transaction", participations.len());
+				Ok(Some((mailbox_ids, cp)))
 			},
-			Ok(None) => {},
+			Ok(None) => Ok(None),
 			Err(e) => {
 				warn!("Failed to post round participations to mailboxes: {:#}", e);
+				Ok(None)
 			},
 		}
-
-		Ok(())
 	}).await;
 
 	telemetry::set_round_step_duration(round_step);
 
-	if let Err(e) = result {
-		// Nothing was stored and the funding tx is not signed yet, so the
-		// round can end safely. An output that the server cannot bind to an
-		// owner mailbox fails the round, not the server.
-		if e.is::<OwnerBindingMismatch>() {
-			return Err(RoundError::Recoverable(e));
+	let notification = match result {
+		Ok(notification) => notification,
+		Err(e) => {
+			// Nothing was stored and the funding tx is not signed yet, so the
+			// round can end safely. An expiry decision can take an input while
+			// the round collects signatures, as an on-chain exit can. An output
+			// that the server cannot bind to an owner mailbox fails the round,
+			// not the server.
+			if recoverable_persist_error(&e) {
+				return Err(RoundError::Recoverable(e));
+			}
+			// An input can exit onchain while we collect signatures. A rejected
+			// input is only returned after a rollback, so nothing was stored.
+			if e.downcast_ref::<BadArgument>().is_some() {
+				return Err(RoundError::Recoverable(e.context("round input no longer spendable")));
+			}
+
+			server_rslog!(FatalStoringRound, round_step,
+				error: format!("{:?}", e),
+				unsigned_funding_tx: serialize(unsigned_funding_tx),
+				vtxo_tree: signed_vtxos.spec.serialize(),
+				input_vtxos: state.all_inputs.keys().copied().collect(),
+			);
+
+			return Err(RoundError::Fatal(e));
+		},
+	};
+	if let Some((mailbox_ids, cp)) = notification {
+		for mailbox_id in mailbox_ids {
+			srv.mailbox_manager.notify(mailbox_id, cp);
 		}
-		// An input can exit onchain while we collect signatures. A rejected
-		// input is only returned after a rollback, so nothing was stored.
-		if e.downcast_ref::<BadArgument>().is_some() {
-			return Err(RoundError::Recoverable(e.context("round input no longer spendable")));
-		}
-
-		server_rslog!(FatalStoringRound, round_step,
-			error: format!("{:?}", e),
-			unsigned_funding_tx: serialize(unsigned_funding_tx),
-			vtxo_tree: signed_vtxos.spec.serialize(),
-			input_vtxos: state.all_inputs.keys().copied().collect(),
-		);
-
-		Err(RoundError::Fatal(e))
-	} else {
-		server_rslog!(RoundFinished, round_step,
-			txid: state.funding_tx.txid(),
-			vtxo_expiry_block_height: state.expiry_height,
-			nb_input_vtxos: state.all_inputs.len(),
-			nb_output_vtxos: signed_vtxos.nb_leaves(),
-			total_output_amount: signed_vtxos.spec.spec.total_required_value(),
-		);
-
-		Ok(())
 	}
+	server_rslog!(RoundFinished, round_step,
+		txid: state.funding_tx.txid(),
+		vtxo_expiry_block_height: state.expiry_height,
+		nb_input_vtxos: state.all_inputs.len(),
+		nb_output_vtxos: signed_vtxos.nb_leaves(),
+		total_output_amount: signed_vtxos.spec.spec.total_required_value(),
+	);
+
+	Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -2191,6 +2204,7 @@ impl Server {
 		let mut unusable = Vec::new();
 		for vtxo in &vtxos {
 			if let Err(e) = vtxo.check_spendable(chain_tip) {
+				if e.is::<ExpiryPayoutRefusal>() { return Err(e); }
 				debug!("delegated round input {} is not spendable: {:#}", vtxo.vtxo_id, e);
 				unusable.push(vtxo.vtxo_id);
 			}
@@ -2252,6 +2266,14 @@ mod tests {
 	use ark::test_util::VTXO_VECTORS;
 	use ark::test_util::dummy::{DummyTestVtxoSpec, DUMMY_USER_KEY};
 	use crate::flux::VtxosInFlux;
+
+	#[test]
+	fn mailbox_conflict_is_a_recoverable_round_error() {
+		let id = VTXO_VECTORS.board_vtxo.id();
+		let conflict = anyhow::Error::new(StoredMailboxConflict(id)).context("storing round");
+		assert!(recoverable_persist_error(&conflict));
+		assert!(!recoverable_persist_error(&anyhow::anyhow!("other storage failure")));
+	}
 
 	fn generate_pubkey() -> PublicKey {
 		let secp = Secp256k1::new();

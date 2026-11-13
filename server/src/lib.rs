@@ -46,6 +46,7 @@ use crate::database::htlc_vtxo::{self, HtlcDirection};
 use crate::database::tree::VtxoTreeUpdate;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
+pub use crate::error::ExpiryPayoutRefusal;
 pub use bark_common::{fs_perms, secret};
 
 use std::collections::{BTreeSet, HashSet};
@@ -1009,22 +1010,6 @@ impl Server {
 			.filter(|v| seen_ids.insert(v.id()))
 			.collect::<Vec<_>>();
 
-		// An htlc-send vtxo only exists once its signed chain is
-		// registered: that is when the server holds a claim on the funds.
-		let htlc_sends = vtxos.iter()
-			.filter_map(|v| match v.policy() {
-				VtxoPolicy::ServerHtlcSend(p) =>
-					Some((v.id(), p.payment_hash, p.htlc_expiry)),
-				VtxoPolicy::ServerHtlcSend_v0(p) =>
-					Some((v.id(), p.payment_hash, p.htlc_expiry)),
-				_ => None,
-			})
-			.collect::<Vec<_>>();
-
-		let mut signed_txs: Vec<Transaction> = Vec::new();
-		let mut seen_txids: HashSet<Txid> = HashSet::new();
-		let mut registered_ids: Vec<VtxoId> = Vec::new();
-
 		for vtxo in &vtxos {
 			let vtxo_id = vtxo.id();
 
@@ -1060,17 +1045,22 @@ impl Server {
 
 			self.check_registration_inputs_not_exited(vtxo).await?;
 
-			// Collect all signed transactions from the VTXO, deduplicating
-			// by txid since different vtxos can share parent transactions.
-			for item in vtxo.transactions() {
-				let txid = item.tx.compute_txid();
-				if seen_txids.insert(txid) {
-					trace!("Registering virtual tx {} for vtxo {}", txid, vtxo_id);
-					signed_txs.push(item.tx);
+		}
+		fn registration_update(vtxos: &[Vtxo<Full>]) -> VtxoTreeUpdate {
+			let mut signed_txs = Vec::new();
+			let mut seen_txids = HashSet::new();
+			for vtxo in vtxos {
+				for item in vtxo.transactions() {
+					let txid = item.tx.compute_txid();
+					if seen_txids.insert(txid) {
+						trace!("Registering virtual tx {} for vtxo {}", txid, vtxo.id());
+						signed_txs.push(item.tx);
+					}
 				}
 			}
-
-			registered_ids.push(vtxo_id);
+			VtxoTreeUpdate::new().upsert_signed_tx(signed_txs)
+				.provide_signatures(vtxos.to_vec())
+				.mark_vtxos_registered(vtxos.iter().map(Vtxo::id))
 		}
 
 		// Persist the fully-signed vtxos (so the server can later serve them to
@@ -1079,12 +1069,29 @@ impl Server {
 		// flip only affects `unregistered` vtxos; the stored vtxo bytes are
 		// overwritten regardless of state, which is safe because each vtxo was
 		// checked above to differ from the stored one only in its witnesses.
-		let update = VtxoTreeUpdate::new()
-			.upsert_signed_tx(signed_txs)
-			.provide_signatures(vtxos)
-			.mark_vtxos_registered(registered_ids);
 		self.db.write(async |t| {
-			t.execute_vtxo_tree_update(update).await?;
+			let mut vtxos = vtxos;
+			if let Err(error) = t.execute_vtxo_tree_update(registration_update(&vtxos)).await {
+				if !t.expiry_payouts() || !matches!(error.downcast_ref::<ExpiryPayoutRefusal>(),
+					Some(ExpiryPayoutRefusal::DecidedForPayout(_))) {
+					return Err(error);
+				}
+				let replays = t.completed_round_registration_replays(&vtxos).await?;
+				if replays.is_empty() { return Err(error); }
+				vtxos.retain(|v| !replays.contains(&v.id()));
+				if !vtxos.is_empty() {
+					t.execute_vtxo_tree_update(registration_update(&vtxos)).await?;
+				}
+			}
+			// An htlc-send vtxo only exists once its signed chain is
+			// registered: that is when the server holds a claim on the funds.
+			let htlc_sends = vtxos.iter().filter_map(|v| match v.policy() {
+				VtxoPolicy::ServerHtlcSend(p) =>
+					Some((v.id(), p.payment_hash, p.htlc_expiry)),
+				VtxoPolicy::ServerHtlcSend_v0(p) =>
+					Some((v.id(), p.payment_hash, p.htlc_expiry)),
+				_ => None,
+			}).collect::<Vec<_>>();
 			htlc_vtxo::create_htlc_vtxos(&t, &htlc_sends, HtlcDirection::Incoming).await?;
 			Ok(())
 		}).await?;

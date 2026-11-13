@@ -1,7 +1,12 @@
-//! Expiry payouts: the mode of the server, and the owner mailbox of each
-//! VTXO.
+//! Expiry payouts: decide who owns each VTXO of an expired tree, guard
+//! those decisions against other spends, and store the transactions that
+//! pay the owners.
 
+pub mod decision;
 pub mod ownership;
+pub mod payout;
+pub(crate) mod guard;
+mod allocation;
 
 use crate::config::Postgres as PostgresConfig;
 use crate::database::{Db, Tx};

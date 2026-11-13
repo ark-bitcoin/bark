@@ -15,6 +15,8 @@ use tokio_postgres::Row;
 use ark::{ProtocolEncoding, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
 use ark::vtxo::policy::{check_block_delta, check_block_height, VtxoPolicyKind};
 
+use crate::error::ExpiryPayoutRefusal;
+
 // Used by mailbox as an always increasing number for data sorting.
 pub type Checkpoint = u64;
 
@@ -89,7 +91,7 @@ impl FromStr for SpendState {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VtxoState<G = Full, P: Policy = VtxoPolicy> {
 	pub id: i64,
 	/// The id of the VTXO
@@ -114,6 +116,8 @@ pub struct VtxoState<G = Full, P: Policy = VtxoPolicy> {
 	/// The spend lifecycle state of the vtxo. `check_spendable` consults
 	/// this so unregistered vtxos can't be used as inputs.
 	pub spend_state: SpendState,
+	/// Whether an expiry payout decided the VTXO.
+	pub decided_for_payout: bool,
 
 	/// If this vtxo exited onchain, the height at which its onchain
 	/// transaction confirmed.
@@ -141,6 +145,7 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 					banned_until_height: self.banned_until_height,
 					confirmed_height: self.confirmed_height,
 					spend_state: self.spend_state,
+					decided_for_payout: self.decided_for_payout,
 					created_at: self.created_at,
 					updated_at: self.updated_at,
 				})
@@ -156,6 +161,7 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 					banned_until_height: self.banned_until_height,
 					confirmed_height: self.confirmed_height,
 					spend_state: self.spend_state,
+					decided_for_payout: self.decided_for_payout,
 					created_at: self.created_at,
 					updated_at: self.updated_at,
 				})
@@ -200,6 +206,9 @@ impl<G, P: Policy> VtxoState<G, P> {
 
 	/// The spend-lifecycle half of the checks above, shared by both.
 	fn check_state_spendable(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
+		if self.decided_for_payout {
+			return Err(ExpiryPayoutRefusal::DecidedForPayout(self.vtxo_id).into());
+		}
 		if self.is_exited() {
 			return badarg!("vtxo {} has exited onchain", self.vtxo_id);
 		}
@@ -290,6 +299,7 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Full, P> {
 				.transpose()
 				.context("invalid confirmed_height in DB")?,
 			spend_state: SpendState::from_str(row.get::<_, &str>("spend_state"))?,
+			decided_for_payout: row.get("decided_for_payout"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})
@@ -339,6 +349,7 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Bare, P> {
 				.transpose()
 				.context("invalid confirmed_height in DB")?,
 			spend_state: SpendState::from_str(row.get::<_, &str>("spend_state"))?,
+			decided_for_payout: row.get("decided_for_payout"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})
@@ -462,6 +473,7 @@ mod test {
 			banned_until_height: None,
 			confirmed_height: None,
 			spend_state: SpendState::Spendable,
+			decided_for_payout: false,
 			created_at: Local::now(),
 			updated_at: Local::now(),
 		}
@@ -482,6 +494,15 @@ mod test {
 	/// `htlc-recv-unclaimed`, but the policy gate must not depend on that.
 	fn htlc_recv() -> VtxoState {
 		state(VTXO_VECTORS.round2_vtxo.clone())
+	}
+
+	#[test]
+	fn decided_vtxo_reports_typed_refusal_before_generic_spent_state() {
+		let mut v = spendable();
+		v.spend_state = SpendState::Spent;
+		v.decided_for_payout = true;
+		let error = v.check_spendable(BlockHeight::new(100)).unwrap_err();
+		assert_eq!(error.downcast_ref::<ExpiryPayoutRefusal>().unwrap().reason(), "decided_for_payout");
 	}
 
 	#[test]

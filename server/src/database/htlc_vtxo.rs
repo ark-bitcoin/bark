@@ -190,6 +190,7 @@ const HTLC_VTXO_COLUMNS: &str = "
 	v.id, v.vtxo_id, v.vtxo, v.expiry, v.oor_spent_txid, v.spent_in_round,
 	v.offboarded_in, v.banned_until_height, v.confirmed_height,
 	v.spend_state::TEXT AS spend_state, v.created_at, v.updated_at,
+	EXISTS(SELECT 1 FROM expiry_payout_vtxo d WHERE d.vtxo_id=v.vtxo_id) AS decided_for_payout,
 	hv.payment_hash, hv.htlc_expiry,
 	hv.direction::TEXT AS direction,
 	hv.offchain_resolution::TEXT AS offchain_resolution,
