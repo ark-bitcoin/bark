@@ -388,6 +388,11 @@ message InitiateLightningPaymentRequest {
 	// single attempt. Values above the server's maximum are capped to it.
 	// The server picks its default when unset.
 	optional uint32 retry_for_secs = 5;
+	// Expiry payout mode only: a nonce that makes the request unique, and
+	// the signature of the request by the key of the HTLC VTXOs. A retry
+	// must send the same request.
+	optional bytes intent_nonce = 1000;
+	bytes source_owner_signature = 1001;
 }
 
 message CheckLightningPaymentRequest {

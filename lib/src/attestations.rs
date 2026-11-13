@@ -1,5 +1,7 @@
 use std::io::{self, Write as _};
 
+use bitcoin::{Amount, Network};
+use bitcoin::constants::ChainHash;
 use bitcoin::consensus::WriteExt;
 use bitcoin::hashes::{sha256, Hash, HashEngine};
 use bitcoin::key::Keypair;
@@ -9,7 +11,7 @@ use bitcoin_ext::BlockHeight;
 use crate::{SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest, SECP};
 use crate::arkoor::ArkoorDestination;
 use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
-use crate::lightning::PaymentHash;
+use crate::lightning::{Invoice, PaymentHash};
 use crate::mailbox::MailboxIdentifier;
 use crate::offboard::OffboardRequest;
 use crate::tree::signed::UnlockHash;
@@ -559,6 +561,84 @@ impl ProtocolEncoding for ForfeitNoncesAttestation {
 	fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, ProtocolDecodingError> {
 		let signature = schnorr::Signature::decode(reader)?;
 		Ok(Self { signature })
+	}
+}
+
+/// The request of a Lightning send, signed by the owner of its HTLC VTXOs.
+///
+/// A server in expiry payout mode pays an invoice only for a signed request.
+/// The hash commits to every field of the request, so the server can tell a
+/// retry of a request from a new request. The nonce makes every new request
+/// unique.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LightningSendIntent(sha256::Hash);
+
+impl LightningSendIntent {
+	const MESSAGE_PREFIX: &'static [u8] = b"Ark lightning send intent v1";
+
+	pub fn new(
+		nonce: [u8; 32],
+		server_pubkey: PublicKey,
+		network: Network,
+		invoice: &Invoice,
+		amount: Amount,
+		htlc_vtxo_ids: &[VtxoId],
+		mailbox_id: Option<MailboxIdentifier>,
+		retry_for_secs: Option<u32>,
+	) -> Self {
+		let mut engine = sha256::Hash::engine();
+		engine.write_all(Self::MESSAGE_PREFIX).unwrap();
+		engine.write_all(&server_pubkey.serialize()).unwrap();
+		engine.write_all(ChainHash::using_genesis_block_const(network).as_bytes()).unwrap();
+		engine.write_all(&nonce).unwrap();
+
+		let invoice = invoice.to_string();
+		engine.write_all(&(invoice.len() as u64).to_be_bytes()).unwrap();
+		engine.write_all(invoice.as_bytes()).unwrap();
+		engine.write_all(&amount.to_sat().to_be_bytes()).unwrap();
+
+		let mut ids = htlc_vtxo_ids.to_vec();
+		ids.sort_unstable();
+		engine.write_all(&(ids.len() as u64).to_be_bytes()).unwrap();
+		for id in ids {
+			engine.write_all(&id.to_bytes()).unwrap();
+		}
+
+		match mailbox_id {
+			Some(id) => {
+				engine.write_all(&[1]).unwrap();
+				engine.write_all(&id.serialize()).unwrap();
+			},
+			None => engine.write_all(&[0]).unwrap(),
+		}
+		match retry_for_secs {
+			Some(secs) => {
+				engine.write_all(&[1]).unwrap();
+				engine.write_all(&secs.to_be_bytes()).unwrap();
+			},
+			None => engine.write_all(&[0]).unwrap(),
+		}
+
+		Self(sha256::Hash::from_engine(engine))
+	}
+
+	/// The hash of the request.
+	pub fn id(self) -> sha256::Hash {
+		self.0
+	}
+
+	pub fn sign(self, keypair: &Keypair) -> schnorr::Signature {
+		let msg = Message::from_digest(self.0.to_byte_array());
+		SECP.sign_schnorr_with_aux_rand(&msg, keypair, &rand::random())
+	}
+
+	pub fn verify(
+		self,
+		signature: &schnorr::Signature,
+		user_pubkey: PublicKey,
+	) -> Result<(), secp256k1::Error> {
+		let msg = Message::from_digest(self.0.to_byte_array());
+		SECP.verify_schnorr(signature, &msg, &user_pubkey.x_only_public_key().0)
 	}
 }
 

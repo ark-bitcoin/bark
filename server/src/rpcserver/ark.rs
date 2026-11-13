@@ -536,7 +536,8 @@ impl rpc::server::ArkService for Server {
 
 		let retry_for = req.retry_for_secs.map(|s| Duration::from_secs(s as u64));
 
-		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids, mailbox_id, retry_for)
+		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids, mailbox_id, retry_for,
+			req.intent_nonce, req.source_owner_signature)
 			.await
 			.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))

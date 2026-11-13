@@ -496,6 +496,7 @@ mod test {
 			movement_id: None,
 			revocation_key: key,
 			retry_for: None,
+			intent_nonce: None,
 			progress: Progress::PaymentInitiated(htlcs.clone()),
 			allow_exit_of_htlcs: false,
 		};

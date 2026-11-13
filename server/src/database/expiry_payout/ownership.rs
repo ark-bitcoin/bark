@@ -139,4 +139,10 @@ impl Tx<'_> {
 		Ok(self.query_opt("SELECT exit_txid FROM board_exit WHERE funding_outpoint = $1",
 			&[&funding_outpoint.to_string()]).await?.is_some())
 	}
+
+	/// Whether a lightning payment attempt exists for the signed send intent.
+	pub(crate) async fn send_intent_used(&self, intent_id: &str) -> anyhow::Result<bool> {
+		Ok(self.query_opt("SELECT id FROM lightning_payment_attempt WHERE intent_id = $1",
+			&[&intent_id]).await?.is_some())
+	}
 }

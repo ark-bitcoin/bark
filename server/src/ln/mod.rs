@@ -320,9 +320,13 @@ impl Server {
 		htlc_vtxo_ids: Vec<VtxoId>,
 		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
 		retry_for: Option<Duration>,
+		intent_nonce: Option<Vec<u8>>,
+		source_owner_signature: Vec<u8>,
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
 		check_max_amount("lightning send", payment_amount, self.config.max_ln_send_amount)?;
+		// The send intent signs the retry time as the client requested it.
+		let requested_retry_for_secs = retry_for.map(|d| d.as_secs() as u32);
 
 		let retry_for = match retry_for {
 			None => self.config.cln_xpay_timeout,
@@ -339,6 +343,17 @@ impl Server {
 		let htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&htlc_vtxo_ids).await).await?;
 
 		slog!(LightningPaymentInitRequested, payment_hash, htlc_vtxo_ids: htlc_vtxo_ids.clone());
+
+		let intent_id = if self.config.expiry_payouts {
+			let intent = self.verify_send_intent(&invoice, payment_amount, &htlc_vtxo_ids, &htlc_vtxos,
+				mailbox_id, requested_retry_for_secs, intent_nonce, &source_owner_signature).await?;
+			// A request sent again after its reply was lost is acknowledged.
+			// The client learns the outcome from CheckLightningPayment.
+			let Some(intent_id) = intent else { return Ok(()) };
+			Some(intent_id)
+		} else {
+			None
+		};
 
 		let chain_tip = self.sync_manager.chain_tip().height;
 		let mut vtxos = vec![];
@@ -433,6 +448,7 @@ impl Server {
 			user_fee,
 			attempt_block_height,
 			retry_for,
+			intent_id,
 		).await?;
 
 		Ok(())
@@ -564,6 +580,7 @@ impl Server {
 		// matching the arkoor cosign path. They flip to spendable once the
 		// caller uploads the signed chain via register_vtxo_transactions.
 		let bindings = destinations.bindings_for_package(&builder, self.config.expiry_payouts)?;
+		let requested_mailboxes = bindings.iter().map(|(_, mailbox)| *mailbox).collect::<Vec<_>>();
 		let update = VtxoTreeUpdate::new()
 			.upsert_unsigned_tx(builder.virtual_transactions())
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
@@ -579,6 +596,15 @@ impl Server {
 			// settled payment can no longer be refunded (which would
 			// double-pay the sender).
 			t.ensure_not_settled(payment_hash).await?;
+
+			// In payout mode a refund goes to the mailbox that owns the HTLCs,
+			// so a revocation cannot move value to another owner.
+			if self.config.expiry_payouts {
+				let owner = t.single_owner_mailbox(&htlc_vtxo_ids).await?;
+				if requested_mailboxes.iter().any(|mailbox| *mailbox != owner) {
+					return badarg!("lightning revocation output differs from source payout mailbox");
+				}
+			}
 
 			// For an intra-Ark payment the payee shares this payment hash via a
 			// receive subscription. The settlement check above only catches a
@@ -712,12 +738,21 @@ impl Server {
 				return badarg!("Requested amount exceeds limit of {}", max);
 			}
 		}
+		if self.config.expiry_payouts && (claim_pubkey.is_none() || mailbox_id.is_none()) {
+			return badarg!("receive requires claim key and mailbox");
+		}
 
 		// A payment hash carries at most one subscription.
 		let subscription = self.db.read(async |t|
 			t.get_htlc_subscription_by_payment_hash(payment_hash).await
 		).await?;
 		if let Some(subscription) = subscription {
+			if self.config.expiry_payouts && (
+					subscription.claim_pubkey != claim_pubkey
+					|| self.db.read(async |t| t.get_lightning_receiver_mailbox_id(payment_hash).await).await? != mailbox_id
+				) {
+				return badarg!("invoice already exists for another claim key or mailbox");
+			}
 			match subscription.status {
 				LightningHtlcSubscriptionStatus::Created => {
 					let existing_expiry = subscription.invoice.expiry_time();
@@ -1043,7 +1078,11 @@ impl Server {
 		// can still settle after the check above. Doing it in the transaction
 		// that stores the HTLC-recv vtxos means a refusal leaves no vtxo behind
 		// and puts the pool inputs back.
-		let vtxos = self.vtxopool.send_arkoor(self, dest, async |t, vtxos| {
+		let owner_mailbox = if self.config.expiry_payouts {
+			Some(self.db.read(async |t| t.get_lightning_receiver_mailbox_id(payment_hash).await).await?
+				.context("receive subscription has no payout mailbox")?.as_pubkey())
+		} else { None };
+		let vtxos = self.vtxopool.send_arkoor(self, dest, owner_mailbox, async |t, vtxos| {
 			t.update_lightning_htlc_subscription_with_htlcs(
 				sub.id,
 				vtxos.iter().map(|v| v.id()),

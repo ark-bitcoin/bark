@@ -19,12 +19,14 @@ use log::{debug, warn};
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy};
 use ark::address::VtxoDelivery;
+use ark::attestations::LightningSendIntent;
 use ark::mailbox::BlindedMailboxIdentifier;
 use ark::vtxo::{Full, VtxoRef};
 use server_rpc::ServerConnection;
 use server_rpc::protos::{self, VtxoSpendState};
 
 use crate::Wallet;
+use crate::actions::lightning::pay;
 use crate::mailbox::{MAILBOX_PROCESSING_LOCK_KEY, MAILBOX_PROCESSING_LOCK_TIMEOUT};
 use crate::round::RoundParticipation;
 use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
@@ -132,6 +134,31 @@ impl Wallet {
 		let (_, ark_info) = self.require_server().await?;
 		let blinded_id = self.mailbox_identifier().to_blinded(ark_info.mailbox_pubkey, &keypair)?;
 		Ok(server_mailbox(address) == Some(blinded_id))
+	}
+
+	/// Sign a Lightning payment request for a server in expiry payout mode.
+	///
+	/// That server pays an invoice only for a request that the owner of the
+	/// HTLC VTXOs signs. The nonce of the send makes the request unique, and a
+	/// retry sends the same request again.
+	pub(crate) async fn sign_lightning_payment(
+		&self,
+		send: &pay::LightningSend,
+		htlcs: &pay::Htlcs,
+		req: &mut protos::InitiateLightningPaymentRequest,
+	) -> anyhow::Result<()> {
+		let nonce = send.intent_nonce.context("the Lightning send has no request nonce")?;
+		let (_, keypair) = self.pubkey_keypair(&send.htlc_key).await?
+			.context("the HTLC key of the Lightning send is not in this wallet")?;
+		let ark_info = self.require_ark_info().await?;
+
+		let intent = LightningSendIntent::new(
+			nonce, ark_info.server_pubkey, ark_info.network, &send.invoice, send.payment_amount,
+			&htlcs.vtxo_ids, Some(htlcs.mailbox_id), req.retry_for_secs,
+		);
+		req.intent_nonce = Some(nonce.to_vec());
+		req.source_owner_signature = intent.sign(&keypair).serialize().to_vec();
+		Ok(())
 	}
 
 	/// The status of each VTXO in `queries` from a server in expiry payout

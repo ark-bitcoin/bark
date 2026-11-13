@@ -804,6 +804,8 @@ impl RawHtlcSend {
 	async fn initiate(&self, srv: &Captaind, invoice: &str, amount: Amount) -> Result<(), tonic::Status> {
 		let mut srv_rpc = srv.get_public_rpc().await;
 		srv_rpc.initiate_lightning_payment(protos::InitiateLightningPaymentRequest {
+			intent_nonce: None,
+			source_owner_signature: Vec::new(),
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: self.vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 			payment_amount_sat: amount.to_sat(),
@@ -3834,6 +3836,8 @@ async fn self_payment_claim_rejected_after_sender_onchain_refund() {
 	wallet.register_vtxo_transactions_with_server(&htlcs).await.unwrap();
 
 	rpc.initiate_lightning_payment(protos::InitiateLightningPaymentRequest {
+		intent_nonce: None,
+		source_owner_signature: Vec::new(),
 		invoice,
 		payment_amount_sat: 100_000,
 		htlc_vtxo_ids: htlcs.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
@@ -4016,7 +4020,7 @@ async fn late_xpay_result_does_not_finalize_a_retry() {
 	let retry_id = db.write(async |t| {
 		let retry_id = t.store_lightning_payment_start(
 			first.lightning_node_id, &invoice, sat(10_000), None, &[], None,
-			first.block_height.unwrap(), sat(0), None, Duration::from_secs(3600), Some(sat(1_000)),
+			first.block_height.unwrap(), sat(0), None, Duration::from_secs(3600), Some(sat(1_000)), None,
 		).await?;
 		xpay::create_xpay(&**t, &xpay::NewClnXpay {
 			lightning_node_id: first.lightning_node_id,

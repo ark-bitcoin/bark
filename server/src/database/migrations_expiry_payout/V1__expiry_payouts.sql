@@ -7,6 +7,11 @@ CREATE TABLE server_mode (
 );
 INSERT INTO server_mode (id, expiry_payouts) VALUES (1, FALSE);
 
+-- The id of the signed intent of a lightning send. A request that is sent
+-- again finds its attempt by this id and starts no other payment.
+ALTER TABLE lightning_payment_attempt
+	ADD COLUMN intent_id TEXT UNIQUE CHECK (intent_id IS NULL OR length(intent_id) = 64);
+
 -- The owner of a board, bound when the server co-signs its exit.
 ALTER TABLE board_exit
 	ADD COLUMN owner_mailbox TEXT

@@ -208,6 +208,7 @@ fn send_at_start() -> LightningSend {
 		movement_id: None,
 		revocation_key: test_pubkey(),
 		retry_for: None,
+		intent_nonce: None,
 		progress: Progress::Start,
 		allow_exit_of_htlcs: false,
 	}

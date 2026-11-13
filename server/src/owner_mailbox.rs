@@ -4,18 +4,20 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Context};
-use bitcoin::{Transaction, Txid};
-use bitcoin::secp256k1::{Keypair, PublicKey};
+use bitcoin::{Amount, Transaction, Txid};
+use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 
 use ark::{ProtocolEncoding, ServerVtxo, Vtxo, VtxoId, VtxoPolicy};
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::arkoor::state::ServerCanCosign;
+use ark::attestations::LightningSendIntent;
+use ark::lightning::Invoice;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
 use ark::tree::signed::{CachedSignedVtxoTree, VtxoLeafSpec};
 use ark::vtxo::Full;
 use server_rpc::protos;
 
-use crate::database::SpendState;
+use crate::database::{SpendState, VtxoState};
 use crate::database::rounds::StoredRoundOutput;
 use crate::database::tree::VtxoTreeUpdate;
 use crate::error::ContextExt;
@@ -207,6 +209,48 @@ impl crate::Server {
 			t.execute_vtxo_tree_update(update).await?;
 			t.add_funding_vtxos_to_frontier(utxo.txid, None).await
 		}).await
+	}
+
+	/// Verify that the key that owns every source signed this exact lightning
+	/// send, so nobody else can spend the HTLCs that the owner co-signed.
+	/// Returns the id of the send intent, or `None` if an attempt with this
+	/// id exists: the intent id commits to every field of the request, so
+	/// the request was sent before.
+	pub(crate) async fn verify_send_intent(
+		&self,
+		invoice: &Invoice,
+		amount: Amount,
+		source_ids: &[VtxoId],
+		sources: &[VtxoState],
+		mailbox_id: Option<MailboxIdentifier>,
+		retry_for_secs: Option<u32>,
+		nonce: Option<Vec<u8>>,
+		signature: &[u8],
+	) -> anyhow::Result<Option<String>> {
+		if source_ids.is_empty() {
+			return badarg!("a lightning send needs a source");
+		}
+		let signature = schnorr::Signature::from_slice(signature)
+			.badarg("invalid lightning source owner signature")?;
+		if source_ids.iter().collect::<BTreeSet<_>>().len() != source_ids.len() {
+			return badarg!("duplicate lightning source");
+		}
+		let nonce: [u8; 32] = nonce.badarg("missing lightning send intent nonce")?
+			.try_into().map_err(|_| badarg_err!("lightning send intent nonce must be 32 bytes"))?;
+		let intent = LightningSendIntent::new(
+			nonce, self.server_pubkey, self.config.network, invoice, amount, source_ids, mailbox_id, retry_for_secs,
+		);
+		for id in source_ids {
+			let source = sources.iter().find(|source| source.vtxo_id == *id)
+				.context("lightning source is missing")?;
+			intent.verify(&signature, source.vtxo.user_pubkey())
+				.badarg("lightning source owner signature does not match payment intent")?;
+		}
+		let intent_id = intent.id().to_string();
+		if self.db.read(async |t| t.send_intent_used(&intent_id).await).await? {
+			return Ok(None);
+		}
+		Ok(Some(intent_id))
 	}
 
 	/// The owner mailbox of every output of an arkoor co-sign request.

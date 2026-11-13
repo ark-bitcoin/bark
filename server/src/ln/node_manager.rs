@@ -247,6 +247,7 @@ impl LightningManager {
 		user_fee: Amount,
 		attempt_block_height: BlockHeight,
 		retry_for: Duration,
+		intent_id: Option<String>,
 	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
@@ -262,6 +263,7 @@ impl LightningManager {
 			user_fee,
 			attempt_block_height,
 			retry_for,
+			intent_id.as_deref(),
 		).await {
 			// The attempt is already recorded as failed and the client sees the
 			// failure via CheckLightningPayment. Benign races (someone else paid
@@ -302,6 +304,7 @@ impl LightningManager {
 		user_fee: Amount,
 		attempt_block_height: BlockHeight,
 		retry_for: Duration,
+		intent_id: Option<&str>,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 		let node = self.active_node().context("no active cln node")?;
@@ -370,6 +373,7 @@ impl LightningManager {
 				// An intra-Ark payment short-circuits before xpay, so no
 				// routing budget is ever authorised for it.
 				lightning_htlc_subscription_id.is_none().then_some(max_routing_fee),
+				intent_id,
 			).await?;
 			// Same transaction as the attempt: the attempt check above is what
 			// keeps one payment per hash in flight, and the cln_xpay row must
