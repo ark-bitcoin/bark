@@ -1,19 +1,32 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
 
-use ark::lightning::{PaymentHash, Preimage};
-use bitcoin_ext::BlockDelta;
-use ark_testing::{TestContext, btc, util::{FutureExt, poll_interval}};
+use bitcoin::Amount;
+use bitcoin::secp256k1::Keypair;
+
+use ark::{ProtocolEncoding, SECP, VtxoPolicy};
+use ark::address::VtxoDelivery;
+use ark::arkoor::ArkoorDestination;
+use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
+use ark::arkoor::state::UserGeneratedNonces;
+use ark::lightning::{Bolt11InvoiceExt, PaymentHash, Preimage};
+use bitcoin_ext::{AmountExt, BlockDelta};
+use ark_testing::{TestContext, btc, sat, util::{FutureExt, poll_interval}};
+use ark_testing::Captaind;
 use ark_testing::balance::assert_balance_consistent;
+use ark_testing::context::LightningPaymentSetup;
 
 use bark::actions::lightning::pay::LightningSendState;
 use bark::actions::lightning::receive::LightningReceiveState;
 use bark::movement::MovementStatus;
 use bark::subsystem::Subsystem;
 use bark::LightningSendOptions;
+use bark::lightning_invoice::Bolt11Invoice;
 use cln_rpc::plugins::hold;
 use server::database::Db;
+use server_rpc::protos;
 use server_rpc::protos::mailbox_server::mailbox_message::Message as MailboxMsg;
 
 /// Wait until the hold plugin holds the payment's HTLCs. The invoice turns
@@ -483,4 +496,225 @@ async fn pay_with_retry_for() {
 		).await.expect("db read").expect("payment attempt");
 		assert_eq!(attempt.retry_for, Some(expected));
 	}
+}
+
+/// A server that lets users put their Ark address in invoices, and two
+/// wallets on it that use it.
+async fn ark_address_hint_setup(
+	ctx: &TestContext,
+) -> (LightningPaymentSetup, Arc<Captaind>, bark::Wallet, bark::Wallet) {
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10))
+		.cfg(|cfg| cfg.ln_receive_ark_address_hints = true)
+		.create().await;
+	srv.wait_for_vtxopool(ctx).await;
+	let payer = ctx.bark_sdk("payer", &srv).boarded(sat(400_000))
+		.cfg(|cfg| cfg.lightning_ark_address_hints = true)
+		.create().await;
+	let receiver = ctx.bark_sdk("receiver", &srv)
+		.cfg(|cfg| cfg.lightning_ark_address_hints = true)
+		.create().await;
+	lightning.sync().await;
+	(lightning, srv, payer, receiver)
+}
+
+async fn server_receive_status(
+	srv: &Captaind,
+	hash: PaymentHash,
+) -> protos::LightningReceiveStatus {
+	let status = srv.get_public_rpc().await
+		.check_lightning_receive(protos::CheckLightningReceiveRequest {
+			hash: hash.to_vec(),
+			wait: false,
+		}).await.unwrap().into_inner().status;
+	protos::LightningReceiveStatus::try_from(status).unwrap()
+}
+
+/// An invoice that carries the receiver's Ark address is paid with an
+/// arkoor by a wallet on the same server. The server and the receiver see
+/// the invoice paid, as if it had been paid over lightning, and it can't
+/// be paid again.
+#[tokio::test]
+async fn pay_invoice_on_its_ark_address() {
+	let ctx = TestContext::new("bark_sdk/pay_invoice_on_its_ark_address").await;
+	let (lightning, srv, payer, receiver) = ark_address_hint_setup(&ctx).await;
+
+	let amount = sat(100_000);
+	let invoice = receiver.bolt11_invoice(amount, None, None).await.unwrap();
+	let hash = PaymentHash::from(&invoice);
+	let address = invoice.ark_address().expect("invoice carries an Ark address");
+
+	// A plain arkoor to that address doesn't pay the invoice.
+	payer.send_arkoor_payment(&address, sat(10_000)).await.unwrap();
+	receiver.sync().await;
+	assert!(matches!(receiver.lightning_receive_state(hash).await.unwrap(),
+		LightningReceiveState::InProgress(_)));
+	assert_eq!(server_receive_status(&srv, hash).await, protos::LightningReceiveStatus::Created);
+
+	let mut paid = receiver.subscribe_notifications().filter_lightning_payment_movements(hash);
+	payer.pay_lightning_invoice(invoice.clone(), None, true).await.unwrap();
+	assert_eq!(server_receive_status(&srv, hash).await, protos::LightningReceiveStatus::Settled);
+
+	receiver.sync().await;
+	let movement = paid.next().wait_millis(10_000).await.expect("receiver saw the invoice paid");
+	assert_eq!(movement.status, MovementStatus::Successful);
+	assert!(movement.subsystem.is_subsystem(Subsystem::LIGHTNING_RECEIVE));
+	match receiver.lightning_receive_state(hash).await.unwrap() {
+		LightningReceiveState::Settled(settled) => assert_eq!(settled.amount, amount),
+		other => panic!("receive not settled: {:?}", other),
+	}
+
+	// No lightning fees on either side.
+	let balance = assert_balance_consistent(&receiver, false).await;
+	assert_eq!(balance.spendable, amount + sat(10_000));
+	let balance = assert_balance_consistent(&payer, false).await;
+	assert_eq!(balance.spendable, sat(400_000) - amount - sat(10_000));
+
+	// Nobody can pay the invoice again.
+	payer.pay_lightning_invoice(invoice.clone(), None, true).await
+		.expect_err("paid the invoice twice");
+	lightning.external.try_pay_bolt11(invoice.to_string()).await
+		.expect_err("paid over lightning after it was paid by arkoor");
+	let balance = assert_balance_consistent(&receiver, false).await;
+	assert_eq!(balance.spendable, amount + sat(10_000));
+}
+
+/// Lightning nodes find no route through the Ark address hints and pay
+/// the invoice as usual.
+#[tokio::test]
+async fn external_payer_pays_invoice_with_ark_address() {
+	let ctx = TestContext::new("bark_sdk/external_payer_pays_invoice_with_ark_address").await;
+	let (lightning, _srv, _payer, receiver) = ark_address_hint_setup(&ctx).await;
+
+	let amount = sat(100_000);
+	let invoice = receiver.bolt11_invoice(amount, None, None).await.unwrap();
+	assert!(invoice.ark_address().is_some());
+	let hash = PaymentHash::from(&invoice);
+
+	let (paid, claimed) = tokio::join!(
+		lightning.external.try_pay_bolt11(invoice.to_string()),
+		receiver.try_claim_lightning_receive(hash, true),
+	);
+	paid.expect("external payment failed");
+	assert!(matches!(claimed.unwrap(), LightningReceiveState::Settled(_)));
+}
+
+/// A wallet that doesn't pay Ark addresses pays the invoice over
+/// lightning, and the wallet that didn't ask for an Ark address gets an
+/// invoice without one.
+#[tokio::test]
+async fn ark_address_hints_are_opt_in() {
+	let ctx = TestContext::new("bark_sdk/ark_address_hints_are_opt_in").await;
+	let (_lightning, srv, _payer, receiver) = ark_address_hint_setup(&ctx).await;
+
+	let other = ctx.bark_sdk("other", &srv).boarded(sat(400_000)).create().await;
+	let invoice = other.bolt11_invoice(sat(10_000), None, None).await.unwrap();
+	assert_eq!(invoice.ark_address(), None);
+
+	let amount = sat(100_000);
+	let invoice = receiver.bolt11_invoice(amount, None, None).await.unwrap();
+	assert!(invoice.ark_address().is_some());
+	let hash = PaymentHash::from(&invoice);
+
+	let (paid, claimed) = tokio::join!(
+		other.pay_lightning_invoice(invoice.clone(), None, true),
+		receiver.try_claim_lightning_receive(hash, true),
+	);
+	paid.unwrap();
+	assert!(matches!(claimed.unwrap(), LightningReceiveState::Settled(_)));
+	assert!(matches!(other.lightning_send_state(hash).await.unwrap(), LightningSendState::Paid(_)));
+}
+
+/// A wallet that asks for Ark address route hints and syncs only when the
+/// test asks it to, so it claims no receive by itself.
+async fn manual_hint_receiver(ctx: &TestContext, srv: &Captaind) -> bark::Wallet {
+	ctx.bark_sdk("manual_receiver", srv)
+		.cfg(|cfg| {
+			cfg.lightning_ark_address_hints = true;
+			cfg.daemon_manual_sync = true;
+		})
+		.create().await
+}
+
+/// An arkoor that pays the amount of `invoice` from a VTXO of `payer` to the
+/// Ark address of the invoice, with the change to a key nobody uses, and
+/// the key of that VTXO.
+async fn arkoor_to_invoice_address(
+	payer: &bark::Wallet, invoice: &Bolt11Invoice,
+) -> (ArkoorPackageBuilder<UserGeneratedNonces>, Keypair) {
+	let address = invoice.ark_address().expect("invoice carries an Ark address");
+	let amount = Amount::from_msat_floor(invoice.amount_milli_satoshis().unwrap());
+	let vtxo = payer.spendable_vtxos().await.unwrap().pop().unwrap();
+	let vtxo = payer.get_full_vtxo(vtxo.id()).await.unwrap();
+	let key = payer.get_vtxo_key(&vtxo).await.unwrap();
+	let change = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let outputs = vec![
+		ArkoorDestination { total_amount: amount, policy: address.policy().clone() },
+		ArkoorDestination {
+			total_amount: vtxo.amount() - amount,
+			policy: VtxoPolicy::new_pubkey(change.public_key()),
+		},
+	];
+	let builder = ArkoorPackageBuilder::new_with_checkpoints([vtxo], outputs).unwrap()
+		.generate_user_nonces(&[key]).unwrap();
+	(builder, key)
+}
+
+/// The request to pay the invoice of `hash` with `arkoor`.
+fn invoice_arkoor(
+	hash: PaymentHash, arkoor: &ArkoorPackageBuilder<UserGeneratedNonces>,
+) -> protos::LightningReceiveArkoorCosignRequest {
+	protos::LightningReceiveArkoorCosignRequest {
+		payment_hash: hash.to_vec(),
+		cosign_request: Some(arkoor.cosign_request().into()),
+	}
+}
+
+/// The receiver credits VTXOs on the Ark address of a settled invoice as
+/// the Lightning receive only when they pay the invoice amount. The payer
+/// settles the invoice with an arkoor that it holds back and sends a small
+/// arkoor to the same address. The receiver credits that one as an
+/// ordinary arkoor and keeps the receive pending. Once the payer registers
+/// and delivers the arkoor that settled the invoice, the receiver credits
+/// it as the receive.
+#[tokio::test]
+async fn ark_address_receive_is_credited_only_for_its_amount() {
+	let ctx = TestContext::new("bark_sdk/ark_address_receive_is_credited_only_for_its_amount").await;
+	let (_lightning, srv, payer, _) = ark_address_hint_setup(&ctx).await;
+	let receiver = manual_hint_receiver(&ctx, &srv).await;
+	let small_payer = ctx.bark_sdk("small_payer", &srv).boarded(sat(100_000)).create().await;
+	let amount = sat(100_000);
+	let invoice = receiver.bolt11_invoice(amount, None, None).await.unwrap();
+	let hash = PaymentHash::from(&invoice);
+	let address = invoice.ark_address().unwrap();
+	let (arkoor, key) = arkoor_to_invoice_address(&payer, &invoice).await;
+	let response = srv.get_public_rpc().await
+		.request_lightning_receive_arkoor_cosign(invoice_arkoor(hash, &arkoor)).await.unwrap().into_inner();
+	assert_eq!(server_receive_status(&srv, hash).await, protos::LightningReceiveStatus::Settled);
+
+	small_payer.send_arkoor_payment(&address, sat(1_000)).await.unwrap();
+	receiver.sync().await;
+	assert!(matches!(receiver.lightning_receive_state(hash).await.unwrap(), LightningReceiveState::InProgress(_)),
+		"a small arkoor on the address of a settled invoice does not pay it");
+	assert_eq!(assert_balance_consistent(&receiver, false).await.spendable, sat(1_000));
+	let history = receiver.history().await.unwrap();
+	assert_eq!(history.len(), 1);
+	assert!(history[0].subsystem.is_subsystem(Subsystem::ARKOOR));
+
+	let vtxos = arkoor.user_cosign(&[key], ArkoorPackageCosignResponse::try_from(response).unwrap()).unwrap()
+		.build_signed_vtxos();
+	payer.register_vtxo_transactions_with_server(&vtxos).await.unwrap();
+	let Some(VtxoDelivery::ServerMailbox { blinded_id }) = address.delivery().first() else {
+		panic!("the Ark address of the invoice has no mailbox");
+	};
+	srv.get_mailbox_public_rpc().await.post_arkoor_message(protos::mailbox_server::PostArkoorMessageRequest {
+		blinded_id: blinded_id.as_ref().to_vec(),
+		vtxos: vtxos.iter().filter(|v| v.policy() == address.policy()).map(|v| v.serialize()).collect(),
+	}).await.unwrap();
+	receiver.sync().await;
+	match receiver.lightning_receive_state(hash).await.unwrap() {
+		LightningReceiveState::Settled(settled) => assert_eq!(settled.amount, amount),
+		other => panic!("receive not settled: {:?}", other),
+	}
+	assert_eq!(assert_balance_consistent(&receiver, false).await.spendable, amount + sat(1_000));
 }
