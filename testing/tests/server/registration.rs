@@ -49,7 +49,7 @@ async fn register_vtxo_transactions_accepts_duplicate_ids() {
 /// the server keeps the resulting vtxos `unregistered` and holds their
 /// transactions unsigned.
 #[derive(Clone)]
-struct DropRegistration;
+pub(crate) struct DropRegistration;
 
 #[async_trait::async_trait]
 impl captaind::proxy::ArkRpcProxy for DropRegistration {
