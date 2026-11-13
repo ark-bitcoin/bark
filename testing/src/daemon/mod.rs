@@ -276,6 +276,21 @@ impl<T> Daemon<T>
 		Ok(())
 	}
 
+	/// Kill the daemon with SIGKILL, so it cannot run any shutdown code.
+	pub async fn crash_stop(&self) -> anyhow::Result<()> {
+		let mut state_lock = self.daemon_state.lock().await;
+		*state_lock = DaemonState::Stopping;
+
+		let mut child_lock = self.child.lock().await;
+		let child = child_lock.as_mut().expect("daemon not started yet");
+		child.kill().await.with_context(|| format!("failed to kill daemon {}", self.name))?;
+		self.inner.cleanup_external();
+
+		info!("Killed {}", self.name);
+		*state_lock = DaemonState::Stopped;
+		Ok(())
+	}
+
 	pub fn add_stdout_handler<L: LogHandler>(&self, log_handler: L) {
 		self.log_handler_tx.lock().as_ref().expect("not started yet")
 			.try_send(Box::new(log_handler))
