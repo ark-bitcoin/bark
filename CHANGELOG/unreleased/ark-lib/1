@@ -1,0 +1,6 @@
+- Add the expiry payout script and Ark address route hints
+  `expiry_payout::payout_script` returns the payout output `tr(M)` of an
+  owner mailbox key. `lightning::ark_address_route_hints` and
+  `Bolt11InvoiceExt::ark_address` put an Ark address in the route hints of
+  an invoice and read it back.
+  [#1](https://github.com/SatoshiPortal/scuttle/pull/1)

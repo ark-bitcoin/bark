@@ -1,0 +1,6 @@
+- Add the protocol version `PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT`
+  A client uses it when the server offers it. It adds the owner mailbox to the
+  requests that make a VTXO, the expiry payout to the VTXO status, and
+  `RequestLightningReceiveArkoorCosign`. The fields that it adds to upstream
+  messages are numbered from 1000.
+  [#1](https://github.com/SatoshiPortal/scuttle/pull/1)

@@ -1,0 +1,17 @@
+- Support Ark servers in expiry payout mode
+  The wallet sends its owner mailbox in every request that makes a VTXO,
+  credits a received VTXO only when the server reports it bound to its
+  mailbox, and records the payout of an expired VTXO as pending, paid or
+  forfeited. With other servers the wallet behaves as upstream.
+  [#1](https://github.com/SatoshiPortal/scuttle/pull/1)
+  - `Wallet::expiry_payout` returns the payout of a VTXO, and
+    `Wallet::payout_script` the payout output `tr(M)` to watch on-chain.
+  - `WalletSeed::with_mailbox_keypair` uses a mailbox keypair of the app.
+  - `Config::require_expiry_payouts` opens the wallet only with a server in
+    expiry payout mode.
+  - `Config::lightning_ark_address_hints` puts the Ark address of the
+    wallet in its invoices, and pays such an invoice with an arkoor. The
+    wallet credits a receive paid by arkoor only for VTXOs that pay at least
+    the invoice amount.
+  - **BREAKING:** `BarkPersister` has the required methods
+    `set_mailbox_key` and `set_vtxo_expiry_payout_state`.
