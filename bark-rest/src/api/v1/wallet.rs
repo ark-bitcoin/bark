@@ -41,6 +41,7 @@ pub fn router() -> Router<Arc<ServerState>> {
 		.route("/vtxos", get(vtxos))
 		.route("/vtxos/{id}", get(get_vtxo))
 		.route("/vtxos/{id}/encoded", get(get_vtxo_encoded))
+		.route("/vtxos/{id}/expiry-payout", get(get_vtxo_expiry_payout))
 		.route("/movements", get(movements))
 		.route("/history", get(history))
 		.route("/send", post(send))
@@ -75,6 +76,7 @@ pub fn router() -> Router<Arc<ServerState>> {
 		vtxos,
 		get_vtxo,
 		get_vtxo_encoded,
+		get_vtxo_expiry_payout,
 		movements,
 		history,
 		send,
@@ -109,6 +111,7 @@ pub fn router() -> Router<Arc<ServerState>> {
 		bark_json::cli::Balance,
 		bark_json::primitives::WalletVtxoInfo,
 		bark_json::web::EncodedVtxoResponse,
+		bark_json::primitives::ExpiryPayoutInfo,
 		bark_json::movements::Movement,
 		bark_json::web::SendRequest,
 		bark_json::web::PaymentMethodKind,
@@ -624,6 +627,40 @@ pub async fn get_vtxo_encoded(
 
 	let encoded = bark_json::primitives::EncodedVtxo(vtxo.serialize_hex());
 	Ok(axum::Json(bark_json::web::EncodedVtxoResponse { encoded }))
+}
+
+#[utoipa::path(
+	get,
+	path = "/vtxos/{id}/expiry-payout",
+	summary = "Get the expiry payout of a VTXO",
+	params(
+		("id" = String, Path, description = "VTXO identifier formatted as `txid:vout`.")
+	),
+	responses(
+		(status = 200, description = "Returns the expiry payout of the VTXO", body = bark_json::primitives::ExpiryPayoutInfo),
+		(status = 400, description = "Invalid VTXO id", body = error::BadRequestError),
+		(status = 404, description = "VTXO or expiry payout not found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns the expiry payout that an Ark server in expiry payout mode decided \
+		for a VTXO: its state, the VTXO amount, the payout fee, the payout amount and the \
+		payout address of the wallet. The server reports the payout; confirm it on-chain \
+		before you count it as received.",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn get_vtxo_expiry_payout(
+	State(state): State<Arc<ServerState>>,
+	Path(id): Path<String>,
+) -> HandlerResult<Json<bark_json::primitives::ExpiryPayoutInfo>> {
+	let wallet = state.require_wallet()?;
+	let vtxo_id = VtxoId::from_str(&id).badarg("Invalid VTXO id")?;
+	wallet.get_vtxo_by_id(vtxo_id).await
+		.not_found([vtxo_id], "VTXO not found")?;
+	let payout = wallet.expiry_payout(vtxo_id).await?
+		.not_found([vtxo_id], "No expiry payout for VTXO")?;
+
+	Ok(axum::Json(payout.into()))
 }
 
 #[utoipa::path(

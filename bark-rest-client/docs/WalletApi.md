@@ -13,6 +13,7 @@ Method | HTTP request | Description
 [**debug_info**](WalletApi.md#debug_info) | **GET** /api/v1/wallet/debug-info | Get wallet debug info
 [**get_vtxo**](WalletApi.md#get_vtxo) | **GET** /api/v1/wallet/vtxos/{id} | Get VTXO detail
 [**get_vtxo_encoded**](WalletApi.md#get_vtxo_encoded) | **GET** /api/v1/wallet/vtxos/{id}/encoded | Get encoded VTXO
+[**get_vtxo_expiry_payout**](WalletApi.md#get_vtxo_expiry_payout) | **GET** /api/v1/wallet/vtxos/{id}/expiry-payout | Get the expiry payout of a VTXO
 [**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history (deprecated)
 [**import_vtxo**](WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
 [**mnemonic**](WalletApi.md#mnemonic) | **GET** /api/v1/wallet/mnemonic | Get wallet mnemonic
@@ -279,6 +280,36 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**models::EncodedVtxoResponse**](EncodedVtxoResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## get_vtxo_expiry_payout
+
+> models::ExpiryPayoutInfo get_vtxo_expiry_payout(id)
+Get the expiry payout of a VTXO
+
+Returns the expiry payout that an Ark server in expiry payout mode decided for a VTXO: its state, the VTXO amount, the payout fee, the payout amount and the payout address of the wallet. The server reports the payout; confirm it on-chain before you count it as received.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**id** | **String** | VTXO identifier formatted as `txid:vout`. | [required] |
+
+### Return type
+
+[**models::ExpiryPayoutInfo**](ExpiryPayoutInfo.md)
 
 ### Authorization
 

@@ -701,6 +701,39 @@ impl RoundState {
 	/// Use [StoredRoundState::sync], which stores the state after every
 	/// [SyncStep::Checkpoint].
 	async fn sync_step(&mut self, wallet: &Wallet) -> anyhow::Result<SyncStep> {
+		// A server in expiry payout mode cancels a participation when it
+		// pays out one of its inputs, and accepts no forfeit for it.
+		let awaits_forfeit = match self.flow {
+			RoundFlowState::NonInteractivePending { .. } => true,
+			RoundFlowState::Finished { .. } => !self.done,
+			_ => false,
+		};
+		if awaits_forfeit && wallet.has_expiry_payout_input(&self.participation).await? {
+			// A released participation already forfeited its inputs to this
+			// round. The wallet must still recover its output after a restart,
+			// even if a later expiry decision marked an old input paid out.
+			let released = if let Some(unlock_hash) = self.unlock_hash() {
+				let (mut srv, _) = wallet.require_server().await?;
+				let request = protos::RoundParticipationStatusRequest {
+					unlock_hash: unlock_hash.to_byte_array().to_vec(),
+					attestation: RoundParticipationStatusAttestation::new(
+						unlock_hash, &wallet.mailbox_keypair(),
+					).serialize(),
+				};
+				match srv.client.round_participation_status(request).await {
+					Ok(resp) => resp.into_inner().status == protos::RoundParticipationStatus::RoundPartReleased as i32,
+					Err(e) if e.code() == tonic::Code::NotFound => false,
+					Err(e) => return Err(e.into()),
+				}
+			} else {
+				false
+			};
+			if !released {
+				info!("Server pays out an input of this round at its expiry, canceling the round");
+				self.flow = RoundFlowState::Canceled;
+			}
+		}
+
 		match self.flow {
 			RoundFlowState::Finished { ref funding_tx, .. } if self.done => {
 				Ok(SyncStep::Done(RoundStatus::Confirmed {

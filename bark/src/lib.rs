@@ -1510,9 +1510,6 @@ impl Wallet {
 			round_secret_nonces: RoundSecretNonces::new(),
 			finished_recovery: parking_lot::Mutex::new(None),
 		})};
-		if ret.inner.config.require_expiry_payouts {
-			ret.require_server().await?;
-		}
 
 		ret.inner.exit.load().await
 			.context("error loading exit system after opening wallet")?;
@@ -2170,6 +2167,11 @@ impl Wallet {
 					}
 					warn!("Maintenance refresh rejected {} unusable input(s) ({:?}); \
 						retrying without them", rejected.len(), rejected);
+					// A VTXO refused because it is decided for an expiry payout
+					// stays due for refresh until the wallet marks it spent.
+					if let Err(e) = self.check_expiry_payout(&rejected).await {
+						warn!("Error checking rejected VTXOs for an expiry payout: {:#}", e);
+					}
 					excluded.extend(rejected);
 				},
 			}
@@ -2284,6 +2286,9 @@ impl Wallet {
 				}
 			}
 		);
+
+		// The tasks above can run past the expiry of a VTXO they hold.
+		self.sync_expiry_payouts_if_connected().await;
 	}
 
 	/// Sync the status of emergency exits
@@ -2655,7 +2660,7 @@ impl Wallet {
 		if let Some(info) = self.ark_info().await? {
 			selection = selection.max_exit_depth(info.max_vtxo_exit_depth);
 		}
-		Ok(selection)
+		self.skip_expired_inputs(selection).await
 	}
 
 	/// Select any spendable VTXOs to cover the provided amount.

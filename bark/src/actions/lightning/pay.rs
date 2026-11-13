@@ -209,6 +209,9 @@ impl WalletAction for LightningSend {
 			},
 			Progress::RevocableHtlcs { htlcs, revocation } |
 			Progress::RevocationStuck { htlcs, revocation } => {
+				if wallet.finish_paid_out_lightning_send(htlcs).await.retry()? {
+					return Ok(Advance::Done);
+				}
 				revoke_lightning_send_htlcs(wallet, &self, htlcs, revocation).await?;
 				return Ok(Advance::Done);
 			},
@@ -516,9 +519,17 @@ async fn request_lightning_send_htlcs(
 		.context("failed to hydrate lightning-send input vtxos").retry()?;
 
 	// Ensure inputs are fully registered server-side before the cosign.
-	wallet.register_vtxo_transactions_with_server(&full_inputs).await
-		.context("failed to register lightning-send input vtxo transactions with server")
-		.retry()?;
+	if let Err(e) = wallet.register_vtxo_transactions_with_server(&full_inputs).await {
+		if !is_decided_for_payout(&e) {
+			return Err(AdvanceError::Retry(e.context(
+				"failed to register lightning-send input vtxo transactions with server",
+			)));
+		}
+		// A previous co-sign may have committed while its reply was lost.
+		// Let the idempotent co-sign distinguish that replay from a new spend
+		// of an input already decided for payout.
+		info!("Lightning-send input registration was refused by a payout decision; reconciling co-sign");
+	}
 
 	let mut input_keypairs = Vec::with_capacity(full_inputs.len());
 	for input in full_inputs.iter() {
@@ -615,6 +626,14 @@ async fn request_lightning_send_htlcs(
 		vtxo_ids,
 		mailbox_id: wallet.mailbox_identifier(),
 		movement_id,
+	})
+}
+
+fn is_decided_for_payout(error: &anyhow::Error) -> bool {
+	error.chain().filter_map(|cause| cause.downcast_ref::<tonic::Status>()).any(|status| {
+		status.code() == tonic::Code::InvalidArgument
+			&& status.metadata().get("expiry-payout-reason")
+				.and_then(|value| value.to_str().ok()) == Some("decided_for_payout")
 	})
 }
 

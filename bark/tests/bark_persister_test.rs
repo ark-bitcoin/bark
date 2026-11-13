@@ -34,7 +34,7 @@ use bark::persist::models::{
 	PaidInvoice, StoredExit, StoredRoundState, Unlocked, RoundStateId, SerdeRoundState,
 };
 use bark::round::RoundState;
-use bark::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
+use bark::vtxo::{ExpiryPayoutState, VtxoLockHolder, VtxoState, VtxoStateKind};
 
 
 struct Dummy;
@@ -85,6 +85,7 @@ impl BarkPersister for Dummy {
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
 			registered: false,
+			expiry_payout_state: None,
 		}))
 	}
 
@@ -95,6 +96,7 @@ impl BarkPersister for Dummy {
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
 			registered: false,
+			expiry_payout_state: None,
 		}]))
 	}
 
@@ -107,6 +109,7 @@ impl BarkPersister for Dummy {
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
 			registered: false,
+			expiry_payout_state: None,
 		}]))
 	}
 
@@ -284,7 +287,23 @@ impl BarkPersister for Dummy {
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
 			registered: false,
+			expiry_payout_state: None,
 		}]).pop().unwrap())
+	}
+
+	async fn set_vtxo_expiry_payout_state(
+		&self,
+		_vtxo_id: VtxoId,
+		_payout_state: ExpiryPayoutState,
+	) -> anyhow::Result<WalletVtxo> {
+		Ok(WalletVtxo {
+			vtxo: Vtxo::deserialize(&[])?,
+			state: VtxoState::Spent,
+			exit_depth: 0,
+			exit_tx_weight: bitcoin::Weight::ZERO,
+			registered: false,
+			expiry_payout_state: None,
+		})
 	}
 
 	async fn update_vtxo_states_checked(

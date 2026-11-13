@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::{Full, VtxoPolicyKind};
 use bark::movement::MovementId;
-use bark::vtxo::VtxoState;
+use bark::vtxo::{ExpiryPayout, ExpiryPayoutState, VtxoState};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
 /// Reference to a block in the blockchain.
@@ -164,6 +164,66 @@ impl From<Vtxo<Full>> for VtxoInfo {
 	}
 }
 
+/// The state of the expiry payout of a VTXO, as an Ark server in expiry
+/// payout mode reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+#[serde(rename_all = "kebab-case")]
+pub enum ExpiryPayoutStateInfo {
+	/// The payout transaction is less than six blocks deep.
+	Pending,
+	/// The payout transaction is at least six blocks deep.
+	Paid,
+	/// The payout fee is not less than the VTXO amount, so the server pays
+	/// nothing.
+	Forfeited,
+}
+
+impl From<ExpiryPayoutState> for ExpiryPayoutStateInfo {
+	fn from(state: ExpiryPayoutState) -> Self {
+		match state {
+			ExpiryPayoutState::Pending => Self::Pending,
+			ExpiryPayoutState::Paid => Self::Paid,
+			ExpiryPayoutState::Forfeited => Self::Forfeited,
+		}
+	}
+}
+
+/// The expiry payout of a VTXO, as an Ark server in expiry payout mode
+/// reports it. Confirm the payout on-chain before you count it as received.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct ExpiryPayoutInfo {
+	pub state: ExpiryPayoutStateInfo,
+	/// The amount of the VTXO in sats.
+	#[serde(rename = "gross_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub gross: Amount,
+	/// The payout fee in sats.
+	#[serde(rename = "fee_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub fee: Amount,
+	/// The amount paid on-chain in sats, zero for a forfeited VTXO.
+	#[serde(rename = "payout_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub payout: Amount,
+	/// The payout address of the wallet.
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub address: bitcoin::Address<bitcoin::address::NetworkUnchecked>,
+}
+
+impl From<ExpiryPayout> for ExpiryPayoutInfo {
+	fn from(payout: ExpiryPayout) -> Self {
+		ExpiryPayoutInfo {
+			state: payout.status.into(),
+			gross: payout.gross,
+			fee: payout.fee,
+			payout: payout.payout,
+			address: payout.address.into_unchecked(),
+		}
+	}
+}
+
 /// A VTXO together with its current wallet state.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
@@ -173,6 +233,10 @@ pub struct WalletVtxoInfo {
 	pub vtxo: VtxoInfo,
 	/// The current state of this VTXO in the wallet.
 	pub state: VtxoStateInfo,
+	/// The state of the expiry payout of this VTXO, if the Ark server
+	/// decided one. `GET /wallet/vtxos/{id}/expiry-payout` returns the amounts.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub expiry_payout: Option<ExpiryPayoutStateInfo>,
 }
 
 impl<'a> From<&'a bark::WalletVtxo> for WalletVtxoInfo {
@@ -190,6 +254,7 @@ impl<'a> From<&'a bark::WalletVtxo> for WalletVtxoInfo {
 				exit_depth: Some(v.exit_depth),
 			},
 			state: VtxoStateInfo::from(&v.state),
+			expiry_payout: v.expiry_payout_state.map(Into::into),
 		}
 	}
 }

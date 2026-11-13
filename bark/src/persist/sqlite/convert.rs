@@ -107,8 +107,10 @@ pub (crate) fn row_to_wallet_vtxo(row: &Row<'_>) -> anyhow::Result<WalletVtxo> {
 	let exit_depth = row.get::<_, i64>("exit_depth")? as u16;
 	let exit_tx_weight = Weight::from_wu(row.get::<_, i64>("exit_tx_weight")? as u64);
 	let registered = row.get::<_, bool>("registered")?;
+	let expiry_payout_state = row.get::<_, Option<String>>("expiry_payout_state")?
+		.map(|state| state.parse()).transpose()?;
 
-	Ok(WalletVtxo { vtxo, state, exit_depth, exit_tx_weight, registered })
+	Ok(WalletVtxo { vtxo, state, exit_depth, exit_tx_weight, registered, expiry_payout_state })
 }
 
 pub (crate) fn rows_to_wallet_vtxos(mut rows: Rows<'_>) -> anyhow::Result<Vec<WalletVtxo>> {

@@ -388,6 +388,7 @@ mod test {
 			exit_depth: 0,
 			exit_tx_weight: Weight::ZERO,
 			registered: false,
+			expiry_payout_state: None,
 		}
 	}
 

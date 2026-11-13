@@ -31,6 +31,7 @@ use ark::Vtxo;
 use ark::vtxo::{Bare, Full, VtxoRef};
 
 use crate::actions::WalletActionId;
+use crate::expiry_payout::ExpiryPayoutState;
 use crate::movement::MovementId;
 
 /// What kind of entity holds a [VtxoState::Locked] reservation.
@@ -208,6 +209,11 @@ pub struct WalletVtxo {
 	/// migration can reset it to re-upload every VTXO.
 	#[serde(default)]
 	pub registered: bool,
+
+	/// The expiry payout state that a server in expiry payout mode last
+	/// reported for this VTXO. The VTXO stays spent if a reorg changes it.
+	#[serde(default)]
+	pub expiry_payout_state: Option<ExpiryPayoutState>,
 }
 
 impl VtxoRef for WalletVtxo {

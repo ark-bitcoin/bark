@@ -28,7 +28,7 @@ use crate::exit::{ExitState, ExitTxOrigin, ExitVtxo};
 use crate::movement::MovementId;
 use crate::lock_manager::LockGuard;
 use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState};
-use crate::vtxo::VtxoState;
+use crate::vtxo::{ExpiryPayoutState, VtxoState};
 
 /// VTXO with state history for persistence.
 ///
@@ -48,6 +48,9 @@ pub struct SerdeVtxo {
 	/// records stored before this field existed, so they get caught up.
 	#[serde(default)]
 	pub registered: bool,
+	/// See [WalletVtxo::expiry_payout_state].
+	#[serde(default)]
+	pub expiry_payout_state: Option<ExpiryPayoutState>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,7 +64,7 @@ impl SerdeVtxo {
 
 	pub fn to_wallet_vtxo(&self) -> Result<WalletVtxo, MissingStateError> {
 		let state = self.current_state().cloned().ok_or(MissingStateError)?;
-		Ok(wallet_vtxo_from_full(&self.vtxo, state, self.registered))
+		Ok(wallet_vtxo_from_full(&self.vtxo, state, self.registered, self.expiry_payout_state))
 	}
 }
 
@@ -78,6 +81,7 @@ pub(crate) fn wallet_vtxo_from_full(
 	vtxo: &Vtxo<Full>,
 	state: VtxoState,
 	registered: bool,
+	expiry_payout_state: Option<ExpiryPayoutState>,
 ) -> WalletVtxo {
 	WalletVtxo {
 		vtxo: vtxo.to_bare(),
@@ -85,6 +89,7 @@ pub(crate) fn wallet_vtxo_from_full(
 		exit_depth: vtxo.exit_depth(),
 		exit_tx_weight: vtxo.transactions().map(|t| t.tx.weight()).sum(),
 		registered,
+		expiry_payout_state,
 	}
 }
 
