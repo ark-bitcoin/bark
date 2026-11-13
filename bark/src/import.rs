@@ -159,7 +159,7 @@ impl Wallet {
 		}
 
 		let id = vtxo.id();
-		let spend_state = self.fetch_vtxo_spend_state(id, keypair).await?;
+		let spend_state = self.fetch_own_vtxo_spend_state(id, keypair).await?;
 		let adoption = ServerStatusAdoption::from_spend_state(spend_state)
 			.with_context(|| format!("cannot decide the state of vtxo {id}"))?;
 		Ok(match adoption {

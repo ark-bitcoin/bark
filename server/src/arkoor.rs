@@ -14,6 +14,7 @@ use ark::arkoor::package::{
 use crate::database::htlc_vtxo::{self, HtlcResolution};
 use crate::database::ln::LightningHtlcSubscription;
 use crate::database::tree::VtxoTreeUpdate;
+use crate::owner_mailbox::DestinationBindings;
 use crate::error::ContextExt;
 use crate::{check_max_amount, Server};
 
@@ -118,6 +119,7 @@ impl Server {
 	pub async fn cosign_oor_with_builder(
 		&self,
 		builder: ArkoorPackageBuilder<ServerCanCosign>,
+		destinations: &DestinationBindings,
 		paid_receive: Option<&LightningHtlcSubscription>,
 	) -> anyhow::Result<(ArkoorPackageBuilder<ServerSigned>, u64)> {
 		let vtxo_guard = self.vtxos_in_flux.try_lock(builder.input_ids()).map_err(|e| {
@@ -139,13 +141,18 @@ impl Server {
 		// once the sender uploads the signed transaction chain via
 		// register_vtxo_transactions; until then `check_spendable` rejects
 		// them. This replaces the standalone chain-registration guard.
+		let bindings = destinations.bindings_for_package(&builder, self.config.expiry_payouts)?;
 		let update = VtxoTreeUpdate::new()
 			.upsert_unsigned_tx(builder.virtual_transactions())
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
 			.insert_unregistered_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
-			.mark_vtxos_oor_spent(builder.input_spend_info());
+			.mark_vtxos_oor_spent(builder.input_spend_info())
+			.bind_owner_mailboxes(bindings)?;
 		let source_ids = builder.input_ids().collect::<Vec<_>>();
 		let inserted = self.db.write(async |t| {
+			if self.config.expiry_payouts {
+				t.single_owner_mailbox(&source_ids).await?;
+			}
 			if let Some(receive) = paid_receive {
 				// The arkoor settles the receive it pays, together with its
 				// own spend. This runs before the spend is stored, which
@@ -169,6 +176,7 @@ impl Server {
 	pub async fn cosign_oor(
 		&self,
 		request: ArkoorPackageCosignRequest<VtxoId>,
+		destinations: &DestinationBindings,
 		paid_receive: Option<&LightningHtlcSubscription>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
@@ -221,7 +229,9 @@ impl Server {
 			v.check_spendable_for_oor(chain_tip, *spending_txid)?;
 		}
 
-		let (builder, inserted) = self.cosign_oor_with_builder(builder, paid_receive).await?;
+		let (builder, inserted) = self.cosign_oor_with_builder(
+			builder, destinations, paid_receive,
+		).await?;
 
 		slog!(ArkoorCosign, input_ids: input_vtxo_ids,
 			output_ids: builder.build_unsigned_vtxos().into_iter().map(|v| v.id()).collect(),

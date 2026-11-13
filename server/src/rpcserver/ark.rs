@@ -172,6 +172,7 @@ impl rpc::server::ArkService for Server {
 
 		let vtxo_state = self.db.read(async |t| t.get_server_vtxo_by_id(id).await).await
 			.to_status()?;
+		let payouts = self.vtxo_payouts(&[id]).await?;
 
 		let spend_state = vtxo_state.spend_state;
 		let user_vtxo = match vtxo_state.vtxo.try_into_user_vtxo() {
@@ -190,6 +191,7 @@ impl rpc::server::ArkService for Server {
 
 		Ok(tonic::Response::new(protos::GetVtxoStatusResponse {
 			spend_state: spend_state as i32,
+			owner_mailbox: payouts.owner_mailbox(&id),
 		}))
 	}
 
@@ -248,6 +250,7 @@ impl rpc::server::ArkService for Server {
 		let ids = queries.iter().map(|(id, _)| *id).collect::<Vec<_>>();
 		let states = self.db.read(async |t| t.get_existing_server_vtxos_by_id(&ids).await).await
 			.to_status()?;
+		let payouts = self.vtxo_payouts(&ids).await?;
 
 		// An id without a client-visible user vtxo is reported as missing,
 		// not as an error, so one bad id does not cost the client the batch.
@@ -275,6 +278,7 @@ impl rpc::server::ArkService for Server {
 			vtxos.push(protos::VtxoStatus {
 				vtxo_id: id.to_bytes().to_vec(),
 				spend_state: *spend_state as i32,
+				owner_mailbox: payouts.owner_mailbox(&id),
 			});
 		}
 
@@ -334,11 +338,14 @@ impl rpc::server::ArkService for Server {
 		// from, so their status needs no attestation of its own. A VTXO in a
 		// server-internal state is left out, as GetVtxoStatus reports it as
 		// not found.
+		let ids = res.vtxos.iter().map(|v| v.vtxo.id()).collect::<Vec<_>>();
+		let payouts = self.vtxo_payouts(&ids).await?;
 		let vtxos = res.vtxos.into_iter().filter_map(|v| {
 			Some(protos::RecoveredVtxo {
 				spend_state: client_spend_state(v.spend_state)? as i32,
 				vtxo: v.vtxo.serialize(),
 				derivation_index: v.derivation_index,
+				owner_mailbox: payouts.owner_mailbox(&v.vtxo.id()),
 			})
 		}).collect();
 
@@ -468,10 +475,12 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let request = ArkoorPackageCosignRequest::try_from(req.into_inner())
+		let req = req.into_inner();
+		let destinations = self.arkoor_destinations(&req.parts)?;
+		let request = ArkoorPackageCosignRequest::try_from(req)
 			.badarg("invalid cosign request")?;
 
-		let response = self.cosign_oor(request, None).await.to_status()?;
+		let response = self.cosign_oor(request, &destinations, None).await.to_status()?;
 		Ok(tonic::Response::new(response.into()))
 	}
 
@@ -490,10 +499,11 @@ impl rpc::server::ArkService for Server {
 				in order to be able to send Lightning payments.");
 		}
 
+		let destinations = self.arkoor_destinations(&req.parts)?;
 		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
 			.badarg("invalid cosign request")?;
 
-		let resp = self.request_lightning_pay_htlc_cosign(cosign_requests)
+		let resp = self.request_lightning_pay_htlc_cosign(cosign_requests, &destinations)
 			.await.context("error making payment")?;
 
 		Ok(tonic::Response::new(resp.into()))
@@ -551,10 +561,12 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.into_inner())
+		let req = req.into_inner();
+		let destinations = self.arkoor_destinations(&req.parts)?;
+		let cosign_requests = ArkoorPackageCosignRequest::try_from(req)
 			.badarg("invalid cosign request")?;
 
-		let cosign_resp = self.revoke_lightning_pay_htlcs(cosign_requests).await
+		let cosign_resp = self.revoke_lightning_pay_htlcs(cosign_requests, &destinations).await
 			.to_status()?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))
@@ -688,15 +700,17 @@ impl rpc::server::ArkService for Server {
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 
 		let payment_preimage = Preimage::from_bytes(req.payment_preimage)?;
-		let cosign_request = ArkoorPackageCosignRequest::try_from(
-			req.cosign_request.badarg("cosign request missing")?,
-		).badarg("invalid cosign request")?;
+		let raw_cosign = req.cosign_request.badarg("cosign request missing")?;
+		let destinations = self.arkoor_destinations(&raw_cosign.parts)?;
+		let cosign_request = ArkoorPackageCosignRequest::try_from(raw_cosign)
+			.badarg("invalid cosign request")?;
 
 		let cosign_resp = self.claim_lightning_receive(
 			payment_hash,
 			payment_preimage,
 			cosign_request,
 			pver,
+			&destinations,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))
@@ -710,12 +724,13 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
-		let cosign_request = ArkoorPackageCosignRequest::try_from(
-			req.cosign_request.badarg("cosign request missing")?,
-		).badarg("invalid cosign request")?;
+		let raw_cosign = req.cosign_request.badarg("cosign request missing")?;
+		let destinations = self.arkoor_destinations(&raw_cosign.parts)?;
+		let cosign_request = ArkoorPackageCosignRequest::try_from(raw_cosign)
+			.badarg("invalid cosign request")?;
 
 		let response = self.cosign_lightning_receive_arkoor(
-			payment_hash, cosign_request,
+			payment_hash, cosign_request, &destinations,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(response.into()))

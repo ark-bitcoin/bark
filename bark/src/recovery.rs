@@ -529,12 +529,20 @@ impl Wallet {
 		// The server is the authority on whether a vtxo was spent elsewhere,
 		// and recovery has nothing else to go on.
 		let queries = staged.iter().map(|(vtxo, keypair)| (vtxo.id(), keypair)).collect::<Vec<_>>();
-		let (states, answered) = self.fetch_vtxo_spend_states(&queries).await?;
+		let (states, foreign, answered) = self.fetch_own_vtxo_spend_states(&queries).await?;
+		let foreign = foreign.into_iter().collect::<HashSet<_>>();
 
 		// A VTXO whose batch got no answer stays staged, and the attempt doesn't
 		// count against its budget.
 		let mut vtxos = Vec::with_capacity(staged.len());
 		for (vtxo, _) in staged {
+			if foreign.contains(&vtxo.id()) {
+				warn!("Recovery vtxo {} has the owner mailbox of another wallet", vtxo.id());
+				self.inner.db.remove_vtxo(vtxo.id()).await
+					.context("failed to drop foreign recovery VTXO")?;
+				report.push_foreign(&vtxo);
+				continue;
+			}
 			if !answered.contains(&vtxo.id()) {
 				report.push_failed(vtxo.id(), Some(vtxo.amount()));
 				continue;

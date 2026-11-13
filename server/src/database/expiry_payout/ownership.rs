@@ -8,6 +8,7 @@ use bitcoin::OutPoint;
 use bitcoin::secp256k1::PublicKey;
 
 use ark::VtxoId;
+use ark::mailbox::MailboxIdentifier;
 
 use crate::database::Tx;
 
@@ -19,6 +20,21 @@ impl Tx<'_> {
 		self.query("SELECT vtxo_id,mailbox_pk FROM vtxo_owner_mailbox WHERE vtxo_id=ANY($1)", &[&ids]).await?
 			.into_iter().map(|row| Ok((row.get::<_, &str>(0).parse()?,
 				row.get::<_, &str>(1).parse()?))).collect()
+	}
+
+	/// In payout mode, refuse to post VTXOs to a mailbox that is not the
+	/// owner mailbox of each of them.
+	pub(crate) async fn check_owner_mailbox(&self, mailbox: MailboxIdentifier, ids: &[VtxoId]) -> anyhow::Result<()> {
+		if !self.expiry_payouts() {
+			return Ok(());
+		}
+		let owners = self.vtxo_owner_mailboxes(ids).await?;
+		for id in ids {
+			if owners.get(id) != Some(&mailbox.as_pubkey()) {
+				return badarg!("vtxo {} does not belong to the provided mailbox", id);
+			}
+		}
+		Ok(())
 	}
 
 	/// Store the owner mailbox of each new VTXO in `owned`. `bindings` must
@@ -46,6 +62,17 @@ impl Tx<'_> {
 			ensure!(stored.get(id) == bindings.get(id), "owner VTXO {id} has a conflicting mailbox binding");
 		}
 		Ok(())
+	}
+
+	/// The one owner mailbox of the VTXOs `ids`. A spend of VTXOs that
+	/// belong to different owners is refused.
+	pub(crate) async fn single_owner_mailbox(&self, ids: &[VtxoId]) -> anyhow::Result<PublicKey> {
+		let owners = self.vtxo_owner_mailboxes(ids).await?;
+		let first = *ids.first().and_then(|id| owners.get(id)).context("input has no payout mailbox")?;
+		if ids.iter().any(|id| owners.get(id) != Some(&first)) {
+			return badarg!("inputs have mixed payout mailboxes");
+		}
+		Ok(first)
 	}
 
 	/// Bind the owner key and the owner mailbox of a board to its exit

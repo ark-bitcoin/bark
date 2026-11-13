@@ -500,6 +500,8 @@ impl<'t> Tx<'t> {
 			return Ok(None);
 		}
 
+		self.check_owner_mailbox(mailbox_id, &vtxos.iter().map(|vtxo| vtxo.id()).collect::<Vec<_>>()).await?;
+
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.

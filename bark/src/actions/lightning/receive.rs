@@ -691,6 +691,7 @@ async fn prepare_lightning_receive_htlcs(
 struct PreparedClaim {
 	srv: ServerConnection,
 	builder: ArkoorPackageBuilder<UserGeneratedNonces>,
+	package: protos::ArkoorPackageCosignRequest,
 	keypairs: Vec<Keypair>,
 }
 
@@ -731,7 +732,9 @@ async fn prepare_lightning_receive_claim(
 		.generate_user_nonces(&keypairs)
 		.context("arkoor nonce generation for claim failed").abort()?;
 
-	Ok(PreparedClaim { srv, builder, keypairs })
+	let mut package = protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
+	wallet.bind_output_mailboxes(&mut package.parts, recv.claim_destination.as_ref()).await.abort()?;
+	Ok(PreparedClaim { srv, builder, package, keypairs })
 }
 
 /// Claiming -> done, or -> Delivering when the receive has a claim
@@ -750,14 +753,13 @@ async fn claim_lightning_receive_htlcs(
 	htlcs: &Htlcs,
 	claim: PreparedClaim,
 ) -> Result<Option<Delivery>, AdvanceError> {
-	let PreparedClaim { mut srv, builder, keypairs } = claim;
+	let PreparedClaim { mut srv, builder, package, keypairs } = claim;
 
 	info!("Claiming arkoor against payment preimage for {}", recv.payment_hash);
-	let package_cosign_request = protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
 	let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: recv.payment_hash.to_byte_array().to_vec(),
 		payment_preimage: recv.payment_preimage.to_vec(),
-		cosign_request: Some(package_cosign_request),
+		cosign_request: Some(package),
 	}).await.retry_unless_rejected()?.into_inner();
 
 	// The preimage is out, so from here on only retry: the server's
@@ -789,8 +791,7 @@ async fn claim_lightning_receive_htlcs(
 	// A destination owned by this wallet needs no mailbox delivery: the
 	// outputs are already keyed to one of our pubkeys.
 	let external_destination = match recv.claim_destination.as_ref() {
-		Some(destination) => wallet.pubkey_keypair(&destination.policy().user_pubkey())
-			.await.retry()?.is_none(),
+		Some(destination) => !wallet.is_own_address(destination).await.retry()?,
 		None => false,
 	};
 

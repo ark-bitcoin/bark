@@ -333,6 +333,7 @@ impl Wallet {
 				break;
 			}
 		}
+		self.credit_pending_arkoor_receives().await?;
 
 		Ok(())
 	}
@@ -541,6 +542,10 @@ impl Wallet {
 			warn!("Failed to register received arkoor vtxo transactions with server: {:#}", e);
 		}
 
+		let new_vtxos = self.verify_received_arkoor_vtxos(new_vtxos).await?;
+		if new_vtxos.is_empty() {
+			return Ok(true);
+		}
 		self.credit_received_arkoor_vtxos(&new_vtxos).await?;
 		Ok(true)
 	}
