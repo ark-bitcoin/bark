@@ -800,7 +800,9 @@ impl Server {
 	/// Ark address in its route hints, which settles the receive.
 	///
 	/// Afterwards the invoice cannot be paid, as after a payment over
-	/// lightning.
+	/// lightning. A retry of the arkoor that settled the receive is
+	/// co-signed again and changes nothing. Any other request for a receive
+	/// that is not open is refused.
 	#[tracing::instrument(skip(self, request))]
 	pub(crate) async fn cosign_lightning_receive_arkoor(
 		&self,
@@ -820,10 +822,11 @@ impl Server {
 		// A receive can have a claim key without route hints.
 		let claim_pubkey = sub.claim_pubkey.filter(|_| sub.invoice.ark_address().is_some())
 			.badarg("invoice has no Ark address")?;
-		// A retry of the arkoor that settled the receive is co-signed again.
-		if sub.status == LightningHtlcSubscriptionStatus::Created && sub.invoice.is_expired() {
-			return badarg!("invoice is not payable");
-		}
+		let retry = match sub.status {
+			LightningHtlcSubscriptionStatus::Created if !sub.invoice.is_expired() => false,
+			LightningHtlcSubscriptionStatus::Settled => true,
+			_ => return badarg!("invoice is not payable"),
+		};
 
 		let policy = VtxoPolicy::new_pubkey(claim_pubkey);
 		let paid = request.all_outputs()
@@ -834,8 +837,25 @@ impl Server {
 			return badarg!("arkoor pays {} of the {} invoice", paid, sub.amount());
 		}
 
-		let response = self.cosign_oor(request, Some(&sub)).await?;
+		let paid_receive = if retry {
+			let inputs = request.inputs().copied().collect::<Vec<_>>();
+			let settled_by = self.db.read(async |t|
+				t.lightning_receive_settled_by_arkoor(sub.id, &inputs).await
+			).await?;
+			if !settled_by {
+				return badarg!("invoice is not payable");
+			}
+			None
+		} else {
+			Some(&sub)
+		};
 
+		// The co-sign of a new arkoor settles the receive, or it fails.
+		let response = self.cosign_oor(request, paid_receive).await?;
+
+		// The server can stop after the co-sign and before this step, so a
+		// retry also notifies the receiver and cancels the hold invoice.
+		// Both are idempotent.
 		self.lightning_manager.finish_intra_ark_payment(sub).await;
 
 		Ok(response)
