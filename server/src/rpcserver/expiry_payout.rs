@@ -1,5 +1,5 @@
 //! The public RPC of a server in expiry payout mode: the protocol version
-//! gate, and the owner mailbox that the VTXO status reports.
+//! gate, and the owner mailbox and payout that the VTXO status reports.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -8,12 +8,14 @@ use bitcoin::secp256k1::PublicKey;
 use tonic::service::interceptor::InterceptedService;
 
 use ark::VtxoId;
+use ark::attestations::VtxoStatusAttestation;
 use ark::tree::signed::UnlockHash;
-use server_rpc::{self as rpc, RequestExt};
+use server_rpc::{self as rpc, protos, RequestExt};
 
 use crate::Server;
+use crate::database::expiry_payout::payout::{ExpiryPayoutReceipt, ExpiryPayoutState};
 use crate::error::ExpiryPayoutRefusal;
-use crate::rpcserver::ToStatusResult;
+use crate::rpcserver::{StatusContext, ToStatusResult};
 
 /// Refuse a request that carries a protocol version below
 /// [rpc::pver::PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT], with the error that
@@ -30,16 +32,37 @@ fn require_expiry_payout_version(req: tonic::Request<()>) -> Result<tonic::Reque
 	Ok(req)
 }
 
-/// The owner mailbox of VTXOs, as the VTXO status RPCs report it. Empty
-/// when the server is not in payout mode.
+/// The owner mailbox and the expiry payout of VTXOs, as the VTXO status
+/// RPCs report them. Empty when the server is not in payout mode.
 #[derive(Default)]
 pub(crate) struct VtxoPayouts {
 	owners: BTreeMap<VtxoId, PublicKey>,
+	receipts: BTreeMap<VtxoId, ExpiryPayoutReceipt>,
 }
 
 impl VtxoPayouts {
 	pub(crate) fn owner_mailbox(&self, id: &VtxoId) -> Vec<u8> {
 		self.owners.get(id).map(|owner| owner.serialize().to_vec()).unwrap_or_default()
+	}
+
+	pub(crate) fn expiry_payout(&self, id: &VtxoId) -> Option<protos::ExpiryPayout> {
+		self.receipts.get(id).copied().map(Into::into)
+	}
+}
+
+impl From<ExpiryPayoutReceipt> for protos::ExpiryPayout {
+	fn from(receipt: ExpiryPayoutReceipt) -> Self {
+		let state = match receipt.state {
+			ExpiryPayoutState::Pending => protos::ExpiryPayoutState::Pending,
+			ExpiryPayoutState::Paid => protos::ExpiryPayoutState::Paid,
+			ExpiryPayoutState::Forfeited => protos::ExpiryPayoutState::Forfeited,
+		};
+		protos::ExpiryPayout {
+			state: state as i32,
+			gross_sat: receipt.gross.to_sat(),
+			fee_sat: receipt.fee.to_sat(),
+			payout_sat: receipt.payout.to_sat(),
+		}
 	}
 }
 
@@ -50,8 +73,40 @@ impl Server {
 		}
 		self.db.read(async |t| {
 			let owners = t.vtxo_owner_mailboxes(ids).await?;
-			Ok(VtxoPayouts { owners })
+			let receipts = t.expiry_payout_receipts(&owners).await?;
+			Ok(VtxoPayouts { owners, receipts })
 		}).await.to_status()
+	}
+
+	/// The status of a board that was co-signed but never registered. Its
+	/// funding output is paid out under the board's own VTXO id.
+	pub(crate) async fn unregistered_board_status(
+		&self,
+		id: VtxoId,
+		attestation: &VtxoStatusAttestation,
+	) -> Result<Option<protos::VtxoStatus>, tonic::Status> {
+		if !self.config.expiry_payouts {
+			return Ok(None);
+		}
+		let status = self.db.read(async |t| {
+			let Some(board) = t.unregistered_board_status(id).await? else { return Ok(None) };
+			let owners = BTreeMap::from([(board.root, board.mailbox)]);
+			let receipt = t.expiry_payout_receipts(&owners).await?.get(&board.root).copied();
+			Ok(Some((board, receipt)))
+		}).await.to_status()?;
+		let Some((board, receipt)) = status else { return Ok(None) };
+		attestation.verify_key(id, board.user_pubkey).badarg("invalid VTXO status attestation")?;
+		let spend_state = if board.onchain_spent || receipt.is_some() {
+			protos::VtxoSpendState::Spent
+		} else {
+			protos::VtxoSpendState::Unregistered
+		};
+		Ok(Some(protos::VtxoStatus {
+			vtxo_id: id.to_bytes().to_vec(),
+			spend_state: spend_state as i32,
+			owner_mailbox: board.mailbox.serialize().to_vec(),
+			expiry_payout: receipt.map(Into::into),
+		}))
 	}
 
 	/// Refuse the status of a round participation that an expiry payout

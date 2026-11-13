@@ -336,6 +336,13 @@ impl VtxoStatusAttestation {
 		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
 	}
 
+	/// Verify the attestation against the id and the user public key of a
+	/// VTXO that the server does not store, like an unregistered board VTXO.
+	pub fn verify_key(&self, vtxo_id: VtxoId, user_pubkey: PublicKey) -> Result<(), secp256k1::Error> {
+		let msg = Self::compute_message(vtxo_id);
+		SECP.verify_schnorr(&self.signature, &msg, &user_pubkey.x_only_public_key().0)
+	}
+
 	fn compute_message(vtxo_id: VtxoId) -> Message {
 		let mut engine = sha256::Hash::engine();
 		engine.write_all(Self::CHALLENGE_MESSAGE_PREFIX).unwrap();

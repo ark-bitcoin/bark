@@ -262,6 +262,14 @@ pub struct OwnershipProposal {
 	pub cancellations: Vec<i64>,
 }
 
+/// A board that this server co-signed but that was never registered.
+pub(crate) struct UnregisteredBoardStatus {
+	pub root: VtxoId,
+	pub user_pubkey: PublicKey,
+	pub mailbox: PublicKey,
+	pub onchain_spent: bool,
+}
+
 impl OwnershipProposal {
 	fn pending(fact: &ExpiredTreeVtxo, reason: &'static str) -> Self {
 		Self {
@@ -297,6 +305,28 @@ impl Tx<'_> {
 		}
 		Ok(Some((user_pubkey,
 			row.get::<_, &str>("owner_mailbox").parse()?)))
+	}
+
+	/// The co-signed but unregistered board with the board VTXO id `id`.
+	pub(crate) async fn unregistered_board_status(&self, id: VtxoId)
+		-> anyhow::Result<Option<UnregisteredBoardStatus>>
+	{
+		if id.to_point().vout != ark::board::BOARD_FUNDING_TX_VTXO_VOUT {
+			return Ok(None);
+		}
+		let rows = self.query("SELECT b.funding_outpoint, \
+			(v.onchain_spent_height IS NOT NULL OR v.onchain_spent_txid IS NOT NULL) AS onchain_spent \
+			FROM board_exit b JOIN vtxo v ON v.vtxo_id=b.funding_outpoint \
+			WHERE b.exit_txid=$1", &[&id.to_point().txid.to_string()]).await?;
+		ensure!(rows.len() <= 1, "board exit txid has conflicting funding outputs");
+		let Some(row) = rows.first() else { return Ok(None); };
+		let root: VtxoId = row.get::<_, &str>("funding_outpoint").parse()?;
+		let Some((user_pubkey, mailbox)) = self.unregistered_board_owner(root).await? else {
+			return Ok(None);
+		};
+		Ok(Some(UnregisteredBoardStatus {
+			root, user_pubkey, mailbox, onchain_spent: row.get("onchain_spent"),
+		}))
 	}
 
 	/// The one owner mailbox of the VTXOs `ids`. A spend of VTXOs that

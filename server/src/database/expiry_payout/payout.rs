@@ -1,12 +1,14 @@
-//! Expiry payout transactions: the stored attempts of each payout, and the
-//! locks that keep a watchman claim from spending a decided tree.
+//! Expiry payout transactions: the stored attempts of each payout, the
+//! payout that each VTXO reports, and the locks that keep a watchman claim
+//! from spending a decided tree.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use bitcoin::consensus::{deserialize, serialize};
+use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, FeeRate, ScriptBuf, Transaction, TxOut};
 
-use ark::{ProtocolEncoding, ServerVtxo};
+use ark::{ProtocolEncoding, ServerVtxo, VtxoId};
 use bitcoin_ext::{BlockRef, TxOutExt};
 
 use crate::database::Tx;
@@ -14,6 +16,23 @@ use crate::error::ExpiryPayoutRefusal;
 
 /// The largest payout transaction that is still standard.
 const MAX_PAYOUT_VSIZE: usize = 100_000;
+
+/// The state of the expiry payout of a VTXO, as the wallet sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExpiryPayoutState {
+	Pending,
+	Paid,
+	Forfeited,
+}
+
+/// The expiry payout decided for a VTXO.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ExpiryPayoutReceipt {
+	pub state: ExpiryPayoutState,
+	pub gross: Amount,
+	pub fee: Amount,
+	pub payout: Amount,
+}
 
 /// An expiry payout that is not confirmed and not conflicted.
 pub struct PendingExpiryPayout {
@@ -25,6 +44,47 @@ pub struct PendingExpiryPayout {
 }
 
 impl Tx<'_> {
+	/// The payout decided for each VTXO in `owners`, which maps each VTXO to
+	/// its owner mailbox. A payout to another mailbox, such as an arkoor
+	/// output that the recipient never registered and that goes back to
+	/// its sender, is not reported for the VTXO.
+	pub(crate) async fn expiry_payout_receipts(&self, owners: &BTreeMap<VtxoId, PublicKey>)
+		-> anyhow::Result<BTreeMap<VtxoId, ExpiryPayoutReceipt>>
+	{
+		if !self.expiry_payouts() || owners.is_empty() {
+			return Ok(BTreeMap::new());
+		}
+		let ids = owners.keys().map(ToString::to_string).collect::<Vec<_>>();
+		// The winning decision of each VTXO: a confirmed one, else the latest.
+		let rows = self.query("SELECT DISTINCT ON (c.vtxo_id) c.vtxo_id,c.disposition,c.owner_mailbox, \
+			c.gross_sat,c.fee_sat,c.payout_sat,a.status,v.confirmed_height IS NOT NULL AS exposed, \
+			a.confirmed_height+5 <= (SELECT MAX(height) FROM watchmand_block) AS deep \
+			FROM expiry_payout_vtxo c JOIN v_expiry_payout_state a ON a.id=c.expiry_payout_id \
+			JOIN vtxo v ON v.vtxo_id=c.vtxo_id \
+			WHERE c.vtxo_id=ANY($1) ORDER BY c.vtxo_id,(a.status='confirmed') DESC,c.expiry_payout_id DESC",
+			&[&ids]).await?;
+		let mut receipts = BTreeMap::new();
+		for row in rows {
+			let id: VtxoId = row.get::<_, &str>("vtxo_id").parse()?;
+			let mailbox = row.get::<_, Option<&str>>("owner_mailbox").map(str::parse::<PublicKey>).transpose()?;
+			if row.get::<_, &str>("disposition") != "owner" || mailbox.as_ref() != owners.get(&id) {
+				continue;
+			}
+			// The owner exited the VTXO on-chain, so no payout follows.
+			let status: &str = row.get("status");
+			if status == "conflicted" && row.get::<_, bool>("exposed") { continue; }
+			let amount = |column| -> anyhow::Result<Amount> {
+				Ok(Amount::from_sat(u64::try_from(row.get::<_, i64>(column))?))
+			};
+			let payout = amount("payout_sat")?;
+			let state = if status != "confirmed" || row.get::<_, Option<bool>>("deep") != Some(true) {
+				ExpiryPayoutState::Pending
+			} else if payout > Amount::ZERO { ExpiryPayoutState::Paid } else { ExpiryPayoutState::Forfeited };
+			receipts.insert(id, ExpiryPayoutReceipt { state, gross: amount("gross_sat")?, fee: amount("fee_sat")?, payout });
+		}
+		Ok(receipts)
+	}
+
 	/// The owner outputs of an expiry payout: the total of each mailbox `M`,
 	/// paid to `tr(M)`.
 	async fn expiry_owner_outputs(&self, id: i64) -> anyhow::Result<BTreeMap<ScriptBuf, Amount>> {
