@@ -756,6 +756,17 @@ async fn claim_lightning_receive_htlcs(
 	let PreparedClaim { mut srv, builder, package, keypairs } = claim;
 
 	info!("Claiming arkoor against payment preimage for {}", recv.payment_hash);
+	if wallet.expiry_payouts().await {
+		// The server can settle the payment before its reply arrives, so in
+		// payout mode the disclosure is stored before the request leaves: a
+		// payout of the HTLC-recv VTXOs ends the receive only from
+		// PreimageRevealed, never by failing it.
+		let checkpoint = LightningReceive {
+			progress: Progress::PreimageRevealed(htlcs.clone()),
+			..recv.clone()
+		};
+		wallet.inner.db.upsert_wallet_action_checkpoint(&recv.id(), &checkpoint.into()).await.retry()?;
+	}
 	let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: recv.payment_hash.to_byte_array().to_vec(),
 		payment_preimage: recv.payment_preimage.to_vec(),
