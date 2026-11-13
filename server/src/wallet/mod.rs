@@ -209,6 +209,19 @@ impl PersistedWallet {
 		self.wallet.make_signed_p2a_cpfp(tx, fees, &self.signers)
 	}
 
+	/// Sign this wallet's inputs in a PSBT that also contains foreign Ark inputs.
+	/// The Ark inputs are finalized by the watchman signer afterward.
+	pub fn sign_known_inputs(&self, psbt: &mut Psbt) -> anyhow::Result<()> {
+		#[allow(deprecated)]
+		let opts = bdk_wallet::SignOptions {
+			trust_witness_utxo: true,
+			..Default::default()
+		};
+		self.wallet.sign_with_signers(psbt, &[&self.signers], opts)
+			.context("signing watchman fee inputs")?;
+		Ok(())
+	}
+
 	/// Finish the PSBT by signing it and committing it to the wallet.
 	///
 	/// This method does not persist changes to the database.
@@ -266,6 +279,13 @@ impl PersistedWallet {
 			.map(|utxo| utxo.outpoint)
 			.chain(self.locked_outputs.utxos())
 			.collect::<Vec<_>>()
+	}
+
+	/// Exclude untrusted and concurrently locked inputs when a mixed Ark and
+	/// watchman payout transaction is funded through BDK.
+	pub fn payout_unspendable_outputs(&self) -> Vec<OutPoint> {
+		let canon = TrustedCanonicalization::from_wallet(&self.wallet, self.min_trusted_confs);
+		self.unspendable_outputs(&canon)
 	}
 
 	pub fn lock_wallet_utxo(

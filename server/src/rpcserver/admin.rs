@@ -39,6 +39,23 @@ impl rpc::server::WalletAdminService for Server {
 	}
 }
 
+/// The watchman wallet pays the part of an expiry payout fee that the
+/// expired tree does not cover, so the operator must see its funds.
+#[async_trait]
+impl rpc::server::WalletAdminService for crate::watchman::Daemon {
+	#[tracing::instrument(skip(self, _req))]
+	async fn wallet_status(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::WalletStatusResponse>, tonic::Status> {
+		let watchman = self.watchman_wallet().lock().await.status();
+		Ok(tonic::Response::new(protos::WalletStatusResponse {
+			rounds: None,
+			watchman: Some(watchman.into()),
+		}))
+	}
+}
+
 #[async_trait]
 impl rpc::server::RoundAdminService for Server {
 	#[tracing::instrument(skip(self, _req))]
@@ -278,6 +295,7 @@ pub async fn run_watchmand_admin_rpc_server(
 	info!("Starting watchmand admin gRPC service on address {}", addr);
 
 	let routes = tonic::service::Routes::default()
+		.add_service(rpc::server::WalletAdminServiceServer::from_arc(daemon.clone()))
 		.add_service(rpc::server::WatchmanAdminServiceServer::from_arc(daemon.clone()))
 		.add_service(rpc::server::BlocklistAdminServiceServer::from_arc(daemon));
 

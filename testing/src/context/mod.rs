@@ -569,6 +569,7 @@ impl TestContext {
 				progress_grace_period: BlockDelta::new(2),
 				claim_chunksize: 15.try_into().unwrap(),
 				incremental_relay_fee: FeeRate::from_sat_per_kvb_ceil(100),
+				expiry_payout_max_fee_rate: FeeRate::from_sat_per_vb_u32(1000),
 				min_cpfp_amount: Amount::from_sat(10_000),
 			},
 			sweep_address: Some(sweep_address.to_string().parse().expect("invalid sweep address")),
