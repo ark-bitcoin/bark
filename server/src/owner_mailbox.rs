@@ -1,21 +1,25 @@
-//! The owner mailbox of each VTXO that a board or an arkoor creates in
-//! payout mode.
+//! The owner mailbox of each VTXO that a board, an arkoor, a round or the
+//! VTXO pool creates in payout mode.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Context};
-use bitcoin::Txid;
+use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::{Keypair, PublicKey};
 
-use ark::{ProtocolEncoding, ServerVtxo, VtxoId, VtxoPolicy};
+use ark::{ProtocolEncoding, ServerVtxo, Vtxo, VtxoId, VtxoPolicy};
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::arkoor::state::ServerCanCosign;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
+use ark::tree::signed::{CachedSignedVtxoTree, VtxoLeafSpec};
 use ark::vtxo::Full;
 use server_rpc::protos;
 
+use crate::database::SpendState;
+use crate::database::rounds::StoredRoundOutput;
 use crate::database::tree::VtxoTreeUpdate;
 use crate::error::ContextExt;
+use crate::round::UNSPENDABLE;
 use crate::rpcserver::ToStatusResult;
 
 /// The owner mailbox of each output key of one arkoor request. The map
@@ -101,6 +105,85 @@ impl DestinationBindings {
 		}
 		Ok(bindings)
 	}
+}
+
+/// Refuse a requested round output with the key of round padding. The
+/// server records no owner for such an output and pays its value to the
+/// operator at expiry, so it cannot bind the output to the mailbox of the
+/// participation.
+pub(crate) fn refuse_padding_outputs<'a>(
+	policies: impl IntoIterator<Item = &'a VtxoPolicy>,
+) -> anyhow::Result<()> {
+	let padding = VtxoPolicy::new_pubkey(*UNSPENDABLE);
+	if policies.into_iter().any(|policy| *policy == padding) {
+		return badarg!("a round output cannot have the key of round padding");
+	}
+	Ok(())
+}
+
+/// Refuse a stored delegated participation with an output that a round
+/// cannot bind to an owner mailbox. The submission is checked the same way,
+/// but the round checks the stored outputs again: one output that it cannot
+/// bind fails the whole round, and the participation would join each next
+/// round. The round drops a participation that this refuses.
+pub(crate) fn check_stored_round_outputs(outputs: &[StoredRoundOutput], required: bool) -> anyhow::Result<()> {
+	if !required { return Ok(()); }
+	if outputs.iter().any(|output| output.unblinded_mailbox_id.is_none()) {
+		bail!("a round output has no payout mailbox");
+	}
+	refuse_padding_outputs(outputs.iter().map(|output| &output.vtxo_request.policy))
+}
+
+/// The owner mailbox of each output of a round. Each output must match its
+/// leaf spec, and each output that an owner holds must have a mailbox.
+/// Round padding has no owner.
+pub(crate) fn round_owner_bindings(
+	tree: &CachedSignedVtxoTree,
+	specs: &[VtxoLeafSpec],
+	mailboxes: &[Option<MailboxIdentifier>],
+) -> anyhow::Result<Vec<(VtxoId, PublicKey)>> {
+	let outputs = tree.output_vtxos().collect::<Vec<_>>();
+	ensure!(outputs.len() == mailboxes.len() && outputs.len() == specs.len(),
+		"round output/mailbox count differs");
+	let mut ret = Vec::new();
+	for ((vtxo, spec), mailbox) in outputs.iter().zip(specs).zip(mailboxes) {
+		ensure!(vtxo.policy() == &spec.vtxo.policy && vtxo.amount() == spec.vtxo.amount,
+			"round output/mailbox order differs");
+		match mailbox {
+			Some(mailbox) => ret.push((vtxo.id(), mailbox.as_pubkey())),
+			None if vtxo.policy() == &VtxoPolicy::new_pubkey(*UNSPENDABLE) => {},
+			None => bail!("round owner output {} has no payout mailbox", vtxo.id()),
+		}
+	}
+	Ok(ret)
+}
+
+/// The tree update of a pool issuance in payout mode. The cached tree holds
+/// the hArk leaf transactions unsigned, but the finalized pool VTXOs carry
+/// their signatures and unlock preimage. The watchman must be able to
+/// publish the path of a receive grant that a pool VTXO funds, so the
+/// update stores that signed path and the finalized VTXOs.
+pub(crate) fn pool_tree_update(
+	funding_tx: &Transaction,
+	tree: &CachedSignedVtxoTree,
+	vtxos: &[Vtxo<Full>],
+) -> anyhow::Result<VtxoTreeUpdate> {
+	// Pool VTXOs share ancestors, and one insert must not write a txid twice.
+	let mut signed_txs = BTreeMap::new();
+	for vtxo in vtxos {
+		vtxo.validate(funding_tx).context("finalized pool VTXO has an invalid signed path")?;
+		for step in vtxo.transactions() {
+			let txid = step.tx.compute_txid();
+			if let Some(old) = signed_txs.insert(txid, step.tx.clone()) {
+				ensure!(old == step.tx, "finalized pool paths disagree on a shared transaction");
+			}
+		}
+	}
+	Ok(VtxoTreeUpdate::new()
+		.upsert_funding_tx(funding_tx)
+		.upsert_signed_tx(signed_txs.into_values())
+		.insert_oor_spent_vtxos(tree.internal_vtxos())
+		.insert_unspent_vtxos(vtxos.iter().cloned().map(ServerVtxo::from), SpendState::Pool))
 }
 
 impl crate::Server {

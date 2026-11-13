@@ -2,6 +2,7 @@
 //! created.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use anyhow::Context;
 use bitcoin::OutPoint;
@@ -11,6 +12,20 @@ use ark::VtxoId;
 use ark::mailbox::MailboxIdentifier;
 
 use crate::database::Tx;
+
+/// The owner mailboxes of a write differ from the new VTXOs that need one.
+/// The write stores nothing, so its caller can drop it: a round with such
+/// an output fails, and the server keeps running rounds.
+#[derive(Debug)]
+pub struct OwnerBindingMismatch;
+
+impl fmt::Display for OwnerBindingMismatch {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str("mailbox binding set differs from the owner VTXOs")
+	}
+}
+
+impl std::error::Error for OwnerBindingMismatch {}
 
 impl Tx<'_> {
 	/// The owner mailbox recorded for each VTXO when it was created. The
@@ -48,12 +63,14 @@ impl Tx<'_> {
 		let mut ids = Vec::with_capacity(owned.len());
 		let mut mailboxes = Vec::with_capacity(owned.len());
 		for id in owned {
-			let mailbox = bindings.get(id)
+			let mailbox = bindings.get(id).ok_or(OwnerBindingMismatch)
 				.with_context(|| format!("owner VTXO {id} has no registered mailbox"))?;
 			ids.push(id.to_string());
 			mailboxes.push(mailbox.to_string());
 		}
-		ensure!(bindings.len() == owned.len(), "mailbox binding set differs from the owner VTXOs");
+		if bindings.len() != owned.len() {
+			return Err(OwnerBindingMismatch.into());
+		}
 		self.execute("INSERT INTO vtxo_owner_mailbox (vtxo_id, mailbox_pk) \
 			SELECT u.vtxo_id, u.mailbox_pk FROM UNNEST($1::TEXT[], $2::TEXT[]) AS u(vtxo_id, mailbox_pk) \
 			ON CONFLICT (vtxo_id) DO NOTHING", &[&ids, &mailboxes]).await?;

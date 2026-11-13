@@ -20,12 +20,13 @@ use log::{debug, warn};
 use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy};
 use ark::address::VtxoDelivery;
 use ark::mailbox::BlindedMailboxIdentifier;
-use ark::vtxo::Full;
+use ark::vtxo::{Full, VtxoRef};
 use server_rpc::ServerConnection;
 use server_rpc::protos::{self, VtxoSpendState};
 
 use crate::Wallet;
 use crate::mailbox::{MAILBOX_PROCESSING_LOCK_KEY, MAILBOX_PROCESSING_LOCK_TIMEOUT};
+use crate::round::RoundParticipation;
 use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
 
 /// The status of a VTXO from a server in expiry payout mode.
@@ -206,6 +207,38 @@ impl Wallet {
 		Ok((states, foreign, answered))
 	}
 
+	/// Release the round outputs that the server reports bound to this
+	/// wallet's mailbox.
+	///
+	/// Does nothing unless the server is in expiry payout mode.
+	pub async fn sync_expiry_payouts(&self) -> anyhow::Result<()> {
+		let (srv, _) = self.require_server().await?;
+		if !srv.expiry_payouts().await {
+			return Ok(());
+		}
+
+		for vtxo in self.inner.db.get_all_vtxos().await? {
+			if vtxo.state == (VtxoState::Locked { holder: Some(VtxoLockHolder::RoundPayoutCheck) }) {
+				if let Err(e) = self.release_round_output(&vtxo.vtxo).await {
+					warn!("Round output {} stays locked until the server reports its owner \
+						mailbox: {:#}", vtxo.id(), e);
+				}
+			}
+		}
+		Ok(())
+	}
+
+	/// [Wallet::sync_expiry_payouts] as a step of [Wallet::sync], which does
+	/// not connect to the server. An error is only logged.
+	pub(crate) async fn sync_expiry_payouts_if_connected(&self) {
+		if !self.expiry_payouts().await {
+			return;
+		}
+		if let Err(e) = self.sync_expiry_payouts().await {
+			warn!("Error releasing round outputs for expiry payouts: {:#}", e);
+		}
+	}
+
 	/// Check VTXOs received by arkoor with a server in expiry payout mode.
 	///
 	/// Returns the VTXOs that the server reports spendable and bound to this
@@ -281,6 +314,58 @@ impl Wallet {
 		self.credit_received_arkoor_vtxos(&spendable).await
 	}
 
+	/// Check that every output of a round participation has a key of this
+	/// wallet. A server in expiry payout mode records this wallet's mailbox
+	/// as the owner mailbox of every output.
+	pub(crate) async fn check_round_output_keys(
+		&self,
+		participation: &RoundParticipation,
+	) -> anyhow::Result<()> {
+		let (srv, _) = self.require_server().await?;
+		if !srv.expiry_payouts().await {
+			return Ok(());
+		}
+		for output in &participation.outputs {
+			let key = output.policy.user_pubkey();
+			ensure!(self.pubkey_keypair(&key).await?.is_some(),
+				"keypair {} not found for requested round output", key);
+		}
+		Ok(())
+	}
+
+	/// Store the outputs of a finished round. With a server in expiry payout
+	/// mode, they stay locked until the server reports them bound to this
+	/// wallet's mailbox, see [Wallet::release_round_outputs].
+	pub(crate) async fn store_round_outputs(&self, outputs: &[Vtxo<Full>]) -> anyhow::Result<()> {
+		if self.expiry_payouts().await {
+			self.store_locked_vtxos(outputs, Some(VtxoLockHolder::RoundPayoutCheck)).await
+		} else {
+			self.store_spendable_vtxos(outputs).await
+		}
+	}
+
+	/// Release the round outputs that the server reports bound to this
+	/// wallet's mailbox. [Wallet::sync_expiry_payouts] tries again for the
+	/// others.
+	pub(crate) async fn release_round_outputs(&self, outputs: &[Vtxo<Full>]) {
+		if !self.expiry_payouts().await {
+			return;
+		}
+		for output in outputs {
+			if let Err(e) = self.release_round_output(output).await {
+				warn!("Round output {} stays locked until the server reports its owner \
+					mailbox: {:#}", output.id(), e);
+			}
+		}
+	}
+
+	async fn release_round_output(&self, output: impl VtxoRef + Copy) -> anyhow::Result<()> {
+		let key = self.get_vtxo_key(output).await?;
+		let status = self.fetch_own_vtxo_status(output.vtxo_id(), &key).await?;
+		ensure!(status.state == VtxoSpendState::Spendable,
+			"the server does not report the round output spendable");
+		self.unlock_vtxos([output.vtxo_id()], Some(VtxoLockHolder::RoundPayoutCheck)).await
+	}
 }
 
 /// The blinded mailbox of an address with exactly one server mailbox delivery.

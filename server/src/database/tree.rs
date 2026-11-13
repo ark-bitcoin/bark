@@ -6,8 +6,10 @@ use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use tracing::debug;
 
-use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId};
+use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
 use ark::vtxo::{Bare, Full};
+
+use crate::round::UNSPENDABLE;
 
 use super::model::{SpendState, VirtualTransaction};
 use super::Tx;
@@ -135,7 +137,7 @@ impl VtxoInserts {
 	}
 
 	/// The inserted VTXOs that an owner holds, each of which needs an owner
-	/// mailbox: the user VTXOs not spent at insertion.
+	/// mailbox: the user VTXOs not spent at insertion, except round padding.
 	fn owned_vtxo_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
 		let mut ret = Vec::new();
 		for ((id, state), policy) in self.vtxo_ids.iter().zip(&self.spend_states).zip(&self.policies) {
@@ -147,7 +149,9 @@ impl VtxoInserts {
 					| SpendState::OffboardForfeit | SpendState::OffboardConnector => false,
 			};
 			let policy = ServerVtxoPolicy::deserialize(policy)?;
-			if held && policy.user_pubkey().is_some() {
+			let padding = state == SpendState::Unclaimed
+				&& policy == ServerVtxoPolicy::User(VtxoPolicy::new_pubkey(*UNSPENDABLE));
+			if held && !padding && policy.user_pubkey().is_some() {
 				ret.push(id.parse()?);
 			}
 		}

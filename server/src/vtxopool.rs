@@ -27,6 +27,7 @@ use crate::database::tree::VtxoTreeUpdate;
 use crate::wallet::BdkWalletExt;
 use crate::{database, telemetry, Server, SECP};
 use crate::nursery::NurseryTxKind;
+use crate::owner_mailbox::pool_tree_update;
 
 
 /// Type used to express a vtxo issuance target for the [VtxoPool]
@@ -722,6 +723,7 @@ impl Process {
 				tree.output_vtxos().map(ServerVtxo::from),
 				database::SpendState::Pool,
 			);
+		let update = if self.srv.config.expiry_payouts { pool_tree_update(&tx, &tree, &vtxos)? } else { update };
 		self.srv.db.write(async |t| {
 			t.execute_vtxo_tree_update(update).await?;
 			t.upsert_nursery_tx(&tx, NurseryTxKind::VtxoPool, confirm_target).await

@@ -825,6 +825,15 @@ impl rpc::server::ArkService for Server {
 		if req.vtxo_requests.is_empty() {
 			macros::badarg!("invalid request: no outputs");
 		}
+
+		// Only payout mode reads this field for interactive rounds. It binds
+		// the outputs to the mailbox.
+		let unblinded_mailbox_id = req.unblinded_mailbox_id.as_ref()
+			.filter(|_| self.config.expiry_payouts)
+			.map(|b| MailboxIdentifier::deserialize(b)).transpose().badarg("invalid unblinded mailbox id")?;
+		if self.config.expiry_payouts && unblinded_mailbox_id.is_none() {
+			macros::badarg!("interactive round participations need an unblinded mailbox id");
+		}
 		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
 		for r in req.vtxo_requests.clone() {
 			// Make sure users provided right number of nonces.
@@ -832,6 +841,10 @@ impl rpc::server::ArkService for Server {
 				macros::badarg!("need exactly {} public nonces", self.config.nb_round_nonces);
 			}
 			vtxo_requests.push(r.try_into().badarg("invalid signed vtxo request")?);
+		}
+		if self.config.expiry_payouts {
+			let policies = vtxo_requests.iter().map(|r: &ark::SignedVtxoRequest| &r.vtxo.policy);
+			crate::owner_mailbox::refuse_padding_outputs(policies).to_status()?;
 		}
 
 		#[allow(deprecated)]
@@ -850,6 +863,7 @@ impl rpc::server::ArkService for Server {
 			challenge,
 			inputs: inputs.into_iter().map(|i| i.vtxo_id).collect(),
 			vtxo_requests,
+			unblinded_mailbox_id,
 			unlock_preimage: Secret::new(unlock_preimage),
 			user_agent: crate::telemetry::current_user_agent(),
 		};
@@ -923,7 +937,8 @@ impl rpc::server::ArkService for Server {
 			.map(|b| MailboxIdentifier::deserialize(&b[..]))
 			.transpose().badarg("invalid unblinded mailbox id")?;
 		// its status could never be queried, so the wallet couldn't progress it
-		if self.config.round_status_attestation_required && unblinded_mailbox_id.is_none() {
+		if (self.config.round_status_attestation_required || self.config.expiry_payouts)
+			&& unblinded_mailbox_id.is_none() {
 			macros::badarg!("delegated round participations need an unblinded mailbox id");
 		}
 
@@ -933,6 +948,10 @@ impl rpc::server::ArkService for Server {
 				vtxo_request: r.try_into().badarg("invalid vtxo request")?,
 				unblinded_mailbox_id,
 			});
+		}
+		if self.config.expiry_payouts {
+			let policies = outputs.iter().map(|o| &o.vtxo_request.policy);
+			crate::owner_mailbox::refuse_padding_outputs(policies).to_status()?;
 		}
 
 		let unlock_hash = self.register_delegated_round_participation(

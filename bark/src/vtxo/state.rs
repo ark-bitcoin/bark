@@ -54,6 +54,10 @@ pub enum VtxoLockHolder {
 	/// A VTXO received by arkoor that a server in expiry payout mode does
 	/// not report spendable yet. The wallet credits it once the server does.
 	MailboxReceive,
+	/// A round output that a server in expiry payout mode does not report
+	/// bound to this wallet's mailbox yet. The wallet releases it once the
+	/// server does.
+	RoundPayoutCheck,
 }
 
 impl From<MovementId> for VtxoLockHolder {

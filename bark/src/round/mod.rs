@@ -1827,7 +1827,7 @@ async fn persist_round_success(
 	let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 	let spent_result = wallet.inner.db.steal_lock_to_spent(&input_ids).await
 		.context("failed to mark input VTXOs as spent");
-	let store_result = wallet.store_spendable_vtxos(new_vtxos).await
+	let store_result = wallet.store_round_outputs(new_vtxos).await
 		.context("failed to store new VTXOs");
 	let update_result = if let Some(mid) = movement_id {
 		wallet.inner.movements.finish_movement_with_update(
@@ -1844,6 +1844,7 @@ async fn persist_round_success(
 	store_result?;
 	spent_result?;
 	update_result?;
+	wallet.release_round_outputs(new_vtxos).await;
 
 	Ok(())
 }
@@ -2018,6 +2019,7 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
+		self.check_round_output_keys(&participation).await?;
 		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 
 		// The inputs are only locked at attempt start; here they must just
@@ -2068,6 +2070,7 @@ impl Wallet {
 		movement_kind: Option<RoundMovement>,
 		scheduled_height: Option<BlockHeight>,
 	) -> anyhow::Result<StoredRoundState<Unlocked>> {
+		self.check_round_output_keys(&participation).await?;
 		// The inputs are only locked once an attempt starts, so like an
 		// interactive registration this one just needs them spendable.
 		// Pending participations over the same inputs stand: the server drops
