@@ -77,7 +77,7 @@ async fn assert_vtxopool_consistency(srv: &Captaind) {
 }
 
 /// The HTLC-send vtxos `client` holds for `payment_hash`.
-async fn htlc_send_vtxo_ids(
+pub(crate) async fn htlc_send_vtxo_ids(
 	client: &Wallet,
 	payment_hash: ark::lightning::PaymentHash,
 ) -> Vec<ark::VtxoId> {
@@ -3394,7 +3394,7 @@ async fn refuse_send_with_unlock_hash_as_payment_hash() {
 }
 
 /// The `status` of the `lightning_htlc_subscription` row for `payment_hash`.
-async fn lightning_subscription_status(
+pub(crate) async fn lightning_subscription_status(
 	db: &Db,
 	payment_hash: ark::lightning::PaymentHash,
 ) -> Option<String> {
@@ -3446,7 +3446,7 @@ async fn cln_hold_status(
 }
 
 /// Whether a settlement (preimage) for `payment_hash` was recorded.
-async fn is_preimage_recorded(
+pub(crate) async fn is_preimage_recorded(
 	db: &Db,
 	payment_hash: ark::lightning::PaymentHash,
 ) -> bool {
@@ -3459,7 +3459,7 @@ async fn is_preimage_recorded(
 }
 
 /// Waits until the server's htlc subscription for `payment_hash` reaches `status`.
-async fn wait_for_subscription_status(
+pub(crate) async fn wait_for_subscription_status(
 	db: &Db,
 	payment_hash: ark::lightning::PaymentHash,
 	status: &str,
@@ -3591,7 +3591,7 @@ async fn successful_xpay_records_the_preimage() {
 	}.wait(wait_timeout()).await;
 }
 
-async fn wait_for_hold_invoice_accepted(
+pub(crate) async fn wait_for_hold_invoice_accepted(
 	hold_client: &mut hold::hold_client::HoldClient<tonic::transport::Channel>,
 	payment_hash: ark::lightning::PaymentHash,
 ) {
