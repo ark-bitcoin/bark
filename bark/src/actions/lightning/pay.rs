@@ -182,7 +182,7 @@ impl WalletAction for LightningSend {
 				Progress::PaymentInitiated(htlcs.clone())
 			},
 			Progress::PaymentInitiated(htlcs) => {
-				match check_lightning_send_payment_status(wallet, &self).await.retry()? {
+				match check_lightning_send_payment_status(wallet, &self, htlcs).await.retry()? {
 					PaymentStatus::Success(preimage) => {
 						settle_lightning_send_payment(wallet, &self, htlcs, preimage).await?;
 						return Ok(Advance::Done);
@@ -652,6 +652,7 @@ async fn initiate_lightning_send_payment(
 async fn check_lightning_send_payment_status(
 	wallet: &Wallet,
 	send: &LightningSend,
+	htlcs: &Htlcs,
 ) -> anyhow::Result<PaymentStatus> {
 	let (mut srv, _) = wallet.require_server().await?;
 	let payment_hash = send.invoice.payment_hash();
@@ -660,10 +661,14 @@ async fn check_lightning_send_payment_status(
 	let expired = tip > send.htlc_expiry;
 	let pending_status = if expired { PaymentStatus::Failed } else { PaymentStatus::Pending };
 
-	let req = protos::CheckLightningPaymentRequest {
+	let mut req = protos::CheckLightningPaymentRequest {
 		hash: payment_hash.to_vec(),
 		wait: false,
+		..Default::default()
 	};
+	if srv.expiry_payouts().await {
+		req.htlc_vtxo_ids = htlcs.vtxo_ids.iter().map(|id| id.to_bytes().to_vec()).collect();
+	}
 	// NB: don't early-return on transport errors; collapse to
 	// expired-or-pending so the executor can revoke when appropriate.
 	let response = srv.client.check_lightning_payment(req).await

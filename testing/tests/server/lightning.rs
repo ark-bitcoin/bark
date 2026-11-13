@@ -563,6 +563,7 @@ async fn intra_ark_granted_receive_canceled_after_htlc_recv_expiry() {
 	let status = srv.get_public_rpc().await.check_lightning_payment(protos::CheckLightningPaymentRequest {
 		hash: payment_hash.to_vec(),
 		wait: true,
+		htlc_vtxo_ids: Vec::new(),
 	}).wait_millis(30_000).await.expect("check_lightning_payment failed").into_inner();
 	assert!(
 		matches!(status.payment_status, Some(protos::lightning_payment_status::PaymentStatus::Failed(_))),
