@@ -37,3 +37,16 @@ pub const PROTOCOL_VERSION_BOARD_FUNDING_TX: u64 = 4;
 /// scripts, so the server rejects Lightning sends and receives and round
 /// participations from clients below this version with an upgrade error.
 pub const PROTOCOL_VERSION_HASHLOCK_CLAUSES: u64 = 5;
+
+/// Scuttle version that adds expiry payouts.
+///
+/// It includes every upstream version up to [PROTOCOL_VERSION_HASHLOCK_CLAUSES].
+/// It adds the owner mailbox on board, arkoor, round and Lightning requests
+/// and the expiry payout status of a VTXO. A server in expiry payout mode
+/// accepts only Scuttle versions.
+///
+/// Scuttle versions start at 1001, above every upstream version, so a check
+/// of the form `pver < PROTOCOL_VERSION_X` treats a Scuttle version as a
+/// version that has every upstream feature it includes. Each Scuttle version
+/// names the upstream version it includes.
+pub const PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT: u64 = 1001;

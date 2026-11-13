@@ -789,6 +789,18 @@ ALTER SEQUENCE public.ephemeral_tweak_id_seq OWNED BY public.ephemeral_tweak.id;
 
 
 --
+-- Name: expiry_payout_schema_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.expiry_payout_schema_history (
+    version integer NOT NULL,
+    name character varying(255),
+    applied_on character varying(255),
+    checksum character varying(255)
+);
+
+
+--
 -- Name: htlc_settlement; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1454,6 +1466,17 @@ CREATE SEQUENCE public.round_participation_id_seq
 --
 
 ALTER SEQUENCE public.round_participation_id_seq OWNED BY public.round_participation.id;
+
+
+--
+-- Name: server_mode; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.server_mode (
+    id integer NOT NULL,
+    expiry_payouts boolean NOT NULL,
+    CONSTRAINT server_mode_id_check CHECK ((id = 1))
+);
 
 
 --
@@ -2363,6 +2386,14 @@ ALTER TABLE ONLY public.ephemeral_tweak
 
 
 --
+-- Name: expiry_payout_schema_history expiry_payout_schema_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.expiry_payout_schema_history
+    ADD CONSTRAINT expiry_payout_schema_history_pkey PRIMARY KEY (version);
+
+
+--
 -- Name: htlc_settlement htlc_settlement_payment_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2512,6 +2543,14 @@ ALTER TABLE ONLY public.round_participation
 
 ALTER TABLE ONLY public.round
     ADD CONSTRAINT round_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: server_mode server_mode_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.server_mode
+    ADD CONSTRAINT server_mode_pkey PRIMARY KEY (id);
 
 
 --
