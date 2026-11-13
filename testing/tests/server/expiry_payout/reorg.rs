@@ -1,24 +1,30 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
-use bitcoin::Txid;
+use bitcoin::{Transaction, Txid, TxIn, TxOut, Witness};
 use bitcoin::consensus::encode::serialize_hex;
+use bitcoin::sighash::{Prevouts, SighashCache};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use bitcoin_ext::rpc::{BitcoinRpcExt, RpcApi};
 use serde_json::json;
 
-use ark::{ProtocolEncoding, VtxoId};
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::attestations::VtxoStatusAttestation;
+use ark::lightning::PaymentHash;
+use ark::vtxo::Full;
+use ark::vtxo::policy::signing::VtxoSigner;
 use server::database::{BlockTable, Db, SpendState};
 use server_rpc::protos;
 
-use ark_testing::{sat, Bitcoind, TestContext};
+use ark_testing::{btc, sat, Bitcoind, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
 use ark_testing::util::{poll_interval, FutureExt};
 
 use super::{
-	idle_board, allocation_count, assert_paid, assert_six_deep, current_share, fund_watchman, mine,
-	mine_past, onchain_spend, payout_output, payout_shares, wait_watchman_tip, wait_for_confirmation,
+	idle_board, allocation_count, assert_paid, assert_six_deep, confirm_exit_path, current_share,
+	fund_watchman, grant_closures, htlc_send, mine, mine_past, onchain_spend, outputs_to, payout_output,
+	payout_shares, receive_claim_keypair, send_request, wait_watchman_tip, wait_for_confirmation,
 	wait_for_query_lock, wait_payout, wait_synced,
 };
 
@@ -341,4 +347,148 @@ async fn expiry_payout_reorg_of_an_exit_pays_each_root_once() {
 	assert_paid_once(&db, &payers).await;
 	assert!(core.custom_get_raw_transaction_info(claim, None).unwrap()
 		.is_none_or(|info| info.confirmations.unwrap_or(0) == 0));
+}
+
+/// The grants of a receive are reclaimed by the operator on chain, and a
+/// reorg five blocks deep, before the sender's refund, removes those claims.
+/// The receiver then claims the grants with the preimage. The sender is not
+/// refunded as well.
+#[tokio::test]
+async fn expiry_payout_reorg_of_grant_claims_pays_receiver() {
+	let ctx = TestContext::new("server/expiry_payout_reorg_of_grant_claims_pays_receiver").await;
+	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).bitcoind(ctx.bitcoind_arc())
+		.funded(btc(10)).watchmand().cfg(|cfg| {
+			cfg.expiry_payouts = true;
+			cfg.vtxo_lifetime = BlockDelta::new(24);
+			cfg.vtxopool.vtxo_lifetime = BlockDelta::new(24);
+			cfg.vtxopool.vtxo_pre_expiry = BlockDelta::new(2);
+			cfg.vtxopool.vtxo_targets = vec![server::vtxopool::VtxoTarget { amount: sat(50_000), count: 4 }];
+			cfg.invoice_check_interval = Duration::from_secs(1);
+		}).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+	let start = ctx.bitcoind().get_block_count().await;
+	let recipient = ctx.bark_sdk("recipient", &srv).cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	let invoice = recipient.bolt11_invoice(sat(90_000), None, None).await.unwrap();
+	let hash = PaymentHash::from(&invoice);
+	let receiver_key = receive_claim_keypair(&srv, &recipient, hash).await;
+	let receiver_script = recipient.payout_script();
+	let sender = ctx.bark_sdk("sender", &srv).boarded(sat(100_000))
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	let input = super::full_vtxos(&sender).await.pop().unwrap();
+	let sender_script = sender.payout_script();
+	let (source, key) = htlc_send(&ctx, &srv, &sender, input, hash).await;
+	let mut rpc = srv.get_public_rpc().await;
+	lightning.sync().await;
+	rpc.initiate_lightning_payment(send_request(&srv, &invoice, sat(90_000), &[source.id()], &key).await)
+		.await.unwrap();
+	let deadline = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32) + BlockDelta::new(36);
+	let grants = rpc.prepare_lightning_receive_claim(protos::PrepareLightningReceiveClaimRequest {
+		payment_hash: hash.to_vec(),
+		user_pubkey: receiver_key.public_key().serialize().to_vec(),
+		htlc_recv_expiry: deadline.to_u32(),
+		lightning_receive_anti_dos: None,
+		claim_attestation: Some(ark::attestations::LightningReceiveClaimAttestation::new(
+			hash, deadline, &receiver_key).serialize()),
+	}).await.unwrap().into_inner().htlc_vtxos.iter()
+		.map(|raw| <Vtxo<Full> as ark::ProtocolEncoding>::deserialize(raw).unwrap()).collect::<Vec<_>>();
+	assert_eq!(grants.iter().map(|grant| grant.amount()).sum::<bitcoin::Amount>(), sat(90_000));
+	drop(sender);
+	// Put the grants on chain, where the receiver could claim them.
+	for grant in &grants {
+		confirm_exit_path(&ctx, grant).await;
+	}
+	fund_watchman(&ctx, &srv, sat(100_000)).await;
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let core = ctx.bitcoind().sync_client();
+	let depth = |txid: Txid| core.custom_get_raw_transaction_info(txid, None).unwrap().unwrap()
+		.confirmations.unwrap_or(0);
+
+	// Mine until the operator's claims of the grants are five blocks deep.
+	let reclaims = async {
+		loop {
+			mine(&ctx, &srv, 1).await;
+			assert!(current_share(&db, source.id()).await.is_none_or(|share| share.owner.is_none()),
+				"the sender is refunded before the grant claims are six blocks deep");
+			let Some(closures) = grant_closures(&db, &grants).await else { continue };
+			let reclaims = closures.into_values().collect::<BTreeSet<_>>();
+			for txid in &reclaims {
+				let claim = ctx.bitcoind().await_transaction(*txid).await;
+				assert!(claim.output.iter().all(|output| output.script_pubkey != receiver_script));
+			}
+			if reclaims.iter().all(|txid| depth(*txid) == 5) {
+				break reclaims;
+			}
+		}
+	}.wait_millis(200_000).await;
+	wait_synced(&ctx, &srv, &db).await;
+	assert!(current_share(&db, source.id()).await.is_none_or(|share| share.owner.is_none()));
+
+	// The reorg replays the five blocks without the claims and their children.
+	let old_tip = core.get_block_count().unwrap();
+	let fork = old_tip + 1 - 5;
+	let mut excluded = reclaims.clone();
+	let mut replay = Vec::<Vec<Transaction>>::new();
+	for height in fork..=old_tip {
+		let block = core.get_block(&core.get_block_hash(height).unwrap()).unwrap();
+		let mut kept = Vec::new();
+		for tx in block.txdata.into_iter().skip(1) {
+			if excluded.contains(&tx.compute_txid()) || tx.input.iter().any(|i| excluded.contains(&i.previous_output.txid)) {
+				excluded.insert(tx.compute_txid());
+			} else {
+				kept.push(tx);
+			}
+		}
+		replay.push(kept);
+	}
+	srv.watchmand().stop().await.unwrap();
+	srv.stop().await.unwrap();
+	core.invalidate_block(&core.get_block_hash(fork).unwrap()).unwrap();
+	let miner = ctx.bitcoind().get_new_address().to_string();
+	let generate = |txs: &[Transaction]| {
+		core.call::<serde_json::Value>("generateblock",
+			&[json!(miner), json!(txs.iter().map(serialize_hex).collect::<Vec<_>>())]).unwrap();
+	};
+	for txs in &replay {
+		generate(txs);
+	}
+
+	// The receiver claims every grant with the preimage.
+	let mut claim = Transaction {
+		version: bitcoin::transaction::Version::TWO,
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: Vec::new(),
+		output: vec![TxOut { value: sat(88_000), script_pubkey: receiver_script.clone() }],
+	};
+	let clauses = grants.iter().map(|grant| grant.policy().as_server_htlc_recv().unwrap()
+		.user_reveals_preimage_clause(grant.exit_delta())).collect::<Vec<_>>();
+	for (grant, clause) in grants.iter().zip(&clauses) {
+		claim.input.push(TxIn {
+			previous_output: grant.point(), script_sig: Default::default(),
+			sequence: clause.sequence(), witness: Witness::new(),
+		});
+	}
+	let prevouts = grants.iter().map(Vtxo::txout).collect::<Vec<_>>();
+	for (index, (grant, clause)) in grants.iter().zip(&clauses).enumerate() {
+		claim.input[index].witness = recipient.sign_input_with_clause(grant, &clause.clone().into(), index,
+			&mut SighashCache::new(&claim), &Prevouts::All(&prevouts)).await.unwrap();
+	}
+	for _ in 0..200 {
+		if core.test_mempool_accept(&[&claim]).unwrap()[0].allowed {
+			break;
+		}
+		generate(&[]);
+	}
+	generate(std::slice::from_ref(&claim));
+	assert!(depth(claim.compute_txid()) > 0);
+	srv.start().await.unwrap();
+	srv.watchmand().start().await.unwrap();
+
+	// However long the server runs, the sender is not paid as well.
+	for _ in 0..20 {
+		mine(&ctx, &srv, 1).await;
+	}
+	assert!(current_share(&db, source.id()).await.is_none_or(|share| share.owner.is_none()));
+	assert!(outputs_to(&ctx, &sender_script, start).is_empty());
+	assert_eq!(outputs_to(&ctx, &receiver_script, start), [(bitcoin::OutPoint::new(claim.compute_txid(), 0), sat(88_000))]);
 }

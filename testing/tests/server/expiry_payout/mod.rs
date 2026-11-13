@@ -2,12 +2,14 @@ mod binding;
 mod fees;
 #[cfg(feature = "slow_test")]
 mod large_tree;
+mod lightning_receive;
+mod lightning_send;
 mod payout;
 mod races;
 mod reorg;
 
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use bitcoin::{Amount, BlockHash, Network, OutPoint, ScriptBuf, Transaction, Txid};
 use bitcoin::bip32::{ChildNumber, Xpriv};
@@ -23,9 +25,12 @@ use ark::mailbox::MailboxIdentifier;
 use ark::vtxo::Full;
 use bark::Wallet;
 use server::database::{BlockTable, Db, Tx};
+use server::database::expiry_payout::ownership::{OwnershipDisposition, OwnershipProposal};
 use server_rpc::protos;
 
-use ark_testing::{Captaind, TestContext};
+use ark_testing::{btc, Captaind, TestContext};
+use ark_testing::context::LightningPaymentSetup;
+use ark_testing::lightning::sign_lightning_send_request;
 use ark_testing::util::{poll_interval, FutureExt};
 
 /// The mailbox key the database tests bind their VTXOs to.
@@ -58,6 +63,12 @@ impl Owner {
 	fn mailbox_id(&self) -> MailboxIdentifier {
 		MailboxIdentifier::from_pubkey(self.mailbox.public_key())
 	}
+}
+
+/// A server in payout mode with a Lightning node.
+async fn lightning_payout_server(ctx: &TestContext, lightning: &LightningPaymentSetup) -> Arc<Captaind> {
+	ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10))
+		.cfg(|cfg| cfg.expiry_payouts = true).create().await
 }
 
 /// The blinded id of `mailbox` for an output whose key is `key`.
@@ -131,6 +142,40 @@ async fn htlc_send(
 	let deadline = tip + srv.config().htlc_send_expiry_delta + BlockDelta::new(2);
 	let policy = VtxoPolicy::new_server_htlc_send(key.public_key(), hash, deadline);
 	(signed_leaf(srv, wallet, input, policy).await, key)
+}
+
+/// Revoke the HTLC-send VTXOs `htlcs`, owned by `key` of `wallet`, to a new
+/// VTXO of the same key.
+async fn revoke(srv: &Captaind, wallet: &Wallet, htlcs: &[Vtxo<Full>], key: &Keypair) -> Result<(), tonic::Status> {
+	let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		htlcs.to_vec(), VtxoPolicy::new_pubkey(key.public_key()),
+	).unwrap().generate_user_nonces(&vec![*key; htlcs.len()]).unwrap();
+	let request = bind_to_wallets(srv, &[wallet], builder.cosign_request().into()).await;
+	srv.get_public_rpc().await.request_lightning_pay_htlc_revocation(request).await.map(|_| ())
+}
+
+/// A send request for `sources`, signed by their owner.
+async fn send_request(
+	srv: &Captaind, invoice: impl ToString, amount: Amount, sources: &[VtxoId], key: &Keypair,
+) -> protos::InitiateLightningPaymentRequest {
+	sign_lightning_send_request(srv, protos::InitiateLightningPaymentRequest {
+		invoice: invoice.to_string(),
+		payment_amount_sat: amount.to_sat(),
+		htlc_vtxo_ids: sources.iter().map(|id| id.to_bytes().to_vec()).collect(),
+		mailbox_id: None,
+		retry_for_secs: Some(5),
+		intent_nonce: None,
+		source_owner_signature: Vec::new(),
+	}, key).await
+}
+
+/// The key a wallet bound its receive to, for tests that prepare the
+/// claim by hand.
+async fn receive_claim_keypair(srv: &Captaind, wallet: &Wallet, hash: PaymentHash) -> Keypair {
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let sub = db.read(async |t| t.get_htlc_subscription_by_payment_hash(hash).await).await.unwrap().unwrap();
+	let key = sub.claim_pubkey.expect("the wallet bound its receive to a claim key");
+	wallet.pubkey_keypair(&key).await.unwrap().expect("the claim key is the wallet's").1
 }
 
 /// A board of `amount` whose wallet then goes away, the payout script of
@@ -231,6 +276,40 @@ fn assert_six_deep(ctx: &TestContext, tx: &Transaction) -> BlockRef {
 	let height = core.get_block_header_info(&hash).unwrap().height;
 	assert_eq!(core.get_block_hash(height as u64).unwrap(), hash);
 	BlockRef { height: BlockHeight::new(height as u32), hash }
+}
+
+/// Every output to `script` in the blocks of the current chain from height
+/// `from` on.
+fn outputs_to(ctx: &TestContext, script: &ScriptBuf, from: u64) -> Vec<(OutPoint, Amount)> {
+	let core = ctx.bitcoind().sync_client();
+	let mut outputs = Vec::new();
+	for height in from..=core.get_block_count().unwrap() {
+		for tx in core.get_block(&core.get_block_hash(height).unwrap()).unwrap().txdata {
+			for (vout, output) in tx.output.iter().enumerate().filter(|(_, o)| o.script_pubkey == *script) {
+				outputs.push((OutPoint::new(tx.compute_txid(), vout as u32), output.value));
+			}
+		}
+	}
+	outputs
+}
+
+/// Mine the unconfirmed transactions of the exit path of `vtxo` in one block.
+async fn confirm_exit_path(ctx: &TestContext, vtxo: &Vtxo<Full>) {
+	let core = ctx.bitcoind().sync_client();
+	let path = vtxo.transactions().map(|step| step.tx).filter(|tx| {
+		!core.custom_get_raw_transaction_info(tx.compute_txid(), None).unwrap()
+			.is_some_and(|info| info.confirmations.is_some_and(|depth| depth > 0))
+	}).collect::<Vec<_>>();
+	let mut unique = Vec::<Transaction>::new();
+	for tx in path {
+		if !unique.contains(&tx) {
+			unique.push(tx);
+		}
+	}
+	if !unique.is_empty() {
+		ctx.mine(&unique).await;
+		ctx.await_block_count_sync().await;
+	}
 }
 
 /// Wait until the highest block the watchman stored is `point`.
@@ -396,6 +475,20 @@ async fn wait_for_confirmation(db: &Db, allocation: i64, point: BlockRef, hash: 
 	}.wait_millis(30_000).await
 }
 
+/// The owner the decision proposes for `source` at `tip`.
+async fn proposal(db: &Db, source: &Vtxo<Full>, tip: BlockHeight) -> OwnershipProposal {
+	let root = ark::ServerVtxo::from(source.clone()).to_bare();
+	let snapshot = db.read(async |t| t.expired_tree_snapshot(&[root]).await).await.unwrap();
+	let fact = snapshot.iter().find(|fact| fact.state.vtxo_id == source.id()).unwrap();
+	db.read(async |t| t.propose_expiry_ownership(fact, tip).await).await.unwrap()
+}
+
+/// The owner `source` was created with.
+async fn birth_owner(db: &Db, source: VtxoId) -> OwnershipDisposition {
+	let mailbox = db.read(async |t| t.vtxo_owner_mailboxes(&[source]).await).await.unwrap()[&source];
+	OwnershipDisposition::Owner { mailbox }
+}
+
 /// Wait until another connection waits on a lock to run `prefix`.
 async fn wait_for_query_lock(tx: &Tx<'_>, prefix: &str) -> anyhow::Result<()> {
 	async {
@@ -417,9 +510,48 @@ async fn wait_for_query_lock(tx: &Tx<'_>, prefix: &str) -> anyhow::Result<()> {
 	}.wait_millis(15_000).await
 }
 
+/// Decide `ids` for the expiry payout while `call` waits on their rows, so
+/// the call only sees the decision in its own write.
+async fn decide_during<T: Send + 'static>(
+	db: &Db, ids: &[VtxoId], call: impl std::future::Future<Output = T> + Send + 'static,
+) -> T {
+	let ids = ids.iter().map(ToString::to_string).collect::<Vec<_>>();
+	let waiter = db.clone();
+	db.write(async move |t| {
+		t.query("SELECT vtxo_id FROM vtxo WHERE vtxo_id = ANY($1) FOR UPDATE", &[&ids]).await?;
+		let call = tokio::spawn(call);
+		async {
+			while !waiter.read(async |t| Ok(t.query_one(
+				"SELECT EXISTS(SELECT 1 FROM pg_locks WHERE NOT granted)", &[],
+			).await?.get::<_, bool>(0))).await.unwrap() {
+				tokio::time::sleep(poll_interval()).await;
+			}
+		}.wait_millis(30_000).await;
+		decide_for_payout(t, &ids).await?;
+		Ok(call)
+	}).await.unwrap().await.unwrap()
+}
+
 /// The transaction that spent `vtxo` on chain, as the server saw it.
 async fn onchain_spend(db: &Db, vtxo: VtxoId) -> Option<Txid> {
 	db.read(async |t| Ok(t.query_one("SELECT onchain_spent_txid FROM vtxo WHERE vtxo_id = $1",
 		&[&vtxo.to_string()]).await?.get::<_, Option<String>>(0))).await.unwrap()
 		.map(|txid| txid.parse().unwrap())
+}
+
+/// The transactions that closed HTLC grants, if all are closed: the
+/// transaction that spent each on chain, or the payout that swept it.
+async fn grant_closures(db: &Db, grants: &[Vtxo<Full>]) -> Option<BTreeMap<VtxoId, Txid>> {
+	let mut closures = BTreeMap::new();
+	for grant in grants {
+		let txid = match onchain_spend(db, grant.id()).await {
+			Some(txid) => txid,
+			None => match current_share(db, grant.id()).await {
+				Some(PayoutShare { status, tx: Some(tx), .. }) if status == "confirmed" => tx.compute_txid(),
+				_ => return None,
+			},
+		};
+		closures.insert(grant.id(), txid);
+	}
+	Some(closures)
 }

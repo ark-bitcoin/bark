@@ -1,3 +1,16 @@
+use std::str::FromStr;
+
+use bitcoin::Amount;
+use bitcoin::secp256k1::Keypair;
+
+use ark::{ProtocolEncoding, VtxoId};
+use ark::attestations::LightningSendIntent;
+use ark::lightning::Invoice;
+use ark::mailbox::MailboxIdentifier;
+use server_rpc::protos;
+
+use crate::Captaind;
+
 
 /// Generates inter-lightning-node and intra-ark runner functions for a
 /// **receive** test.
@@ -83,4 +96,25 @@ macro_rules! lightning_test {
 			}
 		}
 	};
+}
+
+/// Sign `req` with `keypair`, the key of its HTLC-send VTXOs, as their owner
+/// signs a payment.
+pub async fn sign_lightning_send_request(
+	srv: &Captaind,
+	mut req: protos::InitiateLightningPaymentRequest,
+	keypair: &Keypair,
+) -> protos::InitiateLightningPaymentRequest {
+	let info = srv.ark_info().await;
+	let invoice = Invoice::from_str(&req.invoice).unwrap();
+	let ids = req.htlc_vtxo_ids.iter().map(|bytes| VtxoId::from_slice(bytes).unwrap()).collect::<Vec<_>>();
+	let mailbox = req.mailbox_id.as_deref().map(MailboxIdentifier::deserialize).transpose().unwrap();
+	let nonce = rand::random();
+	let intent = LightningSendIntent::new(
+		nonce, info.server_pubkey, info.network, &invoice,
+		Amount::from_sat(req.payment_amount_sat), &ids, mailbox, req.retry_for_secs,
+	);
+	req.intent_nonce = Some(nonce.to_vec());
+	req.source_owner_signature = intent.sign(keypair).serialize().to_vec();
+	req
 }
