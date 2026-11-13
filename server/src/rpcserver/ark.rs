@@ -114,8 +114,8 @@ impl rpc::server::ArkService for Server {
 		};
 
 		let ret = protos::HandshakeResponse {
-			min_protocol_version: MIN_PROTOCOL_VERSION,
-			max_protocol_version: MAX_PROTOCOL_VERSION,
+			min_protocol_version: if self.config.expiry_payouts { rpc::pver::PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT } else { MIN_PROTOCOL_VERSION },
+			max_protocol_version: if self.config.expiry_payouts { rpc::pver::PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT } else { MAX_PROTOCOL_VERSION },
 			psa,
 		};
 		Ok(tonic::Response::new(ret))
@@ -1149,6 +1149,7 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.add_service(rpc::server::ArkServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::MailboxServiceServer::from_arc(srv.clone()))
 		.add_service(health_server);
+	let routes = if srv.config.expiry_payouts { super::expiry_payout::routes(&srv) } else { routes };
 
 	tonic::transport::Server::builder()
 		.accept_http1(true)

@@ -422,6 +422,7 @@ impl TestContext {
 		// NB we don't auto-complete `..Default::default()` here
 		// to force us to evaluate every value in test context.
 		server::config::Config {
+			expiry_payouts: false,
 			data_dir: data_dir.clone(),
 			network: Network::Regtest,
 			vtxo_lifetime: BlockDelta::new(432),

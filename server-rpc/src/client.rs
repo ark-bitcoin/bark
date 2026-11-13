@@ -530,6 +530,11 @@ impl ServerConnection {
 		Ok(())
 	}
 
+	/// Whether the negotiated protocol version has expiry payouts.
+	pub async fn expiry_payouts(&self) -> bool {
+		self.info.read().await.pver >= crate::pver::PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT
+	}
+
 	/// Returns the cached [ArkInfo].
 	pub async fn ark_info(&self) -> ArkInfo {
 		self.info.read().await.info.clone()
@@ -572,6 +577,10 @@ fn check_handshake(handshake: protos::HandshakeResponse) -> Result<u64, ConnectE
 			server_min: handshake.min_protocol_version, server_max: handshake.max_protocol_version
 		});
 	}
+	let server_range = handshake.min_protocol_version..=handshake.max_protocol_version;
+	if server_range.contains(&crate::pver::PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT) {
+		return Ok(crate::pver::PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT);
+	}
 	if MAX_PROTOCOL_VERSION < handshake.min_protocol_version {
 		return Err(ConnectError::ProtocolVersionMismatchClientTooOld {
 			client_max: MAX_PROTOCOL_VERSION, server_min: handshake.min_protocol_version
@@ -591,7 +600,7 @@ fn check_handshake(handshake: protos::HandshakeResponse) -> Result<u64, ConnectE
 #[cfg(test)]
 mod tests {
 	use super::{check_handshake, CreateEndpointError, ConnectError, NO_TRANSPORT_BACKEND_MESSAGE};
-	use crate::MAX_PROTOCOL_VERSION;
+	use crate::{MAX_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION};
 	use crate::protos;
 
 	#[test]
@@ -611,5 +620,19 @@ mod tests {
 		};
 		assert!(matches!(check_handshake(response),
 			Err(ConnectError::InvalidProtocolVersionRange { .. })));
+	}
+
+	#[test]
+	fn handshake_picks_the_expiry_payout_version_when_offered() {
+		let handshake = |min, max| protos::HandshakeResponse {
+			min_protocol_version: min, max_protocol_version: max, psa: None,
+		};
+		let payout = crate::pver::PROTOCOL_VERSION_SCUTTLE_EXPIRY_PAYOUT;
+		assert_eq!(check_handshake(handshake(payout, payout)).unwrap(), payout);
+		assert_eq!(check_handshake(handshake(MIN_PROTOCOL_VERSION, payout)).unwrap(), payout);
+		assert_eq!(check_handshake(handshake(MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION)).unwrap(),
+			MAX_PROTOCOL_VERSION);
+		assert!(matches!(check_handshake(handshake(payout + 1, payout + 1)),
+			Err(ConnectError::ProtocolVersionMismatchClientTooOld { .. })));
 	}
 }

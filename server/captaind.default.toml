@@ -11,6 +11,10 @@ data_dir = "./bark-server"
 # The bitcoin network this server runs on
 network = "regtest"
 
+# Pay each VTXO of an expired tree to the owner mailbox it records.
+# The mode is fixed when the database is created.
+expiry_payouts = false
+
 # The lifetime of VTXOs in blocks
 vtxo_lifetime = 4320
 

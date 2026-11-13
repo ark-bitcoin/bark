@@ -13,6 +13,7 @@ pub mod intman;
 pub mod mailbox;
 mod middleware;
 mod convert;
+mod expiry_payout;
 mod macros;
 
 use std::fmt::{self, Write};

@@ -44,7 +44,9 @@ fn main() {
 		println!("cargo:rustc-env=SERVER_VERSION={}", version);
 	}
 
-	generate_migrations();
+	generate_migrations("src/database/migrations", "migrations.rs");
+	// The expiry payout migrations, with their own history table.
+	generate_migrations("src/database/migrations_expiry_payout", "expiry_payout_migrations.rs");
 }
 
 /// Generates the embedded database migrations module.
@@ -54,10 +56,10 @@ fn main() {
 /// unreproducible. Generate the equivalent module from a sorted file list.
 ///
 /// This is fixed in refinery v0.10.0, but it requires Rust v1.92.
-fn generate_migrations() {
-	println!("cargo:rerun-if-changed=src/database/migrations");
+fn generate_migrations(dir: &str, out_file: &str) {
+	println!("cargo:rerun-if-changed={}", dir);
 
-	let mut files = fs::read_dir("src/database/migrations")
+	let mut files = fs::read_dir(dir)
 		.expect("failed to read migrations directory")
 		.map(|entry| entry.expect("failed to read migrations directory").path())
 		.filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
@@ -77,6 +79,6 @@ fn generate_migrations() {
 	}
 	code.push_str("\t];\n\t::refinery::Runner::new(&migrations)\n}\n");
 
-	let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("migrations.rs");
+	let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join(out_file);
 	fs::write(out, code).expect("failed to write migrations.rs");
 }

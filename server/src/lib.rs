@@ -267,7 +267,7 @@ impl Server {
 		fs::create_dir_all(&cfg.data_dir).context("can't create dir")?;
 		fs_perms::harden(&cfg.data_dir, 0o700)?;
 
-		let db = database::Db::create(&cfg.postgres).await?;
+		let db = database::Db::create_with_payouts(&cfg.postgres, cfg.expiry_payouts).await?;
 
 		// Initiate key material.
 		let seed = {
@@ -377,6 +377,8 @@ impl Server {
 		let db = database::Db::connect(&cfg.postgres)
 			.await
 			.context("failed to connect to db")?;
+		ensure!(db.expiry_payouts() == cfg.expiry_payouts,
+			"expiry_payouts differs from the mode fixed at database creation");
 
 		let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 		bcd::require_network(&bitcoind, cfg.network).await?;

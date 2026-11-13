@@ -218,6 +218,10 @@ mod defaults {
 pub struct Config {
 	pub data_dir: PathBuf,
 	pub network: bitcoin::Network,
+	/// Pay each VTXO of an expired tree to the owner mailbox it records.
+	/// The mode is fixed when the database is created.
+	#[serde(default)]
+	pub expiry_payouts: bool,
 	/// The number of blocks after which a VTXO expires, by default 6*24*30 so that
 	/// a VTXO can live for up to 30 days.
 	pub vtxo_lifetime: BlockDelta,
