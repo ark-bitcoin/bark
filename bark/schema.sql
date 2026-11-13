@@ -225,3 +225,7 @@ CREATE VIEW most_recent_vtxo_state
 			FROM most_recent JOIN bark_vtxo_state as vs
 				ON vs.id = most_recent.id
 /* most_recent_vtxo_state(id,last_updated_at,vtxo_id,state_kind,state) */;
+CREATE TABLE mailbox_key (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		mailbox_pubkey TEXT NOT NULL CHECK (length(mailbox_pubkey) = 66)
+	);

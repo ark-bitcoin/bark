@@ -25,6 +25,7 @@ use crate::persist::models::{
 	PaidInvoice, SerdeRoundState, SettledLightningReceive, StoredExit, Unlocked,
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
+use crate::persist::sqlite::expiry_payout;
 use crate::round::RoundState;
 use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -46,6 +47,9 @@ pub (crate) fn set_properties(
 		":server_pubkey": properties.server_pubkey.map(|pk| pk.to_string()),
 		":server_mailbox_pubkey": properties.server_mailbox_pubkey.map(|pk| pk.to_string()),
 	})?;
+	if let Some(mailbox_pubkey) = &properties.mailbox_pubkey {
+		expiry_payout::store_mailbox_pubkey(conn, mailbox_pubkey)?;
+	}
 
 	Ok(())
 }
@@ -98,6 +102,7 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 		let fingerprint: String = row.get("fingerprint")?;
 		let server_pubkey: Option<String> = row.get("server_pubkey")?;
 		let server_mailbox_pubkey: Option<String> = row.get("server_mailbox_pubkey")?;
+		let mailbox_pubkey = expiry_payout::fetch_mailbox_pubkey(conn)?;
 
 		let server_pubkey = server_pubkey
 			.map(|s| PublicKey::from_str(&s))
@@ -115,6 +120,7 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 				fingerprint: Fingerprint::from_str(&fingerprint).context("invalid fingerprint")?,
 				server_pubkey,
 				server_mailbox_pubkey,
+				mailbox_pubkey,
 			}
 		))
 	} else {

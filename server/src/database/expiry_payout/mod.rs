@@ -1,7 +1,10 @@
-//! Expiry payouts: the mode of the server.
+//! Expiry payouts: the mode of the server, and the owner mailbox of each
+//! VTXO.
+
+pub mod ownership;
 
 use crate::config::Postgres as PostgresConfig;
-use crate::database::Db;
+use crate::database::{Db, Tx};
 
 impl Db {
 	/// Create the database as [Db::create] does, in expiry payout mode if
@@ -28,6 +31,12 @@ impl Db {
 		Ok(())
 	}
 
+	pub fn expiry_payouts(&self) -> bool {
+		self.expiry_payouts
+	}
+}
+
+impl Tx<'_> {
 	pub fn expiry_payouts(&self) -> bool {
 		self.expiry_payouts
 	}

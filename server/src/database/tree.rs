@@ -1,14 +1,16 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use anyhow::{Context, bail};
 
 use bitcoin::{Transaction, Txid};
+use bitcoin::secp256k1::PublicKey;
 use tracing::debug;
 
-use ark::{ProtocolEncoding, ServerVtxo, Vtxo, VtxoId};
+use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId};
 use ark::vtxo::{Bare, Full};
 
 use super::model::{SpendState, VirtualTransaction};
+use super::Tx;
 
 // -- Update structs --
 
@@ -131,6 +133,26 @@ impl VtxoInserts {
 	fn is_empty(&self) -> bool {
 		self.vtxo_ids.is_empty()
 	}
+
+	/// The inserted VTXOs that an owner holds, each of which needs an owner
+	/// mailbox: the user VTXOs not spent at insertion.
+	fn owned_vtxo_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
+		let mut ret = Vec::new();
+		for ((id, state), policy) in self.vtxo_ids.iter().zip(&self.spend_states).zip(&self.policies) {
+			let state = state.parse::<SpendState>()?;
+			let held = match state {
+				SpendState::Spendable | SpendState::Unregistered | SpendState::Unclaimed
+					| SpendState::HtlcRecvUnclaimed => true,
+				SpendState::Spent | SpendState::Pool | SpendState::LnSpent | SpendState::RoundForfeit
+					| SpendState::OffboardForfeit | SpendState::OffboardConnector => false,
+			};
+			let policy = ServerVtxoPolicy::deserialize(policy)?;
+			if held && policy.user_pubkey().is_some() {
+				ret.push(id.parse()?);
+			}
+		}
+		Ok(ret)
+	}
 }
 
 struct VtxoUpdates {
@@ -171,6 +193,7 @@ pub struct VtxoTreeUpdate {
 	tx_inserts: Vec<VirtualTransaction<'static>>,
 	vtxo_inserts: VtxoInserts,
 	vtxo_updates: VtxoUpdates,
+	owner_bindings: BTreeMap<VtxoId, PublicKey>,
 }
 
 impl VtxoTreeUpdate {
@@ -179,7 +202,19 @@ impl VtxoTreeUpdate {
 			tx_inserts: Vec::new(),
 			vtxo_inserts: VtxoInserts::new(),
 			vtxo_updates: VtxoUpdates::new(),
+			owner_bindings: BTreeMap::new(),
 		}
+	}
+
+	/// Set the owner mailbox of new VTXOs. In payout mode every new VTXO
+	/// that an owner holds needs one.
+	pub fn bind_owner_mailboxes(mut self, bindings: impl IntoIterator<Item = (VtxoId, PublicKey)>) -> anyhow::Result<Self> {
+		for (id, mailbox) in bindings {
+			if self.owner_bindings.insert(id, mailbox).is_some_and(|previous| previous != mailbox) {
+				bail!("conflicting mailbox bindings for VTXO {id}");
+			}
+		}
+		Ok(self)
 	}
 
 	// -- virtual tx upserts --
@@ -430,13 +465,16 @@ impl VtxoTreeUpdate {
 /// VTXO row was written, `0` means every insert hit `ON CONFLICT DO NOTHING`
 /// (i.e. an idempotent retry of an already-applied update).
 pub async fn execute_vtxo_tree_update(
-	tx: &tokio_postgres::Transaction<'_>,
+	tx: &Tx<'_>,
 	update: VtxoTreeUpdate,
 ) -> anyhow::Result<u64> {
 	debug_assert!(validate(&update).is_ok(), "{}", validate(&update).unwrap_err());
 
 	upsert_virtual_transactions(tx, &update.tx_inserts).await?;
 	let inserted = insert_vtxos(tx, &update.vtxo_inserts).await?;
+	if tx.expiry_payouts() {
+		tx.store_vtxo_owner_mailboxes(&update.vtxo_inserts.owned_vtxo_ids()?, &update.owner_bindings).await?;
+	}
 	apply_vtxo_updates(tx, &update.vtxo_updates).await?;
 
 	Ok(inserted)

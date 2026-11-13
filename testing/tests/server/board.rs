@@ -110,6 +110,7 @@ async fn board_validates_requests_and_replays_retries() {
 	};
 	let cosign_request = |key: &Keypair, nonce: &musig::PublicNonce, expiry: BlockHeight, amount: Amount, utxo: OutPoint, funding_tx: &Transaction| {
 		protos::BoardCosignRequest {
+			owner_mailbox: None,
 			amount: amount.to_sat(),
 			utxo: utxo.serialize(),
 			expiry_height: expiry.to_u32(),

@@ -169,6 +169,19 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the update fails.
 	async fn set_server_mailbox_pubkey(&self, server_mailbox_pubkey: PublicKey) -> anyhow::Result<()>;
 
+	/// Set the public key of the wallet's mailbox keypair in wallet properties.
+	///
+	/// The wallet stores it when it first connects to a server in expiry
+	/// payout mode. Once set, the wallet refuses to open with another
+	/// mailbox keypair.
+	///
+	/// Parameters:
+	/// - mailbox_pubkey: The public key of the wallet's mailbox keypair.
+	///
+	/// Errors:
+	/// - Returns an error if the update fails or another key is set.
+	async fn set_mailbox_key(&self, mailbox_pubkey: PublicKey) -> anyhow::Result<()>;
+
 	/// Creates a new movement in the given state, ready to be updated.
 	///
 	/// Parameters:

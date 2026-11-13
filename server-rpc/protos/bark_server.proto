@@ -308,6 +308,8 @@ message BoardCosignRequest {
 	bytes user_pubkey = 4;
 	bytes pub_nonce = 5;
 	bytes funding_tx = 6;
+	// Expiry payout mode only: the owner mailbox key of the board VTXO.
+	optional bytes owner_mailbox = 1000;
 }
 
 message BoardCosignResponse {

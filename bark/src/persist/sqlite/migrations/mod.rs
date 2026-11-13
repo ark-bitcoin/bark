@@ -90,6 +90,8 @@ use m0041_offboard_action_checkpoint::Migration0041;
 use m0042_vtxo_registered::Migration0042;
 use m0043_index_vtxo_state::Migration0043;
 
+use super::expiry_payout;
+
 pub struct MigrationContext {}
 
 impl MigrationContext {
@@ -149,6 +151,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0041{})?;
 		self.try_migration(conn, &Migration0042{})?;
 		self.try_migration(conn, &Migration0043{})?;
+		expiry_payout::create_tables(conn)?;
 
 		Ok(())
 	}
