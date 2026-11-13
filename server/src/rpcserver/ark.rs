@@ -466,7 +466,7 @@ impl rpc::server::ArkService for Server {
 		let request = ArkoorPackageCosignRequest::try_from(req.into_inner())
 			.badarg("invalid cosign request")?;
 
-		let response = self.cosign_oor(request).await.to_status()?;
+		let response = self.cosign_oor(request, None).await.to_status()?;
 		Ok(tonic::Response::new(response.into()))
 	}
 
@@ -615,6 +615,7 @@ impl rpc::server::ArkService for Server {
 			req.description,
 			req.expiry_secs.map(Duration::from_secs),
 			claim_pubkey,
+			req.ark_address_hint,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))
@@ -694,6 +695,25 @@ impl rpc::server::ArkService for Server {
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))
+	}
+
+	#[tracing::instrument(skip(self, req))]
+	async fn request_lightning_receive_arkoor_cosign(
+		&self,
+		req: tonic::Request<protos::LightningReceiveArkoorCosignRequest>,
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		let req = req.into_inner();
+
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
+		let cosign_request = ArkoorPackageCosignRequest::try_from(
+			req.cosign_request.badarg("cosign request missing")?,
+		).badarg("invalid cosign request")?;
+
+		let response = self.cosign_lightning_receive_arkoor(
+			payment_hash, cosign_request,
+		).await.to_status()?;
+
+		Ok(tonic::Response::new(response.into()))
 	}
 
 	#[tracing::instrument(skip(self, req))]

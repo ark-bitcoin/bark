@@ -125,6 +125,10 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.claim_lightning_receive(req).await?.into_inner())
 	}
 
+	async fn request_lightning_receive_arkoor_cosign(&self, upstream: &mut ArkClient, req: protos::LightningReceiveArkoorCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		Ok(upstream.request_lightning_receive_arkoor_cosign(req).await?.into_inner())
+	}
+
 	async fn next_round_time(&self, upstream: &mut ArkClient, req: protos::Empty) -> Result<protos::NextRoundTimeResponse, tonic::Status> {
 		Ok(upstream.next_round_time(req).await?.into_inner())
 	}
@@ -445,6 +449,13 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::claim_lightning_receive(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
+	}
+
+	async fn request_lightning_receive_arkoor_cosign(
+		&self, req: tonic::Request<protos::LightningReceiveArkoorCosignRequest>,
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
+		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_receive_arkoor_cosign(&self.proxy, &mut self.upstream_client(), req.into_inner()).await?))
 	}
 
 	async fn next_round_time(
