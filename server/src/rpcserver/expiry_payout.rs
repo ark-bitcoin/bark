@@ -1,10 +1,13 @@
 //! The public RPC of a server in expiry payout mode: the protocol version
-//! gate.
+//! gate, and the owner mailbox that the VTXO status reports.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use bitcoin::secp256k1::PublicKey;
 use tonic::service::interceptor::InterceptedService;
 
+use ark::VtxoId;
 use server_rpc::{self as rpc, RequestExt};
 
 use crate::Server;
@@ -23,6 +26,31 @@ fn require_expiry_payout_version(req: tonic::Request<()>) -> Result<tonic::Reque
 			in order to use expiry payouts.").to_status();
 	}
 	Ok(req)
+}
+
+/// The owner mailbox of VTXOs, as the VTXO status RPCs report it. Empty
+/// when the server is not in payout mode.
+#[derive(Default)]
+pub(crate) struct VtxoPayouts {
+	owners: BTreeMap<VtxoId, PublicKey>,
+}
+
+impl VtxoPayouts {
+	pub(crate) fn owner_mailbox(&self, id: &VtxoId) -> Vec<u8> {
+		self.owners.get(id).map(|owner| owner.serialize().to_vec()).unwrap_or_default()
+	}
+}
+
+impl Server {
+	pub(crate) async fn vtxo_payouts(&self, ids: &[VtxoId]) -> Result<VtxoPayouts, tonic::Status> {
+		if !self.config.expiry_payouts {
+			return Ok(VtxoPayouts::default());
+		}
+		self.db.read(async |t| {
+			let owners = t.vtxo_owner_mailboxes(ids).await?;
+			Ok(VtxoPayouts { owners })
+		}).await.to_status()
+	}
 }
 
 /// The public services of a server in payout mode: the Ark and mailbox

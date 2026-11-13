@@ -313,7 +313,7 @@ async fn run_cosign(wallet: &Wallet, send: &ArkoorSend) -> Result<Progress, Adva
 	let neg_amount = -send.amount.to_signed().context("amount out-of-range").abort()?;
 
 	let arkoor = wallet.create_checkpointed_arkoor_with_vtxos(
-		dest, inputs, change_keypair, send.change_pieces.clone(),
+		dest, inputs, change_keypair, send.change_pieces.clone(), Some(&send.destination),
 		send.paid_invoice.as_ref().map(PaymentHash::from),
 	).await.retry_unless_rejected()?;
 

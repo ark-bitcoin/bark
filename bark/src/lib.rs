@@ -1815,6 +1815,29 @@ impl Wallet {
 		queries: &[(VtxoId, &Keypair)],
 	) -> anyhow::Result<(HashMap<VtxoId, VtxoSpendState>, HashSet<VtxoId>)> {
 		let mut ret = HashMap::with_capacity(queries.len());
+		let (statuses, answered) = self.fetch_vtxo_statuses(queries).await?;
+		for (id, status) in statuses {
+			match VtxoSpendState::try_from(status.spend_state) {
+				Ok(state) => {
+					ret.insert(id, state);
+				},
+				Err(_) => warn!(
+					"server returned unknown spend state {} for vtxo {id}; this wallet may \
+					need updating", status.spend_state,
+				),
+			}
+		}
+
+		Ok((ret, answered))
+	}
+
+	/// Ask the server for the status of every VTXO in `queries`, in batches
+	/// of [`MAX_NB_VTXO_IDS`]. See [Wallet::fetch_vtxo_spend_states].
+	pub(crate) async fn fetch_vtxo_statuses(
+		&self,
+		queries: &[(VtxoId, &Keypair)],
+	) -> anyhow::Result<(HashMap<VtxoId, protos::VtxoStatus>, HashSet<VtxoId>)> {
+		let mut ret = HashMap::with_capacity(queries.len());
 		let mut answered = HashSet::new();
 		if queries.is_empty() {
 			return Ok((ret, answered));
@@ -1845,20 +1868,12 @@ impl Wallet {
 				}
 			}
 
-			for status in &resp.vtxos {
+			for status in resp.vtxos {
 				let Ok(id) = VtxoId::from_slice(&status.vtxo_id) else {
 					warn!("Server returned a status for an undecodable vtxo id: {:?}", status.vtxo_id);
 					continue;
 				};
-				match VtxoSpendState::try_from(status.spend_state) {
-					Ok(state) => {
-						ret.insert(id, state);
-					},
-					Err(_) => warn!(
-						"server returned unknown spend state {} for vtxo {id}; this wallet may \
-						need updating", status.spend_state,
-					),
-				}
+				ret.insert(id, status);
 			}
 		}
 
@@ -2912,15 +2927,20 @@ impl std::ops::Drop for WalletInner {
 
 #[cfg(test)]
 mod tests {
+	use std::collections::HashSet;
+
 	use bitcoin::{Amount, FeeRate, Network};
 	use bitcoin::secp256k1::{Keypair, PublicKey};
 
 	use ark::ArkInfo;
+	use ark::address::VtxoDelivery;
+	use ark::expiry_payout::payout_script;
+	use ark::mailbox::MailboxIdentifier;
 	use bitcoin_ext::BlockDelta;
 	use server_rpc::client::CreateEndpointError;
 
 	use super::{
-		check_ark_info_safe, wrap_server_connect_error, WalletSeed,
+		check_ark_info_safe, wrap_server_connect_error, Wallet, WalletSeed,
 		MAX_NB_ROUND_NONCES, MIN_MAINNET_VTXO_EXIT_DELTA, MISSING_SERVER_TRANSPORT_HELP, SECP,
 	};
 
@@ -2936,6 +2956,30 @@ mod tests {
 		assert_eq!(supplied.fingerprint(), derived.fingerprint());
 		assert_eq!(supplied.derive_vtxo_keypair(0), derived.derive_vtxo_keypair(0));
 		assert_eq!(supplied.to_recovery_mailbox_keypair(), derived.to_recovery_mailbox_keypair());
+	}
+
+	#[cfg(feature = "sqlite")]
+	#[tokio::test]
+	async fn addresses_of_both_key_parities_unblind_to_the_payout_mailbox() {
+		let (wallet, _conn) = Wallet::offline_for_test().await;
+		let server_mailbox = Keypair::from_seckey_slice(&SECP, &[4; 32]).unwrap();
+		wallet.inner.db.set_server_pubkey(Keypair::from_seckey_slice(&SECP, &[3; 32]).unwrap().public_key())
+			.await.unwrap();
+		wallet.inner.db.set_server_mailbox_pubkey(server_mailbox.public_key()).await.unwrap();
+
+		let mut parities = HashSet::new();
+		while parities.len() < 2 {
+			let (address, _) = wallet.new_address_with_index().await.unwrap();
+			parities.insert(address.policy().user_pubkey().serialize()[0]);
+
+			let [VtxoDelivery::ServerMailbox { blinded_id }] = address.delivery() else {
+				panic!("address must have one server mailbox delivery");
+			};
+			let mailbox = MailboxIdentifier::from_blinded(
+				*blinded_id, address.policy().user_pubkey(), &server_mailbox,
+			).unwrap();
+			assert_eq!(payout_script(mailbox.as_pubkey()), wallet.payout_script());
+		}
 	}
 
 	#[test]

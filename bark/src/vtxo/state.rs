@@ -51,6 +51,9 @@ pub enum VtxoLockHolder {
 	/// A pre-action subsystem (round, offboard, board, lightning
 	/// receive). The movement is used as a stable handle.
 	Movement { id: MovementId },
+	/// A VTXO received by arkoor that a server in expiry payout mode does
+	/// not report spendable yet. The wallet credits it once the server does.
+	MailboxReceive,
 }
 
 impl From<MovementId> for VtxoLockHolder {

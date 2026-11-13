@@ -529,6 +529,7 @@ impl From<ArkoorDestination> for protos::ArkoorDestination {
 		Self {
 			total_amount: v.total_amount.to_sat(),
 			policy: v.policy.serialize(),
+			blinded_mailbox_id: Vec::new(),
 		}
 	}
 }

@@ -270,6 +270,7 @@ async fn run_xpub(
 	holder: &Option<VtxoLockHolder>,
 ) -> anyhow::Result<Option<(u32, Option<Vec<u8>>)>> {
 	let (mut srv, ark_info) = wallet.require_server().await?;
+	let payouts = srv.expiry_payouts().await;
 
 	let expiry = chrono::Local::now() + std::time::Duration::from_secs(60);
 	let auth = XpubRecoveryAuthorization::new(
@@ -318,6 +319,13 @@ async fn run_xpub(
 			continue;
 		}
 		max_index = max_index.max(Some(index));
+		if payouts && entry.owner_mailbox != wallet.mailbox_keypair().public_key().serialize() {
+			warn!("Recovery vtxo {} has the owner mailbox of another wallet", vtxo.id());
+			wallet.inner.db.remove_vtxo(vtxo.id()).await
+				.context("failed to drop foreign recovery VTXO")?;
+			report.push_foreign(&vtxo);
+			continue;
+		}
 
 		// A step re-run after a crash finds the VTXOs it stored already.
 		if let Some(stored) = wallet.inner.db.get_wallet_vtxo(vtxo.id()).await? {

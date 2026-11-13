@@ -544,9 +544,10 @@ async fn request_lightning_send_htlcs(
 		.generate_user_nonces(&input_keypairs)
 		.context("invalid nb of keypairs").abort()?;
 
-	let cosign_request = protos::LightningPayHtlcCosignRequest {
+	let mut cosign_request = protos::LightningPayHtlcCosignRequest {
 		parts: protos::ArkoorPackageCosignRequest::from(builder.cosign_request()).parts,
 	};
+	wallet.bind_output_mailboxes(&mut cosign_request.parts, None).await.abort()?;
 	let response = srv.client.request_lightning_pay_htlc_cosign(cosign_request).await
 		.retry_unless_rejected()?.into_inner();
 
@@ -755,7 +756,8 @@ async fn revoke_lightning_send_htlcs(
 		.generate_user_nonces(&htlc_keypairs)
 		.context("failed to generate user nonces").abort()?;
 
-	let cosign_request = protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
+	let mut cosign_request = protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
+	wallet.bind_output_mailboxes(&mut cosign_request.parts, None).await.abort()?;
 	let response = srv.client
 		.request_lightning_pay_htlc_revocation(cosign_request).await
 		.retry_unless_rejected()?.into_inner();

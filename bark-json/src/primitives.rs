@@ -250,7 +250,8 @@ impl<'a> From<&'a VtxoState> for VtxoStateInfo {
 					Some(bark::vtxo::VtxoLockHolder::Action { id }) => {
 						VtxoStateInfo::Locked { movement_id: None, action_id: Some(id.clone()) }
 					},
-					None => VtxoStateInfo::Locked { movement_id: None, action_id: None },
+					Some(bark::vtxo::VtxoLockHolder::MailboxReceive) | None
+					=> VtxoStateInfo::Locked { movement_id: None, action_id: None },
 				}
 			},
 		}

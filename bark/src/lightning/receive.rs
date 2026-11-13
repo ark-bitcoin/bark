@@ -98,6 +98,10 @@ impl<'a> Bolt11InvoiceBuilder<'a> {
 	/// are already theirs. Forwarding through a third party means trusting
 	/// it to eventually come back online and deliver, not trusting it with
 	/// custody.
+	///
+	/// A server in expiry payout mode pays an expired HTLC VTXO to this
+	/// wallet before the claim, and an expired claim output to the mailbox
+	/// of `claim_destination`.
 	pub fn claim_destination(mut self, claim_destination: impl Into<Option<ark::Address>>) -> Self {
 		self.claim_destination = claim_destination.into();
 		self
