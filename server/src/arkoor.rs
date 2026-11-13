@@ -12,7 +12,7 @@ use ark::arkoor::package::{
 };
 
 use crate::database::htlc_vtxo::{self, HtlcResolution};
-use crate::database::ln::{LightningHtlcSubscription, LightningHtlcSubscriptionStatus};
+use crate::database::ln::LightningHtlcSubscription;
 use crate::database::tree::VtxoTreeUpdate;
 use crate::error::ContextExt;
 use crate::{check_max_amount, Server};
@@ -144,25 +144,18 @@ impl Server {
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
 			.insert_unregistered_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_oor_spent(builder.input_spend_info());
+		let source_ids = builder.input_ids().collect::<Vec<_>>();
 		let inserted = self.db.write(async |t| {
+			if let Some(receive) = paid_receive {
+				// The arkoor settles the receive it pays, together with its
+				// own spend. This runs before the spend is stored, which
+				// tells a new arkoor from one co-signed before.
+				t.settle_lightning_receive_by_arkoor(receive.id, &source_ids).await?;
+			}
 			let inserted = t.execute_vtxo_tree_update(update).await?;
 			htlc_vtxo::set_htlc_vtxo_resolutions(
 				&t, &claimed_htlc_recvs, HtlcResolution::Fulfilled,
 			).await?;
-			if let Some(receive) = paid_receive {
-				// The arkoor settles the receive it pays, together with its
-				// own spend. A retry of the arkoor that settled it finds the
-				// receive settled and changes nothing.
-				let settled = t.store_lightning_htlc_subscription_status(
-					receive.id,
-					LightningHtlcSubscriptionStatus::Settled,
-					None,
-					Some(LightningHtlcSubscriptionStatus::Created),
-				).await?;
-				if !settled && inserted > 0 {
-					return badarg!("invoice is not payable");
-				}
-			}
 			Ok(inserted)
 		}).await?;
 		drop(vtxo_guard);
