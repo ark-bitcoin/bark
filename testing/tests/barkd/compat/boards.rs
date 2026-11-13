@@ -1,5 +1,5 @@
 use ark::fees::{BoardFees, PpmFeeRate};
-use ark_testing::{sat, TestContext};
+use ark_testing::{require_bark_version, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use bitcoin::Amount;
 
@@ -91,6 +91,10 @@ async fn board_amount_barkd() {
 /// `GET /boards/pending` and that the list clears once they are confirmed.
 #[tokio::test]
 async fn pending_boards_barkd() {
+	// bark 0.5.0 can evict the first board's unbroadcast funding tx in a sync
+	// and spend its input again in the second board.
+	require_bark_version!(> "0.5.0");
+
 	let ctx = TestContext::new("barkd/pending_boards_barkd").await;
 
 	let srv = ctx.captaind("server").cfg(|cfg| {
