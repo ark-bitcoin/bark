@@ -182,6 +182,20 @@ impl VtxoUpdates {
 		}
 	}
 
+	/// The VTXOs that these updates spend or change.
+	fn changed_vtxo_ids(&self) -> Vec<VtxoId> {
+		let mut ids = self.oor_spends.iter().map(|s| s.vtxo_id)
+			.chain(self.round_spends.iter().map(|s| s.vtxo_id))
+			.chain(self.offboard_spends.iter().map(|s| s.vtxo_id))
+			.chain(self.round_forfeits.iter().map(|s| s.vtxo_id))
+			.chain(self.claims.iter().copied())
+			.chain(self.registrations.iter().copied())
+			.chain(self.provide_signatures.iter().map(|v| v.id()))
+			.collect::<Vec<_>>();
+		ids.sort_unstable();
+		ids.dedup();
+		ids
+	}
 }
 
 /// A batch update to the virtual transaction tree.
@@ -473,6 +487,9 @@ pub async fn execute_vtxo_tree_update(
 	update: VtxoTreeUpdate,
 ) -> anyhow::Result<u64> {
 	debug_assert!(validate(&update).is_ok(), "{}", validate(&update).unwrap_err());
+	if tx.expiry_payouts() {
+		tx.guard_spend_changes(&update.vtxo_updates.changed_vtxo_ids()).await?;
+	}
 
 	upsert_virtual_transactions(tx, &update.tx_inserts).await?;
 	let inserted = insert_vtxos(tx, &update.vtxo_inserts).await?;

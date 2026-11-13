@@ -481,6 +481,7 @@ impl VtxoPool {
 		};
 
 		srv.db.write(async |t| {
+			t.guard_new_lightning_inputs(&input_ids).await?;
 			t.execute_vtxo_tree_update(update).await?;
 			htlc_vtxo::create_htlc_vtxos(&t, &htlc_recvs, HtlcDirection::Outgoing).await?;
 			t.mark_vtxopool_vtxos_spent(input_ids.iter().copied()).await

@@ -41,6 +41,7 @@ use crate::database::VtxoState;
 use crate::{check_max_amount, telemetry, Server, SECP};
 use crate::secret::Secret;
 use crate::error::{BadArgument, ContextExt, NotFound};
+use crate::error::ExpiryPayoutRefusal;
 use crate::database::expiry_payout::ownership::OwnerBindingMismatch;
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
 use crate::nursery::NurseryTxKind;
@@ -174,6 +175,7 @@ fn check_round_inputs_spendable(
 	let mut unusable = Vec::new();
 	for v in vtxos {
 		if let Err(e) = v.check_spendable(chain_tip) {
+			if e.is::<ExpiryPayoutRefusal>() { return Err(e); }
 			debug!("round input vtxo {} is not spendable: {:#}", v.vtxo_id, e);
 			unusable.push(v.vtxo_id);
 		} else {
@@ -1439,9 +1441,11 @@ async fn persist_round(
 
 	if let Err(e) = result {
 		// Nothing was stored and the funding tx is not signed yet, so the
-		// round can end safely. An output that the server cannot bind to an
-		// owner mailbox fails the round, not the server.
-		if e.is::<OwnerBindingMismatch>() {
+		// round can end safely. An expiry decision can take an input while
+		// the round collects signatures, as an on-chain exit can. An output
+		// that the server cannot bind to an owner mailbox fails the round,
+		// not the server.
+		if e.is::<ExpiryPayoutRefusal>() || e.is::<OwnerBindingMismatch>() {
 			return Err(RoundError::Recoverable(e));
 		}
 		// An input can exit onchain while we collect signatures. A rejected
@@ -2127,6 +2131,7 @@ impl Server {
 		let mut unusable = Vec::new();
 		for vtxo in &vtxos {
 			if let Err(e) = vtxo.check_spendable(chain_tip) {
+				if e.is::<ExpiryPayoutRefusal>() { return Err(e); }
 				debug!("delegated round input {} is not spendable: {:#}", vtxo.vtxo_id, e);
 				unusable.push(vtxo.vtxo_id);
 			}

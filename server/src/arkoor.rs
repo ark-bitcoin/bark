@@ -11,6 +11,7 @@ use ark::arkoor::package::{
 	ArkoorPackageCosignRequest, ArkoorPackageCosignResponse, ArkoorPackageBuilder,
 };
 
+use crate::database::SpendState;
 use crate::database::htlc_vtxo::{self, HtlcResolution};
 use crate::database::ln::LightningHtlcSubscription;
 use crate::database::tree::VtxoTreeUpdate;
@@ -149,9 +150,18 @@ impl Server {
 			.mark_vtxos_oor_spent(builder.input_spend_info())
 			.bind_owner_mailboxes(bindings)?;
 		let source_ids = builder.input_ids().collect::<Vec<_>>();
+		let new_lightning_send = builder.build_unsigned_vtxos()
+			.any(|v| v.policy().as_server_htlc_send().is_some());
 		let inserted = self.db.write(async |t| {
 			if self.config.expiry_payouts {
 				t.single_owner_mailbox(&source_ids).await?;
+			}
+			if self.config.expiry_payouts && new_lightning_send {
+				// A retry has already committed all the identical input spends.
+				let states = t.get_user_vtxos_by_id(&source_ids).await?;
+				if states.iter().any(|v| v.spend_state != SpendState::Spent) {
+					t.guard_new_lightning_inputs(&source_ids).await?;
+				}
 			}
 			if let Some(receive) = paid_receive {
 				// The arkoor settles the receive it pays, together with its

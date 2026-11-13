@@ -205,3 +205,10 @@ pub struct FrontierReindexComplete {
 	pub blocks_scanned: usize,
 }
 impl_slog!(FrontierReindexComplete, INFO, "Finished reindexing the frontier");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExpiryHoldObserved {
+	pub vtxo_id: VtxoId,
+	pub reason: String,
+}
+impl_slog!(ExpiryHoldObserved, WARN, "Holding the expiry payout of a VTXO");

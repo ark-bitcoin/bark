@@ -25,7 +25,7 @@ use tracing::{trace, warn};
 use ::ark::VtxoId;
 use server_rpc::{pver, RequestExt, IN_FLIGHT_INPUTS_METADATA_KEY};
 
-use crate::error::{BadArgument, InFlightInputs, NotFound, Unavailable, UnusableInputs};
+use crate::error::{BadArgument, ExpiryPayoutRefusal, InFlightInputs, NotFound, Unavailable, UnusableInputs};
 
 
 /// The minimum protocol version supported by the server.
@@ -98,6 +98,16 @@ impl ToStatus for anyhow::Error {
 				metadata.insert("identifiers", ids);
 			}
 			tonic::Status::with_metadata(tonic::Code::NotFound, format!("{:#}", self), metadata)
+		} else if let Some(refusal) = self.downcast_ref::<ExpiryPayoutRefusal>() {
+			let mut metadata = tonic::metadata::MetadataMap::new();
+			metadata.insert("expiry-payout-reason", tonic::metadata::MetadataValue::from_static(refusal.reason()));
+			metadata.insert("identifiers", refusal.identifier().parse().expect("identifiers are ASCII"));
+			// A cancelled participation is gone for the client, like an unknown one.
+			let code = match refusal {
+				ExpiryPayoutRefusal::RoundCancelledBeforeForfeit(_) => tonic::Code::NotFound,
+				_ => tonic::Code::InvalidArgument,
+			};
+			tonic::Status::with_metadata(code, format!("{:#}", self), metadata)
 		} else if let Some(ui) = self.downcast_ref::<UnusableInputs>() {
 			// Like a bad argument, but we attach the offending VTXO ids so the
 			// client can drop exactly those inputs and retry without them.
@@ -235,3 +245,49 @@ fn validate_pver<T>(req: &tonic::Request<T>) -> Result<u64, tonic::Status> {
 	Ok(pver)
 }
 
+#[cfg(test)]
+mod test {
+	use super::*;
+	use ::ark::test_util::VTXO_VECTORS;
+	use ::ark::tree::signed::UnlockHash;
+	use bitcoin::hashes::Hash;
+
+	#[test]
+	fn cancelled_round_metadata_binds_requested_hash_through_error_context() {
+		for hash in [UnlockHash::from_byte_array([1; 32]), UnlockHash::from_byte_array([2; 32])] {
+			let error = anyhow::Error::new(ExpiryPayoutRefusal::RoundCancelledBeforeForfeit(hash))
+				.context("round participation status failed");
+			let status = error.to_status();
+			assert_eq!(status.code(), tonic::Code::NotFound);
+			assert_eq!(status.metadata().get("expiry-payout-reason").unwrap().to_str().unwrap(),
+				"round_cancelled_before_forfeit");
+			assert_eq!(status.metadata().get("identifiers").unwrap().to_str().unwrap(), hash.to_string());
+			assert_eq!(status.metadata().get_all("identifiers").iter().count(), 1);
+			assert_eq!(status.metadata().get_all("expiry-payout-reason").iter().count(), 1);
+		}
+	}
+
+	#[test]
+	fn unknown_round_does_not_gain_cancellation_metadata_from_error_text() {
+		let hash = UnlockHash::from_byte_array([3; 32]);
+		let error = anyhow::Error::new(NotFound::new([hash], "round_cancelled_before_forfeit"))
+			.context("round participation status failed");
+		let status = error.to_status();
+		assert_eq!(status.code(), tonic::Code::NotFound);
+		assert_eq!(status.metadata().get("identifiers").unwrap().to_str().unwrap(), hash.to_string());
+		assert!(status.metadata().get("expiry-payout-reason").is_none());
+	}
+
+	#[test]
+	fn expiry_payout_refusal_metadata_survives_error_context() {
+		let id = VTXO_VECTORS.board_vtxo.id();
+		for refusal in [ExpiryPayoutRefusal::DecidedForPayout(id), ExpiryPayoutRefusal::ExpiredNewLightning(id)] {
+			let reason = refusal.reason();
+			let error = anyhow::Error::new(refusal).context("outer operation failed");
+			let status = error.to_status();
+			assert_eq!(status.code(), tonic::Code::InvalidArgument);
+			assert_eq!(status.metadata().get("expiry-payout-reason").unwrap().to_str().unwrap(), reason);
+			assert_eq!(status.metadata().get("identifiers").unwrap().to_str().unwrap(), id.to_string());
+		}
+	}
+}

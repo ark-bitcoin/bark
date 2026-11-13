@@ -8,6 +8,7 @@
 
 mod config;
 mod daemon;
+mod expiry_payout;
 mod frontier;
 mod policy;
 mod signer;
@@ -86,6 +87,7 @@ use anyhow::Context;
 use bitcoin::{Address, Amount, FeeRate, Transaction, TxIn, TxOut, Sequence, ScriptBuf, Weight, Witness, sighash};
 use bitcoin::Txid;
 use tokio::sync::watch;
+use tokio::task::JoinSet;
 use tracing::{info, trace, warn};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId};
@@ -236,32 +238,48 @@ impl Watchman {
 	pub fn start(self, rtmgr: RuntimeManager) -> WatchmanHandle {
 		let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel(1);
 		tokio::spawn(async move {
-			self.run(rtmgr, ctrl_rx).await;
+			Arc::new(self).run(rtmgr, ctrl_rx).await;
 		});
 		WatchmanHandle { ctrl_tx }
 	}
 
-	async fn run(&self, rtmgr: RuntimeManager, mut ctrl_rx: tokio::sync::mpsc::Receiver<Ctrl>) {
+	async fn run(self: Arc<Self>, rtmgr: RuntimeManager, mut ctrl_rx: tokio::sync::mpsc::Receiver<Ctrl>) {
 		info!("Starting Watchman...");
 		let _worker = rtmgr.spawn_critical("Watchman");
 
 		let mut reaction_timer = tokio::time::interval(self.config.reaction_interval);
 		let mut sweep_timer = tokio::time::interval(self.config.sweep_interval);
+		let mut completed = self.sync_height.clone();
+		let mut expiry_sweeps = JoinSet::new();
+		let mut sweep_pending = false;
 		loop {
 			tokio::select! {
+				// Payout mode runs the sweep pass on each block, in a background
+				// task. A payout then waits at most one block, and a long pass
+				// does not delay the reactions.
+				Ok(()) = completed.changed(), if self.db.expiry_payouts() => {
+					self.enqueue_expiry_sweep(&mut expiry_sweeps, &mut sweep_pending);
+				},
 				_ = reaction_timer.tick() => {
 					self.process_reactions_logged().await;
 					reaction_timer.reset();
 				},
 				_ = sweep_timer.tick() => {
-					self.process_sweeps_logged().await;
+					self.run_sweeps(&mut expiry_sweeps, &mut sweep_pending).await;
 					sweep_timer.reset();
+				},
+				Some(result) = expiry_sweeps.join_next(), if !expiry_sweeps.is_empty() => {
+					if let Err(error) = result { panic!("Expiry sweep task failed: {error}"); }
+					if sweep_pending {
+						sweep_pending = false;
+						self.enqueue_expiry_sweep(&mut expiry_sweeps, &mut sweep_pending);
+					}
 				},
 				Some(ctrl) = ctrl_rx.recv() => match ctrl {
 					// a manual trigger runs both loops so we fully catch up
 					Ctrl::TriggerSweep => {
 						self.process_reactions_logged().await;
-						self.process_sweeps_logged().await;
+						self.run_sweeps(&mut expiry_sweeps, &mut sweep_pending).await;
 						reaction_timer.reset();
 						sweep_timer.reset();
 					},
@@ -670,6 +688,9 @@ impl Watchman {
 	/// Sweeps have no deadline, so this runs on the much longer
 	/// [Config::sweep_interval].
 	pub async fn process_sweeps(&self) -> anyhow::Result<()> {
+		if self.db.expiry_payouts() {
+			return self.process_expiry_sweeps().await;
+		}
 		let work = self.scan_frontier().await?;
 
 		for vtxo in &work.sweeps {
@@ -822,7 +843,7 @@ impl Watchman {
 	) -> anyhow::Result<()> {
 		let tx = self.build_claim_tx(vtxos, fee_rate).await?;
 		let txid = tx.compute_txid();
-		bcd::broadcast_tx(&self.bitcoind, &tx).await?;
+		self.broadcast_claim(vtxos, &tx).await?;
 
 		let total_output_value = tx.output.iter().map(|o| o.value).sum::<Amount>();
 		let total_input_value = vtxos.iter().map(|v| v.amount()).sum::<Amount>();

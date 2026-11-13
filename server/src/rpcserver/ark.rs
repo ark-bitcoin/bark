@@ -982,8 +982,13 @@ impl rpc::server::ArkService for Server {
 			.filter(|p| !required || attestation.is_some_and(|a|
 				p.outputs.iter().filter_map(|o| o.unblinded_mailbox_id)
 					.any(|id| a.verify(unlock_hash, id).is_ok())
-			))
-			.not_found([unlock_hash], "round participation not found")?;
+			));
+		// A cancelled participation can be deleted, so check the tombstone
+		// unless only the owner may learn about the participation.
+		if self.config.expiry_payouts && (part.is_some() || !required) {
+			self.check_participation_not_cancelled(unlock_hash).await?;
+		}
+		let part = part.not_found([unlock_hash], "round participation not found")?;
 		let input_vtxo_ids = part.inputs.iter().map(|i| i.vtxo_id.to_bytes().to_vec()).collect();
 
 		let res = if let Some(round_id) = part.round_id {
@@ -1007,7 +1012,11 @@ impl rpc::server::ArkService for Server {
 				output_vtxos.push(tree.build_vtxo(idx).serialize());
 			}
 
-			if part.inputs.iter().all(|i| i.is_forfeited()) {
+			// In payout mode a cancellation can race this read, so the release
+			// also needs the forfeit marker, and an empty input set never counts.
+			let releasable = !self.config.expiry_payouts
+				|| (part.forfeited_at.is_some() && !part.inputs.is_empty());
+			if releasable && part.inputs.iter().all(|i| i.is_forfeited()) {
 				protos::RoundParticipationStatusResponse {
 					status: protos::RoundParticipationStatus::RoundPartReleased.into(),
 					unlock_preimage: Some(part.unlock_preimage.leak_ref().to_vec()),

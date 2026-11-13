@@ -46,7 +46,8 @@ pub async fn run(db: &Db) -> anyhow::Result<u64> {
 			server_pubkey, amount, anchor_point, \
 			oor_spent_txid, spent_in_round, offboarded_in, \
 			banned_until_height, confirmed_height, \
-			spend_state::TEXT AS spend_state, created_at, updated_at \
+			spend_state::TEXT AS spend_state, created_at, updated_at, \
+			EXISTS(SELECT 1 FROM expiry_payout_vtxo d WHERE d.vtxo_id=vtxo.vtxo_id) AS decided_for_payout \
 		 FROM vtxo \
 		 WHERE spend_state IN ('offboard-connector', 'offboard-forfeit') \
 		 AND length(vtxo) = 0",

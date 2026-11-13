@@ -18,6 +18,7 @@ use bitcoin_ext::bdk::{WalletExt, WithGuaranteedChange};
 use crate::{check_max_amount, Server, SECP};
 use crate::bitcoind as bcd;
 use crate::error::ContextExt;
+use crate::error::ExpiryPayoutRefusal;
 use crate::fee_estimator::OffboardFeeRateError;
 use crate::flux::OwnedVtxoFluxGuard;
 use crate::nursery::NurseryTxKind;
@@ -529,6 +530,11 @@ impl Server {
 		let user_fee_sat = user_fee.to_sat();
 		if let Err(e) = self.db.write(async |t| t.register_offboard(&vtxo_refs, &signed_tx, &forfeit_txs, user_fee_sat).await).await {
 			error!("Failed to register offboard {} in db: {:#}", offboard_txid, e);
+			// Return the refusal, but not the rest of the error, which can
+			// hold transaction bytes.
+			if let Some(refusal) = e.downcast_ref::<ExpiryPayoutRefusal>() {
+				return Err((*refusal).into());
+			}
 			bail!("failed to register offboard in db, please start over");
 		}
 

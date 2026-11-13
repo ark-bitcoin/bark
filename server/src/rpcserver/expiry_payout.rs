@@ -8,9 +8,11 @@ use bitcoin::secp256k1::PublicKey;
 use tonic::service::interceptor::InterceptedService;
 
 use ark::VtxoId;
+use ark::tree::signed::UnlockHash;
 use server_rpc::{self as rpc, RequestExt};
 
 use crate::Server;
+use crate::error::ExpiryPayoutRefusal;
 use crate::rpcserver::ToStatusResult;
 
 /// Refuse a request that carries a protocol version below
@@ -50,6 +52,19 @@ impl Server {
 			let owners = t.vtxo_owner_mailboxes(ids).await?;
 			Ok(VtxoPayouts { owners })
 		}).await.to_status()
+	}
+
+	/// Refuse the status of a round participation that an expiry payout
+	/// cancelled.
+	pub(crate) async fn check_participation_not_cancelled(
+		&self,
+		unlock_hash: UnlockHash,
+	) -> Result<(), tonic::Status> {
+		if self.db.read(async |t| t.participation_cancelled_for_payout(unlock_hash).await).await.to_status()? {
+			let error = anyhow::Error::new(ExpiryPayoutRefusal::RoundCancelledBeforeForfeit(unlock_hash));
+			return Err(error).to_status();
+		}
+		Ok(())
 	}
 }
 

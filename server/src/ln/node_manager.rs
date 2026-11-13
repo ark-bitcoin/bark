@@ -55,7 +55,7 @@ use ark::mailbox::MailboxIdentifier;
 use uuid::Uuid;
 
 use crate::Server;
-use crate::error::ContextExt;
+use crate::error::{ContextExt, ExpiryPayoutRefusal};
 use crate::ln::cln::{ClnNodeInfo, ClnNodeOnlineState, NodeHandle};
 use crate::ln::cln::hold::ClnHoldConfig;
 use crate::ln::cln::xpay::ClnXpayConfig;
@@ -265,6 +265,11 @@ impl LightningManager {
 			retry_for,
 			intent_id.as_deref(),
 		).await {
+			// The guard refused the source before any attempt was stored, so
+			// no payment status can tell the client. It gets the error.
+			if e.is::<ExpiryPayoutRefusal>() {
+				return Err(e);
+			}
 			// The attempt is already recorded as failed and the client sees the
 			// failure via CheckLightningPayment. Benign races (someone else paid
 			// or canceled the invoice first) surface as PayInvoiceRace and
@@ -366,6 +371,7 @@ impl LightningManager {
 		};
 
 		let attempt_id = self.db.write(async |t| {
+			t.guard_new_lightning_inputs(htlc_vtxo_ids).await?;
 			let attempt_id = t.store_lightning_payment_start(
 				node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids,
 				lightning_htlc_subscription_id,
