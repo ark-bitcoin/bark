@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use bitcoin::secp256k1::Keypair;
 
-use ark::Vtxo;
+use ark::{ProtocolEncoding, Vtxo, VtxoPolicy};
 use ark::mailbox::MailboxIdentifier;
 use ark::vtxo::Full;
 use bark::Wallet;
@@ -32,6 +32,41 @@ async fn bind_outputs(
 	for output in package.parts.iter_mut().flat_map(|p| p.outputs.iter_mut().chain(&mut p.isolated_outputs)) {
 		output.blinded_mailbox_id = blinded.clone();
 	}
+}
+
+/// Bind each unbound output of `package` to the mailbox of the wallet that
+/// holds its key.
+async fn bind_to_wallets(
+	srv: &Captaind, wallets: &[&Wallet], mut package: protos::ArkoorPackageCosignRequest,
+) -> protos::ArkoorPackageCosignRequest {
+	for output in package.parts.iter_mut().flat_map(|p| p.outputs.iter_mut().chain(&mut p.isolated_outputs)) {
+		if !output.blinded_mailbox_id.is_empty() {
+			continue;
+		}
+		let key = VtxoPolicy::deserialize(&output.policy).unwrap().user_pubkey();
+		let mut owner = None;
+		for wallet in wallets {
+			if let Some((_, keypair)) = wallet.pubkey_keypair(&key).await.unwrap() {
+				owner = Some((keypair, wallet.mailbox_identifier()));
+				break;
+			}
+		}
+		let (keypair, mailbox) = owner.unwrap_or_else(|| panic!("no wallet holds the key of output {key}"));
+		output.blinded_mailbox_id = blinded_mailbox(srv, &keypair, mailbox).await;
+	}
+	package
+}
+
+/// Record VTXOs as decided for an expiry payout: one operator share each in
+/// a new allocation.
+pub(crate) async fn decide_for_payout(t: &tokio_postgres::Transaction<'_>, ids: &[String]) -> anyhow::Result<()> {
+	let id: i64 = t.query_one("INSERT INTO expiry_payout(expiry_height) VALUES(0) RETURNING id", &[])
+		.await?.get(0);
+	t.execute("
+		INSERT INTO expiry_payout_vtxo(expiry_payout_id, vtxo_id, disposition, gross_sat, fee_sat, payout_sat, replannable)
+		SELECT $1, UNNEST($2::TEXT[]), 'operator', 1, 0, 0, FALSE
+	", &[&id, &ids]).await?;
+	Ok(())
 }
 
 /// The spendable VTXOs of `wallet`.
