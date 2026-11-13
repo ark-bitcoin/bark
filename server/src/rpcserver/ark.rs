@@ -169,6 +169,13 @@ impl rpc::server::ArkService for Server {
 
 		let id = VtxoId::from_bytes(req.vtxo_id)?;
 		let attestation = VtxoStatusAttestation::from_bytes(&req.attestation)?;
+		if let Some(status) = self.unregistered_board_status(id, &attestation).await? {
+			return Ok(tonic::Response::new(protos::GetVtxoStatusResponse {
+				spend_state: status.spend_state,
+				owner_mailbox: status.owner_mailbox,
+				expiry_payout: status.expiry_payout,
+			}));
+		}
 
 		let vtxo_state = self.db.read(async |t| t.get_server_vtxo_by_id(id).await).await
 			.to_status()?;
@@ -192,6 +199,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::GetVtxoStatusResponse {
 			spend_state: spend_state as i32,
 			owner_mailbox: payouts.owner_mailbox(&id),
+			expiry_payout: payouts.expiry_payout(&id),
 		}))
 	}
 
@@ -266,6 +274,10 @@ impl rpc::server::ArkService for Server {
 		let mut missing = Vec::new();
 		for (id, attestation) in queries {
 			let Some((user_vtxo, spend_state)) = by_id.get(&id) else {
+				if let Some(status) = self.unregistered_board_status(id, &attestation).await? {
+					vtxos.push(status);
+					continue;
+				}
 				if !missing.contains(&id) {
 					missing.push(id);
 				}
@@ -279,6 +291,7 @@ impl rpc::server::ArkService for Server {
 				vtxo_id: id.to_bytes().to_vec(),
 				spend_state: *spend_state as i32,
 				owner_mailbox: payouts.owner_mailbox(&id),
+				expiry_payout: payouts.expiry_payout(&id),
 			});
 		}
 

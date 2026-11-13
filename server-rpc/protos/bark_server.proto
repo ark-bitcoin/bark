@@ -235,6 +235,31 @@ message GetVtxoStatusResponse {
 	VtxoSpendState spend_state = 1;
 	// Expiry payout mode only: the owner mailbox key of the VTXO.
 	bytes owner_mailbox = 1000;
+	// Expiry payout mode only: set when the server decided to pay out the
+	// VTXO. The spend state of the VTXO is then SPENT.
+	optional ExpiryPayout expiry_payout = 1001;
+}
+
+enum ExpiryPayoutState {
+	EXPIRY_PAYOUT_STATE_UNSPECIFIED = 0;
+	// The payout transaction is less than six blocks deep.
+	EXPIRY_PAYOUT_STATE_PENDING = 1;
+	// The payout transaction is at least six blocks deep.
+	EXPIRY_PAYOUT_STATE_PAID = 2;
+	// The payout fee is not less than the VTXO amount, so the server pays
+	// nothing.
+	EXPIRY_PAYOUT_STATE_FORFEITED = 3;
+}
+
+// The payout of an expired VTXO to `tr(owner_mailbox)`.
+message ExpiryPayout {
+	ExpiryPayoutState state = 1;
+	// The amount of the VTXO.
+	uint64 gross_sat = 2;
+	// The payout fee.
+	uint64 fee_sat = 3;
+	// The amount paid on-chain, zero for a forfeited VTXO.
+	uint64 payout_sat = 4;
 }
 
 message VtxoStatusQuery {
@@ -253,6 +278,7 @@ message VtxoStatus {
 	VtxoSpendState spend_state = 2;
 	// Expiry payout mode only, see GetVtxoStatusResponse.
 	bytes owner_mailbox = 1000;
+	optional ExpiryPayout expiry_payout = 1001;
 }
 
 message GetVtxosStatusByIdsResponse {
