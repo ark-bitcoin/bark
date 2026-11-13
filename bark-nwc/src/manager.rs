@@ -85,6 +85,8 @@ impl<H: RequestHandler> NwcManager<H> {
 
 	/// Start a service for every connection already in the store.
 	pub fn start_all(self: &Arc<Self>) {
+		// A revoke must not land between the snapshot and its services starting.
+		let _operation = self.operation.lock();
 		let existing = self.connections.read().iter().cloned().collect::<Vec<_>>();
 		if existing.is_empty() {
 			info!("No NWC connections configured, nothing to serve");
