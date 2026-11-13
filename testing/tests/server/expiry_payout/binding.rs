@@ -1,15 +1,18 @@
+
 use bitcoin::Amount;
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::Keypair;
-use bitcoin_ext::BlockHeight;
+use bitcoin::secp256k1::{Keypair, PublicKey};
+use bitcoin_ext::{BlockDelta, BlockHeight};
 
 use futures::StreamExt;
 
 use ark::{
 	musig, ProtocolEncoding, SECP, ServerVtxo, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest,
 };
+use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::attestations::DelegatedRoundParticipationAttestation;
+use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::rounds::{RoundAttemptAttestation, RoundEvent};
 use ark::test_util::dummy::DummyTestVtxoSpec;
@@ -22,13 +25,54 @@ use server::database::tree::VtxoTreeUpdate;
 use server_log::RoundFinished;
 use server_rpc::protos;
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, sat, Captaind, TestContext};
 use ark_testing::constants::ROUND_CONFIRMATIONS;
 use ark_testing::exit::complete_exit;
 use ark_testing::util::FutureExt;
 
 use crate::registration::DropRegistration;
-use super::{bind_outputs, blinded_mailbox, full_vtxos};
+use super::{bind_outputs, bind_to_wallets, blinded_mailbox, decide_for_payout, full_vtxos};
+
+/// A new Lightning spend of an expired VTXO and any spend of a VTXO decided
+/// for a payout are refused with a reason the client can read.
+#[tokio::test]
+async fn expiry_payout_refusals_carry_a_reason() {
+	let ctx = TestContext::new("server/expiry_payout_refusals_carry_a_reason").await;
+	let srv = ctx.captaind("server").no_vtxo_pool()
+		.cfg(|cfg| { cfg.expiry_payouts = true; cfg.vtxo_lifetime = BlockDelta::new(24); }).create().await;
+	let wallet = ctx.bark_sdk("sender", &srv).boarded(sat(100_000))
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	let source = wallet.spendable_vtxos().await.unwrap().pop().unwrap();
+	let source = wallet.get_full_vtxo(source.id()).await.unwrap();
+	let key = wallet.get_vtxo_key(&source).await.unwrap();
+	let tip = ctx.bitcoind().get_block_count().await as u32;
+	let expired = ctx.generate_blocks(source.expiry_height().to_u32() + 1 - tip).await;
+	srv.wait_for_sync_height(expired).await;
+	let request = async || {
+		let deadline = expired + srv.config().htlc_send_expiry_delta + BlockDelta::new(1);
+		let policy = VtxoPolicy::new_server_htlc_send(key.public_key(), PaymentHash::from([7; 32]), deadline);
+		let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints([source.clone()], policy).unwrap()
+			.generate_user_nonces(&[key]).unwrap();
+		let package = bind_to_wallets(&srv, &[&wallet], builder.cosign_request().into()).await;
+		protos::LightningPayHtlcCosignRequest { parts: package.parts }
+	};
+	let reason = |error: tonic::Status| {
+		error.metadata().get("expiry-payout-reason").unwrap().to_str().unwrap().to_owned()
+	};
+	let mut rpc = srv.get_public_rpc().await;
+	let error = rpc.request_lightning_pay_htlc_cosign(request().await).await.unwrap_err();
+	assert_eq!(reason(error), "expired_new_lightning");
+
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	db.write(async |t| {
+		decide_for_payout(t, &[source.id().to_string()]).await?;
+		t.execute("UPDATE vtxo SET spend_state = 'spent', updated_at = NOW() WHERE vtxo_id = $1",
+			&[&source.id().to_string()]).await?;
+		Ok(())
+	}).await.unwrap();
+	let error = rpc.request_lightning_pay_htlc_cosign(request().await).await.unwrap_err();
+	assert_eq!(reason(error), "decided_for_payout");
+}
 
 /// The `vtxo` rows of `ids` and every owner binding, to check that a
 /// request wrote nothing.
@@ -96,7 +140,8 @@ async fn expiry_payout_arkoor_mailbox_binding_is_immutable() {
 
 	let mut changed = request.clone();
 	bind_outputs(&srv, &mut changed, &recipient, other_mailbox).await;
-	assert!(rpc.request_arkoor_cosign(changed).await.is_err());
+	let error = rpc.request_arkoor_cosign(changed).await.unwrap_err();
+	assert_eq!(error.code(), tonic::Code::FailedPrecondition, "{error}");
 	assert_eq!(stored_rows(&db, &ids).await, committed);
 
 	// A client that lost the reply sends the same request again.
@@ -225,6 +270,73 @@ async fn expiry_payout_unregistered_arkoor_is_not_credited() {
 
 /// The policy of round padding. The server records no owner for it and
 /// pays its value to the operator at expiry.
+/// An arkoor of `input` to one output for each of `policies`, which get
+/// the key of `input` and share its amount, bound to the wallet.
+async fn split_arkoor(
+	srv: &Captaind, wallet: &Wallet, input: &Vtxo<Full>, policies: &[&dyn Fn(PublicKey) -> VtxoPolicy],
+) -> protos::ArkoorPackageCosignRequest {
+	let key = wallet.get_vtxo_key(input).await.unwrap();
+	let amount = input.amount() / policies.len() as u64;
+	let outputs = policies.iter()
+		.map(|policy| ArkoorDestination { total_amount: amount, policy: policy(key.public_key()) })
+		.collect();
+	let builder = ArkoorPackageBuilder::new_with_checkpoints([input.clone()], outputs).unwrap()
+		.generate_user_nonces(&[key]).unwrap();
+	bind_to_wallets(srv, &[wallet], builder.cosign_request().into()).await
+}
+
+/// A payout server co-signs only arkoor outputs with a pubkey policy, and
+/// the HTLC-send outputs of a Lightning send. An HTLC output from any other
+/// arkoor has no Lightning payment that resolves it, so it would hold the
+/// payout of its whole tree. A server without expiry payouts co-signs these
+/// outputs.
+#[tokio::test]
+async fn expiry_payout_arkoor_outputs_need_a_pubkey_policy() {
+	let ctx = TestContext::new("server/expiry_payout_arkoor_outputs_need_a_pubkey_policy").await;
+	for payouts in [true, false] {
+		let name = if payouts { "payout" } else { "upstream" };
+		let srv = ctx.captaind(name).no_vtxo_pool().cfg(move |cfg| cfg.expiry_payouts = payouts).create().await;
+		let wallet = ctx.bark_sdk(&format!("{name}_sender"), &srv)
+			.boarded(sat(100_000)).boarded(sat(100_000)).boarded(sat(100_000)).boarded(sat(100_000))
+			.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+		let inputs = full_vtxos(&wallet).await;
+		let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+		let deadline = tip + srv.config().htlc_send_expiry_delta;
+		let delta = srv.config().htlc_expiry_delta;
+		let htlc_send = |key| VtxoPolicy::new_server_htlc_send(key, Preimage::random().compute_payment_hash(), deadline);
+		let htlc_recv = |key| VtxoPolicy::new_server_htlc_recv(
+			key, Preimage::random().compute_payment_hash(), deadline, delta,
+		);
+		let lightning = |request: protos::ArkoorPackageCosignRequest| {
+			protos::LightningPayHtlcCosignRequest { parts: request.parts }
+		};
+		let mut rpc = srv.get_public_rpc().await;
+
+		let send = split_arkoor(&srv, &wallet, &inputs[0], &[&htlc_send]).await;
+		rpc.request_lightning_pay_htlc_cosign(lightning(send)).await
+			.expect("a Lightning send with HTLC-send outputs is co-signed");
+
+		let plain_recv = split_arkoor(&srv, &wallet, &inputs[1], &[&htlc_recv]).await;
+		let plain_send = split_arkoor(&srv, &wallet, &inputs[2], &[&htlc_send]).await;
+		let mixed_send = split_arkoor(&srv, &wallet, &inputs[3], &[&htlc_send, &htlc_recv]).await;
+		let results = [
+			("an arkoor to an HTLC-recv output", rpc.request_arkoor_cosign(plain_recv).await),
+			("an arkoor to an HTLC-send output", rpc.request_arkoor_cosign(plain_send).await),
+			("a Lightning send with an HTLC-recv output",
+				rpc.request_lightning_pay_htlc_cosign(lightning(mixed_send)).await),
+		];
+		for (what, result) in results {
+			if payouts {
+				let error = result.expect_err(what);
+				assert_eq!(error.code(), tonic::Code::InvalidArgument, "{what}: {error}");
+				assert!(error.message().contains("policy"), "{what}: {error}");
+			} else {
+				result.unwrap_or_else(|e| panic!("{what} is refused without expiry payouts: {e}"));
+			}
+		}
+	}
+}
+
 fn padding_policy() -> VtxoPolicy {
 	VtxoPolicy::new_pubkey("02dfa52f6690299d2d6a08323083e290597b56fee125063e5f4e2957731639c42c".parse().unwrap())
 }
