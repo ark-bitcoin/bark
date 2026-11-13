@@ -212,6 +212,12 @@ receive_htlc_forward_timeout = "3min"
 # when preparing a lightning claim.
 ln_receive_anti_dos_required = false
 
+# Whether users can ask to have their Ark address put in the route
+# hints of their lightning receive invoices. Other users of this
+# server can then pay those invoices with an arkoor, without the
+# lightning send and receive fees.
+ln_receive_ark_address_hints = false
+
 # Indicates whether the Ark server requires clients to sign with the
 # participation's mailbox key when querying a round participation status.
 # Clients that don't send this attestation can then no longer query their

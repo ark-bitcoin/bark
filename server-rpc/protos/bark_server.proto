@@ -60,6 +60,7 @@ service ArkService {
 	rpc PrepareLightningReceiveClaim(PrepareLightningReceiveClaimRequest) returns (PrepareLightningReceiveClaimResponse) {}
 	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc CancelLightningReceive(CancelLightningReceiveRequest) returns (core.Empty) {}
+	rpc RequestLightningReceiveArkoorCosign(LightningReceiveArkoorCosignRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// * OFFBOARDS
 
@@ -418,6 +419,10 @@ message StartLightningReceiveRequest {
 	// The key the HTLC-recv VTXOs will be locked to. When set, the claim can
 	// only be prepared with this key and a claim_attestation signed by it.
 	optional bytes claim_pubkey = 7;
+	// Put the Ark address of claim_pubkey and mailbox_id in the invoice as
+	// route hints, so a user of this server can pay it with an arkoor
+	// instead. A server that does not allow it ignores this field.
+	bool ark_address_hint = 1000;
 }
 
 message StartLightningReceiveResponse {
@@ -456,6 +461,13 @@ message ClaimLightningReceiveRequest {
 
 message CancelLightningReceiveRequest {
 	bytes payment_hash = 1;
+}
+
+// An arkoor that pays the invoice of a Lightning receive on the Ark address
+// in its route hints. The server settles the receive when it co-signs.
+message LightningReceiveArkoorCosignRequest {
+	bytes payment_hash = 1;
+	ArkoorPackageCosignRequest cosign_request = 2;
 }
 
 enum LightningReceiveStatus {

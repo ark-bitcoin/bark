@@ -509,6 +509,7 @@ impl TestContext {
 			receive_htlc_forward_timeout: Duration::from_secs(30),
 			min_board_amount: Amount::from_sat(20_000),
 			ln_receive_anti_dos_required: false,
+			ln_receive_ark_address_hints: false,
 			round_status_attestation_required: false,
 			forfeit_attestation_required: false,
 			ln_max_fee_ppm: 900_000,

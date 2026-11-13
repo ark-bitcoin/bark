@@ -411,6 +411,13 @@ pub struct Config {
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
 
+	/// Whether users can ask to have their Ark address put in the route
+	/// hints of their lightning receive invoices. Other users of this
+	/// server can then pay those invoices with an arkoor, without the
+	/// lightning send and receive fees.
+	#[serde(default)]
+	pub ln_receive_ark_address_hints: bool,
+
 	/// Indicates whether the Ark server requires clients to sign with the
 	/// participation's mailbox key when querying a round participation status.
 	#[serde(default)]

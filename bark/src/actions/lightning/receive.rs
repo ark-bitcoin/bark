@@ -380,6 +380,7 @@ pub(crate) async fn start_lightning_receive(
 		description,
 		expiry_secs: expiry.map(|e| e.as_secs()),
 		claim_pubkey: Some(claim_keypair.public_key().serialize().to_vec()),
+		ark_address_hint: false,
 	};
 
 	let resp = srv.client.start_lightning_receive(req).await?.into_inner();
