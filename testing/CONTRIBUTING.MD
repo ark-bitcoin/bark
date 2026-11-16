@@ -32,6 +32,7 @@ The tests are structured as follows
 
 **Don't use the bark/bark-legacy binary**
 - **Don't**: Write new tests using the `bark/bark-legacy` binary
+- **Don't**: Call `client()` in a bark-legacy test. Write a bark_sdk test instead
 
 **Think about backward compatibility**
 We explicitly test for compatibility of older clients
