@@ -11,19 +11,24 @@ use ark::fees::{BoardFees, PpmFeeRate};
 use ark::lightning::PaymentHash;
 use bark::exit::ExitState;
 use bark_json::primitives::VtxoStateInfo;
-use bitcoin::Amount;
+use bitcoin::{
+	absolute, transaction, Address, Amount, FeeRate, OutPoint, Sequence, Transaction, TxIn, TxOut,
+	Txid, Weight,
+};
+use bitcoincore_rpc::json::SignRawTransactionInput;
 use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use server::database::Db;
 use server::vtxopool::VtxoTarget;
 use server_log::{
-	ArkFeeRecorded, ClaimBroadcast, ClaimBroadcastFailure, ClaimChunkBroadcastFailure,
+	ArkFeeRecorded, BroadcastingDependentTx, ClaimBroadcast, ClaimBroadcastFailure, ClaimChunkBroadcastFailure,
 	ProgressBroadcast, ProgressCpfpFailure, FrontierReindexComplete, FrontierRepairedSpend,
 };
 
-use ark_testing::{TestContext, btc, require_bark_version, sat};
+use ark_testing::{TestContext, btc, require_bark_version, require_bitcoind_chain_source, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::SlogHandler;
+use ark_testing::daemon::watchmand::Watchmand;
 use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
 use ark_testing::util::FutureExt;
 
@@ -1159,6 +1164,242 @@ async fn watchman_sweeps_exit_after_oor_then_forfeit() {
 	failures.assert_empty();
 }
 
+
+/// `getmempoolentry` as JSON, as the bitcoincore_rpc type expects fields bitcoind dropped.
+fn mempool_entry(rpc: &BitcoinRpcClient, txid: Txid) -> serde_json::Value {
+	rpc.call("getmempoolentry", &[txid.to_string().into()]).unwrap()
+}
+
+/// The children of `parent` in the mempool.
+fn mempool_children(rpc: &BitcoinRpcClient, parent: Txid) -> Vec<Txid> {
+	mempool_entry(rpc, parent)["spentby"].as_array().unwrap().iter()
+		.map(|t| Txid::from_str(t.as_str().unwrap()).unwrap())
+		.collect()
+}
+
+/// Replace the CPFP child of `parent` with a large child on its fee anchor, as anyone can.
+/// The package pays 9 sat/vB, a bit more than the watchman's 7 sat/vB, so a much higher
+/// absolute fee. The child spends the confirmed coin of `coin_addr`.
+async fn attach_large_cheap_child(
+	ctx: &TestContext,
+	wm: &Watchmand,
+	parent: Txid,
+	coin_addr: &Address,
+) -> Txid {
+	let rpc = ctx.bitcoind().sync_client();
+	let parent_tx = rpc.get_raw_transaction(&parent, None).unwrap();
+	let parent_vsize = mempool_entry(&rpc, parent)["vsize"].as_u64().unwrap();
+	let anchor_vout = parent_tx.output.iter()
+		.position(|o| o.script_pubkey == *bitcoin_ext::fee::P2A_SCRIPT)
+		.expect("parent has no anchor") as u32;
+	let coin = rpc.list_unspent(Some(1), None, Some(&[coin_addr]), None, None).unwrap()
+		.pop().expect("coin not confirmed");
+	let padding = (0..25).map(|_| TxOut {
+		value: sat(1_000),
+		script_pubkey: ctx.bitcoind().get_new_address().script_pubkey(),
+	}).collect::<Vec<_>>();
+	let sign = |change: Amount| {
+		let tx = Transaction {
+			version: transaction::Version(3),
+			lock_time: absolute::LockTime::ZERO,
+			input: vec![
+				TxIn {
+					previous_output: OutPoint::new(parent, anchor_vout),
+					sequence: Sequence::ZERO,
+					..Default::default()
+				},
+				TxIn {
+					previous_output: OutPoint::new(coin.txid, coin.vout),
+					sequence: Sequence::ZERO,
+					..Default::default()
+				},
+			],
+			output: padding.iter().cloned().chain([TxOut {
+				value: change,
+				script_pubkey: coin_addr.script_pubkey(),
+			}]).collect(),
+		};
+		let anchor = SignRawTransactionInput {
+			txid: parent,
+			vout: anchor_vout,
+			script_pub_key: bitcoin_ext::fee::P2A_SCRIPT.clone(),
+			redeem_script: None,
+			amount: Some(Amount::ZERO),
+		};
+		rpc.sign_raw_transaction_with_wallet(&tx, Some(&[anchor]), None).unwrap()
+			.transaction().unwrap()
+	};
+	let padding_value = padding.iter().map(|o| o.value).sum::<Amount>();
+	let child_vsize = sign(coin.amount - padding_value).vsize() as u64;
+	let fee = FeeRate::from_sat_per_vb_u32(9)
+		* Weight::from_vb_unchecked(parent_vsize + child_vsize + 2);
+	let child = sign(coin.amount - padding_value - fee);
+	let txid = rpc.send_raw_transaction(&child).unwrap();
+	ctx.await_transactions_across_nodes([txid], [wm.bitcoind().as_ref()]).await;
+	txid
+}
+
+/// Restart the watchman wanting 15 sat/vB, so a package at 9 sat/vB pays too little.
+async fn raise_watchman_fee_rate(wm: &Watchmand, failures: &WatchmanFailureCollector) {
+	let fee_rate = FeeRate::from_sat_per_vb_u32(15);
+	wm.stop().await.unwrap();
+	{
+		let mut cfg = wm.config_mut();
+		cfg.fee_estimator.fallback_fee_rate_regular = fee_rate;
+		// A higher estimate is capped to the same rate.
+		cfg.fee_estimator.max_fee_rate = Some(fee_rate);
+	}
+	wm.start().await.unwrap();
+	wm.add_slog_handler(failures.clone());
+
+	// A lower estimate would replace the fallback. The 3-block target is the
+	// watchman's regular rate, and no block comes in before the bump.
+	let estimate: serde_json::Value = wm.bitcoind().sync_client()
+		.call("estimatesmartfee", &[3.into(), "economical".into()]).unwrap();
+	if let Some(btc_per_kvb) = estimate["feerate"].as_f64() {
+		let estimate = FeeRate::from_sat_per_kwu((btc_per_kvb * 100_000_000.0 / 4.0) as u64);
+		assert!(estimate >= fee_rate, "node estimates {} below the test's {}", estimate, fee_rate);
+	}
+}
+
+/// Trigger the watchman until `parent`'s child in its mempool is no longer `old_child`,
+/// and return the new child.
+async fn wait_for_child_replaced(wm: &Watchmand, parent: Txid, old_child: Txid) -> Txid {
+	let rpc = wm.bitcoind().sync_client();
+	for _ in 0..20 {
+		wm.trigger_sweep().await;
+		let children = mempool_children(&rpc, parent);
+		if let Some(child) = children.iter().find(|c| **c != old_child) {
+			assert!(!children.contains(&old_child));
+			return *child;
+		}
+		tokio::time::sleep(Duration::from_secs(1)).await;
+	}
+	panic!("the watchman didn't replace child {} of {}", old_child, parent);
+}
+
+/// A progress package in the mempool that pays too little but has a large child, for example
+/// one an attacker attached to the progress tx's anchor, must still be replaced by the watchman.
+/// The replacement has to pay more than the child it evicts, not just a higher feerate than the
+/// package, or bitcoind rejects it and the progress stays stuck while a timelock runs out.
+#[tokio::test]
+async fn watchman_replaces_large_cheap_progress_child() {
+	require_bark_version!(> "0.5.0");
+	require_bitcoind_chain_source!();
+
+	let ctx = TestContext::new("server/watchman_replaces_large_cheap_progress_child").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.vtxopool.vtxo_targets = vec![];
+	}).watchmand_cfg(|cfg| {
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
+	wm.add_slog_handler(failures.clone());
+	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(100_000)).await;
+
+	// Make the watchman progress a stale exit, as in watchman_sweeps_exit_after_oor_then_forfeit.
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(500_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(500_000)).create().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(200_000)).await;
+	bark2.board_and_confirm_and_register(&ctx, sat(200_000)).await;
+	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark1.sync().await;
+	bark2.sync().await;
+	let bark1_old = bark1.full_clone("bark1_old").await;
+	bark1.send_oor(bark2.address().await, sat(50_000)).await;
+	bark2.sync().await;
+	ctx.refresh_all(&srv, &[&bark2]).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark2.sync().await;
+	bark1_old.start_exit_all().await;
+	progress_exit_until_awaiting_delta(&ctx, &bark1_old).await;
+
+	// A confirmed coin for the attacker's child.
+	let attacker_addr = ctx.bitcoind().get_new_address();
+	ctx.bitcoind().fund_addr(&attacker_addr, sat(100_000)).await;
+
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period.to_u32()).await;
+	wm.wait_for_sync_height(tip).await;
+
+	let mut log_progress = wm.subscribe_log::<ProgressBroadcast>();
+	wm.trigger_sweep().await;
+	let progress = log_progress.recv().wait_millis(10_000).await.expect("no progress");
+	ctx.await_transactions_across_nodes([progress.cpfp_txid], [wm.bitcoind().as_ref()]).await;
+
+	// The package now pays less than the watchman wants, so it has to replace the
+	// attacker's child, which pays more than a package at the watchman's feerate would.
+	let attacker_child = attach_large_cheap_child(&ctx, &wm, progress.txid, &attacker_addr).await;
+	raise_watchman_fee_rate(&wm, &failures).await;
+	let watchman_child = wait_for_child_replaced(&wm, progress.txid, attacker_child).await;
+
+	// Without a restart, the chunk of the same spender pays less than the watchman wants:
+	// make bitcoind count the watchman's child for almost nothing, as if a descendant that
+	// paid for the chunk left. The watchman must notice and bump again.
+	let wm_rpc = wm.bitcoind().sync_client();
+	let child_fee = Amount::from_btc(
+		mempool_entry(&wm_rpc, watchman_child)["fees"]["modified"].as_f64().unwrap(),
+	).unwrap();
+	let delta = -(child_fee.to_sat() as i64 - 100);
+	let _: bool = wm_rpc.call(
+		"prioritisetransaction", &[watchman_child.to_string().into(), 0.into(), delta.into()],
+	).unwrap();
+	wait_for_child_replaced(&wm, progress.txid, watchman_child).await;
+
+	failures.assert_empty();
+}
+
+/// The same for a forfeit tx's connector: the watchman broadcasts it before the forfeit tx,
+/// and it doesn't spend the vtxo that is being exited. A connector in the mempool with a large
+/// cheap child must be found and replaced just the same.
+#[tokio::test]
+async fn watchman_replaces_large_cheap_connector_child() {
+	require_bitcoind_chain_source!();
+
+	let ctx = TestContext::new("server/watchman_replaces_large_cheap_connector_child").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.vtxopool.vtxo_targets = vec![];
+	}).watchmand_cfg(|cfg| {
+		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = srv.watchmand();
+	wm.add_slog_handler(failures.clone());
+	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(1_000_000)).await;
+
+	// Offboarding two vtxos puts their connectors in a separate connector tx.
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	bark.board_and_confirm_and_register(&ctx, sat(200_000)).await;
+	bark.board_and_confirm_and_register(&ctx, sat(200_000)).await;
+	bark.sync().await;
+	let evil = bark.full_clone("evil").await;
+	bark.offboard_all(&ctx.bitcoind().get_new_address()).await;
+	ctx.generate_blocks(1).await;
+	evil.start_exit_all().await;
+	progress_exit_until_awaiting_delta(&ctx, &evil).await;
+
+	let attacker_addr = ctx.bitcoind().get_new_address();
+	ctx.bitcoind().fund_addr(&attacker_addr, sat(100_000)).await;
+
+	let mut log_dependent = wm.subscribe_log::<BroadcastingDependentTx>();
+	let mut log_progress = wm.subscribe_log::<ProgressBroadcast>();
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period.to_u32()).await;
+	wm.wait_for_sync_height(tip).await;
+	wm.trigger_sweep().await;
+	let dependent = log_dependent.recv().wait_millis(10_000).await.expect("no connector");
+	let progress = log_progress.recv().wait_millis(10_000).await.expect("no progress");
+	assert_eq!(progress.txid, dependent.parent_txid);
+	ctx.await_transactions_across_nodes([progress.cpfp_txid], [wm.bitcoind().as_ref()]).await;
+
+	let attacker_child = attach_large_cheap_child(&ctx, &wm, progress.txid, &attacker_addr).await;
+	raise_watchman_fee_rate(&wm, &failures).await;
+	wait_for_child_replaced(&wm, progress.txid, attacker_child).await;
+
+	failures.assert_empty();
+}
 
 /// The vtxopool funds each lightning receive from the change of the previous one, so all the
 /// receives hang off a single allocation chain. When a user exits the oldest receive, the txs
