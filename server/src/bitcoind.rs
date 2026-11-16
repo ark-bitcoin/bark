@@ -158,8 +158,18 @@ pub async fn get_mempool_spending_tx(
 
 /// The `getmempoolentry` fields the server reads. The bitcoincore_rpc
 /// type predates the chunk fields.
+///
+/// All fees include `prioritisetransaction` deltas, as bitcoind's
+/// replacement rules do.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MempoolEntry {
+	/// Maximum of sigop-adjusted size (-bytespersigop) and virtual transaction size as defined in BIP 141.
+	pub vsize_adjusted: Option<u64>,
+	/// Sigops-adjusted virtual size of the tx. DEPRECATED used as fallback
+	pub vsize: Option<u64>,
+	/// Virtual size of the tx and all its in-mempool descendants.
+	#[serde(rename = "descendantsize")]
+	pub descendant_size: u64,
 	/// Sigops-adjusted weight of the tx's chunk.
 	#[serde(rename = "chunkweight")]
 	pub chunk_weight: u64,
@@ -168,30 +178,45 @@ pub struct MempoolEntry {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MempoolEntryFees {
-	/// Fees of the tx's chunk, `prioritisetransaction` deltas included.
+	/// Fee of the tx itself.
+	#[serde(with = "bitcoin::amount::serde::as_btc")]
+	pub modified: Amount,
+	/// Fees of the tx and all its in-mempool descendants.
+	#[serde(with = "bitcoin::amount::serde::as_btc")]
+	pub descendant: Amount,
+	/// Fees of the tx's chunk.
 	#[serde(with = "bitcoin::amount::serde::as_btc")]
 	pub chunk: Amount,
 }
 
-/// The chunk feerate of a mempool tx: its fees plus those of the txs
-/// bitcoind mines it with, over their weight, rounded down so the tx is
-/// never reported to pay more than it does. `Ok(None)` if the tx is not
-/// in the mempool.
+impl MempoolEntry {
+	/// The chunk feerate: the fees of the tx plus those of the txs bitcoind
+	/// mines it with, over their weight, rounded down so the tx is never
+	/// reported to pay more than it does.
+	pub fn chunk_fee_rate(&self) -> Result<FeeRate, ClientError> {
+		self.fees.chunk.div_by_weight_floor(Weight::from_wu(self.chunk_weight)).ok_or_else(|| {
+			ClientError::Parse("invalid chunk fee/weight from getmempoolentry".to_owned())
+		})
+	}
+}
+
+/// The mempool entry of a tx, `Ok(None)` if the tx is not in the mempool.
+pub async fn mempool_entry(
+	client: &Client, txid: Txid,
+) -> Result<Option<MempoolEntry>, ClientError> {
+	match client.call_raw("getmempoolentry", &[json_arg(txid)?]).await {
+		Ok(e) => Ok(Some(e)),
+		Err(e) if e.is_not_found() => Ok(None),
+		Err(e) => Err(e),
+	}
+}
+
+/// The chunk feerate of a mempool tx, see [MempoolEntry::chunk_fee_rate].
+/// `Ok(None)` if the tx is not in the mempool.
 pub async fn chunk_fee_rate(
 	client: &Client, txid: Txid,
 ) -> Result<Option<FeeRate>, ClientError> {
-	let entry: MempoolEntry = match client.call_raw(
-		"getmempoolentry", &[json_arg(txid)?],
-	).await {
-		Ok(e) => e,
-		Err(e) if e.is_not_found() => return Ok(None),
-		Err(e) => return Err(e),
-	};
-	let weight = Weight::from_wu(entry.chunk_weight);
-	let feerate = entry.fees.chunk.div_by_weight_floor(weight).ok_or_else(|| {
-		ClientError::Parse("invalid chunk fee/weight from getmempoolentry".to_owned())
-	})?;
-	Ok(Some(feerate))
+	mempool_entry(client, txid).await?.map(|e| e.chunk_fee_rate()).transpose()
 }
 
 pub async fn submit_package<T: Borrow<Transaction>>(
@@ -241,11 +266,18 @@ mod test {
 	#[test]
 	fn mempool_entry_parses_chunk_fields() {
 		let entry: MempoolEntry = serde_json::from_str(r#"{
-			"vsize": 141, "ancestorsize": 141, "chunkweight": 998,
-			"fees": {"base": 0.00000141, "ancestor": 0.00000141, "chunk": 0.00025100},
+			"vsize": 141, "ancestorsize": 141, "descendantsize": 250, "chunkweight": 998,
+			"fees": {
+				"base": 0.00000141, "modified": 0.00000141, "ancestor": 0.00000141,
+				"descendant": 0.00025100, "chunk": 0.00025100
+			},
 			"spentby": []
 		}"#).unwrap();
+		assert_eq!(entry.vsize, Some(141));
+		assert_eq!(entry.descendant_size, 250);
 		assert_eq!(entry.chunk_weight, 998);
+		assert_eq!(entry.fees.modified, Amount::from_sat(141));
+		assert_eq!(entry.fees.descendant, Amount::from_sat(25_100));
 		assert_eq!(entry.fees.chunk, Amount::from_sat(25_100));
 	}
 }

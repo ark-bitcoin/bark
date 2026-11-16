@@ -95,6 +95,7 @@ use bitcoin_ext::rpc::BitcoinAsyncRpcExt;
 use bitcoin_ext::bdk::KEYCHAIN;
 use bitcoin_ext::cpfp::MakeCpfpFees;
 use bitcoind_async_client::Client as BitcoindClient;
+use bitcoind_async_client::error::ClientError;
 use bitcoind_async_client::traits::Reader;
 
 use crate::bitcoind as bcd;
@@ -108,8 +109,33 @@ use crate::watchman::policy::ActionContextFetcher;
 /// A transaction spending a vtxo that is currently in the mempool.
 #[derive(Debug, Clone)]
 struct MempoolSpend {
-	/// Chunk feerate of the spend.
+	txid: Txid,
+	/// Chunk feerate of the spend, the rate it is mined at.
 	fee_rate: FeeRate,
+	/// Fee and virtual size of the spend itself.
+	fee: Amount,
+	vsize: u64,
+	/// Fee and virtual size of the spend's in-mempool descendants.
+	descendants_fee: Amount,
+	descendants_vsize: u64,
+}
+
+impl MempoolSpend {
+	fn from_entry(txid: Txid, entry: bcd::MempoolEntry) -> Result<Self, ClientError> {
+		let vsize = entry.vsize_adjusted.or(entry.vsize).ok_or_else(||
+			ClientError::Parse("missing vsize_adjusted and vsize argument".into())
+		)?;
+		Ok(MempoolSpend {
+			txid,
+			fee_rate: entry.chunk_fee_rate()?,
+			fee: entry.fees.modified,
+			vsize: vsize,
+			descendants_fee: entry.fees.descendant.checked_sub(entry.fees.modified)
+				.ok_or_else(|| ClientError::Parse("descendant fees below own fee".to_owned()))?,
+			descendants_vsize: entry.descendant_size.checked_sub(vsize)
+				.ok_or_else(|| ClientError::Parse("descendant size below own size".to_owned()))?,
+		})
+	}
 }
 
 /// The mempool spends of the vtxos handled in one pass, by vtxo.
@@ -707,7 +733,7 @@ impl Watchman {
 	}
 
 	/// Look up what spends each of `vtxo_ids` in the mempool and measure its
-	/// chunk feerate.
+	/// fees.
 	///
 	/// Measured on every pass, since a chunk feerate drops when a descendant
 	/// that paid for it leaves the mempool. A spender of several vtxos is
@@ -733,9 +759,8 @@ impl Watchman {
 			let spend = match measured.get(&spending_txid) {
 				Some(spend) => spend.clone(),
 				// None if the spend left the mempool between the two calls.
-				None => match bcd::chunk_fee_rate(&self.bitcoind, spending_txid).await {
-					Ok(fee_rate) => {
-						let spend = fee_rate.map(|fee_rate| MempoolSpend { fee_rate });
+				None => match self.measure_mempool_tx(spending_txid).await {
+					Ok(spend) => {
 						measured.insert(spending_txid, spend.clone());
 						spend
 					},
@@ -750,6 +775,13 @@ impl Watchman {
 			spends.insert(vtxo_id, spend);
 		}
 		spends
+	}
+
+	/// Measure the fees of `txid` in the mempool, `None` if it isn't there.
+	async fn measure_mempool_tx(&self, txid: Txid) -> Result<Option<MempoolSpend>, ClientError> {
+		bcd::mempool_entry(&self.bitcoind, txid).await?
+			.map(|e| MempoolSpend::from_entry(txid, e))
+			.transpose()
 	}
 
 	/// Build and broadcast a claim tx for the given vtxos.
@@ -891,10 +923,11 @@ impl Watchman {
 
 	/// Process vtxos that need to be progressed.
 	///
-	/// For each vtxo, checks if we already have a progress tx in the mempool:
-	/// - If yes and feerate is sufficient: skip (already handled)
-	/// - If yes but feerate is too low: needs RBF
-	/// - If no existing progress: needs broadcast
+	/// For each vtxo, checks what spends it in the mempool, or else whether
+	/// the progress tx is in the mempool:
+	/// - A spend with a sufficient feerate: skip (already handled)
+	/// - A spend with too low a feerate: replace it, see [replacement_fees]
+	/// - Neither: broadcast
 	///
 	/// The input contains (progress_txid, vtxo) pairs, where progress_txid
 	/// is the pre-computed progress transaction that should be broadcast.
@@ -906,9 +939,6 @@ impl Watchman {
 		//TODO(stevenroose) adapt feerate to how close the deadline is
 		let min_fee_rate = self.fee_estimator.regular();
 
-		// make sure we always increment with the minimum incremental feerate
-		let mut fee_rate = min_fee_rate;
-
 		// Deduplicate by progress_txid: when multiple vtxos share the same
 		// connector tx, only one CPFP must be created for it (P2A can only be
 		// spent once per mempool slot).
@@ -916,24 +946,36 @@ impl Watchman {
 		txs.retain(|(txid, _)| seen.insert(*txid));
 
 		// filter txs that are already in the mempool with sufficient fee
-		txs.retain(|(_, v)| match spends.get(&v.id()) {
-			// Unknown mempool state, try again next pass.
-			None => false,
-			Some(None) => true,
-			Some(Some(spend)) => if spend.fee_rate < min_fee_rate {
-				fee_rate = fee_rate.max(saturating_add_feerates(
-					spend.fee_rate, self.config.incremental_relay_fee,
-				));
-				true
-			} else {
-				false
+		let mut to_broadcast = Vec::with_capacity(txs.len());
+		for (txid, v) in txs {
+			let spend = match spends.get(&v.id()) {
+				// Unknown mempool state, try again next pass.
+				None => continue,
+				Some(Some(spend)) => spend.clone(),
+				// The progress tx can be the connector of a forfeit tx, which
+				// doesn't spend the vtxo but can be in the mempool already.
+				Some(None) => match self.measure_mempool_tx(txid).await {
+					Ok(Some(spend)) => spend,
+					Ok(None) => {
+						to_broadcast.push((txid, v, MakeCpfpFees::Effective(min_fee_rate)));
+						continue;
+					},
+					Err(e) => {
+						warn!("Failed to fetch feerate of progress tx {}: {:#}", txid, e);
+						continue;
+					},
+				},
+			};
+			if spend.fee_rate < min_fee_rate {
+				let fees = replacement_fees(&spend, txid, min_fee_rate, self.config.incremental_relay_fee);
+				to_broadcast.push((txid, v, fees));
 			}
-		});
+		}
 
 		let mut wallet = self.watchman_wallet.lock().await;
 
 		//TODO(stevenroose) consider a safe strategy for batching here as well
-		for (progress_txid, vtxo) in txs {
+		for (progress_txid, vtxo, fees) in to_broadcast {
 			if !wallet.has_trusted_balance(self.config.min_cpfp_amount) {
 				slog!(NoMoreConfirmedFunds, wallet: wallet.kind().name().into(),
 					balance: wallet.balance().trusted,
@@ -943,7 +985,7 @@ impl Watchman {
 			}
 
 			if let Err(e) = self.process_progress_tx(
-				&mut wallet, progress_txid, &vtxo, fee_rate,
+				&mut wallet, progress_txid, &vtxo, fees,
 			).await {
 				slog!(ProgressCpfpFailure, vtxo_id: vtxo.id(), txid: progress_txid,
 					error: e.to_string(),
@@ -963,7 +1005,7 @@ impl Watchman {
 		wallet: &mut PersistedWallet,
 		txid: Txid,
 		vtxo: &ServerVtxo,
-		fee_rate: FeeRate,
+		fees: MakeCpfpFees,
 	) -> anyhow::Result<()> {
 		// Get the progress transaction from the database
 		let vtx = self.db.read(async |t| t.get_virtual_transaction_by_txid(txid).await).await?
@@ -973,8 +1015,6 @@ impl Watchman {
 		let progress_tx = vtx.signed_tx.context("progress tx missing signature")?.into_owned();
 
 		// Create a CPFP transaction to pay fees for the progress tx
-		//TODO(stevenroose) adapt feerate to how close the deadline is
-		let fees = MakeCpfpFees::Effective(fee_rate);
 		let cpfp_tx = wallet.make_signed_p2a_cpfp(&progress_tx, fees)
 			.with_context(|| format!("failed to create CPFP for vtx {}", txid))?;
 
@@ -988,8 +1028,81 @@ impl Watchman {
 	}
 }
 
+/// The fees of a CPFP package for `progress_txid` that replaces `spend`.
+///
+/// The package replaces only what it conflicts with: the progress tx's
+/// children, or `spend` and its descendants if `spend` is another tx, in
+/// which case the progress tx is new too. Outbid those, not the chunk, which
+/// also holds the zero-fee progress tx.
+fn replacement_fees(
+	spend: &MempoolSpend,
+	progress_txid: Txid,
+	min_fee_rate: FeeRate,
+	incremental_relay_fee: FeeRate,
+) -> MakeCpfpFees {
+	let parent_in_mempool = spend.txid == progress_txid;
+	let (fee, vsize) = if parent_in_mempool {
+		(spend.descendants_fee, spend.descendants_vsize)
+	} else {
+		(spend.fee + spend.descendants_fee, spend.vsize + spend.descendants_vsize)
+	};
+	let Some(fee_rate) = fee.div_by_weight_ceil(Weight::from_vb_unchecked(vsize)) else {
+		// Nothing to replace.
+		return MakeCpfpFees::Effective(min_fee_rate);
+	};
+	MakeCpfpFees::Rbf {
+		min_effective_fee_rate: min_fee_rate,
+		replaced_fee: fee,
+		replaced_fee_rate: fee_rate,
+		incremental_relay_fee,
+		parent_in_mempool,
+	}
+}
+
 fn saturating_add_feerates(f1: FeeRate, f2: FeeRate) -> FeeRate {
 	FeeRate::from_sat_per_kwu(
 		f1.to_sat_per_kwu().saturating_add(f2.to_sat_per_kwu())
 	)
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use std::str::FromStr;
+
+	#[test]
+	fn replacement_fees_count_a_new_progress_tx() {
+		let progress_txid = Txid::from_str(
+			"0000000000000000000000000000000000000000000000000000000000000001",
+		).unwrap();
+		let other_txid = Txid::from_str(
+			"0000000000000000000000000000000000000000000000000000000000000002",
+		).unwrap();
+		let spend = |txid| MempoolSpend {
+			txid,
+			fee_rate: FeeRate::from_sat_per_vb_u32(1),
+			fee: Amount::ZERO,
+			vsize: 100,
+			descendants_fee: Amount::from_sat(9_000),
+			descendants_vsize: 9_000,
+		};
+		let min_fee_rate = FeeRate::from_sat_per_vb_u32(1);
+		let incremental_relay_fee = FeeRate::from_sat_per_vb_u32(5);
+		let parent = Weight::from_vb_unchecked(200);
+		let child = Weight::from_vb_unchecked(200);
+
+		// The progress tx spends the vtxo and stays: only the new child replaces anything.
+		let fees = replacement_fees(&spend(progress_txid), progress_txid,
+			min_fee_rate, incremental_relay_fee,
+		);
+		assert_eq!(fees.package_fee(parent, child), Amount::from_sat(10_000));
+
+		// Another tx spends the vtxo: the progress tx is new too, so the incremental
+		// relay fee is paid over the whole package.
+		let fees = replacement_fees(&spend(other_txid), progress_txid,
+			min_fee_rate, incremental_relay_fee,
+		);
+		assert_eq!(fees.package_fee(parent, child), Amount::from_sat(11_000));
+	}
 }
