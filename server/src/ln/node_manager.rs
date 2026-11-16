@@ -596,20 +596,25 @@ impl LightningManager {
 				PaymentStatus::Pending => {},
 			}
 
-			tokio::select! {
-				_ = poll_interval.tick() => trace!("check bolt11 timeout reached, polling"),
-				// Trigger received on channel
-				rcv = update_rx.recv() => match rcv {
-					Ok(hash) => {
-						if hash != payment_hash {
-							continue;
-						}
+			// Updates for other hashes don't touch the database.
+			loop {
+				tokio::select! {
+					_ = poll_interval.tick() => {
+						trace!("check bolt11 timeout reached, polling");
+						break;
 					},
-					Err(broadcast::error::RecvError::Lagged(_)) => continue,
-					Err(broadcast::error::RecvError::Closed) => {
-						bail!("payment update channel closed, probably shutting down");
+					rcv = update_rx.recv() => match rcv {
+						Ok(hash) if hash == payment_hash => break,
+						Ok(_) => {},
+						Err(broadcast::error::RecvError::Lagged(n)) => {
+							warn!("payment update receiver lagged by {n} messages");
+							break;
+						},
+						Err(broadcast::error::RecvError::Closed) => {
+							bail!("payment update channel closed, probably shutting down");
+						},
 					},
-				},
+				}
 			}
 		}
 	}
