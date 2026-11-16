@@ -956,9 +956,9 @@ impl Server {
 	///
 	/// For each VTXO:
 	/// - Checks it exists in the database
-	/// - Checks it matches the stored vtxo apart from its witnesses
 	/// - Checks it is fully signed
 	/// - Validates signatures against the chain anchor transaction
+	/// - Checks it matches the stored vtxo apart from its witnesses
 	/// - Extracts transactions for the virtual_transaction table
 	///
 	/// Registration is the moment an htlc-send vtxo starts to exist (the
@@ -998,8 +998,6 @@ impl Server {
 				.context(vtxo_id)
 				.badarg("vtxo not found in database")?;
 
-			Self::check_registration_matches_stored(&stored.vtxo, vtxo)?;
-
 			// Check vtxo is fully signed
 			if !vtxo.has_all_witnesses() {
 				return badarg!("vtxo {} is not fully signed", vtxo_id);
@@ -1021,6 +1019,9 @@ impl Server {
 			vtxo.validate(&anchor_tx)
 				.context(vtxo_id)
 				.badarg("vtxo validation failed")?;
+
+			// Only after validation: building the chain of an invalid vtxo panics.
+			Self::check_registration_matches_stored(&stored.vtxo, vtxo)?;
 
 			self.check_registration_inputs_not_exited(vtxo).await?;
 
