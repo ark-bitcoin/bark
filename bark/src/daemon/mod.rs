@@ -319,6 +319,10 @@ impl DaemonProcess {
 					if let Err(e) = wallet.sync_pending_arkoor_sends().await {
 						warn!("An error occurred while syncing pending arkoor sends: {e:#}");
 					}
+
+					if let Err(e) = wallet.sync_pending_lightning_receives().await {
+						warn!("An error occurred while syncing pending lightning receives: {e:#}");
+					}
 				}
 
 				if let Err(e) = wallet.sync_onchain().await {
