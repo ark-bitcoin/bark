@@ -366,6 +366,21 @@ impl DaemonProcess {
 		loop {
 			if let Some(wallet) = self.wallet() {
 				if wallet.inner.onchain.is_some() {
+					// Find new fee funds without waiting on the server-bound sync loop.
+					// Not bounded: an esplora sync only applies once complete, and
+					// CPFP needs the onchain wallet lock the sync holds anyway.
+					if wallet.exit_mgr().has_pending_exits().await {
+						futures::select! {
+							res = wallet.sync_onchain().fuse() => if let Err(e) = res {
+								warn!("An error occurred while syncing onchain for exits: {:#}", e);
+							},
+							_ = self.shutdown.cancelled().fuse() => {
+								info!("Shutdown signal received! Shutting down exit progress process...");
+								break;
+							},
+						}
+					}
+
 					if let Err(e) = wallet.exit_mgr().progress_exits_with_cpfp(&wallet, None).await {
 						warn!("An error occurred while progressing exits: {:#}", e);
 					}
