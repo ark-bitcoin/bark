@@ -873,7 +873,7 @@ struct WalletInner {
 ///     - [Wallet::new_address_with_index],
 ///     - [Wallet::peek_address],
 ///     - [Wallet::validate_arkoor_address]
-///   - boarding onchain funds into Ark from an onchain wallet (see [onchain::OnchainWallet])
+///   - boarding onchain funds into Ark from an onchain wallet (see [onchain::OnchainWalletTrait])
 ///     - [Wallet::board_amount],
 ///     - [Wallet::board_all]
 ///   - offboarding Ark funds to move them back onchain
@@ -891,8 +891,6 @@ struct WalletInner {
 ///   - syncing with the Ark server, unilateral exits and performing general maintenance
 ///     - [Wallet::maintenance]: Syncs everything offchain-related and refreshes VTXOs where
 ///       necessary,
-///     - [Wallet::maintenance_with_onchain]: The same as [Wallet::maintenance] but also syncs the
-///       onchain wallet and unilateral exits,
 ///     - [Wallet::maintenance_refresh]: Refreshes VTXOs where necessary without syncing anything,
 ///     - [Wallet::sync]: Syncs network fee-rates, ark rounds and arkoor payments,
 ///     - [Wallet::sync_exits]: Updates the status of unilateral exits,
