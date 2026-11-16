@@ -103,3 +103,48 @@ async fn board_psbt_legacy_funding_address() {
 	wallet.sync_pending_boards().await.unwrap();
 	assert_eq!(wallet.balance().await.unwrap().spendable, sat(90_000));
 }
+
+/// The board API end to end: a board from the on-chain wallet with a chosen
+/// expiry, and one funded by another wallet through a persisted
+/// [BoardFundingAddress].
+#[tokio::test]
+async fn board_with_expiry_and_external_funding() {
+	let ctx = TestContext::new("bark_sdk/board_with_expiry_and_external_funding").await;
+	let srv = ctx.captaind("server").create().await;
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(500_000))
+		.create().await;
+
+	// Board from the on-chain wallet, expiring 100 blocks from now.
+	let expiry_height = wallet.chain().tip().await.unwrap() + BlockDelta::new(100);
+	let board = wallet.board()
+		.expiry(expiry_height)
+		.amount(sat(100_000)).await
+		.expect("board with an expiry");
+	let vtxo = wallet.get_vtxo_by_id(board.vtxos[0]).await.unwrap();
+	assert_eq!(vtxo.expiry_height(), expiry_height);
+
+	// The board becomes spendable once confirmed and registered.
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	wallet.sync_pending_boards().await.unwrap();
+	assert_eq!(wallet.balance().await.unwrap().spendable, sat(100_000));
+
+	// Board from another wallet, e.g. as a payjoin receiver. The funding address
+	// is persisted while waiting for the other party's PSBT.
+	let funding = wallet.board().funding_address().await.expect("funding address");
+	let stored = serde_json::to_string(&funding).unwrap();
+	let funding = serde_json::from_str::<BoardFundingAddress>(&stored).unwrap();
+
+	// Spends the confirmed change of the board above: the server refuses funding
+	// inputs it can't find on-chain.
+	wallet.sync_onchain().await.unwrap();
+	let psbt = funding_psbt(&wallet, &funding, sat(150_000)).await;
+	let external = wallet.board_psbt(psbt, &funding).await.expect("board an external PSBT");
+	let vtxo = wallet.get_vtxo_by_id(external.vtxos[0]).await.unwrap();
+	assert_eq!(vtxo.expiry_height(), funding.expiry_height());
+
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	wallet.sync_pending_boards().await.unwrap();
+	assert_eq!(wallet.balance().await.unwrap().spendable, sat(250_000));
+}

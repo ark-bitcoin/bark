@@ -50,9 +50,13 @@ impl BoardFundingAddress {
 /// ```no_run
 /// # async fn example(wallet: bark::Wallet, other_wallet_psbt: bitcoin::Psbt) -> anyhow::Result<()> {
 /// use bitcoin::Amount;
+/// use bitcoin_ext::BlockDelta;
 ///
-/// // Fund from the on-chain wallet.
-/// let board = wallet.board().amount(Amount::from_sat(100_000)).await?;
+/// // Fund from the on-chain wallet, expiring after roughly one day.
+/// let tip = wallet.chain().tip().await?;
+/// let board = wallet.board()
+/// 	.expiry(tip + BlockDelta::new(144))
+/// 	.amount(Amount::from_sat(100_000)).await?;
 ///
 /// // Fund from another wallet, e.g. as a payjoin receiver. Persist `funding` (it
 /// // implements serde) until the PSBT arrives, and fund it right away.
@@ -65,9 +69,19 @@ impl BoardFundingAddress {
 /// ```
 pub struct BoardBuilder<'a> {
 	wallet: &'a Wallet,
+	expiry_height: Option<BlockHeight>,
 }
 
 impl<'a> BoardBuilder<'a> {
+	/// The block height at which the vtxo expires.
+	///
+	/// Defaults to [Config::board_lifetime](crate::Config::board_lifetime) blocks
+	/// from the tip, capped at the server's [ArkInfo::vtxo_lifetime]. An expiry
+	/// further out than the server's vtxo lifetime is an error.
+	pub fn expiry(mut self, expiry_height: BlockHeight) -> Self {
+		self.expiry_height = Some(expiry_height);
+		self
+	}
 
 	/// Board the given amount from the on-chain wallet.
 	///
@@ -91,9 +105,23 @@ impl<'a> BoardBuilder<'a> {
 	pub async fn funding_address(self) -> anyhow::Result<BoardFundingAddress> {
 		let (_, ark_info) = self.wallet.require_server().await?;
 		let tip = self.wallet.inner.chain.tip().await?;
+		let expiry_height = self.expiry_height.unwrap_or(
+			tip + self.wallet.inner.config.board_lifetime.min(ark_info.vtxo_lifetime),
+		);
+		ensure!(expiry_height <= tip + ark_info.vtxo_lifetime,
+			"board expiry height {} is more than the server's vtxo lifetime of {} blocks \
+			past the tip {}", expiry_height, ark_info.vtxo_lifetime, tip,
+		);
+		let remaining = expiry_height.to_u32().saturating_sub(tip.to_u32());
+		let min_lifetime = self.wallet.min_board_lifetime(&ark_info);
+		ensure!(remaining > min_lifetime,
+			"board expiry height {} is only {} blocks past the tip {}, it must be more than {}",
+			expiry_height, remaining, tip, min_lifetime,
+		);
+
 		let (user_keypair, _) = self.wallet.derive_store_next_keypair().await?;
 		self.wallet.make_board_funding_address(
-			&ark_info, user_keypair.public_key(), tip + ark_info.vtxo_lifetime,
+			&ark_info, user_keypair.public_key(), expiry_height,
 		).await
 	}
 
@@ -131,7 +159,7 @@ impl<'a> BoardBuilder<'a> {
 impl Wallet {
 	/// Start configuring a board. See [BoardBuilder].
 	pub fn board(&self) -> BoardBuilder<'_> {
-		BoardBuilder { wallet: self }
+		BoardBuilder { wallet: self, expiry_height: None }
 	}
 
 	/// Board a [ark::Vtxo] with the given amount.
@@ -183,6 +211,11 @@ impl Wallet {
 		let address = Address::from_script(&builder.funding_script_pubkey(), properties.network)?;
 
 		Ok(BoardFundingAddress { address: address.into_unchecked(), user_pubkey, expiry_height })
+	}
+
+	/// Blocks a board needs to confirm its funding tx before it has to be exited.
+	fn min_board_lifetime(&self, ark_info: &ArkInfo) -> u32 {
+		self.inner.config.vtxo_exit_margin.to_u32() + ark_info.required_board_confirmations as u32
 	}
 
 	pub async fn pending_boards(&self) -> anyhow::Result<Vec<PendingBoard>> {
