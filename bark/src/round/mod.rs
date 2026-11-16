@@ -2792,6 +2792,7 @@ mod test {
 	use bitcoin::secp256k1::Secp256k1;
 
 	use ark::VtxoPolicy;
+	use ark::arkoor::ArkoorPackageBuilder;
 	use ark::tree::signed::{HashlockVersion, UnlockPreimage};
 
 	fn pubkey() -> bitcoin::secp256k1::PublicKey {
@@ -2872,6 +2873,49 @@ mod test {
 		assert!(tampered.validate_unsigned(&funding_tx).is_err());
 		assert!(check_vtxo_fails_hash_lock(&funding_tx, &tampered).is_err(),
 			"tampered point must be rejected before forfeits are sent");
+	}
+
+	#[test]
+	fn rejects_vtxo_that_fails_a_hash_lock_before_the_last_transition() {
+		let secp = Secp256k1::new();
+		let mut rng = rand::thread_rng();
+		let user_key = Keypair::new(&secp, &mut rng);
+		let user_cosign_key = Keypair::new(&secp, &mut rng);
+		let server_key = Keypair::new(&secp, &mut rng);
+		let server_cosign_key = Keypair::new(&secp, &mut rng);
+		let preimage: UnlockPreimage = rand::random();
+		let unlock_hash = UnlockHash::hash(&preimage);
+		let outputs = (0..2u64).map(|i| VtxoRequest {
+			amount: Amount::from_sat(10_000 + i),
+			policy: VtxoPolicy::new_pubkey(user_key.public_key()),
+		}).collect::<Vec<_>>();
+
+		let (tree, funding_tx) = ark::test_util::build_signed_tree(
+			HashlockVersion::V1, outputs,
+			&user_cosign_key, &server_key, &server_cosign_key, unlock_hash,
+		);
+		let locked = tree.into_cached_tree().output_vtxos().next().unwrap();
+
+		// An arkoor spend of the still-locked leaf puts the hash-locked
+		// transition before the arkoor transition.
+		let builder = ArkoorPackageBuilder::new_claim_all_without_checkpoints(
+			[locked], VtxoPolicy::new_pubkey(user_key.public_key()),
+		).unwrap().generate_user_nonces(&[user_key]).unwrap();
+		let cosign = ArkoorPackageBuilder::from_cosign_request(builder.cosign_request()).unwrap()
+			.server_cosign(&server_key).unwrap()
+			.cosign_response();
+		let [vtxo] = builder.user_cosign(&[user_key], cosign).unwrap()
+			.build_signed_vtxos().try_into().unwrap();
+
+		vtxo.validate_unsigned(&funding_tx).expect("the vtxo is valid without signatures");
+		match vtxo.validate(&funding_tx) {
+			Err(VtxoValidationError::GenesisTransition {
+				genesis_idx: 1, genesis_len: 3, transition_kind, ..
+			}) if transition_kind == TransitionKind::HashLockedCosigned.as_str() => {},
+			other => panic!("the hash lock must fail before the last transition: {:?}", other),
+		}
+		assert!(check_vtxo_fails_hash_lock(&funding_tx, &vtxo).is_err(),
+			"a vtxo that fails a hash lock before its last transition must be rejected");
 	}
 
 	#[test]
