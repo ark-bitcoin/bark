@@ -430,15 +430,15 @@ impl DaemonProcess {
 			info!("Starting daemon for wallet {}", wallet.fingerprint());
 		}
 
-		self.run_startup_tasks().await;
-		trace!("Daemon startup tasks complete, starting background processes");
-
 		if self.manual_sync {
+			self.run_startup_tasks().await;
 			// In manual-sync mode only the server connection heartbeat keeps
 			// running; everything else must be triggered via the REST API.
 			info!("Daemon running in manual-sync mode; background sync disabled");
 			let _ = self.run_server_connection_check_process().await;
 		} else {
+			// Exit progression doesn't need the server, so it starts right away
+			// instead of waiting for the startup tasks.
 			#[cfg(not(feature = "wasm-web"))]
 			{
 				// Each loop runs in its own tokio task so that a panic in one
@@ -451,36 +451,48 @@ impl DaemonProcess {
 				let p4 = Arc::clone(&proc);
 				let p5 = Arc::clone(&proc);
 				let _ = futures::join!(
-					supervised("server-connection", move || {
-						let p = Arc::clone(&p1);
-						async move { p.run_server_connection_check_process().await }
-					}),
-					supervised("round-events", move || {
-						let p = Arc::clone(&p2);
-						async move { p.run_round_events_process().await }
-					}),
-					supervised("sync", move || {
-						let p = Arc::clone(&p3);
-						async move { p.run_sync_processes().await }
-					}),
 					supervised("exit-progress", move || {
 						let p = Arc::clone(&p4);
 						async move { p.run_exit_progress_process().await }
 					}),
-					supervised("mailbox", move || {
-						let p = Arc::clone(&p5);
-						async move { p.run_mailbox_messages_process().await }
-					}),
+					async {
+						proc.run_startup_tasks().await;
+						trace!("Daemon startup tasks complete, starting background processes");
+						futures::join!(
+							supervised("server-connection", move || {
+								let p = Arc::clone(&p1);
+								async move { p.run_server_connection_check_process().await }
+							}),
+							supervised("round-events", move || {
+								let p = Arc::clone(&p2);
+								async move { p.run_round_events_process().await }
+							}),
+							supervised("sync", move || {
+								let p = Arc::clone(&p3);
+								async move { p.run_sync_processes().await }
+							}),
+							supervised("mailbox", move || {
+								let p = Arc::clone(&p5);
+								async move { p.run_mailbox_messages_process().await }
+							}),
+						)
+					},
 				);
 			}
 			#[cfg(feature = "wasm-web")]
 			{
 				let _ = futures::join!(
-					self.run_server_connection_check_process(),
-					self.run_round_events_process(),
-					self.run_sync_processes(),
 					self.run_exit_progress_process(),
-					self.run_mailbox_messages_process(),
+					async {
+						self.run_startup_tasks().await;
+						trace!("Daemon startup tasks complete, starting background processes");
+						futures::join!(
+							self.run_server_connection_check_process(),
+							self.run_round_events_process(),
+							self.run_sync_processes(),
+							self.run_mailbox_messages_process(),
+						)
+					},
 				);
 			}
 		}
