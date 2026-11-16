@@ -181,7 +181,8 @@
 //! 	let tip = wallet.chain().tip().await?;
 //! 	let board = wallet.board()
 //! 		.expiry(tip + bitcoin_ext::BlockDelta::new(144))
-//! 		.all().await?;
+//! 		.all()
+//! 		.build().await?;
 //! 	Ok(())
 //! }
 //! ```

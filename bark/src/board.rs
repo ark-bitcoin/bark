@@ -44,8 +44,9 @@ impl BoardFundingAddress {
 
 /// Configures a board, created by [Wallet::board].
 ///
-/// Finish with [BoardBuilder::amount] or [BoardBuilder::all] to fund the board from
-/// the on-chain wallet, or with [BoardBuilder::funding_address] to fund it elsewhere.
+/// Set [BoardBuilder::amount] or [BoardBuilder::all] and call [BoardBuilder::build] to
+/// fund the board from the on-chain wallet, or call [BoardBuilder::funding_address] to
+/// fund it elsewhere.
 ///
 /// ```no_run
 /// # async fn example(wallet: bark::Wallet, other_wallet_psbt: bitcoin::Psbt) -> anyhow::Result<()> {
@@ -56,7 +57,8 @@ impl BoardFundingAddress {
 /// let tip = wallet.chain().tip().await?;
 /// let board = wallet.board()
 /// 	.expiry(tip + BlockDelta::new(144))
-/// 	.amount(Amount::from_sat(100_000)).await?;
+/// 	.amount(Amount::from_sat(100_000))
+/// 	.build().await?;
 ///
 /// // Fund from another wallet, e.g. as a payjoin receiver. Persist `funding` (it
 /// // implements serde) until the PSBT arrives, and fund it right away.
@@ -69,7 +71,13 @@ impl BoardFundingAddress {
 /// ```
 pub struct BoardBuilder<'a> {
 	wallet: &'a Wallet,
+	amount: Option<BoardAmount>,
 	expiry_height: Option<BlockHeight>,
+}
+
+enum BoardAmount {
+	Exact(Amount),
+	All,
 }
 
 impl<'a> BoardBuilder<'a> {
@@ -86,23 +94,64 @@ impl<'a> BoardBuilder<'a> {
 	/// Board the given amount from the on-chain wallet.
 	///
 	/// NB we will spend a little more onchain to cover fees.
-	///
-	/// Returns an error if no onchain wallet is configured.
-	pub async fn amount(self, amount: Amount) -> anyhow::Result<PendingBoard> {
-		self.board(Some(amount)).await
+	pub fn amount(mut self, amount: Amount) -> Self {
+		self.amount = Some(BoardAmount::Exact(amount));
+		self
 	}
 
 	/// Board all the funds in the on-chain wallet.
+	pub fn all(mut self) -> Self {
+		self.amount = Some(BoardAmount::All);
+		self
+	}
+
+	/// Fund the board from the on-chain wallet and board it.
 	///
-	/// Returns an error if no onchain wallet is configured.
-	pub async fn all(self) -> anyhow::Result<PendingBoard> {
-		self.board(None).await
+	/// Returns an error if neither [BoardBuilder::amount] nor [BoardBuilder::all] is
+	/// set, or if no onchain wallet is configured.
+	pub async fn build(self) -> anyhow::Result<PendingBoard> {
+		let wallet = self.wallet;
+		let amount = self.amount.as_ref()
+			.context("set an amount or all() before building a board")?;
+		let onchain = wallet.inner.onchain.as_ref()
+			.ok_or_else(|| anyhow!("no onchain wallet configured; cannot board"))?;
+
+		let funding = self.make_funding_address().await?;
+		let addr = funding.address().clone();
+		let fee_rate = wallet.inner.chain.fee_rates().await.regular;
+
+		let signed_psbt = {
+			let mut onchain = onchain.write().await;
+			let board_psbt = match amount {
+				BoardAmount::Exact(amount) => onchain.prepare_tx(&[(addr, *amount)], fee_rate).await?,
+				BoardAmount::All => onchain.prepare_drain_tx(addr, fee_rate).await?,
+			};
+
+			if board_psbt.inputs.len() > MAX_NB_BOARD_FUNDING_INPUTS {
+				bail!("We need {} inputs to board, exceeding the limit of {}",
+					board_psbt.inputs.len(), MAX_NB_BOARD_FUNDING_INPUTS,
+				);
+			}
+
+			// Sign only: a board that fails here must leave the wallet untouched.
+			onchain.sign_psbt(board_psbt).await?
+		};
+
+		wallet.board_psbt(signed_psbt, &funding).await
 	}
 
 	/// Derive a fresh key and return the address to fund the board with.
 	///
 	/// Build a funding transaction paying it and pass both to [Wallet::board_psbt].
+	/// The funding transaction decides the amount, so setting one is an error.
 	pub async fn funding_address(self) -> anyhow::Result<BoardFundingAddress> {
+		ensure!(self.amount.is_none(),
+			"a board funded through funding_address() takes its amount from the funding tx",
+		);
+		self.make_funding_address().await
+	}
+
+	async fn make_funding_address(&self) -> anyhow::Result<BoardFundingAddress> {
 		let (_, ark_info) = self.wallet.require_server().await?;
 		let tip = self.wallet.inner.chain.tip().await?;
 		let expiry_height = self.expiry_height.unwrap_or(
@@ -124,56 +173,26 @@ impl<'a> BoardBuilder<'a> {
 			&ark_info, user_keypair.public_key(), expiry_height,
 		).await
 	}
-
-	async fn board(self, amount: Option<Amount>) -> anyhow::Result<PendingBoard> {
-		let wallet = self.wallet;
-		let onchain = wallet.inner.onchain.as_ref()
-			.ok_or_else(|| anyhow!("no onchain wallet configured; cannot board"))?;
-
-		let funding = self.funding_address().await?;
-		let addr = funding.address().clone();
-		let fee_rate = wallet.inner.chain.fee_rates().await.regular;
-
-		let signed_psbt = {
-			let mut onchain = onchain.write().await;
-			let board_psbt = if let Some(amount) = amount {
-				onchain.prepare_tx(&[(addr, amount)], fee_rate).await?
-			} else {
-				onchain.prepare_drain_tx(addr, fee_rate).await?
-			};
-
-			if board_psbt.inputs.len() > MAX_NB_BOARD_FUNDING_INPUTS {
-				bail!("We need {} inputs to board, exceeding the limit of {}",
-					board_psbt.inputs.len(), MAX_NB_BOARD_FUNDING_INPUTS,
-				);
-			}
-
-			// Sign only: a board that fails here must leave the wallet untouched.
-			onchain.sign_psbt(board_psbt).await?
-		};
-
-		wallet.board_psbt(signed_psbt, &funding).await
-	}
 }
 
 impl Wallet {
 	/// Start configuring a board. See [BoardBuilder].
 	pub fn board(&self) -> BoardBuilder<'_> {
-		BoardBuilder { wallet: self, expiry_height: None }
+		BoardBuilder { wallet: self, amount: None, expiry_height: None }
 	}
 
 	/// Board a [ark::Vtxo] with the given amount.
 	///
-	/// Shorthand for `self.board().amount(amount)`.
+	/// Shorthand for `self.board().amount(amount).build()`.
 	pub async fn board_amount(&self, amount: Amount) -> anyhow::Result<PendingBoard> {
-		self.board().amount(amount).await
+		self.board().amount(amount).build().await
 	}
 
 	/// Board a [ark::Vtxo] with all the funds in your onchain wallet.
 	///
-	/// Shorthand for `self.board().all()`.
+	/// Shorthand for `self.board().all().build()`.
 	pub async fn board_all(&self) -> anyhow::Result<PendingBoard> {
-		self.board().all().await
+		self.board().all().build().await
 	}
 
 	/// Rebuilds the [BoardFundingAddress] of a funding address created before it

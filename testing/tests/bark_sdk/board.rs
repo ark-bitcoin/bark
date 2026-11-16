@@ -120,7 +120,8 @@ async fn board_with_expiry_and_external_funding() {
 	let expiry_height = wallet.chain().tip().await.unwrap() + BlockDelta::new(100);
 	let board = wallet.board()
 		.expiry(expiry_height)
-		.amount(sat(100_000)).await
+		.amount(sat(100_000))
+		.build().await
 		.expect("board with an expiry");
 	let vtxo = wallet.get_vtxo_by_id(board.vtxos[0]).await.unwrap();
 	assert_eq!(vtxo.expiry_height(), expiry_height);
