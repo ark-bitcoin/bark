@@ -5,7 +5,7 @@ use log::warn;
 
 use crate::Wallet;
 use crate::exit::{Exit, ExitProgressStatus};
-use crate::onchain::{CpfpError, MakeCpfpFees};
+use crate::onchain::{CpfpError, MakeCpfpFees, DEFAULT_INCREMENTAL_RELAY_FEE};
 
 /// Exit transactions should only be RBF'ed if the new requested fee rate
 /// is strictly greater than the current package rate.
@@ -60,7 +60,10 @@ impl Exit {
 					}
 					MakeCpfpFees::Rbf {
 						min_effective_fee_rate: fee_rate,
-						current_package_fee: rbf.current_package_fee,
+						replaced_fee: rbf.current_package_fee,
+						replaced_fee_rate: rbf.min_fee_rate,
+						incremental_relay_fee: DEFAULT_INCREMENTAL_RELAY_FEE,
+						parent_in_mempool: true,
 					}
 				},
 			};
