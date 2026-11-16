@@ -1296,7 +1296,16 @@ async fn hark_vtxo_swap(
 	Ok(())
 }
 
-fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo<Full>) -> anyhow::Result<()> {
+/// Check that a new round VTXO is valid up to its terminal hash-locked
+/// transition, and that this transition is locked by `unlock_hash`
+///
+/// The forfeits of our inputs only release the preimage of `unlock_hash`,
+/// so a VTXO locked by any other hash can never be unlocked.
+fn check_vtxo_fails_hash_lock(
+	funding_tx: &Transaction,
+	vtxo: &Vtxo<Full>,
+	unlock_hash: UnlockHash,
+) -> anyhow::Result<()> {
 	// validate() below short-circuits at the terminal hash-locked transition
 	// before the point-vs-genesis checksum runs; call validate_unsigned first
 	// so a forged point is caught before forfeit signatures are sent.
@@ -1312,12 +1321,19 @@ fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo<Full>) -> an
 			genesis_idx, genesis_len, transition_kind, ..
 		}) if genesis_idx + 1 == genesis_len
 			&& (transition_kind == TransitionKind::HashLockedCosigned.as_str()
-				|| transition_kind == TransitionKind::HashLockedCosigned_v0.as_str()) => Ok(()),
-		Ok(()) => Err(anyhow!("new un-unlocked VTXO should fail validation but doesn't: {}",
+				|| transition_kind == TransitionKind::HashLockedCosigned_v0.as_str()) => {},
+		Ok(()) => bail!("new un-unlocked VTXO should fail validation but doesn't: {}",
 			vtxo.serialize_hex(),
-		)),
-		Err(e) => Err(anyhow!("new VTXO {} failed validation: {:#}", vtxo.id(), e)),
+		),
+		Err(e) => bail!("new VTXO {} failed validation: {:#}", vtxo.id(), e),
 	}
+
+	ensure!(vtxo.unlock_hash() == Some(unlock_hash),
+		"new VTXO {} is locked by unlock hash {:?}, expected {}",
+		vtxo.id(), vtxo.unlock_hash(), unlock_hash,
+	);
+
+	Ok(())
 }
 
 /// The minimum expiry height that leaves us enough room for a unilateral
@@ -1358,6 +1374,7 @@ fn check_output_vtxos_exitable(
 
 fn check_round_matches_participation(
 	part: &RoundParticipation,
+	unlock_hash: UnlockHash,
 	new_vtxos: &[Vtxo<Full>],
 	funding_tx: &Transaction,
 	ark_info: &ArkInfo,
@@ -1409,7 +1426,7 @@ fn check_round_matches_participation(
 		)?;
 
 		// We accept the VTXO if only the hArk transition (last) failure happens
-		check_vtxo_fails_hash_lock(funding_tx, vtxo)?;
+		check_vtxo_fails_hash_lock(funding_tx, vtxo, unlock_hash)?;
 	}
 
 	Ok(())
@@ -1563,7 +1580,7 @@ async fn progress_delegated(
 		.context("chain source error")
 		.map_err(HarkForfeitError::Err)?;
 	check_round_matches_participation(
-		participation, &new_vtxos, &funding_tx, &ark_info, scheduled_height,
+		participation, unlock_hash, &new_vtxos, &funding_tx, &ark_info, scheduled_height,
 		tip, wallet.inner.config.vtxo_exit_margin,
 	)
 		.context("new VTXOs received from server don't match our participation")
@@ -1657,7 +1674,7 @@ async fn progress_attempt(
 			}
 
 			match construct_new_vtxos(
-				part, unsigned_round_tx, vtxos_spec, cosign_sigs,
+				part, unsigned_round_tx, vtxos_spec, cosign_sigs, *unlock_hash,
 			).await {
 				Ok(v) => AttemptProgressResult::Finished {
 					funding_tx: signed_round_tx.clone(),
@@ -1754,6 +1771,7 @@ async fn construct_new_vtxos(
 	unsigned_round_tx: &Transaction,
 	vtxo_tree: &VtxoTreeSpec,
 	vtxo_cosign_sigs: &[schnorr::Signature],
+	unlock_hash: UnlockHash,
 ) -> anyhow::Result<Vec<Vtxo<Full>>> {
 	let round_txid = unsigned_round_tx.compute_txid();
 	let vtxos_utxo = OutPoint::new(round_txid, ROUND_TX_VTXO_TREE_VOUT);
@@ -1774,12 +1792,17 @@ async fn construct_new_vtxos(
 
 	let mut new_vtxos = vec![];
 	for (idx, req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
+		// Leaves locked by another unlock hash are not ours, even when their
+		// policy and amount match one of our outputs.
+		if req.unlock_hash != unlock_hash {
+			continue;
+		}
 		if let Some(expected_idx) = expected_vtxos.iter().position(|r| **r == req.vtxo) {
 			let vtxo = signed_vtxos.build_vtxo(idx);
 
 			// validate the received vtxos
 			// This is more like a sanity check since we crafted them ourselves.
-			check_vtxo_fails_hash_lock(unsigned_round_tx, &vtxo)
+			check_vtxo_fails_hash_lock(unsigned_round_tx, &vtxo, unlock_hash)
 				.context("constructed invalid vtxo from tree")?;
 
 			info!("New VTXO from round: {} ({}, {})",
@@ -2793,7 +2816,7 @@ mod test {
 
 	use ark::VtxoPolicy;
 	use ark::arkoor::ArkoorPackageBuilder;
-	use ark::tree::signed::{HashlockVersion, UnlockPreimage};
+	use ark::tree::signed::{HashlockVersion, UnlockPreimage, VtxoLeafSpec};
 
 	fn pubkey() -> bitcoin::secp256k1::PublicKey {
 		let secp = Secp256k1::new();
@@ -2835,7 +2858,7 @@ mod test {
 				&user_cosign_key, &server_key, &server_cosign_key, unlock_hash,
 			);
 			for vtxo in tree.into_cached_tree().output_vtxos() {
-				check_vtxo_fails_hash_lock(&funding_tx, &vtxo).unwrap_or_else(|e| panic!(
+				check_vtxo_fails_hash_lock(&funding_tx, &vtxo, unlock_hash).unwrap_or_else(|e| panic!(
 					"locked {:?} leaf vtxo should be accepted: {:#}", version, e,
 				));
 			}
@@ -2871,7 +2894,7 @@ mod test {
 		let tampered = Vtxo::<Full>::deserialize(&encoded).unwrap();
 
 		assert!(tampered.validate_unsigned(&funding_tx).is_err());
-		assert!(check_vtxo_fails_hash_lock(&funding_tx, &tampered).is_err(),
+		assert!(check_vtxo_fails_hash_lock(&funding_tx, &tampered, unlock_hash).is_err(),
 			"tampered point must be rejected before forfeits are sent");
 	}
 
@@ -2914,8 +2937,80 @@ mod test {
 			}) if transition_kind == TransitionKind::HashLockedCosigned.as_str() => {},
 			other => panic!("the hash lock must fail before the last transition: {:?}", other),
 		}
-		assert!(check_vtxo_fails_hash_lock(&funding_tx, &vtxo).is_err(),
+		assert!(check_vtxo_fails_hash_lock(&funding_tx, &vtxo, unlock_hash).is_err(),
 			"a vtxo that fails a hash lock before its last transition must be rejected");
+	}
+
+	#[test]
+	fn rejects_round_vtxo_locked_by_another_unlock_hash() {
+		let secp = Secp256k1::new();
+		let mut rng = rand::thread_rng();
+		let user_key = Keypair::new(&secp, &mut rng);
+		let user_cosign_key = Keypair::new(&secp, &mut rng);
+		let server_key = Keypair::new(&secp, &mut rng);
+		let server_cosign_key = Keypair::new(&secp, &mut rng);
+
+		let our_unlock_hash = UnlockHash::hash(&rand::random::<UnlockPreimage>());
+		let other_unlock_hash = UnlockHash::hash(&rand::random::<UnlockPreimage>());
+
+		let outputs = (0..2u64).map(|i| VtxoRequest {
+			amount: Amount::from_sat(10_000 + i),
+			policy: VtxoPolicy::new_pubkey(user_key.public_key()),
+		}).collect::<Vec<_>>();
+
+		for version in [HashlockVersion::V0, HashlockVersion::V1] {
+			let (tree, funding_tx) = ark::test_util::build_signed_tree(
+				version, outputs.iter().cloned(),
+				&user_cosign_key, &server_key, &server_cosign_key, other_unlock_hash,
+			);
+			for vtxo in tree.into_cached_tree().output_vtxos() {
+				// The leaf is otherwise valid, so only the unlock hash rejects it.
+				check_vtxo_fails_hash_lock(&funding_tx, &vtxo, other_unlock_hash)
+					.unwrap_or_else(|e| panic!("{:?} leaf vtxo should be accepted: {:#}", version, e));
+				assert!(check_vtxo_fails_hash_lock(&funding_tx, &vtxo, our_unlock_hash).is_err(),
+					"{:?} leaf vtxo locked by another unlock hash must be rejected", version);
+			}
+		}
+	}
+
+	#[tokio::test]
+	async fn new_vtxos_skip_leaves_locked_by_another_unlock_hash() {
+		let secp = Secp256k1::new();
+		let mut rng = rand::thread_rng();
+		let user_key = Keypair::new(&secp, &mut rng);
+		let user_cosign_key = Keypair::new(&secp, &mut rng);
+		let server_key = Keypair::new(&secp, &mut rng);
+		let server_cosign_key = Keypair::new(&secp, &mut rng);
+
+		let our_unlock_hash = UnlockHash::hash(&rand::random::<UnlockPreimage>());
+		let other_unlock_hash = UnlockHash::hash(&rand::random::<UnlockPreimage>());
+
+		let output = VtxoRequest {
+			amount: Amount::from_sat(10_000),
+			policy: VtxoPolicy::new_pubkey(user_key.public_key()),
+		};
+		let participation = RoundParticipation {
+			inputs: vec![],
+			outputs: vec![output.clone()],
+			unblinded_mailbox_id: None,
+		};
+
+		// The leaf locked by the other hash comes first and matches our output
+		// on policy and amount.
+		let leaves = [other_unlock_hash, our_unlock_hash].map(|unlock_hash| VtxoLeafSpec {
+			vtxo: output.clone(),
+			cosign_pubkey: None,
+			unlock_hash: unlock_hash,
+		});
+		let (tree, funding_tx) = ark::test_util::build_signed_tree_with_leaves(
+			HashlockVersion::V1, leaves, &user_cosign_key, &server_key, &server_cosign_key,
+		);
+
+		let new_vtxos = construct_new_vtxos(
+			&participation, &funding_tx, &tree.spec, &tree.cosign_sigs, our_unlock_hash,
+		).await.expect("our leaf is in the tree");
+		assert_eq!(new_vtxos.len(), 1);
+		assert_eq!(new_vtxos[0].unlock_hash(), Some(our_unlock_hash));
 	}
 
 	#[test]
