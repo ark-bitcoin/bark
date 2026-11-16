@@ -422,6 +422,7 @@ pub use self::fees::FeeEstimate;
 pub use self::lightning::{Bolt11InvoiceBuilder, LightningSendOptions};
 pub use self::import::{ImportVtxoArgs, ImportVtxoError};
 pub use self::notification::{WalletNotification, NotificationStream};
+pub use self::board::{BoardBuilder, BoardFundingAddress};
 pub use self::offboard::OffboardResult;
 pub use self::recovery::{RecoveryReport, RecoveryReportEntry, RecoveryStatus};
 pub use self::vtxo::WalletVtxo;
@@ -875,7 +876,9 @@ struct WalletInner {
 ///     - [Wallet::validate_arkoor_address]
 ///   - boarding onchain funds into Ark from an onchain wallet (see [onchain::OnchainWalletTrait])
 ///     - [Wallet::board_amount],
-///     - [Wallet::board_all]
+///     - [Wallet::board_all],
+///     - [Wallet::board]: configure a board, or fund it from another wallet with
+///       [Wallet::board_psbt]
 ///   - offboarding Ark funds to move them back onchain
 ///     - [Wallet::offboard_vtxos],
 ///     - [Wallet::offboard_all]

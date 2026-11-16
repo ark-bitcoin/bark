@@ -1,9 +1,13 @@
 //! Tests for the board flow through the SDK.
 
-use bitcoin::Amount;
+use bitcoin::{Amount, Psbt};
+use bitcoin_ext::BlockDelta;
 use bitcoin_ext::rpc::RpcApi;
 
+use bark::{BoardFundingAddress, Wallet};
+
 use ark_testing::{sat, TestContext};
+use ark_testing::constants::BOARD_CONFIRMATIONS;
 
 const MIN_BOARD_AMOUNT: Amount = Amount::from_sat(20_000);
 
@@ -60,4 +64,42 @@ async fn failed_board_leaves_the_onchain_wallet_untouched() {
 	wallet.sync_onchain().await.expect("onchain sync");
 	let balance = wallet.onchain().expect("onchain wallet").read().await.balance().await;
 	assert_eq!(balance, Amount::ZERO, "the successful board drains the onchain wallet");
+}
+
+/// Builds a finalised PSBT paying `funding` from the wallet's own on-chain
+/// wallet, standing in for another party such as a payjoin sender.
+async fn funding_psbt(wallet: &Wallet, funding: &BoardFundingAddress, amount: Amount) -> Psbt {
+	let onchain = wallet.onchain().expect("onchain wallet");
+	let mut onchain = onchain.write().await;
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+	let psbt = onchain.prepare_tx(&[(funding.address().clone(), amount)], fee_rate).await.unwrap();
+	onchain.finish_psbt(psbt).await.unwrap()
+}
+
+/// A funding address handed out before `BoardFundingAddress` existed can still be
+/// boarded from the keypair and expiry height stored alongside it.
+#[tokio::test]
+#[allow(deprecated)]
+async fn board_psbt_legacy_funding_address() {
+	let ctx = TestContext::new("bark_sdk/board_psbt_legacy_funding_address").await;
+	let srv = ctx.captaind("server").create().await;
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(100_000))
+		.create().await;
+
+	// What a caller of the removed `board_funding_address` stored.
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let expiry_height = wallet.chain().tip().await.unwrap() + BlockDelta::new(100);
+
+	let funding = wallet.legacy_board_funding_address(keypair.public_key(), expiry_height)
+		.await.unwrap();
+	assert_eq!(funding.expiry_height(), expiry_height);
+
+	let psbt = funding_psbt(&wallet, &funding, sat(90_000)).await;
+	wallet.board_psbt(psbt, &funding).await.expect("board a legacy funding address");
+
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	wallet.sync_pending_boards().await.unwrap();
+	assert_eq!(wallet.balance().await.unwrap().spendable, sat(90_000));
 }

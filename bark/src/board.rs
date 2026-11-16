@@ -1,10 +1,12 @@
 use anyhow::Context;
 use bdk_esplora::esplora_client::Amount;
-use bitcoin::key::Keypair;
+use bitcoin::address::NetworkUnchecked;
+use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Address, OutPoint, Psbt};
 use log::{info, warn};
 
-use ark::board::BoardBuilder;
+use ark::ArkInfo;
+use ark::board;
 use ark::fees::validate_and_subtract_fee;
 use bitcoin_ext::BlockHeight;
 use server_rpc::{protos, MAX_NB_BOARD_FUNDING_INPUTS};
@@ -17,23 +19,170 @@ use crate::persist::models::PendingBoard;
 use crate::subsystem::{BoardMovement, Subsystem};
 use crate::vtxo::VtxoStateKind;
 
-impl Wallet {
-	/// Board a [ark::Vtxo] with the given amount.
+/// Where to send the funding transaction of a board, and what the board commits to.
+///
+/// Created by [BoardBuilder::funding_address] and passed unchanged to
+/// [Wallet::board_psbt]. Fund it immediately: the vtxo's lifetime started when the
+/// address was made, and once it expires the server can sweep the funding output
+/// alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoardFundingAddress {
+	address: Address<NetworkUnchecked>,
+	user_pubkey: PublicKey,
+	expiry_height: BlockHeight,
+}
+
+impl BoardFundingAddress {
+	pub fn address(&self) -> &Address {
+		self.address.assume_checked_ref()
+	}
+
+	pub fn expiry_height(&self) -> BlockHeight {
+		self.expiry_height
+	}
+}
+
+/// Configures a board, created by [Wallet::board].
+///
+/// Finish with [BoardBuilder::amount] or [BoardBuilder::all] to fund the board from
+/// the on-chain wallet, or with [BoardBuilder::funding_address] to fund it elsewhere.
+///
+/// ```no_run
+/// # async fn example(wallet: bark::Wallet, other_wallet_psbt: bitcoin::Psbt) -> anyhow::Result<()> {
+/// use bitcoin::Amount;
+///
+/// // Fund from the on-chain wallet.
+/// let board = wallet.board().amount(Amount::from_sat(100_000)).await?;
+///
+/// // Fund from another wallet, e.g. as a payjoin receiver. Persist `funding` (it
+/// // implements serde) until the PSBT arrives, and fund it right away.
+/// let funding = wallet.board().funding_address().await?;
+/// let address = funding.address();
+/// // ... the other wallet builds `other_wallet_psbt` paying `address` ...
+/// let board = wallet.board_psbt(other_wallet_psbt, &funding).await?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct BoardBuilder<'a> {
+	wallet: &'a Wallet,
+}
+
+impl<'a> BoardBuilder<'a> {
+
+	/// Board the given amount from the on-chain wallet.
 	///
 	/// NB we will spend a little more onchain to cover fees.
 	///
 	/// Returns an error if no onchain wallet is configured.
+	pub async fn amount(self, amount: Amount) -> anyhow::Result<PendingBoard> {
+		self.board(Some(amount)).await
+	}
+
+	/// Board all the funds in the on-chain wallet.
+	///
+	/// Returns an error if no onchain wallet is configured.
+	pub async fn all(self) -> anyhow::Result<PendingBoard> {
+		self.board(None).await
+	}
+
+	/// Derive a fresh key and return the address to fund the board with.
+	///
+	/// Build a funding transaction paying it and pass both to [Wallet::board_psbt].
+	pub async fn funding_address(self) -> anyhow::Result<BoardFundingAddress> {
+		let (_, ark_info) = self.wallet.require_server().await?;
+		let tip = self.wallet.inner.chain.tip().await?;
+		let (user_keypair, _) = self.wallet.derive_store_next_keypair().await?;
+		self.wallet.make_board_funding_address(
+			&ark_info, user_keypair.public_key(), tip + ark_info.vtxo_lifetime,
+		).await
+	}
+
+	async fn board(self, amount: Option<Amount>) -> anyhow::Result<PendingBoard> {
+		let wallet = self.wallet;
+		let onchain = wallet.inner.onchain.as_ref()
+			.ok_or_else(|| anyhow!("no onchain wallet configured; cannot board"))?;
+
+		let funding = self.funding_address().await?;
+		let addr = funding.address().clone();
+		let fee_rate = wallet.inner.chain.fee_rates().await.regular;
+
+		let signed_psbt = {
+			let mut onchain = onchain.write().await;
+			let board_psbt = if let Some(amount) = amount {
+				onchain.prepare_tx(&[(addr, amount)], fee_rate).await?
+			} else {
+				onchain.prepare_drain_tx(addr, fee_rate).await?
+			};
+
+			if board_psbt.inputs.len() > MAX_NB_BOARD_FUNDING_INPUTS {
+				bail!("We need {} inputs to board, exceeding the limit of {}",
+					board_psbt.inputs.len(), MAX_NB_BOARD_FUNDING_INPUTS,
+				);
+			}
+
+			// Sign only: a board that fails here must leave the wallet untouched.
+			onchain.sign_psbt(board_psbt).await?
+		};
+
+		wallet.board_psbt(signed_psbt, &funding).await
+	}
+}
+
+impl Wallet {
+	/// Start configuring a board. See [BoardBuilder].
+	pub fn board(&self) -> BoardBuilder<'_> {
+		BoardBuilder { wallet: self }
+	}
+
+	/// Board a [ark::Vtxo] with the given amount.
+	///
+	/// Shorthand for `self.board().amount(amount)`.
 	pub async fn board_amount(&self, amount: Amount) -> anyhow::Result<PendingBoard> {
-		let (user_keypair, _) = self.derive_store_next_keypair().await?;
-		self.board(Some(amount), user_keypair).await
+		self.board().amount(amount).await
 	}
 
 	/// Board a [ark::Vtxo] with all the funds in your onchain wallet.
 	///
-	/// Returns an error if no onchain wallet is configured.
+	/// Shorthand for `self.board().all()`.
 	pub async fn board_all(&self) -> anyhow::Result<PendingBoard> {
-		let (user_keypair, _) = self.derive_store_next_keypair().await?;
-		self.board(None, user_keypair).await
+		self.board().all().await
+	}
+
+	/// Rebuilds the [BoardFundingAddress] of a funding address created before it
+	/// existed, from the user pubkey and expiry height stored alongside it.
+	///
+	/// Only for boards funded through the removed `board_funding_address`. If the
+	/// server's key or exit delta changed since, the rebuilt address won't match and
+	/// [Wallet::board_psbt] refuses the PSBT.
+	#[deprecated(note = "only for funding addresses created before BoardFundingAddress")]
+	pub async fn legacy_board_funding_address(
+		&self,
+		user_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> anyhow::Result<BoardFundingAddress> {
+		let (_, ark_info) = self.require_server().await?;
+		self.pubkey_keypair(&user_pubkey).await?
+			.context("board funding address key is not from this wallet")?;
+		self.make_board_funding_address(&ark_info, user_pubkey, expiry_height).await
+	}
+
+	async fn make_board_funding_address(
+		&self,
+		ark_info: &ArkInfo,
+		user_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> anyhow::Result<BoardFundingAddress> {
+		let properties = self.inner.db.read_properties().await?.context("Missing config")?;
+		let builder = board::BoardBuilder::new(
+			user_pubkey,
+			expiry_height,
+			ark_info.server_pubkey,
+			ark_info.vtxo_exit_delta,
+		).context("invalid board parameters")?;
+
+		let address = Address::from_script(&builder.funding_script_pubkey(), properties.network)?;
+
+		Ok(BoardFundingAddress { address: address.into_unchecked(), user_pubkey, expiry_height })
 	}
 
 	pub async fn pending_boards(&self) -> anyhow::Result<Vec<PendingBoard>> {
@@ -114,81 +263,11 @@ impl Wallet {
 		Ok(())
 	}
 
-	async fn board(
-		&self,
-		amount: Option<Amount>,
-		user_keypair: Keypair,
-	) -> anyhow::Result<PendingBoard> {
-		let onchain = self.inner.onchain.as_ref()
-			.ok_or_else(|| anyhow!("no onchain wallet configured; cannot board"))?;
-
-		let (addr, expiry_height) = self.board_funding_address(&user_keypair).await?;
-		let fee_rate = self.inner.chain.fee_rates().await.regular;
-
-		let signed_psbt = {
-			let mut wallet = onchain.write().await;
-			let board_psbt = if let Some(amount) = amount {
-				wallet.prepare_tx(&[(addr, amount)], fee_rate).await?
-			} else {
-				wallet.prepare_drain_tx(addr, fee_rate).await?
-			};
-
-			if board_psbt.inputs.len() > MAX_NB_BOARD_FUNDING_INPUTS {
-				bail!("We need {} inputs to board, exceeding the limit of {}",
-					board_psbt.inputs.len(), MAX_NB_BOARD_FUNDING_INPUTS,
-				);
-			}
-
-			// Sign only: a board that fails here must leave the wallet untouched.
-			wallet.sign_psbt(board_psbt).await?
-		};
-
-		self.board_psbt(signed_psbt, user_keypair, expiry_height).await
-	}
-
-	/// Returns the funding address for a board with the given keypair.
-	///
-	/// The caller can use this address to build a funding transaction, then pass it
-	/// to [Wallet::board_psbt] to complete the board setup.
-	pub async fn board_funding_address(
-		&self,
-		user_keypair: &Keypair,
-	) -> anyhow::Result<(Address, BlockHeight)> {
-		let (_, ark_info) = self.require_server().await?;
-		let properties = self.inner.db.read_properties().await?.context("Missing config")?;
-		let current_height = self.inner.chain.tip().await?;
-
-		let expiry_height = current_height + ark_info.vtxo_lifetime;
-		let builder = BoardBuilder::new(
-			user_keypair.public_key(),
-			expiry_height,
-			ark_info.server_pubkey,
-			ark_info.vtxo_exit_delta,
-		).context("invalid board parameters")?;
-
-		let addr = bitcoin::Address::from_script(
-			&builder.funding_script_pubkey(),
-			properties.network,
-		)?;
-
-		Ok((addr, expiry_height))
-	}
-
-	#[deprecated(note = "use board_psbt instead")]
-	pub async fn board_tx(
-		&self,
-		board_psbt: Psbt,
-		user_keypair: Keypair,
-		expiry_height: BlockHeight,
-	) -> anyhow::Result<PendingBoard> {
-		self.board_psbt(board_psbt, user_keypair, expiry_height).await
-	}
-
 	/// Board a [ark::Vtxo] from a funding PSBT.
 	///
-	/// The PSBT must pay to the address returned by [Wallet::board_funding_address].
+	/// The PSBT must pay to `funding`, made by [BoardBuilder::funding_address].
 	/// It may have been built anywhere: the board output is found by matching the
-	/// [BoardBuilder] funding script-pubkey, so it may sit at any index alongside
+	/// board funding script-pubkey, so it may sit at any index alongside
 	/// any other outputs.
 	///
 	/// Broadcasting follows from the PSBT rather than being chosen by the caller. A
@@ -201,8 +280,8 @@ impl Wallet {
 	/// txid — added input, fee bump, payjoin sender falling back to its original —
 	/// goes unnoticed: the board waits forever while the funds land in an output no
 	/// vtxo tracks. The other party must therefore report any change, and the caller
-	/// call this again with the updated PSBT and the same `user_keypair` and
-	/// `expiry_height`; the abandoned board stays pending until its vtxo expires.
+	/// call this again with the updated PSBT and the same `funding`; the abandoned
+	/// board stays pending until its vtxo expires.
 	///
 	/// A receiver contributing its own input, signed `SIGHASH_ALL`, would bind the
 	/// sender to the boarded transaction
@@ -212,12 +291,16 @@ impl Wallet {
 	pub async fn board_psbt(
 		&self,
 		board_psbt: Psbt,
-		user_keypair: Keypair,
-		expiry_height: BlockHeight,
+		funding: &BoardFundingAddress,
 	) -> anyhow::Result<PendingBoard> {
 		let (mut srv, ark_info) = self.require_server().await?;
 
-		let builder = BoardBuilder::new(
+		let expiry_height = funding.expiry_height;
+
+		let (_, user_keypair) = self.pubkey_keypair(&funding.user_pubkey).await?
+			.context("board funding address key is not from this wallet")?;
+
+		let builder = board::BoardBuilder::new(
 			user_keypair.public_key(),
 			expiry_height,
 			ark_info.server_pubkey,
