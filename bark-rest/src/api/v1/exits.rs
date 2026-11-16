@@ -626,9 +626,9 @@ pub async fn emergency_exit_fee(
 			.map(ark::VtxoId::from_str)
 			.collect::<Result<Vec<_>, _>>()
 			.badarg("Invalid VTXO ID")?,
-		None => wallet.spendable_vtxos().await
-			.context("Failed to list spendable VTXOs")?
-			.into_iter().map(|v| v.vtxo.id()).collect(),
+		None => wallet.exit_mgr().entire_wallet_exit_vtxos().await
+			.context("Failed to list VTXOs to exit")?
+			.into_iter().map(|v| v.id()).collect(),
 	};
 
 	let fee_rate = match query.fee_rate_sat_per_vb {
@@ -713,9 +713,9 @@ pub async fn remaining_exit_transactions(
 			.map(ark::VtxoId::from_str)
 			.collect::<Result<Vec<_>, _>>()
 			.badarg("Invalid VTXO ID")?,
-		None => wallet.spendable_vtxos().await
-			.context("Failed to list spendable VTXOs")?
-			.into_iter().map(|v| v.vtxo.id()).collect(),
+		None => wallet.exit_mgr().entire_wallet_exit_vtxos().await
+			.context("Failed to list VTXOs to exit")?
+			.into_iter().map(|v| v.id()).collect(),
 	};
 
 	let result = wallet.remaining_exit_transactions(&vtxo_ids).await;
@@ -778,9 +778,9 @@ pub async fn exit_presign(
 			.map(|s| ark::VtxoId::from_str(s))
 			.collect::<Result<Vec<_>, _>>()
 			.badarg("Invalid VTXO ID")?,
-		None => wallet.spendable_vtxos().await
-			.context("Failed to list spendable VTXOs")?
-			.into_iter().map(|v| v.vtxo.id()).collect(),
+		None => wallet.exit_mgr().entire_wallet_exit_vtxos().await
+			.context("Failed to list VTXOs to exit")?
+			.into_iter().map(|v| v.id()).collect(),
 	};
 
 	let fee_rate = match body.fee_rate_sat_per_vb {
