@@ -133,13 +133,13 @@ impl BarkClient {
 			buf
 		};
 
-		let (exit_result, output) = tokio::join!(
-			tokio::time::timeout(timeout, child.wait()),
-			read_fut,
-		);
+		// Bound the drain too, a stalled child keeps stdout open. On timeout the
+		// child is dropped and killed.
+		let (exit_result, output) = tokio::time::timeout(timeout, async {
+			tokio::join!(child.wait(), read_fut)
+		}).await.with_context(|| format!("timeout running '{}'", command_str))?;
 
 		let status = exit_result
-			.with_context(|| format!("timeout running '{}'", command_str))?
 			.with_context(|| format!("error waiting for '{}'", command_str))?;
 
 		if status.success() {
