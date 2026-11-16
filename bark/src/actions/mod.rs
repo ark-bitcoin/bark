@@ -11,6 +11,7 @@ pub mod arkoor_send;
 pub mod board;
 pub mod lightning;
 pub mod offboard;
+pub mod recovery;
 
 use std::fmt;
 use std::time::Duration;
@@ -28,6 +29,7 @@ use crate::actions::board::Board;
 use crate::actions::lightning::pay::LightningSend;
 use crate::actions::lightning::receive::LightningReceive;
 use crate::actions::offboard::Offboard;
+use crate::actions::recovery::{Recovery, RECOVERY_ACTION_ID};
 use crate::lock_manager::LockGuard;
 use crate::vtxo::{VtxoState, VtxoStateKind, VtxoValidationError};
 
@@ -45,6 +47,7 @@ pub enum WalletActionCheckpoint {
 	ArkoorSend(ArkoorSend),
 	Board(Board),
 	Offboard(Offboard),
+	Recovery(Recovery),
 }
 
 impl WalletActionCheckpoint {
@@ -55,6 +58,7 @@ impl WalletActionCheckpoint {
 			WalletActionCheckpoint::ArkoorSend(s) => s.id(),
 			WalletActionCheckpoint::Board(s) => s.id(),
 			WalletActionCheckpoint::Offboard(o) => o.id(),
+			WalletActionCheckpoint::Recovery(r) => r.id(),
 		}
 	}
 
@@ -127,6 +131,20 @@ impl WalletActionCheckpoint {
 			_ => None,
 		}
 	}
+
+	pub fn as_recovery(&self) -> Option<&Recovery> {
+		match self {
+			WalletActionCheckpoint::Recovery(r) => Some(r),
+			_ => None,
+		}
+	}
+
+	pub fn into_recovery(self) -> Option<Recovery> {
+		match self {
+			WalletActionCheckpoint::Recovery(r) => Some(r),
+			_ => None,
+		}
+	}
 }
 
 impl From<LightningSend> for WalletActionCheckpoint {
@@ -156,6 +174,12 @@ impl From<Board> for WalletActionCheckpoint {
 impl From<Offboard> for WalletActionCheckpoint {
 	fn from(o: Offboard) -> Self {
 		WalletActionCheckpoint::Offboard(o)
+	}
+}
+
+impl From<Recovery> for WalletActionCheckpoint {
+	fn from(r: Recovery) -> Self {
+		WalletActionCheckpoint::Recovery(r)
 	}
 }
 
@@ -577,7 +601,14 @@ impl Wallet {
 	///
 	/// Cheap when nothing is held (no-op). Used as the cleanup hook by
 	/// [`GuardedCheckpoint::finish`].
+	///
+	/// The recovery from seed releases nothing: the VTXOs it holds have no status
+	/// from the server yet and may be spent, so they stay locked when it ends.
+	/// A later recovery picks them up again.
 	pub async fn release_action_locks(&self, action_id: &WalletActionId) -> anyhow::Result<()> {
+		if action_id == RECOVERY_ACTION_ID {
+			return Ok(());
+		}
 		let vtxos = self.get_vtxos_locked_by_action(action_id).await?;
 		if vtxos.is_empty() {
 			return Ok(());

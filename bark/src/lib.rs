@@ -423,7 +423,7 @@ pub use self::lightning::{Bolt11InvoiceBuilder, LightningSendOptions};
 pub use self::import::{ImportVtxoArgs, ImportVtxoError};
 pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::offboard::OffboardResult;
-pub use self::recovery::{RecoveryReport, RecoveryReportEntry, RecoveryStatus};
+pub use self::recovery::{MAX_RECOVERY_ATTEMPTS, RecoveryReport, RecoveryReportEntry, RecoveryStatus};
 pub use self::vtxo::WalletVtxo;
 
 use std::borrow::Cow;
@@ -859,6 +859,11 @@ struct WalletInner {
 	/// In-memory MuSig2 secret cosign nonces for in-flight round attempts.
 	/// See [`RoundSecretNonces`].
 	pub(crate) round_secret_nonces: RoundSecretNonces,
+
+	/// The report of the last recovery that finished in this process. The
+	/// recovery action drops its checkpoint when it is done, so this is where the
+	/// final report is read from.
+	finished_recovery: parking_lot::Mutex<Option<RecoveryReport>>,
 }
 
 /// The central entry point for using this library as an Ark wallet.
@@ -1384,13 +1389,19 @@ impl Wallet {
 			daemon: parking_lot::Mutex::new(None),
 			last_force_exit_scan_tip: tokio::sync::Mutex::new(None),
 			round_secret_nonces: RoundSecretNonces::new(),
+			finished_recovery: parking_lot::Mutex::new(None),
 		})};
 
 		ret.inner.exit.load().await
 			.context("error loading exit system after opening wallet")?;
 
 		let recovery = if !created_now {
-			RecoveryStatus::NotRun
+			// A recovery an earlier open started is resumed by the sync.
+			match ret.pending_recovery().await {
+				Ok(Some(recovery)) => RecoveryStatus::InProgress(recovery.report),
+				Ok(None) => RecoveryStatus::NotRun,
+				Err(e) => RecoveryStatus::Failed(e),
+			}
 		} else if args.skip_recovery {
 			info!("Seed-based wallet recovery explicitly skipped");
 			RecoveryStatus::NotRun
@@ -1398,16 +1409,17 @@ impl Wallet {
 			// Recover any VTXOs the server knows for our keys or that were
 			// backed up to the seed-derived recovery mailbox. Best-effort so it
 			// can't abort wallet creation, but a failure means funds may be
-			// missing — surface it loudly. Partial failures are logged inside
-			// the recovery call.
-			match ret.recover_from_seed().await {
-				Ok(report) => RecoveryStatus::Completed(report),
-				Err(e) => {
-					error!("VTXO recovery from seed failed; funds may be \
-						missing from this wallet until recovery succeeds: {:#}", e);
-					RecoveryStatus::Failed(e)
-				},
+			// missing — surface it loudly.
+			let status = ret.start_recovery().await;
+			match &status {
+				RecoveryStatus::Failed(e) => error!("VTXO recovery from seed could not be \
+					started; funds may be missing from this wallet: {:#}", e),
+				RecoveryStatus::InProgress(report) => warn!("VTXO recovery from seed is not \
+					done: {} vtxos are still missing and kept locked; it resumes on the next \
+					sync", report.failed().len()),
+				RecoveryStatus::NotRun | RecoveryStatus::Completed(_) => {},
 			}
+			status
 		};
 
 		if args.run_daemon {
@@ -1453,6 +1465,7 @@ impl Wallet {
 			server: tokio::sync::OnceCell::new(),
 			onchain: None,
 			daemon: parking_lot::Mutex::new(None),
+			finished_recovery: parking_lot::Mutex::new(None),
 			last_force_exit_scan_tip: tokio::sync::Mutex::new(None),
 			round_secret_nonces: RoundSecretNonces::new(),
 		})};
@@ -1654,16 +1667,18 @@ impl Wallet {
 	///
 	/// Each keypair must be its VTXO's private key so we can prove ownership.
 	///
-	/// A VTXO the server does not know, whose batch request failed, or whose
-	/// answer is unusable, is absent from the result. Only a server that cannot
-	/// be reached is an error.
+	/// Returns the spend states, and the ids whose batch the server answered. A
+	/// VTXO the server does not know, whose batch request failed, or whose answer
+	/// is unusable, has no spend state. Only a server that cannot be reached is
+	/// an error.
 	pub(crate) async fn fetch_vtxo_spend_states(
 		&self,
 		queries: &[(VtxoId, &Keypair)],
-	) -> anyhow::Result<HashMap<VtxoId, VtxoSpendState>> {
+	) -> anyhow::Result<(HashMap<VtxoId, VtxoSpendState>, HashSet<VtxoId>)> {
 		let mut ret = HashMap::with_capacity(queries.len());
+		let mut answered = HashSet::new();
 		if queries.is_empty() {
-			return Ok(ret);
+			return Ok((ret, answered));
 		}
 
 		let (mut srv, _) = self.require_server().await?;
@@ -1681,6 +1696,7 @@ impl Wallet {
 					continue;
 				},
 			};
+			answered.extend(chunk.iter().map(|(id, _)| *id));
 
 			// The caller decides what an unanswered id means and logs it.
 			for raw in &resp.missing_vtxo_ids {
@@ -1707,7 +1723,7 @@ impl Wallet {
 			}
 		}
 
-		Ok(ret)
+		Ok((ret, answered))
 	}
 
 	/// Retrieves the full state of a [Vtxo] for a given [VtxoId] if it exists in the database.
@@ -2091,6 +2107,11 @@ impl Wallet {
 			async {
 				if let Err(e) = self.sync_pending_offboards().await {
 					warn!("Error syncing pending offboards: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.sync_pending_recovery().await {
+					warn!("Error resuming recovery from seed: {:#}", e);
 				}
 			},
 			async {

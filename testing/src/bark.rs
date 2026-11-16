@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 use bark::{BarkNetwork, Config, OpenWalletArgs, WalletSeed};
-use bark::actions::{WalletActionCheckpoint as Cp, arkoor_send, board, offboard};
+use bark::actions::{WalletActionCheckpoint as Cp, arkoor_send, board, offboard, recovery};
 use bark::actions::lightning::{pay, receive};
 use bark::lock_manager::memory::MemoryLockManager;
 use bark::onchain::OnchainWallet;
@@ -335,6 +335,11 @@ impl Bark {
 				receive::Progress::HtlcsReady(_) => "HtlcsReady",
 				receive::Progress::PreimageRevealed(_) => "PreimageRevealed",
 				receive::Progress::Delivering(_) => "Delivering",
+			}),
+			Cp::Recovery(r) => format!("recovery.{}", match r.progress {
+				recovery::Progress::Xpub { .. } => "Xpub",
+				recovery::Progress::Scanning { .. } => "Scanning",
+				recovery::Progress::Resolving { .. } => "Resolving",
 			}),
 		}).collect::<Vec<_>>();
 		steps.sort();
@@ -1301,11 +1306,11 @@ impl Bark {
 		assert!(output.status.success(),
 			"cp -r failed: {}", String::from_utf8_lossy(&output.stderr));
 
-		let bitcoind = self.bitcoind.clone().expect("can only clone bark with bitcoind");
+		let bitcoind = self.bitcoind.clone();
 		let cfg = self.config.clone();
 
 		Bark {
-			bitcoind: Some(bitcoind),
+			bitcoind,
 			config: cfg,
 			name: new_name.to_string(),
 			counter: AtomicUsize::new(0),

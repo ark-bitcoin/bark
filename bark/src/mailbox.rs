@@ -53,7 +53,7 @@ use crate::utils::ReconnectBackoff;
 /// consumers. The VTXO row is `INSERT OR IGNORE`, so once one consumer has
 /// stored the package the rest see the VTXO already present and skip the
 /// movement.
-const MAILBOX_PROCESSING_LOCK_KEY: &str = "mailbox.processing";
+pub(crate) const MAILBOX_PROCESSING_LOCK_KEY: &str = "mailbox.processing";
 
 /// How long a consumer waits for the arkoor dedup lock before giving up.
 ///
@@ -64,7 +64,7 @@ const MAILBOX_PROCESSING_LOCK_KEY: &str = "mailbox.processing";
 /// [`Wallet::process_mailbox_message`]) so a later message can't bury it. A
 /// timeout only happens if a holder is stuck for the full duration; normally
 /// waiters acquire the lock and dedup as usual.
-const MAILBOX_PROCESSING_LOCK_TIMEOUT: std::time::Duration =
+pub(crate) const MAILBOX_PROCESSING_LOCK_TIMEOUT: std::time::Duration =
 	std::time::Duration::from_secs(30);
 
 /// How long the handler of a lightning send notification waits for a drive
@@ -416,7 +416,8 @@ impl Wallet {
 
 		// Each arm returns whether the checkpoint should advance. Arkoor
 		// and round participation return false on a transient processing
-		// error so the server redelivers and we retry; their handlers
+		// error so the server redelivers and we retry, and arkoor also while
+		// a recovery from seed has yet to read the package; their handlers
 		// absorb invalid server data, since retrying can't fix that.
 		// Every other arm advances regardless, either because the work is
 		// idempotent and re-done on every wallet sync, or because the
@@ -424,7 +425,11 @@ impl Wallet {
 		let advance = match mailbox_msg.message {
 			Some(Message::Arkoor(msg)) => {
 				match self.process_received_arkoor_package(msg.vtxos).await {
-					Ok(()) => true,
+					Ok(true) => true,
+					Ok(false) => {
+						debug!("Leaving an arkoor package to the recovery from seed in progress");
+						false
+					},
 					Err(e) => {
 						error!("Error processing received arkoor package: {:#}", e);
 						false
@@ -478,10 +483,15 @@ impl Wallet {
 		}
 	}
 
+	/// Store the VTXOs of a received arkoor package the wallet doesn't hold yet,
+	/// and record their receive movement.
+	///
+	/// Returns `false` when the package is left to the recovery from seed in
+	/// progress, see [`Wallet::recovery_reads_regular_mailbox`].
 	async fn process_received_arkoor_package(
 		&self,
 		raw_vtxos: Vec<Vec<u8>>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<bool> {
 		let vtxos = self.process_raw_vtxos(raw_vtxos).await?;
 
 		// Serialize the receive dedup across all consumers of this wallet's
@@ -492,6 +502,13 @@ impl Wallet {
 		let _guard = self.inner.lock_manager.lock(
 			MAILBOX_PROCESSING_LOCK_KEY, MAILBOX_PROCESSING_LOCK_TIMEOUT,
 		).await.context("failed to acquire mailbox processing lock")?;
+
+		// A package is stored here as spendable without asking the server, so
+		// one the recovery has yet to read could be a spent VTXO. The recovery
+		// stores it with the server's word, and the package is redelivered.
+		if self.recovery_reads_regular_mailbox().await? {
+			return Ok(false);
+		}
 
 		// Everything works off of a deduplicated set. This is important to avoid accounting
 		// mistakes in the movement and marking the entire package as spendable, even if it contains
@@ -510,7 +527,7 @@ impl Wallet {
 			}
 		}
 		if new_vtxos.is_empty() {
-			return Ok(());
+			return Ok(true);
 		}
 
 		// Redundantly re-register the received vtxos with the server. An
@@ -558,7 +575,7 @@ impl Wallet {
 
 		info!("Received arkoor (movement {}) for {}", movement_id, balance);
 
-		Ok(())
+		Ok(true)
 	}
 
 	/// Handle a mailbox notice that a delegated round participation completed.
