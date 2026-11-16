@@ -251,16 +251,19 @@ impl Invoice {
 		}
 	}
 
-	pub fn network(&self) -> Network {
+	/// The network the invoice is for
+	///
+	/// Returns `None` for a BOLT12 invoice whose chain is not a known network.
+	pub fn network(&self) -> Option<Network> {
 		match self {
-			Invoice::Bolt11(invoice) => invoice.network(),
+			Invoice::Bolt11(invoice) => Some(invoice.network()),
 			Invoice::Bolt12(invoice) => match invoice.chain() {
-				ChainHash::BITCOIN => Network::Bitcoin,
-				ChainHash::TESTNET3 => Network::Testnet,
-				ChainHash::TESTNET4 => Network::Testnet4,
-				ChainHash::SIGNET => Network::Signet,
-				ChainHash::REGTEST => Network::Regtest,
-				_ => panic!("unsupported network"),
+				ChainHash::BITCOIN => Some(Network::Bitcoin),
+				ChainHash::TESTNET3 => Some(Network::Testnet),
+				ChainHash::TESTNET4 => Some(Network::Testnet4),
+				ChainHash::SIGNET => Some(Network::Signet),
+				ChainHash::REGTEST => Some(Network::Regtest),
+				_ => None,
 			},
 		}
 	}

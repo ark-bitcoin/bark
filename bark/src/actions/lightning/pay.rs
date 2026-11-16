@@ -385,11 +385,13 @@ pub(crate) async fn start_lightning_send(
 	let tip = wallet.inner.chain.tip().await?;
 
 	let properties = wallet.inner.db.read_properties().await?.context("Missing config")?;
-	if invoice.network() != properties.network {
-		bail!("Invoice is for wrong network: {}", invoice.network());
-	}
-
 	invoice.check_signature().context("invoice has bad signature")?;
+
+	match invoice.network() {
+		Some(network) if network == properties.network => {},
+		Some(network) => bail!("Invoice is for wrong network: {}", network),
+		None => bail!("Invoice is for an unknown network"),
+	}
 
 	let payment_amount = invoice.get_payment_amount(user_amount)
 		.context("invoice has bad payment amount")?;
