@@ -1,6 +1,7 @@
 
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bark_json::cli::LightningSendStateKind;
@@ -8,11 +9,13 @@ use bark_json::cli::LightningSendStateKind;
 use ark_testing::{btc, lightning_test, require_bark_version, sat, Captaind, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::context::LightningPaymentSetup;
-use ark_testing::util::{FutureExt, poll_interval};
+use ark_testing::daemon::captaind::{self, ArkClient};
+use ark_testing::util::{action_drive_factor, FutureExt, poll_interval};
 use ark::lightning::Invoice;
 use bark_rest_client::apis::{lightning_api, Error};
-use bark_rest_client::models::LightningPayRequest;
+use bark_rest_client::models::{LightningInvoiceRequest, LightningPayRequest};
 use server::database::Db;
+use server_rpc::protos;
 
 /// Verify that lightning receives are claimed via the mailbox path by
 /// running barkd in `daemon_manual_sync` mode and driving the claim with
@@ -76,6 +79,100 @@ async fn ln_receive_via_mailbox(
 lightning_test!(ln_receive_via_mailbox, |cfg| {
 	cfg.invoice_check_interval = Duration::from_secs(1);
 });
+
+/// barkd retries a lightning receive claim that failed.
+///
+/// The mailbox notification drives the claim one time. A proxy fails that
+/// claim, so only the periodic daemon sync can complete the receive.
+#[tokio::test]
+async fn retries_failed_lightning_receive_claim() {
+	require_bark_version!(> "0.8.1");
+
+	let ctx = TestContext::new("barkd/retries_failed_lightning_receive_claim").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server")
+		.lightningd(&lightning.internal)
+		.funded(btc(10))
+		.create().await;
+
+	srv.wait_for_vtxopool(&ctx).await;
+	ctx.generate_blocks(1).await;
+
+	/// Fails the first `fail_count` claims and forwards the others.
+	#[derive(Clone)]
+	struct FailFirstClaims {
+		claims: Arc<AtomicUsize>,
+		fail_count: usize,
+	}
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for FailFirstClaims {
+		async fn claim_lightning_receive(
+			&self, upstream: &mut ArkClient, req: protos::ClaimLightningReceiveRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			if self.claims.fetch_add(1, Ordering::Relaxed) < self.fail_count {
+				return Err(tonic::Status::internal("simulated claim failure"));
+			}
+			Ok(upstream.claim_lightning_receive(req).await?.into_inner())
+		}
+	}
+
+	// Fail all claims of the first drive. The double-drive mode runs each
+	// step two times.
+	let fail_count = action_drive_factor();
+	let claims = Arc::new(AtomicUsize::new(0));
+	let proxy = srv.start_proxy_no_mailbox(FailFirstClaims { claims: claims.clone(), fail_count }).await;
+	let barkd = ctx.barkd("barkd", &srv)
+		.cfg({
+			let addr = proxy.address.clone();
+			move |c| c.server_address = addr
+		})
+		.create().await;
+
+	let amount = sat(500_000);
+	let invoice = barkd.lightning_invoice(amount).await;
+
+	tokio::join!(
+		lightning.external.pay_bolt11(invoice.invoice),
+		async {
+			// Read the balance only. `POST /sync` also drives the claim.
+			while barkd.bark_balance().await.spendable != amount {
+				tokio::time::sleep(poll_interval()).await;
+			}
+		}.wait_millis(30_000),
+	);
+
+	assert!(claims.load(Ordering::Relaxed) > fail_count,
+		"barkd must claim again after the failed claim");
+}
+
+/// barkd drives pending lightning receives without `POST /sync`.
+///
+/// The invoice is not paid, so the Ark server sends no mailbox message.
+/// Only the periodic daemon sync can see that the Ark server canceled the
+/// expired invoice, and remove the receive.
+#[tokio::test]
+async fn removes_expired_lightning_receive() {
+	require_bark_version!(> "0.8.1");
+
+	let ctx = TestContext::new("barkd/removes_expired_lightning_receive").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	let barkd = ctx.barkd("barkd", &srv).create().await;
+
+	let req = LightningInvoiceRequest {
+		amount_sat: 500_000, description: None, expiry_secs: Some(1), token: None,
+	};
+	lightning_api::generate_invoice(&barkd.client_config(), req).await.unwrap();
+	assert_eq!(barkd.pending_lightning_receives().await.len(), 1);
+
+	// Read the pending list only. `POST /sync` also drives the receive.
+	async {
+		while !barkd.pending_lightning_receives().await.is_empty() {
+			tokio::time::sleep(poll_interval()).await;
+		}
+	}.wait_millis(30_000).await;
+}
 
 /// `GET /lightning/sends/{identifier}` reports `unknown` for a payment
 /// hash the wallet has never seen and rejects invalid identifiers.
