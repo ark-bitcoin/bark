@@ -316,6 +316,8 @@ impl Wallet {
 	/// call this again with the updated PSBT and the same `funding`; the abandoned
 	/// board stays pending until its vtxo expires.
 	///
+	/// Refuses a `funding` too close to its expiry to confirm and register in time.
+	///
 	/// A receiver contributing its own input, signed `SIGHASH_ALL`, would bind the
 	/// sender to the boarded transaction
 	///
@@ -329,6 +331,14 @@ impl Wallet {
 		let (mut srv, ark_info) = self.require_server().await?;
 
 		let expiry_height = funding.expiry_height;
+		let tip = self.inner.chain.tip().await?;
+		let remaining = expiry_height.to_u32().saturating_sub(tip.to_u32());
+		let min_lifetime = self.min_board_lifetime(&ark_info);
+		ensure!(remaining > min_lifetime,
+			"board funding address expires at height {} and only has {} blocks left, \
+			it needs more than {}; use a new funding address",
+			expiry_height, remaining, min_lifetime,
+		);
 
 		let (_, user_keypair) = self.pubkey_keypair(&funding.user_pubkey).await?
 			.context("board funding address key is not from this wallet")?;

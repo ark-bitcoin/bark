@@ -148,3 +148,28 @@ async fn board_with_expiry_and_external_funding() {
 	wallet.sync_pending_boards().await.unwrap();
 	assert_eq!(wallet.balance().await.unwrap().spendable, sat(250_000));
 }
+
+/// A funding address too close to its expiry to confirm and register in time is
+/// refused, rather than cosigning a board the server could sweep.
+#[tokio::test]
+async fn board_psbt_rejects_nearly_expired_funding_address() {
+	let ctx = TestContext::new("bark_sdk/board_psbt_rejects_nearly_expired_funding_address").await;
+	let srv = ctx.captaind("server").create().await;
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(100_000))
+		.create().await;
+
+	// The nearest expiry the builder accepts, so a single block makes it too near.
+	let min_lifetime = wallet.config().vtxo_exit_margin.to_u32() + BOARD_CONFIRMATIONS;
+	let tip = wallet.chain().tip().await.unwrap();
+	let funding = wallet.board()
+		.expiry(tip + BlockDelta::try_from(min_lifetime + 1).unwrap())
+		.funding_address().await.unwrap();
+	let psbt = funding_psbt(&wallet, &funding, sat(90_000)).await;
+
+	ctx.generate_blocks(1).await;
+
+	let err = wallet.board_psbt(psbt, &funding).await.unwrap_err();
+	assert!(format!("{err:#}").contains("use a new funding address"), "unexpected error: {err:#}");
+}
