@@ -5,6 +5,7 @@ use bitcoin_ext::rpc::{BitcoinRpcExt, RpcApi};
 use bark_json::primitives::{ExpiryPayoutStateInfo, VtxoStateInfo};
 
 use ark_testing::{sat, TestContext};
+use ark_testing::barkd_helpers::wait_for_exits_claimable;
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::barkd::Barkd;
 use ark_testing::util::{poll_interval, FutureExt};
@@ -82,4 +83,26 @@ async fn expiry_payout_is_reported_after_restart_and_restore() {
 	let vtxo = restored.vtxos(Some(true)).await.into_iter().find(|v| v.vtxo.id.to_string() == id)
 		.expect("the restored wallet knows the paid VTXO");
 	assert_eq!((vtxo.state, vtxo.expiry_payout), (VtxoStateInfo::Spent, Some(ExpiryPayoutStateInfo::Paid)));
+}
+
+/// A barkd that requires expiry payouts starts while the server is
+/// unreachable. It reports its balance and exits its VTXO.
+#[tokio::test]
+async fn expiry_payout_wallet_starts_and_exits_without_server() {
+	let ctx = TestContext::new("barkd/expiry_payout_wallet_starts_and_exits_without_server").await;
+	let srv = ctx.captaind("server").no_vtxo_pool()
+		.cfg(|cfg| cfg.expiry_payouts = true).create().await;
+	let barkd = ctx.barkd("wallet", &srv).cfg(|cfg| cfg.require_expiry_payouts = true)
+		.boarded(sat(500_000)).create().await;
+	let spendable = barkd.bark_balance().await.spendable;
+	assert!(spendable > Amount::ZERO);
+
+	barkd.stop().await.unwrap();
+	srv.stop().await.unwrap();
+	barkd.start().await.expect("barkd starts without the server");
+	assert_eq!(barkd.bark_balance().await.spendable, spendable);
+
+	barkd.exit_start_all().await;
+	ctx.fund_barkd(&barkd, sat(100_000)).await;
+	wait_for_exits_claimable(&ctx, &barkd).await;
 }
