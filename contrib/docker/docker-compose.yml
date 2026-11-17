@@ -41,6 +41,7 @@ services:
     build:
       context: ../../
       dockerfile: contrib/docker/cln.Dockerfile
+    hostname: cln
     restart: on-failure
     entrypoint: ["/root/cln/start.sh"]
     volumes:
