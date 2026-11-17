@@ -40,7 +40,7 @@ use bark::Wallet;
 use bark::onchain::OnchainWalletTrait;
 use bark_json::web::CreateWalletRequest;
 
-type BoxFuture<T> =
+pub type BoxFuture<T> =
 	Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 pub type OnWalletCreate = dyn Fn(CreateWalletRequest)
@@ -52,6 +52,31 @@ pub type OnWalletDelete = dyn Fn()
 /// A hook that returns the wallet's BIP-39 mnemonic phrase.
 pub type OnGetMnemonic = dyn Fn()
 	-> BoxFuture<anyhow::Result<String>> + Send + Sync;
+
+/// Management of Nostr Wallet Connect connections.
+///
+/// Implemented by barkd, which owns the running services. bark-rest only
+/// exposes them over HTTP and holds no NWC state of its own.
+#[cfg(feature = "nwc")]
+pub trait NwcApi: Send + Sync + 'static {
+	fn create(&self, req: bark_json::web::NwcConnectionRequest)
+		-> BoxFuture<anyhow::Result<bark_json::web::NwcConnectionResponse>>;
+
+	fn list(&self) -> BoxFuture<anyhow::Result<bark_json::web::NwcConnectionListResponse>>;
+
+	/// Returns whether there was a connection to revoke.
+	fn revoke(&self, client_pubkey: &str) -> BoxFuture<anyhow::Result<bool>>;
+
+	fn relays(&self) -> BoxFuture<anyhow::Result<bark_json::web::NwcRelaysResponse>>;
+
+	/// Serve NWC on one more relay. Returns the relays afterwards.
+	fn add_relay(&self, relay: String)
+		-> BoxFuture<anyhow::Result<bark_json::web::NwcRelaysResponse>>;
+
+	/// Stop serving NWC on a relay. Returns the relays afterwards.
+	fn remove_relay(&self, relay: String)
+		-> BoxFuture<anyhow::Result<bark_json::web::NwcRelaysResponse>>;
+}
 
 const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 
@@ -91,6 +116,23 @@ All endpoints return JSON. Amounts are denominated in satoshis.";
 	modifiers(&BearerSecurity),
 )]
 pub struct ApiDoc;
+
+/// The API this build serves.
+///
+/// Feature-gated sections are nested here rather than in [ApiDoc]'s `nest`
+/// list, because entries inside the derive attribute cannot be conditioned on
+/// a feature.
+pub fn api_doc() -> utoipa::openapi::OpenApi {
+	#[allow(unused_mut)]
+	let mut doc = ApiDoc::openapi();
+
+	#[cfg(feature = "nwc")]
+	{
+		doc = doc.nest("/api/v1/nwc", api::v1::nwc::NwcApiDoc::openapi());
+	}
+
+	doc
+}
 
 struct BearerSecurity;
 
@@ -195,6 +237,10 @@ pub struct ServerState {
 	/// When `None`, the mnemonic endpoint responds with 404.
 	on_get_mnemonic: Option<Box<OnGetMnemonic>>,
 
+	/// Manages NWC connections. `None` when the host serves no NWC.
+	#[cfg(feature = "nwc")]
+	nwc: Option<Arc<dyn NwcApi>>,
+
 	/// Serializes wallet creation and deletion.
 	///
 	/// A delete takes the wallet out of [Self::wallet] before it stops the
@@ -227,6 +273,8 @@ pub struct ServerStateBuilder {
 	auth_token: Option<AuthToken>,
 	on_wallet_create: Option<Box<OnWalletCreate>>,
 	on_wallet_delete: Option<Box<OnWalletDelete>>,
+	#[cfg(feature = "nwc")]
+	nwc: Option<Arc<dyn NwcApi>>,
 	on_get_mnemonic: Option<Box<OnGetMnemonic>>,
 	#[cfg(feature = "web-ui")]
 	web: Option<web::WebConfig>,
@@ -239,6 +287,8 @@ impl ServerStateBuilder {
 			auth_token: None,
 			on_wallet_create: None,
 			on_wallet_delete: None,
+			#[cfg(feature = "nwc")]
+			nwc: None,
 			on_get_mnemonic: None,
 			#[cfg(feature = "web-ui")]
 			web: None,
@@ -257,6 +307,12 @@ impl ServerStateBuilder {
 
 	pub fn on_wallet_create(mut self, hook: impl Into<Option<Box<OnWalletCreate>>>) -> Self {
 		self.on_wallet_create = hook.into();
+		self
+	}
+
+	#[cfg(feature = "nwc")]
+	pub fn nwc(mut self, nwc: impl Into<Option<Arc<dyn NwcApi>>>) -> Self {
+		self.nwc = nwc.into();
 		self
 	}
 
@@ -288,6 +344,8 @@ impl ServerStateBuilder {
 			on_wallet_create: self.on_wallet_create,
 			on_wallet_delete: self.on_wallet_delete,
 			on_get_mnemonic: self.on_get_mnemonic,
+			#[cfg(feature = "nwc")]
+			nwc: self.nwc,
 			wallet_lifecycle: tokio::sync::Mutex::new(()),
 			websocket_tickets: tokio::sync::RwLock::new(HashMap::new()),
 			#[cfg(feature = "web-ui")]
@@ -305,6 +363,22 @@ impl Default for ServerStateBuilder {
 impl ServerState {
 	pub fn builder() -> ServerStateBuilder {
 		ServerStateBuilder::new()
+	}
+
+	/// The host's NWC implementation, or a 404 when it supplied none.
+	///
+	/// A host can compile these routes in without wiring an [NwcApi] behind
+	/// them, so the endpoint has to be able to say it is not there. 404 rather
+	/// than an error about configuration, because from the caller's side the
+	/// endpoint genuinely does not exist on this daemon, the same way the
+	/// mnemonic endpoint answers while it is disabled. The remedy depends on
+	/// the host, so the message does not guess at one.
+	#[cfg(feature = "nwc")]
+	pub fn require_nwc(&self) -> Result<Arc<dyn NwcApi>, ErrorResponse> {
+		let Some(nwc) = self.nwc.as_ref() else {
+			crate::error::not_found!(Vec::<String>::new(), "NWC endpoints are disabled");
+		};
+		Ok(Arc::clone(nwc))
 	}
 
 	pub fn require_wallet(&self) -> Result<Wallet, ErrorResponse> {
@@ -347,7 +421,7 @@ impl RestServer {
 		state: Arc<ServerState>,
 		shutdown: CancellationToken,
 	) -> anyhow::Result<Self> {
-		let (router, _api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
+		let (router, _api) = OpenApiRouter::with_openapi(api_doc())
 			.split_for_parts();
 
 		let socket_addr = config.socket_addr();

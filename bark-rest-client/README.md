@@ -70,6 +70,12 @@ Class | Method | HTTP request | Description
 *MessageApi* | [**verify_message**](docs/MessageApi.md#verify_message) | **POST** /api/v1/message/verify | Verify a signed message
 *NotificationsApi* | [**wait_notification**](docs/NotificationsApi.md#wait_notification) | **GET** /api/v1/notifications/wait | Long-poll for wallet notifications
 *NotificationsApi* | [**websocket_ticket**](docs/NotificationsApi.md#websocket_ticket) | **GET** /api/v1/notifications/ws/ticket | Create a websocket ticket
+*NwcApi* | [**add_relay**](docs/NwcApi.md#add_relay) | **POST** /api/v1/nwc/relays | Add a NWC relay
+*NwcApi* | [**create_connection**](docs/NwcApi.md#create_connection) | **POST** /api/v1/nwc/connections | Create a NWC connection
+*NwcApi* | [**list_connections**](docs/NwcApi.md#list_connections) | **GET** /api/v1/nwc/connections | List NWC connections
+*NwcApi* | [**list_relays**](docs/NwcApi.md#list_relays) | **GET** /api/v1/nwc/relays | List NWC relays
+*NwcApi* | [**remove_relay**](docs/NwcApi.md#remove_relay) | **DELETE** /api/v1/nwc/relays/{relay} | Remove a NWC relay
+*NwcApi* | [**revoke_connection**](docs/NwcApi.md#revoke_connection) | **DELETE** /api/v1/nwc/connections/{client_pubkey} | Revoke a NWC connection
 *OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | Generate on-chain address
 *OnchainApi* | [**onchain_balance**](docs/OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | Get on-chain balance
 *OnchainApi* | [**onchain_drain**](docs/OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | Drain on-chain wallet
@@ -249,6 +255,13 @@ Class | Method | HTTP request | Description
  - [MovementTimestamp](docs/MovementTimestamp.md)
  - [NextRoundStart](docs/NextRoundStart.md)
  - [NotFoundError](docs/NotFoundError.md)
+ - [NwcConnectionInfo](docs/NwcConnectionInfo.md)
+ - [NwcConnectionListResponse](docs/NwcConnectionListResponse.md)
+ - [NwcConnectionRequest](docs/NwcConnectionRequest.md)
+ - [NwcConnectionResponse](docs/NwcConnectionResponse.md)
+ - [NwcMethods](docs/NwcMethods.md)
+ - [NwcRelayRequest](docs/NwcRelayRequest.md)
+ - [NwcRelaysResponse](docs/NwcRelaysResponse.md)
  - [OffboardAllFeeEstimateQuery](docs/OffboardAllFeeEstimateQuery.md)
  - [OffboardAllRequest](docs/OffboardAllRequest.md)
  - [OffboardFeeEstimateRequest](docs/OffboardFeeEstimateRequest.md)

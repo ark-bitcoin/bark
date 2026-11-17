@@ -1991,6 +1991,312 @@
         }
       }
     },
+    "/api/v1/nwc/connections": {
+      "get": {
+        "tags": [
+          "nwc"
+        ],
+        "summary": "List NWC connections",
+        "description": "Lists every Nostr Wallet Connect connection with its permitted methods. Connection secrets are never returned.\n\nThe NWC endpoints respond with 404 when barkd was built without NWC support or has no wallet loaded.",
+        "operationId": "list_connections",
+        "responses": {
+          "200": {
+            "description": "Returns all connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NwcConnectionListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NWC is off on this daemon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "nwc"
+        ],
+        "summary": "Create a NWC connection",
+        "description": "Creates a Nostr Wallet Connect connection and returns the `nostr+walletconnect://` URI to hand to an app. The URI contains a secret that is not stored and is returned only once; a lost URI has to be revoked and recreated.\n\nEvery method bark supports is allowed unless it is set to `false` in `methods`, so a connection created without `methods` may call all of them, `pay_invoice` included.\n\nThe URI names the relays configured at creation, so at least one relay has to be added first (see `POST /api/v1/nwc/relays`).\n\nThe NWC endpoints respond with 404 when barkd was built without NWC support or has no wallet loaded.",
+        "operationId": "create_connection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NwcConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the connection URI",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NwcConnectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Every method is turned off, or no relays are configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NWC is off on this daemon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`methods` names a method bark does not know"
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/nwc/connections/{client_pubkey}": {
+      "delete": {
+        "tags": [
+          "nwc"
+        ],
+        "summary": "Revoke a NWC connection",
+        "description": "Revokes a Nostr Wallet Connect connection and stops serving it. The app loses access immediately; requests it sends afterwards go unanswered rather than being refused, because the service it was talking to no longer exists.\n\nThe NWC endpoints respond with 404 when barkd was built without NWC support or has no wallet loaded.",
+        "operationId": "revoke_connection",
+        "parameters": [
+          {
+            "name": "client_pubkey",
+            "in": "path",
+            "description": "The connection's client public key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connection was revoked"
+          },
+          "404": {
+            "description": "No such connection, or NWC is off on this daemon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/nwc/relays": {
+      "get": {
+        "tags": [
+          "nwc"
+        ],
+        "summary": "List NWC relays",
+        "description": "Lists the nostr relays that Nostr Wallet Connect is served on.\n\nThe NWC endpoints respond with 404 when barkd was built without NWC support or has no wallet loaded.",
+        "operationId": "list_relays",
+        "responses": {
+          "200": {
+            "description": "Returns the relays NWC is served on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NwcRelaysResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NWC is off on this daemon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "nwc"
+        ],
+        "summary": "Add a NWC relay",
+        "description": "Adds a nostr relay and restarts every connection's service on the new set. The change is stored with the connections in nwc.json, so it survives a restart. Adding a relay that is already configured changes nothing.\n\nExisting connection URIs keep the relays they were created with, so an app only learns of the new relay from a new connection.\n\nThe NWC endpoints respond with 404 when barkd was built without NWC support or has no wallet loaded.",
+        "operationId": "add_relay",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NwcRelayRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the relays after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NwcRelaysResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The relay is not a ws:// or wss:// url",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NWC is off on this daemon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/nwc/relays/{relay}": {
+      "delete": {
+        "tags": [
+          "nwc"
+        ],
+        "summary": "Remove a NWC relay",
+        "description": "Removes a nostr relay and restarts every connection's service on the remaining ones. The change is stored with the connections in nwc.json, so it survives a restart.\n\nAn app only reaches the wallet through the relays in its connection URI, so removing all of them cuts it off until it is given a new connection.\n\nThe NWC endpoints respond with 404 when barkd was built without NWC support or has no wallet loaded.",
+        "operationId": "remove_relay",
+        "parameters": [
+          {
+            "name": "relay",
+            "in": "path",
+            "description": "The relay url, percent-encoded",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the relays after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NwcRelaysResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such relay, or NWC is off on this daemon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/onchain/addresses/next": {
       "post": {
         "tags": [
@@ -6595,6 +6901,161 @@
           }
         }
       },
+      "NwcConnectionInfo": {
+        "type": "object",
+        "required": [
+          "name",
+          "client_pubkey",
+          "methods",
+          "created_at"
+        ],
+        "properties": {
+          "client_pubkey": {
+            "type": "string",
+            "description": "The connection's client public key, used to revoke it."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "methods": {
+            "$ref": "#/components/schemas/NwcMethods",
+            "description": "The methods this connection may call, each set to whether it may."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "NwcConnectionListResponse": {
+        "type": "object",
+        "required": [
+          "connections"
+        ],
+        "properties": {
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NwcConnectionInfo"
+            }
+          }
+        }
+      },
+      "NwcConnectionRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "methods": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NwcMethods",
+                "description": "The methods this connection may call. Every method is allowed unless it\nis set to `false` here, so leaving this out grants all of them,\n`pay_invoice` included."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "A name for this connection, shown when listing and revoking it."
+          }
+        }
+      },
+      "NwcConnectionResponse": {
+        "type": "object",
+        "required": [
+          "uri",
+          "client_pubkey"
+        ],
+        "properties": {
+          "client_pubkey": {
+            "type": "string",
+            "description": "The connection's client public key, used to revoke it later."
+          },
+          "uri": {
+            "type": "string",
+            "description": "The `nostr+walletconnect://` URI to give the app.\n\nThis is the only time the client secret is returned. It is not stored,\nso a connection that is lost has to be revoked and recreated."
+          }
+        }
+      },
+      "NwcMethods": {
+        "type": "object",
+        "description": "The NWC methods a connection may call, one field per method bark supports.\n\nA method that is not set is allowed, so only the methods an app should not\nhave need to be named. Unknown fields are refused rather than ignored: a\nmisspelt method would otherwise leave the method it meant to turn off\nallowed.",
+        "properties": {
+          "get_balance": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Read the wallet's spendable balance."
+          },
+          "get_info": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Read the wallet's network, block height and supported methods."
+          },
+          "list_transactions": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Read the wallet's lightning payment history."
+          },
+          "lookup_invoice": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Look up an invoice or payment of the wallet."
+          },
+          "make_invoice": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Create lightning invoices that pay into the wallet."
+          },
+          "pay_invoice": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Pay lightning invoices from the wallet, which lets the app spend."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NwcRelayRequest": {
+        "type": "object",
+        "required": [
+          "relay"
+        ],
+        "properties": {
+          "relay": {
+            "type": "string",
+            "description": "A nostr relay, as a `ws://` or `wss://` url."
+          }
+        }
+      },
+      "NwcRelaysResponse": {
+        "type": "object",
+        "required": [
+          "relays"
+        ],
+        "properties": {
+          "relays": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The relays NWC is served on."
+          }
+        }
+      },
       "OffboardAllFeeEstimateQuery": {
         "type": "object",
         "description": "Query parameters for offboard-all fee estimates.",
@@ -8075,6 +8536,10 @@
     {
       "name": "notifications",
       "description": "Receive real-time notifications from barkd."
+    },
+    {
+      "name": "nwc",
+      "description": "Manage Nostr Wallet Connect connections and the relays they are served on. bark supports the NWC methods `get_info`, `get_balance`, `make_invoice`, `lookup_invoice`, `pay_invoice` and `list_transactions`."
     }
   ]
 }

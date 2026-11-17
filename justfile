@@ -40,6 +40,19 @@ check-wasm-tests:
 		--no-default-features --features wasm \
 		--target wasm32-unknown-unknown
 
+# The wasm-testing build does not enable "nwc", so the nostr stack would only
+# be found broken on wasm by someone building it by hand.
+check-wasm-nwc:
+	cargo check -p bark-wallet \
+		--no-default-features --features nwc,wasm-web,indexed-db,onchain-bdk \
+		--target wasm32-unknown-unknown
+
+# barkd serves NWC by default, so nothing compiles a barkd without it unless
+# it is asked for. bark-rest's own "nwc" feature is covered both ways by
+# check-bark-as-libs.
+check-no-nwc:
+	cargo check -p bark-cli --no-default-features \
+		--features tls-native-roots,barkd-swagger-ui --tests
 
 check-lib-arithmetic:
 	cargo clippy -p ark-lib --tests
@@ -71,7 +84,7 @@ check-use-bark-as-dependency:
 	cargo init barktest
 	cd barktest && cargo add bark-wallet && cargo update && cargo build
 
-checks: prechecks check-lib-arithmetic check-wasm-tests check
+checks: prechecks check-lib-arithmetic check-wasm-tests check-wasm-nwc check-no-nwc check
 
 check-commits:
 	bash contrib/check-commits.sh
@@ -86,6 +99,7 @@ build-ci:
 
 build-unit-tests-ci:
 	cargo nextest archive --cargo-profile ci --workspace --exclude ark-testing \
+		--features bark-wallet/nwc \
 		--archive-file {{CARGO_TARGET}}/ci/unit-tests.tar.zst --zstd-level 19
 
 build-integration-tests-ci:
@@ -144,9 +158,11 @@ build-lib-wasm-release:
 docker-pull:
 	if [ -n "${LIGHTNINGD_DOCKER_IMAGE-""}" ]; then docker image inspect "$LIGHTNINGD_DOCKER_IMAGE" > /dev/null 2>&1 && echo "Image already exists locally." || (echo "Image not found locally. Pulling..." && docker pull "$LIGHTNINGD_DOCKER_IMAGE"); fi
 
+# bark-wallet's "nwc" feature is off by default, so its tests are only built
+# when asked for.
 test-unit TEST="":
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --workspace \
-		--exclude ark-testing {{TEST}}
+		--exclude ark-testing --features bark-wallet/nwc {{TEST}}
 alias unit := test-unit
 
 test-unit-prebuilt:
@@ -157,7 +173,7 @@ test-doc:
 
 test-unit-codecov TEST="":
 	cargo llvm-cov nextest --profile {{NEXTEST_PROFILE}} --workspace \
-		--exclude ark-testing --no-report {{TEST}}
+		--exclude ark-testing --features bark-wallet/nwc --no-report {{TEST}}
 
 test-integration TEST="": ensure-build-bins docker-pull
 	# `upgrade` is excluded like `tor`: it needs a release fetched up front.

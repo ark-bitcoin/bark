@@ -23,7 +23,7 @@ name = "barkd"
 path = "src/bin/barkd/main.rs"
 
 [features]
-default = ["tls-native-roots"]
+default = ["tls-native-roots", "barkd-nwc"]
 
 # TLS certificate verification options (pick one). The bark-cli REST client
 # verifies against the platform's certificate store under either option.
@@ -40,6 +40,16 @@ barkd-swagger-ui = ["bark-rest/swagger-ui"]
 # build; otherwise barkd serves no web UI. Off by default; release builds
 # enable it (see nix/package-bark.nix).
 barkd-web-ui = ["bark-rest/web-ui"]
+# Serve Nostr Wallet Connect from barkd. Pulls in the nostr stack and a rustls
+# crypto provider. On by default: barkd only dials a relay once one is
+# configured, so a daemon that never serves NWC only pays for it in build time
+# and binary size.
+barkd-nwc = [
+	"bark-wallet/nwc",
+	"bark-rest/nwc",
+	"dep:parking_lot",
+	"dep:rustls",
+]
 
 [dependencies]
 ark-lib = { version = "0.8.1", path = "../lib" }
@@ -76,4 +86,6 @@ tokio-util.workspace = true
 
 dialoguer = "0.12"
 home = "=0.5.9"
+# Only used to serve NWC, see the "barkd-nwc" feature.
+parking_lot = { workspace = true, optional = true }
 

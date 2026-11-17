@@ -128,7 +128,11 @@ impl From<AuthError> for NIP47Error {
 }
 
 
-/// The set of connections a wallet has handed out.
+/// The connections a wallet has handed out, and the relays they are served on.
+///
+/// The relays are part of the same state as the connections, since every
+/// connection URI names them. Holding both in one value means they are always
+/// persisted together.
 ///
 /// Persistence lives in bark, so this type only owns the in-memory state and
 /// the rules. That keeps the authorisation logic testable without touching a
@@ -137,6 +141,10 @@ impl From<AuthError> for NIP47Error {
 pub struct ConnectionStore {
 	/// Keyed by client pubkey, which is what arrives on every request.
 	connections: HashMap<String, Connection>,
+	/// Where every connection is served. Empty until the host adds one, so a
+	/// wallet does not dial out to a relay unless asked to.
+	#[serde(default)]
+	relays: Vec<RelayUrl>,
 }
 
 impl ConnectionStore {
@@ -162,6 +170,14 @@ impl ConnectionStore {
 
 	pub fn is_empty(&self) -> bool {
 		self.connections.is_empty()
+	}
+
+	pub fn relays(&self) -> &[RelayUrl] {
+		&self.relays
+	}
+
+	pub fn set_relays(&mut self, relays: Vec<RelayUrl>) {
+		self.relays = relays;
 	}
 
 	/// Check that `client_pubkey` may call `method`.

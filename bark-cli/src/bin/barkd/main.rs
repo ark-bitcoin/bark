@@ -18,10 +18,15 @@ use bark_rest::auth::AuthToken;
 
 use bark::fs_perms;
 
+#[cfg(feature = "barkd-nwc")]
+mod nwc;
+
 use bark_cli::VERSION_DEV_MARKER;
 use bark_cli::connection;
 use bark_cli::log::init_logging;
-use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, read_mnemonic, AUTH_TOKEN_FILE};
+use bark_cli::wallet::{
+	ConfigOpts, CreateOpts, create_wallet, open_wallet, read_mnemonic, AUTH_TOKEN_FILE,
+};
 use tokio_util::sync::CancellationToken;
 
 
@@ -31,6 +36,12 @@ const FULL_VERSION: &str = concat!(env!("BARK_VERSION"), " (", env!("GIT_HASH"),
 
 /// Wire-level client identity sent in `x-user-agent` on every RPC.
 const USER_AGENT: &str = concat!("barkd/", env!("BARK_VERSION"));
+
+/// The NWC manager, shared between startup and the wallet lifecycle callbacks.
+///
+/// `None` means there is no wallet to serve.
+#[cfg(feature = "barkd-nwc")]
+type SharedNwcManager = Arc<parking_lot::RwLock<Option<Arc<bark::nwc::NwcManager>>>>;
 
 
 fn default_datadir() -> String {
@@ -463,7 +474,19 @@ async fn main() -> anyhow::Result<()>{
 		Some(token)
 	};
 
-	let wallet_opt = if let Some(wallet) = open_wallet(&datadir, USER_AGENT).await? {
+	// NWC is registered before the daemon starts, because the daemon is what
+	// brings the relay connections up.
+	#[cfg(feature = "barkd-nwc")]
+	let nwc_manager: SharedNwcManager = Arc::new(parking_lot::RwLock::new(None));
+
+	let wallet = open_wallet(&datadir, USER_AGENT).await?;
+
+	let wallet_opt = if let Some(wallet) = wallet {
+		#[cfg(feature = "barkd-nwc")]
+		{
+			*nwc_manager.write() = Some(nwc::register(&wallet, &datadir)?);
+		}
+
 		wallet.start_daemon()?;
 		info!("Wallet loaded and daemon started");
 		Some(wallet)
@@ -474,9 +497,13 @@ async fn main() -> anyhow::Result<()>{
 
 	let on_wallet_create: Box<OnWalletCreate> = Box::new({
 		let datadir = datadir.clone();
+		#[cfg(feature = "barkd-nwc")]
+		let nwc_manager = Arc::clone(&nwc_manager);
 
 		move |req: CreateWalletRequest| {
 			let datadir = datadir.clone();
+			#[cfg(feature = "barkd-nwc")]
+			let nwc_manager = Arc::clone(&nwc_manager);
 
 			Box::pin(async move {
 				let create_opts = wallet_create_request_to_create_opts(req)?;
@@ -491,7 +518,16 @@ async fn main() -> anyhow::Result<()>{
 					warn!("Ark server handshake failed on wallet creation: {:#}", e);
 				}
 
+				// A wallet created at runtime gets NWC too, otherwise the
+				// feature would only ever work for wallets that predate startup.
+				// Registered before the daemon starts, which is what connects.
+				#[cfg(feature = "barkd-nwc")]
+				{
+					*nwc_manager.write() = Some(nwc::register(&wallet, &datadir)?);
+				}
+
 				wallet.start_daemon()?;
+
 				Ok::<_, anyhow::Error>(wallet)
 			})
 		}
@@ -499,12 +535,26 @@ async fn main() -> anyhow::Result<()>{
 
 	let on_wallet_delete: Box<OnWalletDelete> = Box::new({
 		let datadir = datadir.clone();
+		#[cfg(feature = "barkd-nwc")]
+		let nwc_manager = Arc::clone(&nwc_manager);
 		move || {
 			let datadir = datadir.clone();
+			#[cfg(feature = "barkd-nwc")]
+			let nwc_manager = Arc::clone(&nwc_manager);
 
 			// NB: No need to stop the daemon here, it will be stopped when the wallet is removed from the server state
 
 			Box::pin(async move {
+				// The NWC services are not part of the server state, so they
+				// have to be stopped explicitly. Leaving them running would
+				// keep answering apps from a wallet that no longer exists.
+				#[cfg(feature = "barkd-nwc")]
+				if let Some(manager) = nwc_manager.write().take() {
+					manager.stop_all();
+				}
+
+				// The wipe removes nwc.json along with the wallet, so
+				// connections do not outlive the wallet they spend from.
 				connection::wipe_datadir_except_barkd_files(&datadir)?;
 				Ok(())
 			})
@@ -529,6 +579,11 @@ async fn main() -> anyhow::Result<()>{
 		.on_wallet_delete(on_wallet_delete)
 		.on_get_mnemonic(on_get_mnemonic);
 
+	#[cfg(feature = "barkd-nwc")]
+	let builder = builder.nwc(Arc::new(
+		nwc::NwcApiImpl::new(Arc::clone(&nwc_manager)),
+	) as Arc<dyn bark_rest::NwcApi>);
+
 	// Serve the embedded bark-web SPA from the same origin as the REST API.
 	#[cfg(feature = "barkd-web-ui")]
 	let builder = builder.web(if cli.no_ui {
@@ -547,6 +602,11 @@ async fn main() -> anyhow::Result<()>{
 	let server = RestServer::start(&config, Arc::new(state), shutdown.clone()).await?;
 
 	run_shutdown_signal_listener(shutdown.clone()).await;
+
+	#[cfg(feature = "barkd-nwc")]
+	if let Some(manager) = nwc_manager.write().take() {
+		manager.stop_all();
+	}
 
 	if let Some(wallet) = inner_wallet {
 		wallet.stop_daemon();
