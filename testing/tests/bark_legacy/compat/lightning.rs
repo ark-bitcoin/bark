@@ -738,10 +738,18 @@ async fn bark_can_receive_lightning_for_own_address() {
 	let own_address = bark.address().await;
 	let pay_amount = sat(100_000);
 	let invoice_info = bark.bolt11_invoice_for_address(&own_address, pay_amount).await;
+	let payment_hash = PaymentHash::from(
+		&Bolt11Invoice::from_str(&invoice_info.invoice).expect("valid bolt11 invoice"),
+	);
 
+	// Claim once the server holds the HTLC, so the claim does not park
+	// waiting for the payment.
 	tokio::join!(
 		lightning.external.pay_bolt11(invoice_info.invoice.clone()),
-		bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000),
+		async {
+			srv.wait_for_lightning_receive_accepted(payment_hash).await;
+			bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
+		},
 	);
 
 	// A mailbox roundtrip would leave the funds unsynced in our own

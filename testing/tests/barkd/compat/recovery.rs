@@ -140,6 +140,7 @@ async fn recovered_wallet_finds_scheduled_delegated_refresh_output() {
 		.expect("server should complete the scheduled delegated refresh in a round");
 	assert!(finished.nb_input_vtxos >= 1,
 		"the delegated refresh should forfeit the board VTXO");
+	ctx.await_transaction(finished.txid).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// Recover from the seed.
@@ -187,8 +188,9 @@ async fn recovered_wallet_finds_delegated_refresh_with_status_attestation_requir
 	ctx.generate_blocks(delay.to_u32()).await;
 	srv.wait_for_sync_height(scheduled_height).await;
 	srv.trigger_round().await;
-	log_round_finished.recv().wait(secs(60)).await
+	let finished = log_round_finished.recv().wait(secs(60)).await
 		.expect("server should complete the scheduled delegated refresh in a round");
+	ctx.await_transaction(finished.txid).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let recovered = ctx.barkd("bark_recovered", &srv)
@@ -235,6 +237,7 @@ async fn recovered_wallet_finds_delegated_refresh_output_expired_output() {
 		.expect("server should complete the scheduled delegated refresh in a round");
 	assert!(finished.nb_input_vtxos >= 1,
 		"the delegated refresh should forfeit the board VTXO");
+	ctx.await_transaction(finished.txid).await;
 
 	// Mine past the round-output VTXO's expiry before recovering.
 	ctx.generate_blocks(srv.config().vtxo_lifetime.to_u32()).await;
