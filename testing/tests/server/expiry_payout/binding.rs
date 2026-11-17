@@ -23,7 +23,7 @@ use ark::test_util::dummy::DummyTestVtxoSpec;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 use ark::vtxo::Full;
 use bark::Wallet;
-use server::database::{Db, SpendState};
+use server::database::{Db, MailboxPayload, SpendState};
 use server::database::rounds::StoredRoundOutput;
 use server::database::tree::VtxoTreeUpdate;
 use server_log::RoundFinished;
@@ -704,4 +704,39 @@ async fn expiry_payout_unbound_round_output_is_dropped() {
 	srv.trigger_round().await;
 	let round = finished.recv().wait_millis(30_000).await.unwrap();
 	assert_eq!(round.nb_input_vtxos, 1);
+}
+
+/// A wallet with a delegated and an interactive participation in one round
+/// reads its mailbox after the round. The server posts the round result
+/// only to the mailbox of the delegated participation, as an upstream
+/// server does.
+#[tokio::test]
+async fn expiry_payout_two_participations_in_a_round_keep_the_mailbox() {
+	let ctx = TestContext::new("server/expiry_payout_two_participations_in_a_round_keep_the_mailbox").await;
+	let srv = ctx.captaind("server").funded(btc(1)).no_vtxo_pool().cfg(|cfg| cfg.expiry_payouts = true).create().await;
+	let wallet = ctx.bark_sdk("participant", &srv).boarded(sat(100_000))
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	let other = ctx.bark_sdk("other", &srv).boarded(sat(100_000))
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	let delegated = full_vtxos(&wallet).await.pop().unwrap();
+	other.send_arkoor_payment(&wallet.new_address().await.unwrap(), sat(40_000)).await.unwrap();
+	wallet.sync_mailbox().await.unwrap();
+	let interactive = full_vtxos(&wallet).await.into_iter().find(|vtxo| vtxo.id() != delegated.id())
+		.expect("the wallet received the arkoor");
+
+	let mut finished = srv.subscribe_log::<RoundFinished>();
+	wallet.refresh_vtxos_delegated(vec![delegated.id()]).await.unwrap().expect("refresh joined");
+	let (refresh, _) = tokio::join!(wallet.refresh_vtxos(vec![interactive.id()]), srv.trigger_round());
+	refresh.unwrap().expect("refresh joined");
+	let round = finished.recv().wait_millis(30_000).await.unwrap();
+	assert_eq!(round.nb_input_vtxos, 2, "one round takes both participations");
+
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let mailbox = wallet.mailbox_identifier();
+	let entries = db.read(async |t| t.get_mailbox_messages(mailbox, 0, 100).await).await
+		.expect("the mailbox stays readable");
+	let results = entries.iter()
+		.filter(|entry| matches!(entry.payload, MailboxPayload::RoundParticipationCompleted { .. })).count();
+	assert_eq!(results, 1, "only the delegated participation has a round result in the mailbox");
+	wallet.sync_mailbox().await.unwrap();
 }

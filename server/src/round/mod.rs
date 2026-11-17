@@ -129,11 +129,7 @@ pub struct VtxoParticipant {
 }
 
 impl VtxoParticipant {
-	pub fn new_signed(
-		req: SignedVtxoRequest,
-		unlock_hash: UnlockHash,
-		unblinded_mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
-	) -> VtxoParticipant {
+	pub fn new_signed(req: SignedVtxoRequest, unlock_hash: UnlockHash) -> VtxoParticipant {
 		VtxoParticipant {
 			req: VtxoLeafSpec {
 				vtxo: req.vtxo,
@@ -141,7 +137,7 @@ impl VtxoParticipant {
 				unlock_hash: unlock_hash,
 			},
 			nonces: Some(req.nonces),
-			unblinded_mailbox_id,
+			unblinded_mailbox_id: None,
 		}
 	}
 
@@ -565,9 +561,7 @@ impl CollectingPayments {
 				"should be checked before",
 			);
 
-			self.all_outputs.push(VtxoParticipant::new_signed(
-				req.clone(), unlock_hash, unblinded_mailbox_id,
-			));
+			self.all_outputs.push(VtxoParticipant::new_signed(req.clone(), unlock_hash));
 		}
 
 		assert!(self.interactive_participants.insert(unlock_hash, InteractiveParticipation {
@@ -1390,8 +1384,15 @@ async fn persist_round(
 
 	let unsigned_funding_tx = state.funding_tx.unsigned_tx();
 	let owner_bindings = if srv.config.expiry_payouts {
-		round_owner_bindings(signed_vtxos, &state.unsigned_vtxo_tree.spec.vtxos, &state.output_mailbox_ids)
-			.map_err(RoundError::Fatal)?
+		// The outputs of an interactive participation carry no mailbox, so
+		// that the server posts no round result to it. Their owner mailbox
+		// is in the participation.
+		let specs = &state.unsigned_vtxo_tree.spec.vtxos;
+		let mailboxes = specs.iter().zip(&state.output_mailbox_ids).map(|(spec, mailbox)| {
+			mailbox.or_else(|| state.interactive_participants.get(&spec.unlock_hash)?
+				.outputs.first()?.unblinded_mailbox_id)
+		}).collect::<Vec<_>>();
+		round_owner_bindings(signed_vtxos, specs, &mailboxes).map_err(RoundError::Fatal)?
 	} else {
 		Vec::new()
 	};
