@@ -31,3 +31,6 @@
   - An unregistered arkoor output to the key of round padding pays its
     sender at expiry. Only an unclaimed round padding output pays the
     operator.
+  - The server posts a round result only to the mailbox of a delegated
+    participation, as upstream does. A wallet with a delegated and an
+    interactive participation in one round can read its mailbox after it.
