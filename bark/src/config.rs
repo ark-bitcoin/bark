@@ -160,6 +160,14 @@ pub struct Config {
 	/// Default value: 12
 	pub vtxo_exit_margin: BlockDelta,
 
+	/// The default lifetime of a board VTXO, in blocks.
+	///
+	/// Capped at the server's [ark::ArkInfo::vtxo_lifetime]. Override it per board
+	/// with [BoardBuilder::expiry](crate::BoardBuilder::expiry).
+	///
+	/// Default value: 432 (3 days) for mainnet, 4320 (30 days) for testnets
+	pub board_lifetime: BlockDelta,
+
 	/// The number of blocks to claim a HTLC-recv VTXO.
 	///
 	/// Default value: 18
@@ -267,6 +275,7 @@ impl Config {
 			socks5_proxy: None,
 			vtxo_refresh_expiry_threshold: BlockDelta::new(144),
 			vtxo_exit_margin: BlockDelta::new(12),
+			board_lifetime: BlockDelta::new(72 * 6),
 			htlc_recv_claim_delta: BlockDelta::new(18),
 			lightning_receive_claim_retries: 5,
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(2)),
@@ -281,6 +290,7 @@ impl Config {
 
 		if network != Network::Bitcoin {
 			ret.vtxo_refresh_expiry_threshold = BlockDelta::new(12);
+			ret.board_lifetime = BlockDelta::new(4320);
 			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_u32(1));
 			ret.round_tx_required_confirmations = BlockDelta::new(1);
 			ret.offboard_required_confirmations = BlockDelta::ZERO;

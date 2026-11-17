@@ -4,7 +4,7 @@ use std::sync::atomic::{self, AtomicUsize};
 use bitcoin::{Amount, OutPoint, Psbt, ScriptBuf, SignedAmount, Transaction, TxIn, TxOut, Txid};
 use bitcoin::absolute::LockTime;
 use bitcoin::hashes::Hash;
-use bitcoin_ext::{BlockDelta, P2TR_DUST_SAT};
+use bitcoin_ext::P2TR_DUST_SAT;
 
 use bark::onchain::OnchainWalletTrait;
 use bark_json::movements::MovementStatus;
@@ -252,8 +252,7 @@ async fn board_psbt_rejects_wrong_funding_address() {
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
 
 	let wallet = bark1.client().await;
-	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
-	let (_, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let funding = wallet.board().funding_address().await.unwrap();
 
 	// Build a PSBT that pays to an arbitrary script instead of the board funding address
 	let wrong_script = ScriptBuf::new_op_return(&[0u8; 20]);
@@ -274,36 +273,7 @@ async fn board_psbt_rejects_wrong_funding_address() {
 		}],
 	}).unwrap();
 
-	let err = wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
-	assert!(
-		err.contains("does not pay to the expected board funding address"),
-		"unexpected error: {err}",
-	);
-}
-
-#[tokio::test]
-async fn board_psbt_rejects_wrong_expiry_height() {
-	let ctx = TestContext::new("bark/board_psbt_rejects_wrong_expiry_height").await;
-	let srv = ctx.captaind("server").create().await;
-	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
-
-	let wallet = bark1.client().await;
-	let mut onchain = bark1.onchain_wallet().await;
-	onchain.sync(wallet.chain()).await.unwrap();
-
-	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
-	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
-
-	let board_amount = sat(90_000);
-	let fee_rate = wallet.chain().fee_rates().await.regular;
-	let psbt = onchain.prepare_tx(&[(board_addr, board_amount)], fee_rate).await.unwrap();
-	let signed_psbt = onchain.finish_psbt(psbt).await.unwrap();
-
-	let err = wallet
-		.board_psbt(signed_psbt, keypair, expiry_height + BlockDelta::new(1))
-		.await
-		.unwrap_err()
-		.to_alt_string();
+	let err = wallet.board_psbt(psbt, &funding).await.unwrap_err().to_alt_string();
 	assert!(
 		err.contains("does not pay to the expected board funding address"),
 		"unexpected error: {err}",
@@ -319,8 +289,8 @@ async fn board_psbt_rejects_dust_amount() {
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
 
 	let wallet = bark1.client().await;
-	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
-	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let funding = wallet.board().funding_address().await.unwrap();
+	let board_addr = funding.address().clone();
 
 	// Build a PSBT that pays to the correct address but with a sub-dust amount
 	let dust_amount = sat(P2TR_DUST_SAT - 1);
@@ -339,7 +309,7 @@ async fn board_psbt_rejects_dust_amount() {
 		}],
 	}).unwrap();
 
-	let err = wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
+	let err = wallet.board_psbt(psbt, &funding).await.unwrap_err().to_alt_string();
 	assert!(
 		err.contains("board amount must be at least"),
 		"unexpected error: {err}",
@@ -368,15 +338,15 @@ async fn board_psbt_full_flow() {
 	// Sync the onchain wallet so it sees the funded UTXOs
 	onchain.sync(wallet.chain()).await.unwrap();
 
-	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
-	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let funding = wallet.board().funding_address().await.unwrap();
+	let board_addr = funding.address().clone();
 
 	// Build and sign the funding PSBT using the onchain wallet
 	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let board_psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
 	let signed_psbt = onchain.finish_psbt(board_psbt).await.unwrap();
 
-	let board = wallet.board_psbt(signed_psbt, keypair, expiry_height).await.unwrap();
+	let board = wallet.board_psbt(signed_psbt, &funding).await.unwrap();
 	assert_eq!(board.vtxos.len(), 1, "board should produce one vtxo");
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -434,8 +404,8 @@ async fn board_psbt_output_at_any_index() {
 	let mut onchain = bark1.onchain_wallet().await;
 	onchain.sync(wallet.chain()).await.unwrap();
 
-	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
-	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let funding = wallet.board().funding_address().await.unwrap();
+	let board_addr = funding.address().clone();
 	let board_script = board_addr.script_pubkey();
 
 	// Two outputs, board last, so another output sits in front of the board.
@@ -456,7 +426,7 @@ async fn board_psbt_output_at_any_index() {
 	assert_ne!(board_vout, 0, "test is meaningless if the board output is at vout 0");
 
 	let pending = wallet
-		.board_psbt(psbt, keypair, expiry_height)
+		.board_psbt(psbt, &funding)
 		.await
 		.expect("board should cosign regardless of output index");
 
@@ -481,14 +451,14 @@ async fn board_psbt_unfinalized_is_not_broadcast() {
 	let mut onchain = bark1.onchain_wallet().await;
 	onchain.sync(wallet.chain()).await.unwrap();
 
-	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
-	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let funding = wallet.board().funding_address().await.unwrap();
+	let board_addr = funding.address().clone();
 	let fee_rate = wallet.chain().fee_rates().await.regular;
 	// Deliberately not finished: this is the proposal as it is handed over.
 	let psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
 	let txid = psbt.unsigned_tx.compute_txid();
 
-	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
+	wallet.board_psbt(psbt, &funding).await.unwrap();
 	assert!(!in_mempool(&ctx, txid), "cosigning must not broadcast");
 
 	// The vtxo exists and is locked, so the board is durable even though nothing
@@ -524,8 +494,8 @@ async fn board_psbt_confirms_when_other_party_broadcasts() {
 	let mut onchain = bark1.onchain_wallet().await;
 	onchain.sync(wallet.chain()).await.unwrap();
 
-	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
-	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let funding = wallet.board().funding_address().await.unwrap();
+	let board_addr = funding.address().clone();
 	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
 	assert!(
@@ -539,7 +509,7 @@ async fn board_psbt_confirms_when_other_party_broadcasts() {
 	let tx = onchain.finish_psbt(psbt.clone()).await.unwrap().extract_tx().unwrap();
 	assert_eq!(tx.compute_txid(), psbt.unsigned_tx.compute_txid());
 
-	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
+	wallet.board_psbt(psbt, &funding).await.unwrap();
 
 	// Nothing has moved on-chain, so the board does not count yet: the other party
 	// holds the signatures and may never send it.
@@ -583,13 +553,13 @@ async fn board_psbt_unfinalized_fails_when_input_double_spent() {
 	let mut onchain = bark1.onchain_wallet().await;
 	onchain.sync(wallet.chain()).await.unwrap();
 
-	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
-	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let funding = wallet.board().funding_address().await.unwrap();
+	let board_addr = funding.address().clone();
 	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
 	let board_txid = psbt.unsigned_tx.compute_txid();
 
-	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
+	wallet.board_psbt(psbt, &funding).await.unwrap();
 	// Not counted as pending: the funding tx has not reached the chain. The vtxo is
 	// what says the board exists.
 	assert_eq!(Amount::ZERO, bark1.pending_board_balance().await);
@@ -645,8 +615,8 @@ async fn board_fails_when_input_double_spent_before_broadcast() {
 	let conflict = conflict.extract_tx().unwrap();
 
 	// Finalised, so the funding tx is bark's to broadcast.
-	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
-	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+	let funding = wallet.board().funding_address().await.unwrap();
+	let board_addr = funding.address().clone();
 	let psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).await.unwrap();
 	let psbt = onchain.finish_psbt(psbt).await.unwrap();
 	assert_ne!(psbt.unsigned_tx.compute_txid(), conflict.compute_txid());
@@ -656,7 +626,7 @@ async fn board_fails_when_input_double_spent_before_broadcast() {
 	ctx.bitcoind().sync_client().send_raw_transaction(&conflict).unwrap();
 	ctx.generate_blocks(1).await;
 
-	wallet.board_psbt(psbt, keypair, expiry_height).await.unwrap();
+	wallet.board_psbt(psbt, &funding).await.unwrap();
 	wallet.sync_pending_boards().await.unwrap();
 
 	assert_eq!(

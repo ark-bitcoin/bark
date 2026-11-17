@@ -134,6 +134,59 @@
 //! }
 //! ```
 //!
+//! ## Boarding coins
+//!
+//! Boarding moves on-chain bitcoin from the wallet's on-chain wallet into a vtxo.
+//! The vtxo becomes spendable once the funding transaction has
+//! [ark::ArkInfo::required_board_confirmations] and the board is registered with
+//! the server, which [Wallet::maintenance] does for you.
+//!
+//! A board vtxo expires [Config::board_lifetime] blocks after the tip by default.
+//! Use [Wallet::board] to pick another expiry height, or to fund the board from
+//! another wallet: see [BoardBuilder].
+//!
+//! ```no_run
+//! # use std::str::FromStr;
+//! # use std::path::PathBuf;
+//! #
+//! # use bitcoin::Network;
+//! # use tokio::fs;
+//! #
+//! # use bark::{Config, Wallet, OpenWalletArgs, WalletSeed};
+//! #
+//! # const MNEMONIC_FILE : &str = "mnemonic";
+//! #
+//! # async fn get_wallet() -> Wallet {
+//! #   let datadir = PathBuf::from("./bark");
+//! #
+//! #   let mnemonic_str = fs::read_to_string(datadir.join(MNEMONIC_FILE)).await.unwrap();
+//! #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
+//! #   let seed = WalletSeed::new_from_mnemonic(Network::Signet, &mnemonic);
+//! #
+//! #   let config = Config::network_default(bitcoin::Network::Signet);
+//! #   Wallet::open(Network::Signet, seed, config, OpenWalletArgs {
+//! #   	datadir: Some(datadir),
+//! #   	..Default::default()
+//! #   }).await.unwrap()
+//! # }
+//! #
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//! 	let wallet = get_wallet().await;
+//!
+//! 	// Board with the default expiry.
+//! 	let board = wallet.board_amount(bitcoin::Amount::from_sat(100_000)).await?;
+//!
+//! 	// Or board everything, expiring after roughly one day.
+//! 	let tip = wallet.chain().tip().await?;
+//! 	let board = wallet.board()
+//! 		.expiry(tip + bitcoin_ext::BlockDelta::new(144))
+//! 		.all()
+//! 		.build().await?;
+//! 	Ok(())
+//! }
+//! ```
+//!
 //! ## Receiving coins
 //!
 //! For the time being we haven't implemented an Ark address type (yet). You
@@ -422,6 +475,7 @@ pub use self::fees::FeeEstimate;
 pub use self::lightning::{Bolt11InvoiceBuilder, LightningSendOptions};
 pub use self::import::{ImportVtxoArgs, ImportVtxoError};
 pub use self::notification::{WalletNotification, NotificationStream};
+pub use self::board::{BoardBuilder, BoardFundingAddress};
 pub use self::offboard::OffboardResult;
 pub use self::recovery::{MAX_RECOVERY_ATTEMPTS, RecoveryReport, RecoveryReportEntry, RecoveryStatus};
 pub use self::vtxo::WalletVtxo;
@@ -878,9 +932,11 @@ struct WalletInner {
 ///     - [Wallet::new_address_with_index],
 ///     - [Wallet::peek_address],
 ///     - [Wallet::validate_arkoor_address]
-///   - boarding onchain funds into Ark from an onchain wallet (see [onchain::OnchainWallet])
+///   - boarding onchain funds into Ark from an onchain wallet (see [onchain::OnchainWalletTrait])
 ///     - [Wallet::board_amount],
-///     - [Wallet::board_all]
+///     - [Wallet::board_all],
+///     - [Wallet::board]: configure a board, or fund it from another wallet with
+///       [Wallet::board_psbt]
 ///   - offboarding Ark funds to move them back onchain
 ///     - [Wallet::offboard_vtxos],
 ///     - [Wallet::offboard_all]
@@ -896,8 +952,6 @@ struct WalletInner {
 ///   - syncing with the Ark server, unilateral exits and performing general maintenance
 ///     - [Wallet::maintenance]: Syncs everything offchain-related and refreshes VTXOs where
 ///       necessary,
-///     - [Wallet::maintenance_with_onchain]: The same as [Wallet::maintenance] but also syncs the
-///       onchain wallet and unilateral exits,
 ///     - [Wallet::maintenance_refresh]: Refreshes VTXOs where necessary without syncing anything,
 ///     - [Wallet::sync]: Syncs network fee-rates, ark rounds and arkoor payments,
 ///     - [Wallet::sync_exits]: Updates the status of unilateral exits,

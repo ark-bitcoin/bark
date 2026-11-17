@@ -1,9 +1,13 @@
 //! Tests for the board flow through the SDK.
 
-use bitcoin::Amount;
+use bitcoin::{Amount, Psbt};
+use bitcoin_ext::BlockDelta;
 use bitcoin_ext::rpc::RpcApi;
 
+use bark::{BoardFundingAddress, Wallet};
+
 use ark_testing::{sat, TestContext};
+use ark_testing::constants::BOARD_CONFIRMATIONS;
 
 const MIN_BOARD_AMOUNT: Amount = Amount::from_sat(20_000);
 
@@ -60,4 +64,113 @@ async fn failed_board_leaves_the_onchain_wallet_untouched() {
 	wallet.sync_onchain().await.expect("onchain sync");
 	let balance = wallet.onchain().expect("onchain wallet").read().await.balance().await;
 	assert_eq!(balance, Amount::ZERO, "the successful board drains the onchain wallet");
+}
+
+/// Builds a finalised PSBT paying `funding` from the wallet's own on-chain
+/// wallet, standing in for another party such as a payjoin sender.
+async fn funding_psbt(wallet: &Wallet, funding: &BoardFundingAddress, amount: Amount) -> Psbt {
+	let onchain = wallet.onchain().expect("onchain wallet");
+	let mut onchain = onchain.write().await;
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+	let psbt = onchain.prepare_tx(&[(funding.address().clone(), amount)], fee_rate).await.unwrap();
+	onchain.finish_psbt(psbt).await.unwrap()
+}
+
+/// A funding address handed out before `BoardFundingAddress` existed can still be
+/// boarded from the keypair and expiry height stored alongside it.
+#[tokio::test]
+#[allow(deprecated)]
+async fn board_psbt_legacy_funding_address() {
+	let ctx = TestContext::new("bark_sdk/board_psbt_legacy_funding_address").await;
+	let srv = ctx.captaind("server").create().await;
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(100_000))
+		.create().await;
+
+	// What a caller of the removed `board_funding_address` stored.
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let expiry_height = wallet.chain().tip().await.unwrap() + BlockDelta::new(100);
+
+	let funding = wallet.legacy_board_funding_address(keypair.public_key(), expiry_height)
+		.await.unwrap();
+	assert_eq!(funding.expiry_height(), expiry_height);
+
+	let psbt = funding_psbt(&wallet, &funding, sat(90_000)).await;
+	wallet.board_psbt(psbt, &funding).await.expect("board a legacy funding address");
+
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	wallet.sync_pending_boards().await.unwrap();
+	assert_eq!(wallet.balance().await.unwrap().spendable, sat(90_000));
+}
+
+/// The board API end to end: a board from the on-chain wallet with a chosen
+/// expiry, and one funded by another wallet through a persisted
+/// [BoardFundingAddress].
+#[tokio::test]
+async fn board_with_expiry_and_external_funding() {
+	let ctx = TestContext::new("bark_sdk/board_with_expiry_and_external_funding").await;
+	let srv = ctx.captaind("server").create().await;
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(500_000))
+		.create().await;
+
+	// Board from the on-chain wallet, expiring 100 blocks from now.
+	let expiry_height = wallet.chain().tip().await.unwrap() + BlockDelta::new(100);
+	let board = wallet.board()
+		.expiry(expiry_height)
+		.amount(sat(100_000))
+		.build().await
+		.expect("board with an expiry");
+	let vtxo = wallet.get_vtxo_by_id(board.vtxos[0]).await.unwrap();
+	assert_eq!(vtxo.expiry_height(), expiry_height);
+
+	// The board becomes spendable once confirmed and registered.
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	wallet.sync_pending_boards().await.unwrap();
+	assert_eq!(wallet.balance().await.unwrap().spendable, sat(100_000));
+
+	// Board from another wallet, e.g. as a payjoin receiver. The funding address
+	// is persisted while waiting for the other party's PSBT.
+	let funding = wallet.board().funding_address().await.expect("funding address");
+	let stored = serde_json::to_string(&funding).unwrap();
+	let funding = serde_json::from_str::<BoardFundingAddress>(&stored).unwrap();
+
+	// Spends the confirmed change of the board above: the server refuses funding
+	// inputs it can't find on-chain.
+	wallet.sync_onchain().await.unwrap();
+	let psbt = funding_psbt(&wallet, &funding, sat(150_000)).await;
+	let external = wallet.board_psbt(psbt, &funding).await.expect("board an external PSBT");
+	let vtxo = wallet.get_vtxo_by_id(external.vtxos[0]).await.unwrap();
+	assert_eq!(vtxo.expiry_height(), funding.expiry_height());
+
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	wallet.sync_pending_boards().await.unwrap();
+	assert_eq!(wallet.balance().await.unwrap().spendable, sat(250_000));
+}
+
+/// A funding address too close to its expiry to confirm and register in time is
+/// refused, rather than cosigning a board the server could sweep.
+#[tokio::test]
+async fn board_psbt_rejects_nearly_expired_funding_address() {
+	let ctx = TestContext::new("bark_sdk/board_psbt_rejects_nearly_expired_funding_address").await;
+	let srv = ctx.captaind("server").create().await;
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(100_000))
+		.create().await;
+
+	// The nearest expiry the builder accepts, so a single block makes it too near.
+	let min_lifetime = wallet.config().vtxo_exit_margin.to_u32() + BOARD_CONFIRMATIONS;
+	let tip = wallet.chain().tip().await.unwrap();
+	let funding = wallet.board()
+		.expiry(tip + BlockDelta::try_from(min_lifetime + 1).unwrap())
+		.funding_address().await.unwrap();
+	let psbt = funding_psbt(&wallet, &funding, sat(90_000)).await;
+
+	ctx.generate_blocks(1).await;
+
+	let err = wallet.board_psbt(psbt, &funding).await.unwrap_err();
+	assert!(format!("{err:#}").contains("use a new funding address"), "unexpected error: {err:#}");
 }

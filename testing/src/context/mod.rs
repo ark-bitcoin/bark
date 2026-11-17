@@ -657,6 +657,7 @@ impl TestContext {
 
 			vtxo_refresh_expiry_threshold: BlockDelta::new(24),
 			vtxo_exit_margin: BlockDelta::new(12),
+			board_lifetime: BlockDelta::new(4320),
 			htlc_recv_claim_delta: BlockDelta::new(18),
 			lightning_receive_claim_retries: 5,
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(5)),
