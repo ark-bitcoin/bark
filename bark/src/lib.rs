@@ -562,9 +562,14 @@ const MIN_MAINNET_VTXO_EXIT_DELTA: BlockDelta = BlockDelta::new(96);
 
 /// Refuse an [ArkInfo] whose parameters would make participation unsafe:
 /// `vtxo_lifetime` must leave room to board and broadcast a unilateral exit
-/// before the server-only timeout leaf activates; `vtxo_exit_delta` must keep
-/// its CSV window; `nb_round_nonces` must be non-zero and bounded.
-fn check_ark_info_safe(ark_info: &ArkInfo, vtxo_exit_margin: BlockDelta) -> anyhow::Result<()> {
+/// before the server-only timeout leaf activates and exceed twice the refresh
+/// threshold; `vtxo_exit_delta` must keep its CSV window; `nb_round_nonces`
+/// must be non-zero and bounded.
+fn check_ark_info_safe(
+	ark_info: &ArkInfo,
+	vtxo_exit_margin: BlockDelta,
+	vtxo_refresh_expiry_threshold: BlockDelta,
+) -> anyhow::Result<()> {
 	let required = ark_info.required_board_confirmations;
 	let margin = vtxo_exit_margin.to_u16() as usize;
 	let min_safe = required.saturating_add(margin);
@@ -585,6 +590,13 @@ fn check_ark_info_safe(ark_info: &ArkInfo, vtxo_exit_margin: BlockDelta) -> anyh
 			"server-advertised vtxo_lifetime {} is unsafe (minimum > {} = \
 			required_board_confirmations {} + vtxo_exit_margin {}); refusing to connect",
 			ark_info.vtxo_lifetime, min_safe, required, margin,
+		);
+		// Otherwise a refresh barely leaves the refresh window and maintenance keeps paying.
+		let min_refresh = 2 * vtxo_refresh_expiry_threshold.to_u16() as usize;
+		ensure!((ark_info.vtxo_lifetime.to_u16() as usize) > min_refresh,
+			"server-advertised vtxo_lifetime {} is unsafe (minimum > {} = 2 * \
+			vtxo_refresh_expiry_threshold {}); refusing to connect",
+			ark_info.vtxo_lifetime, min_refresh, vtxo_refresh_expiry_threshold,
 		);
 		ensure!(ark_info.vtxo_exit_delta >= MIN_MAINNET_VTXO_EXIT_DELTA,
 			"server-advertised vtxo_exit_delta {} is below the mainnet minimum of {} \
@@ -1305,7 +1317,9 @@ impl Wallet {
 		let (server_pubkey, mailbox_pubkey) = match Self::connect_to_server(&config, network).await {
 			Ok(conn) => {
 				let ark_info = conn.ark_info().await;
-				match check_ark_info_safe(&ark_info, config.vtxo_exit_margin) {
+				match check_ark_info_safe(
+					&ark_info, config.vtxo_exit_margin, config.vtxo_refresh_expiry_threshold,
+				) {
 					Ok(()) => (Some(ark_info.server_pubkey), Some(ark_info.mailbox_pubkey)),
 					Err(err) if allow_unreachable_server => {
 						warn!("server-advertised ArkInfo is unsafe, \
@@ -1596,7 +1610,11 @@ impl Wallet {
 		}).await?.clone();
 
 		let ark_info = conn.ark_info().await;
-		check_ark_info_safe(&ark_info, self.inner.config.vtxo_exit_margin)?;
+		check_ark_info_safe(
+			&ark_info,
+			self.inner.config.vtxo_exit_margin,
+			self.inner.config.vtxo_refresh_expiry_threshold,
+		)?;
 		self.check_and_store_server_keys(&ark_info).await?;
 
 		Ok((conn, ark_info))
@@ -1617,7 +1635,11 @@ impl Wallet {
 		srv.check_connection().await?;
 		let ark_info = srv.ark_info().await;
 		ark_info.fees.validate().context("invalid fee schedule")?;
-		check_ark_info_safe(&ark_info, self.inner.config.vtxo_exit_margin)?;
+		check_ark_info_safe(
+			&ark_info,
+			self.inner.config.vtxo_exit_margin,
+			self.inner.config.vtxo_refresh_expiry_threshold,
+		)?;
 		self.check_and_store_server_keys(&ark_info).await?;
 
 		Ok(())
@@ -2803,7 +2825,8 @@ mod tests {
 		let mut ai = ark_info_with_lifetime(0, 6);
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
-		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO)
+			.unwrap_err().to_string();
 		assert!(err.contains("unsafe"), "unexpected error: {err}");
 	}
 
@@ -2814,26 +2837,27 @@ mod tests {
 		let mut ai = ark_info_with_lifetime(6 + 12, 6);
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
-		assert!(check_ark_info_safe(&ai, BlockDelta::new(12)).is_err());
+		assert!(check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO).is_err());
 	}
 
 	#[test]
 	fn ark_info_one_block_over_the_boundary_is_accepted() {
 		let ai = ark_info_with_lifetime(6 + 12 + 1, 6);
-		check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap();
+		check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO).unwrap();
 	}
 
 	#[test]
 	fn ark_info_generous_lifetime_is_accepted() {
 		let ai = ark_info_with_lifetime(4032, 6);
-		check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap();
+		check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO).unwrap();
 	}
 
 	#[test]
 	fn ark_info_with_zero_vtxo_exit_delta_is_rejected() {
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.vtxo_exit_delta = BlockDelta::ZERO;
-		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO)
+			.unwrap_err().to_string();
 		assert!(err.contains("vtxo_exit_delta"), "unexpected error: {err}");
 	}
 
@@ -2842,7 +2866,8 @@ mod tests {
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA.saturating_sub(BlockDelta::new(1));
-		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO)
+			.unwrap_err().to_string();
 		assert!(err.contains("mainnet minimum"), "unexpected error: {err}");
 	}
 
@@ -2851,14 +2876,33 @@ mod tests {
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
-		check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap();
+		check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO).unwrap();
+	}
+
+	#[test]
+	fn ark_info_lifetime_must_exceed_twice_the_refresh_threshold() {
+		let threshold = BlockDelta::new(144);
+		for lifetime in [287, 288] {
+			let mut ai = ark_info_with_lifetime(lifetime, 6);
+			ai.network = Network::Bitcoin;
+			ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
+			let err = check_ark_info_safe(&ai, BlockDelta::new(12), threshold)
+				.unwrap_err().to_string();
+			assert!(err.contains("vtxo_refresh_expiry_threshold"), "unexpected error: {err}");
+		}
+
+		let mut ai = ark_info_with_lifetime(289, 6);
+		ai.network = Network::Bitcoin;
+		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
+		check_ark_info_safe(&ai, BlockDelta::new(12), threshold).unwrap();
 	}
 
 	#[test]
 	fn ark_info_with_zero_nb_round_nonces_is_rejected() {
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.nb_round_nonces = 0;
-		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO)
+			.unwrap_err().to_string();
 		assert!(err.contains("nb_round_nonces"), "unexpected error: {err}");
 	}
 
@@ -2866,7 +2910,7 @@ mod tests {
 	fn ark_info_at_nb_round_nonces_cap_is_accepted() {
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.nb_round_nonces = MAX_NB_ROUND_NONCES;
-		check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap();
+		check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO).unwrap();
 	}
 
 	#[test]
@@ -2874,12 +2918,14 @@ mod tests {
 		// the cap holds on every network, not only on mainnet
 		let mut ai = ark_info_with_lifetime(4032, 6);
 		ai.nb_round_nonces = MAX_NB_ROUND_NONCES + 1;
-		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO)
+			.unwrap_err().to_string();
 		assert!(err.contains("nb_round_nonces"), "unexpected error: {err}");
 
 		ai.network = Network::Bitcoin;
 		ai.vtxo_exit_delta = MIN_MAINNET_VTXO_EXIT_DELTA;
-		let err = check_ark_info_safe(&ai, BlockDelta::new(12)).unwrap_err().to_string();
+		let err = check_ark_info_safe(&ai, BlockDelta::new(12), BlockDelta::ZERO)
+			.unwrap_err().to_string();
 		assert!(err.contains("nb_round_nonces"), "unexpected error: {err}");
 	}
 
