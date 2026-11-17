@@ -1,0 +1,8 @@
+- Fix the config in the captaind Docker image
+  The config did not have all the required fields, so captaind did not start
+  in the image or in the Docker Compose stack in `contrib/docker`. The config
+  now has all the required fields and a bitcoind URL with the `http://`
+  scheme. The Docker Compose stack now uses Bitcoin Core 32.1, because
+  captaind requires v31 or later. The `cln` service in the stack now sets
+  its hostname to `cln`, so captaind can verify the CLN TLS certificates.
+  [#2805](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2805)
