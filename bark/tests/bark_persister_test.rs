@@ -355,6 +355,10 @@ impl BarkPersister for Dummy {
 		Ok(None)
 	}
 
+	async fn unlink_movement_from_action(&self, _action_id: &str) -> anyhow::Result<()> {
+		Ok(())
+	}
+
 	async fn update_movement(&self, _movement: &Movement) -> anyhow::Result<()> {
 		Ok(())
 	}

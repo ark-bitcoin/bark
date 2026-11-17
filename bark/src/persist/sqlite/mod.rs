@@ -162,6 +162,11 @@ impl BarkPersister for SqliteClient {
 		query::get_movement_id_by_action(&tx, action_id)
 	}
 
+	async fn unlink_movement_from_action(&self, action_id: &str) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::unlink_movement_from_action(&conn, action_id)
+	}
+
 	async fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;

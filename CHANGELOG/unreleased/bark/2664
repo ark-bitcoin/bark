@@ -1,0 +1,3 @@
+- A retry of a failed lightning payment gets its own movement
+  [#2664](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2664)
+  - **BREAKING:** `BarkPersister` implementations must provide `unlink_movement_from_action`

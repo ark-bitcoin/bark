@@ -18,7 +18,7 @@ use crate::WalletVtxo;
 use crate::actions::{AdvanceResultExt, DriveMode, GuardedCheckpoint, WalletAction};
 use crate::actions::lightning::pay::{
 	Htlcs, LightningSend, LightningSendState, settle_lightning_send_payment,
-	start_lightning_send, ln_pay_action_id,
+	start_lightning_send, store_new_lightning_send, ln_pay_action_id,
 };
 use crate::lightning::{lnaddr_invoice, lnurlp_invoice};
 use crate::movement::PaymentMethod;
@@ -382,7 +382,7 @@ impl Wallet {
 			let start = start_lightning_send(
 				self, invoice.clone(), user_amount, original_payment_method, opts.retry_for,
 			).await?;
-			checkpoint.create(self, start).await?;
+			store_new_lightning_send(self, &mut checkpoint, start).await?;
 		}
 
 		self.drive_checkpoint(checkpoint, mode).await
