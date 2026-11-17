@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::secp256k1::PublicKey;
+use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 use bitcoin::{Transaction, Txid};
 use chrono::{Local, TimeDelta};
 
@@ -19,7 +19,7 @@ use ark::test_util::VTXO_VECTORS;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
 use bitcoin::hashes::{sha256, Hash};
-use bark::lightning_invoice::Bolt11Invoice;
+use bark::lightning_invoice::{Bolt11Invoice, Currency, InvoiceBuilder, PaymentSecret};
 use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
@@ -2503,6 +2503,68 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 		"the row must keep the status it had");
 	assert_eq!(settled2.updated_at, after.updated_at,
 		"a rejected transition must not touch the row");
+}
+
+#[tokio::test]
+async fn get_created_lightning_htlc_subscriptions_after() {
+	let mut ctx = TestContext::new_minimal("postgresd/created_htlc_subs_after").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let secp = Secp256k1::new();
+	let node_key = SecretKey::from_slice(&[7; 32]).unwrap();
+	let node_pubkey = PublicKey::from_secret_key(&secp, &node_key);
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&node_pubkey).await).await.unwrap();
+	let other_pubkey = PublicKey::from_secret_key(&secp, &SecretKey::from_slice(&[8; 32]).unwrap());
+	let (other_node_id, _) = db.write(async |t| t.register_lightning_node(&other_pubkey).await).await.unwrap();
+
+	let store_receive = async |node_id, seed: u8| -> i64 {
+		let payment_hash = Preimage::from([seed; 32]).compute_payment_hash();
+		let invoice = InvoiceBuilder::new(Currency::Regtest)
+			.description("created subscription".into())
+			.payment_hash(payment_hash.to_sha256_hash())
+			.payment_secret(PaymentSecret([42; 32]))
+			.duration_since_epoch(Duration::from_secs(1_700_000_000))
+			.min_final_cltv_expiry_delta(144)
+			.amount_milli_satoshis(1_000_000)
+			.build_signed(|hash| secp.sign_ecdsa_recoverable(hash, &node_key))
+			.unwrap();
+		db.write(async |t| t.store_generated_lightning_receive(
+			node_id, &invoice, 1_000_000, None, None, None,
+		).await).await.unwrap();
+		db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await)
+			.await.unwrap().unwrap().id
+	};
+
+	let first = store_receive(node_id, 1).await;
+	let accepted = store_receive(node_id, 2).await;
+	let other_node = store_receive(other_node_id, 3).await;
+	let second = store_receive(node_id, 4).await;
+	let third = store_receive(node_id, 5).await;
+
+	db.write(async |t| t.store_lightning_htlc_subscription_status(
+		accepted, LightningHtlcSubscriptionStatus::Accepted, Some(BlockHeight::new(200)), None,
+	).await).await.unwrap();
+
+	// Pages of two walk the Created subscriptions of the node by ascending id,
+	// leaving out the accepted one and the one of the other node.
+	let page = |after_id| db.read(async move |t| {
+		t.get_created_lightning_htlc_subscriptions_after(node_id, after_id, 2).await
+	});
+	let ids = |subs: Vec<server::database::ln::LightningHtlcSubscription>| {
+		subs.into_iter().map(|s| s.id).collect::<Vec<_>>()
+	};
+	assert_eq!(ids(page(0).await.unwrap()), vec![first, second]);
+	assert_eq!(ids(page(second).await.unwrap()), vec![third]);
+	assert_eq!(ids(page(third).await.unwrap()), Vec::<i64>::new());
+
+	let others = db.read(async |t| {
+		t.get_created_lightning_htlc_subscriptions_after(other_node_id, 0, 10).await
+	}).await.unwrap();
+	assert_eq!(ids(others), vec![other_node]);
 }
 
 #[tokio::test]
