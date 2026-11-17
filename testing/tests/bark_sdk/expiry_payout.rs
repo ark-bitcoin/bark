@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -22,7 +22,7 @@ use bark::exit::ExitState;
 use bark::movement::{Movement, MovementStatus};
 use bark::persist::BarkPersister;
 use bark::persist::sqlite::SqliteClient;
-use bark::vtxo::{ExpiryPayoutState, VtxoState};
+use bark::vtxo::{ExpiryPayoutState, VtxoLockHolder, VtxoState};
 use server::database::Db;
 use server_rpc::protos;
 
@@ -55,6 +55,9 @@ struct PayoutProxy {
 	/// Make the batch status request fail while recovery stages VTXOs.
 	status_down: Arc<AtomicBool>,
 	owner: Arc<Mutex<Vec<u8>>>,
+	/// Report a spend state that the wallet does not know for a VTXO, or
+	/// the owner mailbox given for it.
+	bad_status: Arc<Mutex<HashMap<Vec<u8>, Option<Vec<u8>>>>>,
 }
 
 const PAYOUT: protos::ExpiryPayout = protos::ExpiryPayout {
@@ -163,6 +166,14 @@ impl ArkRpcProxy for PayoutProxy {
 				status.spend_state = protos::VtxoSpendState::Spent as i32;
 				status.owner_mailbox = self.owner.lock().unwrap().clone();
 				status.expiry_payout = Some(PAYOUT);
+			}
+		}
+		let bad_status = self.bad_status.lock().unwrap();
+		for status in &mut res.vtxos {
+			match bad_status.get(&status.vtxo_id) {
+				Some(Some(owner)) => status.owner_mailbox = owner.clone(),
+				Some(None) => status.spend_state = i32::MAX,
+				None => {},
 			}
 		}
 		Ok(res)
@@ -742,6 +753,48 @@ async fn expiry_payout_recipient_refuses_another_mailbox() {
 		"seed recovery must not keep a VTXO bound to another mailbox");
 	let report = restored.recover_vtxos([id], None).await.unwrap();
 	assert_eq!(report.foreign().ids().collect::<Vec<_>>(), [id]);
+}
+
+/// The server reports a spend state that the recipient does not know for one
+/// received VTXO, and another owner mailbox for a second one. The recipient
+/// keeps both locked and credits the VTXO that follows them in its mailbox.
+/// It credits the locked ones once the server reports them spendable and
+/// bound to its mailbox.
+#[tokio::test]
+async fn expiry_payout_recipient_holds_a_receive_with_a_bad_status() {
+	let ctx = TestContext::new("bark_sdk/expiry_payout_recipient_holds_a_receive_with_a_bad_status").await;
+	let (srv, proxy, server) = payout_server(&ctx).await;
+	let sender = ctx.bark_sdk("sender", &srv).boarded(sat(100_000))
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	let recipient = ctx.bark_sdk("recipient", &server)
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	recipient.stop_daemon_wait().await.unwrap();
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let pay = async |amount| {
+		let address = recipient.new_address().await.unwrap();
+		sender.send_arkoor_payment(&address, sat(amount)).await.unwrap();
+		db.read(async |t| t.get_vtxos_by_policy_page(address.policy(), None, 10).await).await.unwrap()
+			.into_iter().map(|row| row.vtxo_id.to_bytes().to_vec()).collect::<Vec<_>>()
+	};
+	let unknown_state = pay(10_000).await;
+	let other_mailbox = pay(20_000).await;
+	pay(30_000).await;
+	let owner = sender.mailbox_identifier().as_pubkey().serialize().to_vec();
+	proxy.bad_status.lock().unwrap().extend(
+		unknown_state.into_iter().map(|id| (id, None))
+			.chain(other_mailbox.into_iter().map(|id| (id, Some(owner.clone())))),
+	);
+
+	recipient.sync_mailbox().await.unwrap();
+	assert_eq!(recipient.balance().await.unwrap().spendable, sat(30_000));
+	let held = VtxoState::Locked { holder: Some(VtxoLockHolder::MailboxReceive) };
+	let locked = recipient.vtxos().await.unwrap().into_iter()
+		.filter(|vtxo| vtxo.state == held).map(|vtxo| vtxo.amount()).sum::<Amount>();
+	assert_eq!(locked, sat(30_000));
+
+	proxy.bad_status.lock().unwrap().clear();
+	recipient.sync_mailbox().await.unwrap();
+	assert_eq!(recipient.balance().await.unwrap().spendable, sat(60_000));
 }
 
 /// Counts the recovery posts and chain registrations of a wallet, and the

@@ -305,6 +305,23 @@ impl Wallet {
 		Ok(status)
 	}
 
+	/// The status of a VTXO received by arkoor. `None` if the server answers
+	/// without a status that this wallet can use, or with another owner
+	/// mailbox.
+	///
+	/// The server delivers a VTXO only to its owner mailbox, so neither is
+	/// expected. The wallet keeps such a VTXO locked: an error would stop it
+	/// from reading the rest of its mailbox.
+	async fn fetch_received_vtxo_status(
+		&self,
+		vtxo: &Vtxo<Full>,
+	) -> anyhow::Result<Option<ServerVtxoStatus>> {
+		let key = self.get_vtxo_key(vtxo).await?;
+		let (mut statuses, answered) = self.fetch_server_vtxo_statuses(&[(vtxo.id(), &key)]).await?;
+		ensure!(answered.contains(&vtxo.id()), "the server returned no status for VTXO {}", vtxo.id());
+		Ok(statuses.remove(&vtxo.id()).filter(|status| status.own_mailbox))
+	}
+
 	/// [Wallet::fetch_vtxo_spend_state], which on a server in expiry payout
 	/// mode also refuses a VTXO whose owner mailbox is not this wallet's.
 	pub(crate) async fn fetch_own_vtxo_spend_state(
@@ -446,7 +463,7 @@ impl Wallet {
 	///
 	/// Returns the VTXOs that the server reports spendable and bound to this
 	/// wallet's mailbox. Stores a VTXO that the server already paid out as
-	/// spent, and a VTXO that it does not report spendable yet as locked.
+	/// spent, and any other VTXO as locked.
 	pub(crate) async fn verify_received_arkoor_vtxos(
 		&self,
 		vtxos: Vec<Vtxo<Full>>,
@@ -458,21 +475,21 @@ impl Wallet {
 
 		let mut spendable = Vec::with_capacity(vtxos.len());
 		for vtxo in vtxos {
-			let key = self.get_vtxo_key(&vtxo).await?;
-			let status = self.fetch_own_vtxo_status(vtxo.id(), &key).await?;
-			if status.is_spent() {
-				// The server can pay out a VTXO before this wallet reads it.
-				self.store_vtxos([&vtxo], &VtxoState::Spent).await?;
-				if let Some(payout) = status.payout {
-					self.inner.db.set_vtxo_expiry_payout_state(vtxo.id(), payout).await?;
-				}
-			} else if status.state == VtxoSpendState::Spendable {
-				spendable.push(vtxo);
-			} else {
-				warn!("Received arkoor VTXO {} is not spendable on the server ({:?}); \
-					it stays locked", vtxo.id(), status.state);
-				let holder = Some(VtxoLockHolder::MailboxReceive);
-				self.store_vtxos([&vtxo], &VtxoState::Locked { holder }).await?;
+			match self.fetch_received_vtxo_status(&vtxo).await? {
+				Some(status) if status.is_spent() => {
+					// The server can pay out a VTXO before this wallet reads it.
+					self.store_vtxos([&vtxo], &VtxoState::Spent).await?;
+					if let Some(payout) = status.payout {
+						self.inner.db.set_vtxo_expiry_payout_state(vtxo.id(), payout).await?;
+					}
+				},
+				Some(status) if status.state == VtxoSpendState::Spendable => spendable.push(vtxo),
+				status => {
+					warn!("Received arkoor VTXO {} is not spendable on the server ({:?}); \
+						it stays locked", vtxo.id(), status.map(|status| status.state));
+					let holder = Some(VtxoLockHolder::MailboxReceive);
+					self.store_vtxos([&vtxo], &VtxoState::Locked { holder }).await?;
+				},
 			}
 		}
 		Ok(spendable)
@@ -504,8 +521,9 @@ impl Wallet {
 			if let Err(e) = self.register_vtxo_transactions_with_server(&[&vtxo]).await {
 				debug!("Received arkoor VTXO {} still does not register: {:#}", vtxo.id(), e);
 			}
-			let key = self.get_vtxo_key(&vtxo).await?;
-			let status = self.fetch_own_vtxo_status(vtxo.id(), &key).await?;
+			let Some(status) = self.fetch_received_vtxo_status(&vtxo).await? else {
+				continue;
+			};
 			if status.is_spent() {
 				self.mark_vtxos_as_spent([vtxo.id()]).await?;
 				if let Some(payout) = status.payout {

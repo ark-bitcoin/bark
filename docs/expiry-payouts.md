@@ -70,8 +70,8 @@ An arkoor address carries a blinded mailbox. The server unblinds it with the
 key of the output and records the result as the owner mailbox of the output.
 The sender chooses the address, so the address alone does not prove who owns
 the mailbox. A wallet credits a received VTXO only when the server reports it
-spendable and bound to the mailbox of the wallet. A received VTXO that is not
-spendable on the server yet stays locked until it is.
+spendable and bound to the mailbox of the wallet. A received VTXO that the
+server does not report so yet stays locked until it does.
 
 The bitcoin of a payout arrives at `tr(M)`, not in the Ark balance. Watch that
 output with an on-chain wallet. `Wallet::payout_script` returns it.
