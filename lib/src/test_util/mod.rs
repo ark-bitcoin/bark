@@ -52,11 +52,24 @@ pub fn build_signed_tree(
 	server_cosign_key: &Keypair,
 	unlock_hash: UnlockHash,
 ) -> (SignedVtxoTreeSpec, Transaction) {
-	let reqs = outputs.into_iter().map(|vtxo| VtxoLeafSpec {
+	let leaves = outputs.into_iter().map(|vtxo| VtxoLeafSpec {
 		vtxo: vtxo,
 		cosign_pubkey: None,
 		unlock_hash: unlock_hash,
-	}).collect::<Vec<_>>();
+	});
+	build_signed_tree_with_leaves(version, leaves, user_cosign_key, server_key, server_cosign_key)
+}
+
+/// Like [build_signed_tree], but with the given leaves, so that each leaf
+/// can carry its own unlock hash.
+pub fn build_signed_tree_with_leaves(
+	version: HashlockVersion,
+	leaves: impl IntoIterator<Item = VtxoLeafSpec>,
+	user_cosign_key: &Keypair,
+	server_key: &Keypair,
+	server_cosign_key: &Keypair,
+) -> (SignedVtxoTreeSpec, Transaction) {
+	let reqs = leaves.into_iter().collect::<Vec<_>>();
 
 	let mut spec = VtxoTreeSpec::new(
 		reqs,
