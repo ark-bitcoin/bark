@@ -1,0 +1,10 @@
+- Apply the replacement rules in `MakeCpfpFees::Rbf`
+  A CPFP replacement now pays what bitcoind requires: the replaced fee plus
+  the incremental relay fee over the replacement, the new child or the whole
+  package if the parent is new too, and a feerate above the replaced one by
+  the incremental relay fee.
+  [#2781](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2781)
+  - **BREAKING:** `MakeCpfpFees::Rbf` renames `current_package_fee` to
+    `replaced_fee` and adds `replaced_fee_rate`, `incremental_relay_fee`
+    and `parent_in_mempool`. Use `DEFAULT_INCREMENTAL_RELAY_FEE` when the
+    node's isn't known.

@@ -158,7 +158,7 @@ use crate::Wallet;
 use crate::chain::ChainSource;
 use crate::exit::bdk::should_rbf;
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::MakeCpfpFees;
+use crate::onchain::{MakeCpfpFees, DEFAULT_INCREMENTAL_RELAY_FEE};
 use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
@@ -187,7 +187,10 @@ impl ChildState {
 			ChildState::InMempool(Some(fi)) if should_rbf(fee_rate, fi.fee_rate) => {
 				Some(MakeCpfpFees::Rbf {
 					min_effective_fee_rate: fee_rate,
-					current_package_fee: fi.total_fee,
+					replaced_fee: fi.total_fee,
+					replaced_fee_rate: fi.fee_rate,
+					incremental_relay_fee: DEFAULT_INCREMENTAL_RELAY_FEE,
+					parent_in_mempool: true,
 				})
 			},
 			ChildState::InMempool(_) => None,

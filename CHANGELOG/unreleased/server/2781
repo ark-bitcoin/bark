@@ -1,0 +1,7 @@
+- Fix the watchman's fee bumps of stuck exit progress
+  The watchman now measures the feerate of a progress package in the
+  mempool on every pass, and replaces a package that pays too little by
+  outbidding what it evicts. Before, a large but cheap child on the
+  progress tx, for example one an attacker attached to its anchor, could
+  get every bump rejected while a timelock ran out.
+  [#2781](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2781)

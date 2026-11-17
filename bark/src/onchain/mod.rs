@@ -22,7 +22,7 @@ mod bdk;
 #[cfg(feature = "onchain-bdk")]
 pub use bdk_wallet;
 
-pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
+pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees, DEFAULT_INCREMENTAL_RELAY_FEE};
 
 /// BDK-backed onchain wallet implementation.
 ///
