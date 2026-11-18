@@ -1151,15 +1151,18 @@ mod test {
 		).expect("Valid package");
 
 		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
-		assert_eq!(vtxos.len(), 5);
+		assert_eq!(vtxos.len(), 6);
 		// input[0] 300 -> output[0] 300
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(300));
 		// input[1] 700 -> output[0] 200, output[1] 400, output[2] 100
-		assert_eq!(vtxos[1].amount(), Amount::from_sat(200));
-		assert_eq!(vtxos[2].amount(), Amount::from_sat(400));
-		assert_eq!(vtxos[3].amount(), Amount::from_sat(100));
+		// The 200 and 100 dust need 30 more to be isolated. The 400 gives it
+		// and keeps 370 on the checkpoint tx.
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(370));
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(30));
+		assert_eq!(vtxos[3].amount(), Amount::from_sat(200));
+		assert_eq!(vtxos[4].amount(), Amount::from_sat(100));
 		// input[2] 500 -> output[2] 500
-		assert_eq!(vtxos[4].amount(), Amount::from_sat(500));
+		assert_eq!(vtxos[5].amount(), Amount::from_sat(500));
 		let total: Amount = vtxos.iter().map(|v| v.amount()).sum();
 		assert_eq!(total, Amount::from_sat(1500));
 	}

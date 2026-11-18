@@ -984,12 +984,6 @@ impl ArkoorBuilder<state::Initial> {
 		// The dust alone doesn't make a standard isolation output, so a
 		// non-dust output has to add to it.
 
-		// if breaking would result in additional dust, just isolate them all
-		let non_dust_sum = non_dust.iter().map(|o| o.total_amount).sum::<Amount>();
-		if non_dust_sum < P2TR_DUST * 2 {
-			return Self::new(input, vec![], outputs);
-		}
-
 		// now it gets interesting, we need to break a vtxo in two
 		let deficit = P2TR_DUST - dust_sum;
 		// Find first viable output to split
