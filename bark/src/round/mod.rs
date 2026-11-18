@@ -2935,7 +2935,7 @@ mod test {
 
 		// An arkoor spend of the still-locked leaf puts the hash-locked
 		// transition before the arkoor transition.
-		let builder = ArkoorPackageBuilder::new_claim_all_without_checkpoints(
+		let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
 			[locked], VtxoPolicy::new_pubkey(user_key.public_key()),
 		).unwrap().generate_user_nonces(&[user_key]).unwrap();
 		let cosign = ArkoorPackageBuilder::from_cosign_request(builder.cosign_request()).unwrap()
@@ -2947,7 +2947,7 @@ mod test {
 		vtxo.validate_unsigned(&funding_tx).expect("the vtxo is valid without signatures");
 		match vtxo.validate(&funding_tx) {
 			Err(VtxoValidationError::GenesisTransition {
-				genesis_idx: 1, genesis_len: 3, transition_kind, ..
+				genesis_idx: 1, genesis_len: 4, transition_kind, ..
 			}) if transition_kind == TransitionKind::HashLockedCosigned.as_str() => {},
 			other => panic!("the hash lock must fail before the last transition: {:?}", other),
 		}

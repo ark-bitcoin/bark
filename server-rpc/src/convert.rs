@@ -634,7 +634,8 @@ impl<V: VtxoRef> From<ArkoorCosignRequest<V>> for protos::ArkoorCosignRequest {
 			isolated_outputs: v.isolated_outputs.into_iter()
 				.map(|output| output.into())
 				.collect::<Vec<_>>(),
-			use_checkpoint: v.use_checkpoint,
+			// Servers that still have the option reject a request without it.
+			use_checkpoint: true,
 			attestation: v.attestation.serialize().to_vec(),
 		}
 	}
@@ -644,6 +645,10 @@ impl<V: VtxoRef> From<ArkoorCosignRequest<V>> for protos::ArkoorCosignRequest {
 impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 	type Error = ConvertError;
 	fn try_from(v: protos::ArkoorCosignRequest) -> Result<Self, Self::Error> {
+		if !v.use_checkpoint {
+			return Err("arkoor without checkpoint is not supported".into());
+		}
+
 		let req = Self::new_with_attestation(
 			v.user_pub_nonces.into_iter()
 				.map(|n| musig::PublicNonce::from_bytes(&n))
@@ -655,7 +660,6 @@ impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 			v.isolated_outputs.into_iter()
 				.map(|output| ArkoorDestination::try_from(output))
 				.collect::<Result<Vec<_>, _>>()?,
-			v.use_checkpoint,
 			ArkoorCosignAttestation::deserialize(&v.attestation)
 				.map_err(|_| "Failed to parse attestation")?,
 		);

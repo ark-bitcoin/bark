@@ -41,7 +41,6 @@ impl<V> ArkoorPackageCosignRequest<V> {
 					input: f(r.input),
 					outputs: r.outputs,
 					isolated_outputs: r.isolated_outputs,
-					use_checkpoint: r.use_checkpoint,
 					attestation: r.attestation,
 				}
 			}).collect::<Vec<_>>(),
@@ -89,7 +88,6 @@ impl ArkoorPackageCosignRequest<VtxoId> {
 					user_pub_nonces: r.user_pub_nonces,
 					outputs: r.outputs,
 					isolated_outputs: r.isolated_outputs,
-					use_checkpoint: r.use_checkpoint,
 					attestation: r.attestation,
 				})
 			}).collect::<Result<Vec<_>, _>>()?,
@@ -194,15 +192,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
-		Self::new(inputs, outputs, true)
-	}
-
-	/// Create builder without checkpoints for multiple outputs
-	pub fn new_without_checkpoints(
-		inputs: impl IntoIterator<Item = Vtxo<Full>>,
-		outputs: Vec<ArkoorDestination>,
-	) -> Result<Self, ArkoorConstructionError> {
-		Self::new(inputs, outputs, false)
+		Self::new(inputs, outputs)
 	}
 
 	/// Convenience constructor for single output with automatic change
@@ -256,27 +246,9 @@ impl ArkoorPackageBuilder<state::Initial> {
 		Self::new_with_checkpoints(inputs, vec![output])
 	}
 
-	/// Convenience constructor for single output that claims all inputs
-	pub fn new_claim_all_without_checkpoints(
-		inputs: impl IntoIterator<Item = Vtxo<Full>>,
-		output_policy: VtxoPolicy,
-	) -> Result<Self, ArkoorConstructionError> {
-		// Calculate total input amount
-		let inputs = inputs.into_iter().collect::<Vec<_>>();
-		let total_input = inputs.iter().map(|v| v.amount()).sum::<Amount>();
-
-		let output = ArkoorDestination {
-			total_amount: total_input,
-			policy: output_policy,
-		};
-
-		Self::new_without_checkpoints(inputs, vec![output])
-	}
-
 	fn new(
 		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		outputs: Vec<ArkoorDestination>,
-		use_checkpoint: bool,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Allocate outputs to inputs
 		let allocations = Self::allocate_outputs_to_inputs(inputs, outputs)?;
@@ -287,7 +259,6 @@ impl ArkoorPackageBuilder<state::Initial> {
 			let builder = ArkoorBuilder::new_isolate_dust(
 				input,
 				allocated_outputs,
-				use_checkpoint,
 			)?;
 			builders.push(builder);
 		}
@@ -1280,59 +1251,6 @@ mod test {
 	}
 
 	#[test]
-	fn spend_info_correctness_without_checkpoints() {
-		// Test spend_info without checkpoints
-		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(
-			Amount::from_sat(100_000)
-		);
-		let input_id = alice_vtxo.id();
-
-		let package = ArkoorPackageBuilder::new_without_checkpoints(
-			[alice_vtxo],
-			vec![
-				ArkoorDestination {
-					total_amount: Amount::from_sat(100_000),
-					policy: VtxoPolicy::new_pubkey(bob_public_key()),
-				}
-			]
-		).expect("Valid package");
-
-		// Collect all internal VTXOs
-		let internal_vtxos: Vec<VtxoId> = package
-			.build_unsigned_internal_vtxos()
-			.iter().map(|(v, _)| v.id())
-			.collect();
-
-		// Collect all spend_info entries
-		let spend_info: Vec<(VtxoId, Txid)> = package.spend_info().collect();
-
-		// The spend_info should contain the input and all internal VTXOs
-		let mut expected_vtxo_ids = vec![input_id];
-		expected_vtxo_ids.extend(internal_vtxos.iter());
-
-		let actual_vtxo_ids: Vec<VtxoId> = spend_info
-			.iter()
-			.map(|(id, _)| *id)
-			.collect();
-
-		// Check that all expected IDs are present
-		for id in &expected_vtxo_ids {
-			assert!(
-				actual_vtxo_ids.contains(id),
-				"Expected VTXO ID {} not found in spend_info",
-				id
-			);
-		}
-
-		// Check that no extra IDs are present
-		assert_eq!(
-			actual_vtxo_ids.len(),
-			expected_vtxo_ids.len(),
-			"spend_info contains unexpected entries"
-		);
-	}
-
-	#[test]
 	fn spend_info_correctness_multiple_inputs() {
 		// Test spend_info with multiple inputs
 		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(
@@ -1435,22 +1353,26 @@ mod test {
 			},
 		];
 
-		// A non-checkpoint arkoor needs a single user nonce. With the right
-		// count and a valid attestation, the request is well-formed, so only the
-		// amount check can reject it.
-		let nonces = vec![crate::musig::nonce_pair(&alice_keypair()).1];
+		// An arkoor needs a user nonce for the checkpoint tx and for the arkoor
+		// tx of each output. With the right count and a valid attestation, the
+		// request is well-formed, so only the amount check can reject it.
+		let nonces = (0..outputs.len() + 1)
+			.map(|_| crate::musig::nonce_pair(&alice_keypair()).1)
+			.collect();
 		let request = ArkoorCosignRequest::new(
 			nonces,
 			vtxo,
 			outputs,
 			vec![],
-			false,
 			&alice_keypair(),
 		);
 
 		let package = ArkoorPackageCosignRequest { requests: vec![request] };
-		assert!(
-			ArkoorPackageBuilder::from_cosign_request(package).is_err(),
+		assert_eq!(
+			ArkoorPackageBuilder::from_cosign_request(package).err(),
+			Some((0, ArkoorSigningError::ArkoorConstructionError(
+				ArkoorConstructionError::ZeroValueOutput,
+			))),
 			"a zero-value output must not be accepted for server cosigning",
 		);
 	}
