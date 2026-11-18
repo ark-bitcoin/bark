@@ -1,0 +1,8 @@
+- Fix a vulnerability reported by EntropyLab
+  Bark kept the new VTXOs of a delegated round only in memory, and failed the
+  round when the Ark server reported it as not found. A server could take the
+  forfeits, withhold the unlock preimage and make bark forget the new VTXOs.
+  Bark now stores the new VTXOs before it sends the forfeits, and does not fail
+  a round that can have sent them.
+  [#2810](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2810)
+  - **BREAKING:** `RoundState::sync` is now private. Use `StoredRoundState::sync`.
