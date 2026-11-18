@@ -14,6 +14,16 @@
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "web"
 
+# Skipped on merge trains to keep them short.
+.test-rules-not-merge-train:
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
 check-commits:
   interruptible: true
   stage: prechecks
@@ -435,7 +445,7 @@ bark-int-action-reentrancy:
   tags:
     - integration
     - datastore
-  extends: .test-rules-no-tags
+  extends: .test-rules-not-merge-train
   needs:
     - prechecks
     - check-commits
@@ -508,7 +518,7 @@ compat-bark-0.5.0:
   tags:
     - integration
     - datastore
-  extends: .test-rules-no-tags
+  extends: .test-rules-not-merge-train
   needs:
     - prechecks
     - check-commits
@@ -554,7 +564,7 @@ compat-bark-0.6.0:
   tags:
     - integration
     - datastore
-  extends: .test-rules-no-tags
+  extends: .test-rules-not-merge-train
   needs:
     - prechecks
     - check-commits
@@ -600,7 +610,7 @@ compat-bark-0.6.2:
   tags:
     - integration
     - datastore
-  extends: .test-rules-no-tags
+  extends: .test-rules-not-merge-train
   needs:
     - prechecks
     - check-commits
@@ -646,7 +656,7 @@ compat-bark-0.7.0:
   tags:
     - integration
     - datastore
-  extends: .test-rules-no-tags
+  extends: .test-rules-not-merge-train
   needs:
     - prechecks
     - check-commits
@@ -692,7 +702,7 @@ compat-bark-0.7.1:
   tags:
     - integration
     - datastore
-  extends: .test-rules-no-tags
+  extends: .test-rules-not-merge-train
   needs:
     - prechecks
     - check-commits
@@ -738,7 +748,7 @@ compat-bark-0.8.0:
   tags:
     - integration
     - datastore
-  extends: .test-rules-no-tags
+  extends: .test-rules-not-merge-train
   needs:
     - prechecks
     - check-commits
