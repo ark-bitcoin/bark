@@ -5,6 +5,7 @@ use bitcoin::Txid;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo};
 use ark::vtxo::Full;
+use ark::arkoor::{ArkoorConstructionError, ArkoorSigningError};
 use ark::arkoor::state::{ServerCanCosign, ServerSigned};
 use ark::arkoor::package::{
 	ArkoorPackageCosignRequest, ArkoorPackageCosignResponse, ArkoorPackageBuilder,
@@ -88,7 +89,19 @@ impl Server {
 		match ArkoorPackageBuilder::from_cosign_request(cosign_req) {
 			Ok(ret) => Ok(ret),
 			Err((idx, e)) => {
-				badarg!("invalid cosign request at index #{idx}: {e}")
+				// A wallet from before the current dust isolation rules puts
+				// dust outputs on the checkpoint tx.
+				let is_dust = matches!(e, ArkoorSigningError::ArkoorConstructionError(
+					ArkoorConstructionError::Dust,
+				));
+				if is_dust {
+					badarg!(
+						"invalid cosign request at index #{idx}: {e}, \
+						upgrade your wallet and retry",
+					)
+				} else {
+					badarg!("invalid cosign request at index #{idx}: {e}")
+				}
 			}
 		}
 	}

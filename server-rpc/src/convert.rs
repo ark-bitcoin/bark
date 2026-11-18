@@ -646,7 +646,9 @@ impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 	type Error = ConvertError;
 	fn try_from(v: protos::ArkoorCosignRequest) -> Result<Self, Self::Error> {
 		if !v.use_checkpoint {
-			return Err("arkoor without checkpoint is not supported".into());
+			return Err(
+				"arkoor without checkpoint is not supported, upgrade your wallet and retry".into()
+			);
 		}
 
 		let req = Self::new_with_attestation(
@@ -796,6 +798,17 @@ mod test {
 	use std::str::FromStr;
 	use bitcoin::hex::FromHex;
 	use super::*;
+
+	#[test]
+	fn arkoor_cosign_request_without_checkpoint_is_rejected() {
+		let req = protos::ArkoorCosignRequest {
+			use_checkpoint: false,
+			..Default::default()
+		};
+		let err = ArkoorCosignRequest::<VtxoId>::try_from(req).unwrap_err();
+		assert!(err.msg.contains("arkoor without checkpoint is not supported"), "{}", err.msg);
+		assert!(err.msg.contains("upgrade your wallet and retry"), "{}", err.msg);
+	}
 
 	#[test]
 	fn test_preimage_bytes() {
