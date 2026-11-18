@@ -178,12 +178,20 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 		// Find unconfirmed transactions in our wallet that are no longer in the mempool
 		// We will not evict fully owned transactions
 		let mempool_set = mempool.txids.iter().copied().collect::<HashSet<_>>();
+		// A tx we committed while waiting for the lock can be missing from the
+		// snapshot although it is in the mempool.
+		let observed_at = mempool.observed_at.timestamp() as u64;
 		// unconfirmed_txids canonicalizes the entire tx graph, so it runs on the
 		// blocking pool; the owned guard moves along and comes back with the result
 		let (mut wallet, evicted) = tokio::task::spawn_blocking(move || {
 			let evicted: Vec<_> = wallet.wallet.unconfirmed_txids()
 				.filter(|txid| !wallet.is_fully_owned_tx(*txid))
 				.filter(|txid| !mempool_set.contains(txid))
+				.filter(|txid| {
+					let last_seen = wallet.wallet.tx_graph().get_tx_node(*txid)
+						.and_then(|n| n.last_seen);
+					last_seen.map_or(true, |t| t < observed_at)
+				})
 				.collect();
 			(wallet, evicted)
 		}).await.context("unconfirmed txids task panicked")?;

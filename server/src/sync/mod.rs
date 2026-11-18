@@ -28,6 +28,8 @@ pub struct BlockData {
 /// A snapshot of the mempool at a given time.
 #[derive(Debug, Clone)]
 pub struct RawMempool {
+	/// Taken before the txids were requested, so a tx seen after it may be
+	/// missing from them.
 	pub observed_at: DateTime<Local>,
 	pub txids: Vec<Txid>,
 }
@@ -145,15 +147,12 @@ impl Process {
 		// Sync after the snapshot, so a block that took its txs out of it reads
 		// as confirmed. If that finds a block, retake the snapshot: a reorg puts
 		// orphaned txs back in the mempool.
-		let txids = loop {
+		let mempool = loop {
+			let observed_at = chrono::Local::now();
 			let txids = self.bitcoind.get_raw_mempool().await?.0;
 			if !self.block_index.sync().await? {
-				break txids;
+				break RawMempool { observed_at, txids };
 			}
-		};
-		let mempool = RawMempool {
-			observed_at: chrono::Local::now(),
-			txids,
 		};
 
 		let results = join_all(self.block_index.listeners.iter().map(|listener| {
