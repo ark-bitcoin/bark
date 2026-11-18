@@ -91,8 +91,46 @@ pub trait BdkWalletExt: WalletExt {
 			.expect("Unix epoch is in the past").as_secs();
 		self.borrow_mut().apply_unconfirmed_txs([(tx.clone(), now)]);
 	}
+
+	/// Evict our unconfirmed txs spending `outpoint`, and their descendants,
+	/// so a tx replacing them can spend their inputs.
+	fn evict_spenders(&mut self, outpoint: OutPoint) -> EvictedTxs {
+		let wallet = self.borrow_mut();
+		let graph = wallet.tx_graph();
+		let mut txids = HashSet::new();
+		for spend in graph.outspends(outpoint) {
+			txids.insert(*spend);
+			txids.extend(graph.walk_descendants(*spend, |_, txid| Some(txid)));
+		}
+		let txs = wallet.transactions()
+			.filter(|tx| txids.contains(&tx.tx_node.txid))
+			.filter(|tx| !tx.chain_position.is_confirmed())
+			.map(|tx| tx.tx_node.tx.clone())
+			.collect::<Vec<_>>();
+
+		let evicted_at = SystemTime::now().duration_since(UNIX_EPOCH)
+			.expect("Unix epoch is in the past").as_secs();
+		wallet.apply_evicted_txs(txs.iter().map(|tx| (tx.compute_txid(), evicted_at)));
+		EvictedTxs { txs, evicted_at }
+	}
 }
 impl BdkWalletExt for Wallet {}
+
+/// Txs taken out of the wallet by [BdkWalletExt::evict_spenders].
+#[must_use]
+pub struct EvictedTxs {
+	txs: Vec<Arc<Transaction>>,
+	evicted_at: u64,
+}
+
+impl EvictedTxs {
+	/// Put the txs back, for when their replacement didn't make it into the mempool.
+	pub fn restore(self, wallet: &mut Wallet) {
+		// A tx counts as evicted unless it was seen after its eviction.
+		let seen_at = self.evicted_at + 1;
+		wallet.apply_unconfirmed_txs(self.txs.into_iter().map(|tx| (tx, seen_at)));
+	}
+}
 
 pub struct PersistedWallet {
 	wallet: Wallet,
@@ -695,6 +733,7 @@ mod builder_test {
 	use bitcoin::{BlockHash, ScriptBuf, Txid};
 	use bitcoin::hashes::Hash;
 
+	use bitcoin_ext::TransactionExt;
 	use bitcoin_ext::bdk::{PreferConfirmedCoinSelection, WithGuaranteedChange};
 
 	/// An in-memory taproot wallet holding the specified confirmed coins.
@@ -1053,4 +1092,32 @@ mod builder_test {
 		);
 	}
 
+	/// A CPFP bump spends the fee input of the CPFP it replaces.
+	#[test]
+	fn evict_spenders_frees_the_replaced_cpfp_input() {
+		let (mut wallet, coins) = wallet_with_coins(&[Amount::from_btc(1.0).unwrap()]);
+		let parent = Transaction {
+			version: bitcoin::transaction::Version(3),
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: vec![bitcoin::TxIn {
+				previous_output: OutPoint::new(Txid::all_zeros(), 0),
+				..Default::default()
+			}],
+			output: vec![bitcoin_ext::fee::fee_anchor()],
+		};
+		let (anchor, _) = parent.fee_anchor().unwrap();
+		let signers = wallet.build_signers(get_test_tr_single_sig_xprv()).unwrap();
+		let cpfp = wallet.make_signed_p2a_cpfp(
+			&parent, MakeCpfpFees::Effective(sat_per_vb(10)), &signers,
+		).unwrap();
+		wallet.commit_tx(&cpfp);
+		let unspent = |w: &Wallet| w.list_unspent().map(|u| u.outpoint).collect::<Vec<_>>();
+		assert!(!unspent(&wallet).contains(&coins[0]));
+
+		let evicted = wallet.evict_spenders(anchor);
+		assert_eq!(unspent(&wallet), coins);
+
+		evicted.restore(&mut wallet);
+		assert!(!unspent(&wallet).contains(&coins[0]));
+	}
 }
