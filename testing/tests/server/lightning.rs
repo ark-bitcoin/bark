@@ -4020,6 +4020,7 @@ async fn late_xpay_result_does_not_finalize_a_retry() {
 		}).await?;
 		Ok(retry_id)
 	}).await.unwrap();
+	let retry_created = tokio::time::Instant::now();
 
 	// Releasing the hold makes the first xpay call fail.
 	eve_hold.cancel(hold::CancelRequest {
@@ -4040,9 +4041,11 @@ async fn late_xpay_result_does_not_finalize_a_retry() {
 		}
 	}.wait(wait_timeout()).await;
 
-	// Give the first xpay result time to reach the db.
-	let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-	while tokio::time::Instant::now() < deadline {
+	// Give the first xpay result time to reach the db, and the monitor time
+	// to check the retry well past the 15s answer timeout: with no record in
+	// CLN it may only fail once its retry_for has passed too.
+	let deadline = retry_created + Duration::from_secs(30);
+	loop {
 		let retry = db.read(async |t| t.get_latest_payment_attempt_by_payment_hash(payment_hash).await)
 			.await.unwrap().expect("retry attempt");
 		assert_eq!(retry.id, retry_id);
@@ -4050,6 +4053,9 @@ async fn late_xpay_result_does_not_finalize_a_retry() {
 			"the first xpay result finalized the retry: {:?}", retry.error,
 		);
 		assert_eq!(retry.error, None);
+		if tokio::time::Instant::now() >= deadline {
+			break;
+		}
 		tokio::time::sleep(poll_interval()).await;
 	}
 }

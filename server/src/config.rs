@@ -212,6 +212,12 @@ mod defaults {
 
 	/// A round participation may have at most this many outputs.
 	pub fn max_round_participation_outputs() -> usize { 4 }
+
+	/// About an hour and a half, so a slow hour of blocks still keeps them
+	/// out of the round that replaces the abandoned one.
+	pub fn round_withheld_signatures_ban() -> bitcoin_ext::BlockDelta {
+		bitcoin_ext::BlockDelta::new(9)
+	}
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -294,6 +300,12 @@ pub struct Config {
 	/// The duration after which to drop forfeit nonces
 	#[serde(with = "utils::serde::duration")]
 	pub round_forfeit_nonces_timeout: Duration,
+	/// The number of blocks the inputs of a cosigner that withheld its vtxo
+	/// signatures can't be spent, so they can't stall the next round too.
+	///
+	/// Default value: 9
+	#[serde(default = "defaults::round_withheld_signatures_ban")]
+	pub round_withheld_signatures_ban: BlockDelta,
 
 	/// Whether or not to add full error information to RPC internal errors.
 	pub rpc_rich_errors: bool,
@@ -618,6 +630,17 @@ impl Config {
 			bail!("Invalid configuration: max_round_participation_outputs ({}) must be \
 				between 1 and the round capacity 4 ^ nb_round_nonces ({})",
 				self.max_round_participation_outputs, round_capacity,
+			);
+		}
+
+		// A lightning send is an arkoor that pays the HTLC, so a lightning
+		// limit above the arkoor one would never be reached.
+		if self.max_ln_send_amount.unwrap_or(Amount::MAX)
+			> self.max_arkoor_amount.unwrap_or(Amount::MAX)
+		{
+			bail!("Invalid configuration: max_ln_send_amount ({:?}) may not exceed \
+				max_arkoor_amount ({:?}), since a lightning send is limited by both.",
+				self.max_ln_send_amount, self.max_arkoor_amount,
 			);
 		}
 
@@ -1029,6 +1052,8 @@ mod test {
 	fn validate_max_offboard_amount_against_arkoor() {
 		let mut cfg = Config::load(DEFAULT_CAPTAIND_CONFIG_PATH).unwrap();
 		cfg.bitcoind.cookie = Some(".cookie".into());
+		// keep the lightning limit out of the way
+		cfg.max_ln_send_amount = Some(Amount::ZERO);
 
 		cfg.max_arkoor_amount = Some(Amount::from_sat(100_000));
 		cfg.max_offboard_amount = Some(Amount::from_sat(100_000));

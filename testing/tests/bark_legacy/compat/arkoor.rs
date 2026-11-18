@@ -192,8 +192,10 @@ async fn max_arkoor_amount() {
 	let ctx = TestContext::new("bark/max_arkoor_amount").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.max_arkoor_amount = Some(sat(100_000));
-		// The offboard limit may not exceed the arkoor one, see Config::validate.
+		// The offboard and lightning limits may not exceed the arkoor one,
+		// see Config::validate.
 		cfg.max_offboard_amount = Some(sat(100_000));
+		cfg.max_ln_send_amount = Some(sat(100_000));
 	}).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(500_000)).create().await;
 	let bark2 = ctx.bark("bark2", &srv).create().await;
@@ -216,10 +218,11 @@ async fn max_arkoor_amount() {
 
 	bark1.send_oor(&addr2, sat(20_000)).await;
 
-	// zero disables arkoor sends entirely, and offboards with them
+	// zero disables arkoor sends entirely, and offboards and lightning sends with them
 	srv.stop().await.unwrap();
 	srv.config_mut().max_arkoor_amount = Some(sat(0));
 	srv.config_mut().max_offboard_amount = Some(sat(0));
+	srv.config_mut().max_ln_send_amount = Some(sat(0));
 	srv.start().await.unwrap();
 	bark1.set_ark_url(&srv).await;
 

@@ -34,6 +34,7 @@ use ark::tree::signed::{
 	VtxoLeafSpec, VtxoTreeSpec,
 };
 use server_log::{LogMsg, RoundVtxoCreated};
+use server_rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS;
 
 use crate::database::rounds::{StoredRoundOutput, StoredRoundParticipation};
 use crate::database::tree::VtxoTreeUpdate;
@@ -331,6 +332,8 @@ pub struct CollectingPayments {
 	round_step: TimedRoundStep,
 
 	proceed: bool,
+	/// Whether a participation didn't fit in this round.
+	turned_away: bool,
 }
 
 impl CollectingPayments {
@@ -360,7 +363,13 @@ impl CollectingPayments {
 			common_round_tx_input,
 			round_step: RoundStep::AttemptInitiation.with_instant(round_seq, attempt_seq),
 			proceed: false,
+			turned_away: false,
 		}
+	}
+
+	/// Whether this round has no room left for participations.
+	fn is_full(&self) -> bool {
+		self.turned_away || self.all_outputs.len() == self.round_data.max_output_vtxos
 	}
 
 	fn first_attempt(&self) -> bool {
@@ -453,15 +462,6 @@ impl CollectingPayments {
 			return badarg!("too many outputs, maximum is {}", self.round_data.max_participation_outputs);
 		}
 
-		if self.all_outputs.len() + nb_outputs > self.round_data.max_output_vtxos {
-			warn!("Got payment we don't have space for, dropping");
-			server_rslog!(FullRound, self.round_step,
-				nb_outputs: self.all_outputs.len(),
-				max_output_vtxos: self.round_data.max_output_vtxos,
-			);
-			bail!("not enough outputs left in this round, try next round");
-		}
-
 		let mut unique_inputs = HashSet::with_capacity(inputs.len());
 		for input in inputs {
 			if !unique_inputs.insert(*input) {
@@ -482,6 +482,20 @@ impl CollectingPayments {
 			}
 		}
 
+		Ok(())
+	}
+
+	/// Fails if this round has no room left for `nb_outputs` more outputs.
+	fn check_room_for_outputs(&mut self, nb_outputs: usize) -> anyhow::Result<()> {
+		if self.all_outputs.len() + nb_outputs > self.round_data.max_output_vtxos {
+			warn!("Got payment we don't have space for, dropping");
+			server_rslog!(FullRound, self.round_step,
+				nb_outputs: self.all_outputs.len(),
+				max_output_vtxos: self.round_data.max_output_vtxos,
+			);
+			self.turned_away = true;
+			bail!("not enough outputs left in this round, try next round");
+		}
 		Ok(())
 	}
 
@@ -643,6 +657,7 @@ impl CollectingPayments {
 		}
 
 		self.validate_payment_data(challenge, &input_ids, &vtxo_requests)?;
+		self.check_room_for_outputs(vtxo_requests.len())?;
 
 		let flux_guard = srv.vtxos_in_flux.try_lock(&input_ids)
 			.map_err(|e| { client_rslog!(RoundUserVtxoInFlux, self.round_step, vtxo: e.id); e })
@@ -749,6 +764,7 @@ impl CollectingPayments {
 				nb_outputs: self.all_outputs.len(),
 				max_output_vtxos: self.round_data.max_output_vtxos,
 			);
+			self.turned_away = true;
 			return Err(ProcessHarkParticipationError::RoundFull);
 		}
 
@@ -853,9 +869,23 @@ impl CollectingPayments {
 				return;
 			},
 		};
+		let banned = match srv.db.read(async |t| t.list_banned_vtxos(tip).await).await {
+			Ok(b) => b.into_iter().map(|b| b.vtxo_id).collect::<HashSet<_>>(),
+			Err(e) => {
+				error!("Error loading banned vtxos: {:#}", e);
+				return;
+			},
+		};
 
 		for part in parts {
 			let unlock_hash = part.unlock_hash;
+			// A ban is temporary, so keep the participation for a later round.
+			if let Some(input) = part.inputs.iter().find(|i| banned.contains(&i.vtxo_id)) {
+				debug!("Deferring hArk participation {}: input {} is banned",
+					unlock_hash, input.vtxo_id,
+				);
+				continue;
+			}
 			if self.interactive_participants.contains_key(&unlock_hash) {
 				error!(unlock_hash = unlock_hash.to_string(),
 					"A hark participation for an unlock hash we just created, \
@@ -1175,8 +1205,11 @@ impl SigningVtxoTree {
 		Ok(())
 	}
 
-	fn restart(self) -> CollectingPayments {
+	/// Also returns the inputs of the cosigners that didn't sign.
+	fn restart(self) -> (CollectingPayments, HashSet<VtxoId>) {
 		let mut allowed_inputs = self.all_inputs.keys().copied().collect::<HashSet<_>>();
+		// A participation lists its inputs under each of its cosigners.
+		let mut withheld = HashSet::new();
 		for (pk, vtxos) in self.inputs_per_cosigner.iter() {
 			if !self.cosign_part_sigs.contains_key(pk) {
 				// Disallow all inputs by this cosigner.
@@ -1186,16 +1219,18 @@ impl SigningVtxoTree {
 				for id in vtxos {
 					allowed_inputs.remove(id);
 				}
+				withheld.extend(vtxos.iter().copied());
 			}
 		}
-		CollectingPayments::new(
+		let next = CollectingPayments::new(
 			self.round_step.round_seq(),
 			self.round_step.attempt_seq() + 1,
 			self.round_data,
 			self.locked_inputs,
 			Some(allowed_inputs),
 			Some(self.funding_tx.into_pinned_input()),
-		)
+		);
+		(next, withheld)
 	}
 
 	#[tracing::instrument(
@@ -1725,7 +1760,29 @@ async fn receive_payments(
 		output_count,
 	);
 
+	// Whoever didn't fit gets the next round right after this one.
+	if state.is_full() {
+		*srv.rounds.next_round_time.write() = SystemTime::now();
+	}
+
 	ReceivePaymentsResult::Proceed
+}
+
+/// Ban the inputs of cosigners that withheld their vtxo signatures.
+async fn ban_withheld_inputs(srv: &Server, inputs: &HashSet<VtxoId>) {
+	if inputs.is_empty() {
+		return;
+	}
+	let until = srv.sync_manager.chain_tip().height + srv.config.round_withheld_signatures_ban;
+	let res = srv.db.write(async |t| {
+		for id in inputs {
+			t.ban_vtxo(*id, until).await?;
+		}
+		Ok(())
+	}).await;
+	if let Err(e) = res {
+		error!("Failed to ban vtxos {:?} that withheld round signatures: {:#}", inputs, e);
+	}
 }
 
 #[tracing::instrument(
@@ -1754,7 +1811,8 @@ async fn receive_vtxo_signatures(
 				warn!("Timed out receiving vtxo partial signatures.");
 				server_rslog!(RestartMissingVtxoSigs, round_step);
 				let old_state = std::mem::replace(round_state, RoundState::Finished(RoundResult::Empty));
-				let new = old_state.into_signing_vtxo_tree().restart();
+				let (new, withheld) = old_state.into_signing_vtxo_tree().restart();
+				ban_withheld_inputs(srv, &withheld).await;
 				let need_new_round = new.need_new_round();
 				*round_state = RoundState::CollectingPayments(new);
 
@@ -1972,13 +2030,15 @@ pub async fn run_round_coordinator(
 				trace!("Round {} was empty, broadcasting failure", round_seq);
 				srv.rounds.broadcast_event(RoundEvent::Failed(RoundFailed { round_seq }));
 			},
-			// Round got abandoned, immediatelly start a new one.
+			// Round got abandoned, immediately start a new one.
 			RoundResult::Abandoned => {
 				trace!("Round {} was abandoned, broadcasting failure", round_seq);
 				srv.rounds.broadcast_event(RoundEvent::Failed(RoundFailed { round_seq }));
+				*srv.rounds.next_round_time.write() = SystemTime::now();
 				continue;
 			},
-			// Internal error, retry immediatelly.
+			// Internal error, retry at the next round time so a persistent
+			// error doesn't make us spin.
 			RoundResult::Err(RoundError::Recoverable(e)) => {
 				srv.rounds.broadcast_event(RoundEvent::Failed(RoundFailed { round_seq }));
 				error!("Full round error stack trace: {:?}", e);
@@ -2036,6 +2096,9 @@ impl Server {
 	) -> anyhow::Result<UnlockHash> {
 		if inputs.is_empty() {
 			return badarg!("invalid request: no inputs");
+		}
+		if inputs.len() > MAX_NB_ROUND_PARTICIPATION_INPUTS {
+			return badarg!("too many inputs, max is {}", MAX_NB_ROUND_PARTICIPATION_INPUTS);
 		}
 		if outputs.is_empty() {
 			return badarg!("invalid request: no outputs");
@@ -2495,20 +2558,12 @@ mod tests {
 
 	#[test]
 	fn test_register_payment_exceeds_max_outputs() {
-		let state = create_collecting_payments(1);
+		let mut state = create_collecting_payments(1);
 
-		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone(), VTXO_VECTORS.round1_vtxo.clone()];
-		let input_ids = inputs
-			.iter()
-			.map(|v| v.id())
-			.collect::<Vec<_>>();
-
-		let outputs = vec![
-			create_signed_req(100, &state.round_data),
-			create_signed_req(100, &state.round_data),
-		];
-
-		state.validate_payment_data(state.round_attempt_challenge, &input_ids, &outputs).unwrap_err();
+		state.check_room_for_outputs(1).unwrap();
+		assert!(!state.is_full());
+		state.check_room_for_outputs(2).unwrap_err();
+		assert!(state.is_full());
 	}
 
 	#[test]

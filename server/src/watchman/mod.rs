@@ -90,7 +90,7 @@ use tracing::{info, trace, warn};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId};
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::BitcoinAsyncRpcExt;
 use bitcoin_ext::bdk::KEYCHAIN;
 use bitcoin_ext::cpfp::MakeCpfpFees;
@@ -103,7 +103,7 @@ use crate::database::{BlockTable, Db, Tx};
 use crate::fee_estimator::FeeEstimator;
 use crate::system::RuntimeManager;
 use crate::utils::InstrumentedLock;
-use crate::wallet::PersistedWallet;
+use crate::wallet::{BdkWalletExt, EvictedTxs, PersistedWallet};
 use crate::watchman::policy::ActionContextFetcher;
 
 /// A transaction spending a vtxo that is currently in the mempool.
@@ -425,6 +425,7 @@ impl Watchman {
 	) -> anyhow::Result<(ReindexStats, Vec<Amount>)> {
 		let mut stats = ReindexStats::default();
 		let mut newly_confirmed = Vec::new();
+		let mut preimages = Vec::new();
 
 		// Phase 1: register unfrontiered funding vtxos, so the phases below
 		// verify and repair them like any other entry.
@@ -531,7 +532,9 @@ impl Watchman {
 					for input in &btx.input {
 						let id = VtxoId::from(input.previous_output);
 						if wanted.remove(&id) {
-							if self.frontier.spend_in_tx(tx, frontier, id, height, txid, &input.witness).await? {
+							if self.frontier.spend_in_tx(
+								tx, frontier, id, height, txid, &input.witness, &mut preimages,
+							).await? {
 								stats.spends_repaired += 1;
 								slog!(FrontierRepairedSpend, vtxo_id: id,
 									spending_txid: txid, height,
@@ -581,6 +584,9 @@ impl Watchman {
 				slog!(FrontierUnresolvedSpend, vtxo_id: id);
 			}
 		}
+
+		// Last, as storing holds the global settlement lock until commit.
+		self.frontier.store_preimages_in_tx(tx, preimages).await?;
 
 		Ok((stats, newly_confirmed))
 	}
@@ -976,7 +982,25 @@ impl Watchman {
 
 		//TODO(stevenroose) consider a safe strategy for batching here as well
 		for (progress_txid, vtxo, fees) in to_broadcast {
+			let progress_tx = match self.get_progress_tx(progress_txid).await {
+				Ok(tx) => tx,
+				Err(e) => {
+					slog!(ProgressCpfpFailure, vtxo_id: vtxo.id(), txid: progress_txid,
+						error: e.to_string(),
+					);
+					continue;
+				},
+			};
+
+			// The new CPFP replaces our earlier ones on the same anchor, so it
+			// can spend their inputs, even while they are in the mempool.
+			let replaced = progress_tx.fee_anchor()
+				.map(|(anchor, _)| wallet.evict_spenders(anchor));
+
 			if !wallet.has_trusted_balance(self.config.min_cpfp_amount) {
+				if let Some(replaced) = replaced {
+					replaced.restore(&mut wallet);
+				}
 				slog!(NoMoreConfirmedFunds, wallet: wallet.kind().name().into(),
 					balance: wallet.balance().trusted,
 					address: wallet.next_unused_address(KEYCHAIN).address.into_unchecked(),
@@ -985,7 +1009,7 @@ impl Watchman {
 			}
 
 			if let Err(e) = self.process_progress_tx(
-				&mut wallet, progress_txid, &vtxo, fees,
+				&mut wallet, &progress_tx, &vtxo, fees, replaced,
 			).await {
 				slog!(ProgressCpfpFailure, vtxo_id: vtxo.id(), txid: progress_txid,
 					error: e.to_string(),
@@ -996,31 +1020,55 @@ impl Watchman {
 		Ok(())
 	}
 
-	/// Process a single progress transaction.
-	///
-	/// Fetches the signed progress tx from the database and creates a CPFP
-	/// transaction to pay its fees, then broadcasts them as a package.
-	async fn process_progress_tx(
-		&self,
-		wallet: &mut PersistedWallet,
-		txid: Txid,
-		vtxo: &ServerVtxo,
-		fees: MakeCpfpFees,
-	) -> anyhow::Result<()> {
-		// Get the progress transaction from the database
+	/// Fetch the signed progress tx from the database.
+	async fn get_progress_tx(&self, txid: Txid) -> anyhow::Result<Transaction> {
 		let vtx = self.db.read(async |t| t.get_virtual_transaction_by_txid(txid).await).await?
 			.context(txid)
 			.context("progress tx not found")?;
+		Ok(vtx.signed_tx.context("progress tx missing signature")?.into_owned())
+	}
 
-		let progress_tx = vtx.signed_tx.context("progress tx missing signature")?.into_owned();
+	/// Process a single progress transaction.
+	///
+	/// Creates a CPFP transaction to pay the fees of the progress tx, then
+	/// broadcasts them as a package. `replaced` are the CPFPs it replaces,
+	/// restored if the package doesn't make it into the mempool.
+	async fn process_progress_tx(
+		&self,
+		wallet: &mut PersistedWallet,
+		progress_tx: &Transaction,
+		vtxo: &ServerVtxo,
+		fees: MakeCpfpFees,
+		replaced: Option<EvictedTxs>,
+	) -> anyhow::Result<()> {
+		let txid = progress_tx.compute_txid();
 
-		// Create a CPFP transaction to pay fees for the progress tx
-		let cpfp_tx = wallet.make_signed_p2a_cpfp(&progress_tx, fees)
-			.with_context(|| format!("failed to create CPFP for vtx {}", txid))?;
+		let broadcast = async {
+			// Create a CPFP transaction to pay fees for the progress tx
+			let cpfp_tx = wallet.make_signed_p2a_cpfp(progress_tx, fees)
+				.with_context(|| format!("failed to create CPFP for vtx {}", txid))?;
 
-		// Broadcast the progress tx and CPFP as a package
+			// Broadcast the progress tx and CPFP as a package
+			let res = bcd::submit_package(&self.bitcoind, &[progress_tx, &cpfp_tx]).await?;
+			ensure!(res.package_msg == "success",
+				"progress package rejected: {} ({:?})", res.package_msg, res.tx_results,
+			);
+			Ok(cpfp_tx)
+		};
+		let cpfp_tx = match broadcast.await {
+			Ok(tx) => tx,
+			Err(e) => {
+				if let Some(replaced) = replaced {
+					replaced.restore(wallet);
+				}
+				return Err(e);
+			},
+		};
 		let cpfp_txid = cpfp_tx.compute_txid();
-		bcd::submit_package(&self.bitcoind, &[progress_tx, cpfp_tx]).await?;
+
+		// Spend the fee input in our wallet, so the next CPFP picks another.
+		wallet.commit_tx(&cpfp_tx);
+		wallet.persist().await.context("failed to persist progress CPFP")?;
 
 		slog!(ProgressBroadcast, vtxo_id: vtxo.id(), txid, cpfp_txid);
 

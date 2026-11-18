@@ -41,7 +41,7 @@ use super::ClnGrpcClient;
 use super::super::payment_handler::PaymentAttemptHandler;
 
 
-/// How long an attempt may wait for xpay to answer. xpay always answers, so an
+/// How long past its `retry_for` an attempt may wait for xpay to answer. An
 /// attempt still `Requested` after this, with no record in CLN, never reached it.
 const XPAY_ANSWER_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -199,11 +199,11 @@ impl ClnXpayClient {
 	///
 	/// Only the record of the attempt's own xpay call counts: an earlier call
 	/// on the same payment hash says nothing about this one. If CLN has no
-	/// record of the call, the attempt is failed once xpay answered, or once it
-	/// waited [`XPAY_ANSWER_TIMEOUT`] for an answer. If CLN reports a
-	/// different status than the DB, the DB is updated (unless the DB status
-	/// is already final, which is logged as an error). Sends on
-	/// `payment_update_tx` when the status changes.
+	/// record of the call, the attempt is failed once xpay answered, or once
+	/// it waited [`XPAY_ANSWER_TIMEOUT`] past its `retry_for` for an answer.
+	/// If CLN reports a different status than the DB, the DB is updated
+	/// (unless the DB status is already final, which is logged as an error).
+	/// Sends on `payment_update_tx` when the status changes.
 	pub async fn sync_payment_attempt_status(
 		&self,
 		attempt: LightningPaymentAttempt,
@@ -259,7 +259,8 @@ impl ClnXpayClient {
 					self.payment_handler().fail_payment_attempt(&attempt, error).await?;
 				},
 				LightningPaymentStatus::Requested
-					if attempt.created_at + XPAY_ANSWER_TIMEOUT < Local::now() =>
+					if attempt.created_at + attempt.retry_for.unwrap_or_default()
+						+ XPAY_ANSWER_TIMEOUT < Local::now() =>
 				{
 					self.payment_handler().fail_payment_attempt(&attempt, error).await?;
 				},

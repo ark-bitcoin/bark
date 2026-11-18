@@ -433,6 +433,7 @@ impl TestContext {
 			nb_round_nonces: 8,
 			max_round_participation_outputs: 4,
 			round_forfeit_nonces_timeout: Duration::from_secs(30),
+			round_withheld_signatures_ban: BlockDelta::new(9),
 			required_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
 			min_trusted_confs: 1,
 			max_vtxo_amount: None,

@@ -1,0 +1,11 @@
+- Harden the server against expensive and probing requests
+  [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
+  - **BREAKING:** A round participation can have at most 1000 inputs.
+- Ban the inputs of a cosigner that withholds round signatures
+  Set the duration with `round_withheld_signatures_ban` (default 9 blocks).
+  [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
+- Apply `max_arkoor_amount` to lightning sends
+  [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
+  - **BREAKING:** `max_ln_send_amount` must not exceed `max_arkoor_amount`.
+- Fix lightning payment and watchman reliability issues
+  [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)

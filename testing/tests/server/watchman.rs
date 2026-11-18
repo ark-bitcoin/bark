@@ -917,49 +917,68 @@ async fn watchman_sweeps_exit_after_forfeit() {
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
 
-	// Board some funds with bark1
+	// Board some funds with bark1 and bark2
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(500_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(500_000)).create().await;
 	bark1.board_and_confirm_and_register(&ctx, sat(200_000)).await;
+	bark2.board_and_confirm_and_register(&ctx, sat(200_000)).await;
 
-	// fund the watchman
-	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(100_000)).await;
+	// Fund the watchman with two UTXOs, one for each forfeit's CPFP
+	let wm_addr = wm.wait_wallet_address().await;
+	ctx.bitcoind().fund_addr(&wm_addr, sat(100_000)).await;
+	ctx.bitcoind().fund_addr(&wm_addr, sat(100_000)).await;
 
-	// Clone bark1 before refresh — bark2 retains the stale board vtxo state
-	let bark1_old = bark1.full_clone("bark2").await;
+	// Clone both before refresh; the clones retain the stale board vtxo state
+	let bark1_old = bark1.full_clone("bark1_old").await;
+	let bark2_old = bark2.full_clone("bark2_old").await;
 
-	// bark1 refreshes its board vtxo into a round vtxo
-	ctx.refresh_all(&srv, &[&bark1]).await;
+	// Both refresh their board vtxo into a round vtxo
+	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark1.sync().await;
+	bark2.sync().await;
 
-	// bark2, holding the stale board vtxo, starts a malicious exit
+	// The clones, holding the stale board vtxos, start malicious exits
 	bark1_old.start_exit_all().await;
+	bark2_old.start_exit_all().await;
 
-	// Progress until the exit transaction is confirmed on-chain (AwaitingDelta state).
-	progress_exit_until_awaiting_delta(&ctx, &bark1_old).await;
+	// Progress until the exit transactions are confirmed on-chain (AwaitingDelta state).
+	tokio::join!(
+		progress_exit_until_awaiting_delta(&ctx, &bark1_old),
+		progress_exit_until_awaiting_delta(&ctx, &bark2_old),
+	);
 
 	// Advance past watchman's progress grace period
 	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period.to_u32()).await;
 	wm.wait_for_sync_height(tip).await;
 
-	// first sweep: the watchman broadcasts the forfeit (progress) transaction via CPFP.
+	// first sweep: the watchman broadcasts both forfeit (progress) txs via
+	// CPFP, each CPFP with its own fee input.
 	let mut log_progress = wm.subscribe_log::<ProgressBroadcast>();
 	wm.trigger_sweep().await;
-	let progress_log = log_progress.recv().wait_millis(10_000).await
+	let progress1 = log_progress.recv().wait_millis(10_000).await
 		.expect("watchman should broadcast progress (forfeit) tx");
+	let progress2 = log_progress.recv().wait_millis(10_000).await
+		.expect("watchman should broadcast the second progress (forfeit) tx");
+	assert_ne!(progress1.txid, progress2.txid);
 
-	// Confirm the forfeit tx so the resulting HarkForfeit vtxo enters the frontier.
-	ctx.await_transactions_across_nodes([progress_log.cpfp_txid], [wm.bitcoind().as_ref()]).await;
+	// Confirm the forfeit txs so the resulting HarkForfeit vtxos enter the frontier.
+	ctx.await_transactions_across_nodes(
+		[progress1.cpfp_txid, progress2.cpfp_txid], [wm.bitcoind().as_ref()],
+	).await;
 	let tip = ctx.generate_blocks(1).await;
 	wm.wait_for_sync_height(tip).await;
 
-	// third sweep: the watchman claims the HarkForfeit vtxo.
+	// third sweep: the watchman claims the HarkForfeit vtxos.
 	wm.trigger_sweep().await;
 	let msg = log_claim.recv().wait_millis(15_000).await.expect("no claim log");
 	failures.assert_empty();
 	println!("malicious exit sweep: {:#?}", msg);
-	assert_eq!(1, msg.vtxo_ids.len());
-	assert_eq!(msg.vtxo_ids[0].to_point().txid, progress_log.txid);
+	let mut claimed = msg.vtxo_ids.iter().map(|v| v.to_point().txid).collect::<Vec<_>>();
+	claimed.sort();
+	let mut forfeits = vec![progress1.txid, progress2.txid];
+	forfeits.sort();
+	assert_eq!(forfeits, claimed);
 }
 
 /// Cross-domain hash reuse: the same 32-byte secret exists in two tables at once.

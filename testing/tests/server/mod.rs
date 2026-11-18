@@ -55,7 +55,7 @@ use ark_testing::{btc, is_bark_version, require_bark_version, sat, secs, Captain
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::{FutureExt, ToAltString};
+use ark_testing::util::{wait_timeout, FutureExt, ToAltString};
 
 use ark_testing::exit::complete_exit;
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
@@ -1063,6 +1063,7 @@ async fn full_round() {
 	futures::future::join_all(barks.iter().map(|bark| bark.set_ark_url(&proxy))).await;
 
 	let mut log_full = srv.subscribe_log::<FullRound>();
+	let mut log_started = srv.subscribe_log::<RoundStarted>();
 	let subs = subscriptions.clone();
 	tokio::spawn(async move {
 		futures::future::join_all(barks.iter().map(|bark| async {
@@ -1087,6 +1088,11 @@ async fn full_round() {
 	// then we wait for the error to happen
 	let err = rx.recv().wait_millis(30_000).await.unwrap().to_alt_string();
 	assert!(err.contains("Message arrived late or round was full"), "err: {err}");
+
+	// the bark that didn't fit doesn't have to wait for the round interval
+	log_started.recv().wait(wait_timeout()).await.expect("the full round started");
+	log_started.recv().wait(wait_timeout()).await
+		.expect("the next round starts right after a full one");
 }
 
 /// Oversized cosign packages are refused before the server reads any input.
@@ -1547,6 +1553,30 @@ async fn bad_round_input() {
 	assert!(err.message().contains("invalid request: no outputs"),
 		"[{}]: {}", err.code(), err.message(),
 	);
+
+	info!("too many inputs");
+	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
+		input_vtxos: vec![input.clone(); server_rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS + 1],
+		vtxo_requests: vec![],
+		#[allow(deprecated)]
+		offboard_requests: vec![],
+		unblinded_mailbox_id: None,
+	}).ready().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+	assert!(err.message().contains("too many inputs"), "[{}]: {}", err.code(), err.message());
+
+	info!("too many delegated inputs");
+	let err = rpc.submit_round_participation(protos::RoundParticipationRequest {
+		input_vtxos: vec![input.clone(); server_rpc::MAX_NB_ROUND_PARTICIPATION_INPUTS + 1],
+		vtxo_requests: vec![protos::VtxoRequest {
+			amount: vtxo_req.vtxo.amount.to_sat(),
+			policy: vtxo_req.vtxo.policy.serialize(),
+		}],
+		unblinded_mailbox_id: None,
+		scheduled_height: None,
+	}).ready().await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
+	assert!(err.message().contains("too many inputs"), "[{}]: {}", err.code(), err.message());
 
 	info!("unknown input");
 	let fake_vtxo = VtxoId::from_slice(&rand::random::<[u8; 36]>()[..]).unwrap();

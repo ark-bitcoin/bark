@@ -33,6 +33,32 @@ pub(crate) struct ArkoorCosignRequestValidationParams {
 	pub max_input_exit_depth: Option<u16>,
 }
 
+/// Check one input of a cosign request against the configured limits.
+fn check_input_limits(
+	params: &ArkoorCosignRequestValidationParams,
+	idx: usize,
+	input: &Vtxo<Full>,
+	nb_outputs: usize,
+) -> anyhow::Result<()> {
+	if let Some(max_exit_depth) = params.max_input_exit_depth {
+		let depth = input.exit_depth();
+		if depth >= max_exit_depth {
+			bail!(
+				"input VTXO {} (#{}) exit depth {} meets or exceeds the maximum of {}; \
+				 refresh the VTXO in a round before making further OOR payments",
+				input.id(), idx, depth, max_exit_depth,
+			);
+		}
+	}
+
+	if nb_outputs > params.max_outputs_per_input {
+		bail!("too many outputs for input {} (#{}) ({} > {})",
+			input.id(), idx, nb_outputs, params.max_outputs_per_input,
+		);
+	}
+	Ok(())
+}
+
 impl Server {
 	/// Validate the cosign request for the given validation params
 	///
@@ -42,9 +68,11 @@ impl Server {
 		params: ArkoorCosignRequestValidationParams,
 		cosign_req: ArkoorPackageCosignRequest<Vtxo<Full>>,
 	) -> anyhow::Result<ArkoorPackageBuilder<ServerCanCosign>> {
-		let ret = self.build_cosign_request(params.use_checkpoints, cosign_req)?;
-		self.check_cosign_request_limits(&params, &ret)?;
-		Ok(ret)
+		// Before the builder, which builds a tx for every output.
+		for (idx, req) in cosign_req.requests.iter().enumerate() {
+			check_input_limits(&params, idx, &req.input, req.all_outputs().count())?;
+		}
+		self.build_cosign_request(params.use_checkpoints, cosign_req)
 	}
 
 	/// Create the arkoor builder for the cosign request, without applying
@@ -88,25 +116,8 @@ impl Server {
 		builder: &ArkoorPackageBuilder<ServerCanCosign>,
 	) -> anyhow::Result<()> {
 		for (idx, b) in builder.builders.iter().enumerate() {
-			if let Some(max_exit_depth) = params.max_input_exit_depth {
-				let depth = b.input().exit_depth();
-				if depth >= max_exit_depth {
-					bail!(
-						"input VTXO {} (#{}) exit depth {} meets or exceeds the maximum of {}; \
-						 refresh the VTXO in a round before making further OOR payments",
-						b.input().id(), idx, depth, max_exit_depth,
-					);
-				}
-			}
-
-			let nb_outputs = b.all_outputs().count();
-			if nb_outputs > params.max_outputs_per_input {
-				bail!("too many outputs for input {} (#{}) ({} > {})",
-					b.input().id(), idx, nb_outputs, params.max_outputs_per_input,
-				);
-			}
+			check_input_limits(params, idx, b.input(), b.all_outputs().count())?;
 		}
-
 		Ok(())
 	}
 

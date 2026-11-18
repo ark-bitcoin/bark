@@ -506,7 +506,10 @@ use ark::rounds::{RoundAttempt, RoundEvent};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef, VTXO_DUST};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
-use server_rpc::{protos, ServerConnection, MAX_NB_REGISTER_VTXOS, MAX_NB_VTXO_IDS};
+use server_rpc::{
+	protos, ServerConnection, MAX_NB_REGISTER_VTXOS, MAX_NB_ROUND_PARTICIPATION_INPUTS,
+	MAX_NB_VTXO_IDS,
+};
 use server_rpc::protos::VtxoSpendState;
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
@@ -2371,6 +2374,10 @@ impl Wallet {
 		Ok(!my_clause.is_some())
 	}
 
+	/// Builds a participation that refreshes `vtxos` into a single new VTXO.
+	///
+	/// With more than [MAX_NB_ROUND_PARTICIPATION_INPUTS] VTXOs, only those
+	/// that expire first are included. Returns [None] if `vtxos` is empty.
 	pub async fn build_refresh_participation<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
@@ -2378,6 +2385,8 @@ impl Wallet {
 		self.inner_build_refresh_participation(vtxos, None).await
 	}
 
+	/// Same as [Wallet::build_refresh_participation], with the refresh fee
+	/// calculated at `height`.
 	pub async fn build_scheduled_refresh_participation<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
@@ -2386,16 +2395,16 @@ impl Wallet {
 		self.inner_build_refresh_participation(vtxos, Some(height)).await
 	}
 
+	/// Shared by the refresh builders; `height` defaults to the chain tip.
 	async fn inner_build_refresh_participation<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 		height: Option<BlockHeight>,
 	) -> anyhow::Result<Option<RoundParticipation>> {
-		let (vtxos, total_amount) = {
+		let mut vtxos = {
 			let iter = vtxos.into_iter();
 			let size_hint = iter.size_hint();
 			let mut vtxos = Vec::<Vtxo<Full>>::with_capacity(size_hint.1.unwrap_or(size_hint.0));
-			let mut amount = Amount::ZERO;
 			for vref in iter {
 				// We use a Vec here instead of a HashMap or a HashSet of IDs because for the kinds
 				// of elements we expect to deal with, a Vec is likely to be quicker. The overhead
@@ -2413,11 +2422,21 @@ impl Wallet {
 					self.inner.db.get_full_vtxo(id).await?
 						.with_context(|| format!("vtxo with id {} not found", id))?
 				};
-				amount += vtxo.amount();
 				vtxos.push(vtxo);
 			}
-			(vtxos, amount)
+			vtxos
 		};
+
+		// The server refuses more inputs, so refresh the ones expiring first
+		// and leave the rest for a later round.
+		if vtxos.len() > MAX_NB_ROUND_PARTICIPATION_INPUTS {
+			warn!("Refreshing only the {} of {} VTXOs that expire first",
+				MAX_NB_ROUND_PARTICIPATION_INPUTS, vtxos.len(),
+			);
+			vtxos.sort_by_key(|v| v.expiry_height());
+			vtxos.truncate(MAX_NB_ROUND_PARTICIPATION_INPUTS);
+		}
+		let total_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		if vtxos.is_empty() {
 			info!("Skipping refresh since no VTXOs are provided.");

@@ -155,15 +155,17 @@ impl Server {
 
 		let unlock_hash = unlock_hash.badarg("zero forfeit bundles provided")?;
 
-		// nonces are only handed out against the participation, so without
-		// them nothing below may tell the caller anything about it
+		// The nonces may have been requested by the owner on another
+		// connection, so only a valid signature authenticates the caller.
+		// Until every bundle verified, fail the same way whatever the nonce
+		// or the participation state is, so nothing tells the caller which
+		// unlock hash belongs to these vtxos.
+		let unverified = |id: VtxoId| badarg_err!("forfeit validation failed for vtxo {}", id);
 		{
 			let nonces = self.forfeit_nonces.lock();
 			for id in &vtxo_ids {
-				let generated = nonces.get(id).and_then(|n| n.as_ref())
-					.is_some_and(|n| n.unlock_hash == unlock_hash);
-				if !generated {
-					return badarg!("no forfeit nonces generated for vtxo {}", id);
+				if nonces.get(id).and_then(|n| n.as_ref()).is_none() {
+					return Err(unverified(*id));
 				}
 			}
 		}
@@ -171,10 +173,36 @@ impl Server {
 		// fetch all input vtxos and round participation in a single transaction
 		let (vtxos, part) = self.db.read(async |t| {
 			let vtxos = t.get_user_vtxos_by_id(&vtxo_ids).await?;
-			let part = t.get_round_participation_by_unlock_hash(unlock_hash).await?
-				.badarg("unknown unlock hash")?;
+			let part = t.get_round_participation_by_unlock_hash(unlock_hash).await?;
 			Ok((vtxos, part))
 		}).await?;
+
+		// Verify every bundle, so we only report nonce hash errors to the
+		// owner of the participation.
+		let mut pub_nonces = Vec::with_capacity(forfeits.len());
+		let mut nonce_hashes = Vec::with_capacity(forfeits.len());
+		for (vtxo_ff, vtxo) in forfeits.iter().zip(&vtxos) {
+			let (pub_nonce, nonce_hash) = self.forfeit_nonces.lock().get(&vtxo_ff.vtxo_id)
+				.and_then(|n| n.as_ref())
+				.map(|n| (n.public_nonce(), n.unlock_hash))
+				.ok_or_else(|| unverified(vtxo_ff.vtxo_id))?;
+			if vtxo_ff.verify(&vtxo.vtxo, &pub_nonce).is_err() {
+				return Err(unverified(vtxo_ff.vtxo_id));
+			}
+			pub_nonces.push(pub_nonce);
+			nonce_hashes.push(nonce_hash);
+		}
+
+		// The caller is the owner now.
+		for (vtxo_ff, nonce_hash) in forfeits.iter().zip(nonce_hashes) {
+			if nonce_hash != unlock_hash {
+				return badarg!("forfeit nonces for vtxo {} were generated for unlock hash {} \
+					instead of {}", vtxo_ff.vtxo_id, nonce_hash, unlock_hash,
+				);
+			}
+		}
+
+		let part = part.badarg("unknown unlock hash")?;
 
 		// if this participation was already forfeited, skip the expensive work
 		// and return the preimage directly
@@ -203,33 +231,6 @@ impl Server {
 			}
 		}
 
-		// then do the expensive verification and create final sigs
-		let mut ff_txs = Vec::with_capacity(forfeits.len());
-		let mut ff_txids = Vec::with_capacity(forfeits.len());
-		let mut ff_vtxos = Vec::with_capacity(forfeits.len());
-		let mut input_forfeit_pairs = Vec::with_capacity(forfeits.len());
-		// Verify every bundle before consuming any nonce, so an invalid bundle,
-		// which anyone knowing the participation can send, uses up none of them.
-		let mut pub_nonces = Vec::with_capacity(forfeits.len());
-		for (vtxo_ff, vtxo) in forfeits.iter().zip(&vtxos) {
-			let pub_nonce = {
-				let nonces = self.forfeit_nonces.lock();
-				let nonces = nonces.get(&vtxo_ff.vtxo_id).and_then(|n| n.as_ref()).with_badarg(||
-					format!("no forfeit nonces generated for vtxo {}", vtxo_ff.vtxo_id),
-				)?;
-				if nonces.unlock_hash != unlock_hash {
-					return badarg!("forfeit nonces were generated for unlock hash {} instead of {}",
-						nonces.unlock_hash, unlock_hash,
-					);
-				}
-				nonces.public_nonce()
-			};
-			if let Err(e) = vtxo_ff.verify(&vtxo.vtxo, &pub_nonce) {
-				return badarg!("forfeit validation failed for vtxo {}: {}", vtxo_ff.vtxo_id, e);
-			}
-			pub_nonces.push(pub_nonce);
-		}
-
 		// Then consume them all at once, unless a concurrent request did first.
 		let sec_nonces = {
 			let mut nonces = self.forfeit_nonces.lock();
@@ -247,6 +248,11 @@ impl Server {
 				.collect::<Vec<_>>()
 		};
 
+		// then create the final sigs
+		let mut ff_txs = Vec::with_capacity(forfeits.len());
+		let mut ff_txids = Vec::with_capacity(forfeits.len());
+		let mut ff_vtxos = Vec::with_capacity(forfeits.len());
+		let mut input_forfeit_pairs = Vec::with_capacity(forfeits.len());
 		for (((vtxo_ff, vtxo), pub_nonce), sec_nonce) in forfeits.iter().zip(&vtxos)
 			.zip(pub_nonces).zip(sec_nonces)
 		{

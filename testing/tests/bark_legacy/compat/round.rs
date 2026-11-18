@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bitcoin::Amount;
+use bitcoin_ext::BlockHeight;
 use futures::future::join_all;
 use log::{debug, info, trace};
 use tokio_stream::StreamExt;
@@ -16,13 +17,16 @@ use bark::round::{RoundFlowKind, RoundParticipation};
 use bark::subsystem::RoundMovement;
 use bark::vtxo::{VtxoLockHolder, VtxoState};
 use server::database::Db;
-use server_log::{AttemptingRound, NoRoundPayments, RestartMissingVtxoSigs, RoundFinished, RoundUserVtxoNotAllowed};
+use server_log::{
+	AttemptingRound, NeedNewRound, NoRoundPayments, RestartMissingVtxoSigs, RoundFinished, RoundStarted,
+	RoundUserVtxoNotAllowed,
+};
 use server_rpc::protos;
 
 use ark_testing::{TestContext, btc, is_bark_version, require_bark_version, sat, secs, signed_sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::FutureExt;
+use ark_testing::util::{wait_timeout, FutureExt};
 
 #[tokio::test]
 async fn large_round() {
@@ -192,6 +196,57 @@ async fn second_round_attempt() {
 	res1.expect("bark1 should have refreshed successfully");
 	// check that bark2 was kicked with the correct log message
 	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
+
+	// and that its vtxo can't stall the next round either
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	let vtxo = db.read(async |t| t.get_user_vtxos_by_id(&[bark2_vtxo]).await).await.unwrap()
+		.pop().unwrap();
+	let tip = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32);
+	vtxo.check_not_banned(tip).expect_err("a vtxo that withheld its signatures must be banned");
+}
+
+/// A round abandoned because nobody signed is followed by a new round right
+/// away instead of after the round interval.
+#[tokio::test]
+async fn abandoned_round_starts_a_new_one() {
+	require_bark_version!(> "0.5.0");
+
+	#[derive(Clone)]
+	struct DropSignatures;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for DropSignatures {
+		async fn provide_vtxo_signatures(
+			&self, _upstream: &mut ArkClient, _req: protos::VtxoSignaturesRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			Ok(protos::Empty {})
+		}
+	}
+
+	let ctx = TestContext::new("bark/abandoned_round_starts_a_new_one").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).create().await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	let bark = ctx.bark("bark".to_string(), &srv).funded(sat(1_000_000)).create().await;
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+	let proxy = srv.start_proxy_no_mailbox(DropSignatures).await;
+	bark.set_ark_url(&proxy.address).await;
+
+	let mut log_need_new_round = srv.subscribe_log::<NeedNewRound>();
+	let mut log_round_started = srv.subscribe_log::<RoundStarted>();
+	let (res, ()) = tokio::join!(
+		bark.try_refresh_all_no_retry(),
+		srv.trigger_round(),
+	);
+	res.expect_err("the round can't finish without the signatures");
+	log_need_new_round.recv().wait(wait_timeout()).await.unwrap();
+
+	// the triggered round, then the one replacing it
+	log_round_started.recv().wait(wait_timeout()).await.unwrap();
+	log_round_started.recv().wait(wait_timeout()).await
+		.expect("a new round must start without waiting for the round interval");
 }
 
 #[tokio::test]
@@ -592,6 +647,32 @@ async fn delegated_refresh_dropped_when_input_spent_before_round() {
 	srv.trigger_round().await;
 	log_no_payments.recv().wait(secs(30)).await
 		.expect("round must sit out: the spent input's delegated participation should be dropped");
+}
+
+/// A banned input only delays a delegated refresh, its participation stays.
+#[tokio::test]
+async fn delegated_refresh_waits_out_a_ban() {
+	require_bark_version!(> "0.5.0");
+
+	let ctx = TestContext::new("bark/delegated_refresh_waits_out_a_ban").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+	let vtxo = bark.vtxo_ids().await[0];
+
+	bark.refresh_all_delegated_no_sync().await;
+	srv.ban_vtxo(vtxo, 100).await;
+
+	let mut log_no_payments = srv.subscribe_log::<NoRoundPayments>();
+	srv.trigger_round().await;
+	log_no_payments.recv().wait(wait_timeout()).await
+		.expect("the round sits out while the input is banned");
+
+	srv.unban_vtxo(vtxo).await;
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	log_round_finished.recv().wait(wait_timeout()).await
+		.expect("the participation is still there once the ban is lifted");
 }
 
 #[tokio::test]

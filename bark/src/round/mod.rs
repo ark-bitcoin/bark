@@ -35,7 +35,10 @@ use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
 use bitcoin_ext::{BlockDelta, BlockHeight, TxStatus};
-use server_rpc::{protos, ServerConnection, TryFromBytes, MAX_NB_FORFEIT_NONCE_IDS};
+use server_rpc::{
+	protos, ServerConnection, TryFromBytes, MAX_NB_FORFEIT_NONCE_IDS,
+	MAX_NB_ROUND_PARTICIPATION_INPUTS,
+};
 
 use crate::import::ImportVtxoArgs;
 use crate::movement::manager::OnDropStatus;
@@ -1042,6 +1045,15 @@ enum AttemptProgressResult {
 	NotUpdated,
 }
 
+/// The server refuses a participation with more inputs than this.
+fn check_nb_inputs(participation: &RoundParticipation) -> anyhow::Result<()> {
+	ensure!(participation.inputs.len() <= MAX_NB_ROUND_PARTICIPATION_INPUTS,
+		"a round participation can have at most {} input VTXOs, got {}",
+		MAX_NB_ROUND_PARTICIPATION_INPUTS, participation.inputs.len(),
+	);
+	Ok(())
+}
+
 /// Participate in the new round attempt by submitting our round participation
 async fn start_attempt(
 	wallet: &Wallet,
@@ -2041,6 +2053,7 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
+		check_nb_inputs(&participation)?;
 		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 
 		// The inputs are only locked at attempt start; here they must just
@@ -2091,6 +2104,7 @@ impl Wallet {
 		movement_kind: Option<RoundMovement>,
 		scheduled_height: Option<BlockHeight>,
 	) -> anyhow::Result<StoredRoundState<Unlocked>> {
+		check_nb_inputs(&participation)?;
 		// The inputs are only locked once an attempt starts, so like an
 		// interactive registration this one just needs them spendable.
 		// Pending participations over the same inputs stand: the server drops
