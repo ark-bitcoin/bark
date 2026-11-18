@@ -41,6 +41,8 @@ struct Inner {
 	workers: parking_lot::Mutex<HashMap<u64, String>>,
 	next_id: AtomicU64,
 	notify: Notify,
+	/// The first critical worker that stopped before shutdown was requested.
+	failed_worker: parking_lot::Mutex<Option<String>>,
 }
 
 /// Manager of thread coordination during runtime.
@@ -56,6 +58,7 @@ impl RuntimeManager {
 				shutdown: CancellationToken::new(),
 				workers: parking_lot::Mutex::new(HashMap::new()),
 				next_id: AtomicU64::new(0),
+				failed_worker: parking_lot::Mutex::new(None),
 				notify: Notify::new(),
 			}),
 		}
@@ -63,10 +66,12 @@ impl RuntimeManager {
 
 	/// Runs a thread that will watch for SIGTERM and ctrl-c signals.
 	///
-	/// Upon receipt, it will
+	/// Upon receipt, or once shutdown starts otherwise, like when a critical
+	/// worker stops, it will
 	/// - call the [RuntimeManager::shutdown] method.
 	/// - If [RuntimeManager::shutdown_complete] does not return true within
-	///   the `timeout` duration, it will exit the process forcibly.
+	///   the `timeout` duration, it will exit the process forcibly with
+	///   status 1.
 	pub fn run_shutdown_signal_listener(&self, timeout: Duration) {
 		let rt = self.clone();
 		tokio::spawn(async move {
@@ -79,6 +84,9 @@ impl RuntimeManager {
 					Ok(()) => info!("Ctrl+C received! Sending shutdown signal..."),
 					Err(e) => panic!("failed to listen to ctrl-c signal: {e:#}"),
 				},
+				// A worker can be busy without watching for shutdown, like a
+				// frontier reindex, so bound this shutdown too.
+				_ = rt.shutdown_signal() => info!("Shutdown started, waiting for workers..."),
 			}
 
 			let _ = rt.shutdown();
@@ -99,18 +107,35 @@ impl RuntimeManager {
 	}
 
 	fn drop_worker(&self, id: u64, name: &str, critical: bool) {
+		// Held from removing the worker until the failure is decided, so a
+		// concurrent shutdown can't complete in between.
+		let mut failed = self.inner.failed_worker.lock();
 		let removed = self.inner.workers.lock().remove(&id);
 		assert!(removed.is_some(), "worker {} ({}) was not registered", id, name);
-		self.inner.notify.notify_waiters();
+		let failed_now = critical && self.shutdown_for_failed_worker(&mut failed, name);
+		drop(failed);
 
 		telemetry::worker_dropped(name);
 
-		if critical && !self.inner.shutdown.is_cancelled() {
+		if failed_now {
 			slog!(CriticalWorkerStopped, name: name.into());
-			self.shutdown();
 		} else {
 			slog!(WorkerStopped, name: name.into());
 		}
+
+		// Only now, so a woken waiter also sees the shutdown started above.
+		self.inner.notify.notify_waiters();
+	}
+
+	/// Record `name` as the failed worker and start shutdown, unless shutdown
+	/// already started. Returns whether it did.
+	fn shutdown_for_failed_worker(&self, failed: &mut Option<String>, name: &str) -> bool {
+		if self.inner.shutdown.is_cancelled() {
+			return false;
+		}
+		*failed = Some(name.to_owned());
+		self.inner.shutdown.cancel();
+		true
 	}
 
 	fn inner_spawn(&self, name: impl AsRef<str>, critical: bool) -> WorkerGuard {
@@ -146,11 +171,22 @@ impl RuntimeManager {
 
 	/// Start system shutdown.
 	pub fn shutdown(&self) {
-		self.inner.shutdown.cancel();
+		{
+			// Serialized with a failing critical worker, which records its
+			// name only if it starts the shutdown.
+			let _failed = self.inner.failed_worker.lock();
+			self.inner.shutdown.cancel();
+		}
+		self.inner.notify.notify_waiters();
 	}
 
 	pub fn shutdown_complete(&self) -> bool {
 		self.shutdown_requested() && self.worker_count() == 0
+	}
+
+	/// The critical worker whose unexpected stop shut the system down, if any.
+	pub fn failed_worker(&self) -> Option<String> {
+		self.inner.failed_worker.lock().clone()
 	}
 
 	/// Whether [RuntimeManager::shutdown] has been called.
@@ -174,10 +210,13 @@ impl RuntimeManager {
 	/// Wait for shutdown to finish.
 	pub async fn wait(&self) {
 		loop {
+			// Register before checking, so a notification in between isn't lost.
+			let mut notified = std::pin::pin!(self.inner.notify.notified());
+			notified.as_mut().enable();
 			if self.shutdown_complete() {
 				return;
 			}
-			self.inner.notify.notified().await;
+			notified.await;
 		}
 	}
 
@@ -268,5 +307,47 @@ mod tests {
 		mgr.wait().await;
 		assert_eq!(mgr.worker_count(), 0);
 		assert!(mgr.shutdown_complete());
+		// The others stopped because of the shutdown.
+		assert_eq!(mgr.failed_worker().as_deref(), Some("critical-1"));
+	}
+
+	#[tokio::test]
+	async fn test_wait_returns_when_the_last_worker_is_a_failing_critical_one() {
+		let mgr = RuntimeManager::new();
+		let guard = mgr.spawn_critical("critical");
+		let waiting = tokio::spawn({
+			let mgr = mgr.clone();
+			async move { mgr.wait().await }
+		});
+		tokio::task::yield_now().await;
+		drop(guard);
+		tokio::time::timeout(std::time::Duration::from_secs(5), waiting).await
+			.expect("wait must return").unwrap();
+		assert_eq!(mgr.failed_worker().as_deref(), Some("critical"));
+	}
+
+	#[tokio::test]
+	async fn test_wait_returns_on_shutdown_without_workers() {
+		let mgr = RuntimeManager::new();
+		drop(mgr.spawn("worker"));
+		let waiting = tokio::spawn({
+			let mgr = mgr.clone();
+			async move { mgr.wait().await }
+		});
+		tokio::task::yield_now().await;
+		mgr.shutdown();
+		tokio::time::timeout(std::time::Duration::from_secs(5), waiting).await
+			.expect("wait must return").unwrap();
+		assert_eq!(mgr.failed_worker(), None);
+	}
+
+	#[test]
+	fn test_requested_shutdown_has_no_failed_worker() {
+		let mgr = RuntimeManager::new();
+		let guard = mgr.spawn_critical("critical");
+		mgr.shutdown();
+		drop(guard);
+		assert!(mgr.shutdown_complete());
+		assert_eq!(mgr.failed_worker(), None);
 	}
 }

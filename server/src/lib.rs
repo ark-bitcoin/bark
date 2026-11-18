@@ -605,9 +605,16 @@ impl Server {
 	/// Starts the server and waits until it terminates.
 	///
 	/// This is equivalent to calling [Server::start] and [Server::wait] in one go.
+	///
+	/// Returns an error if a critical worker stopped the server. `captaind start`
+	/// then exits with status 1, so a supervisor that restarts on failure, like
+	/// systemd's `Restart=on-failure`, restarts it.
 	pub async fn run(cfg: Config) -> anyhow::Result<()> {
 		let srv = Server::start(cfg).await?;
 		srv.wait().await;
+		if let Some(worker) = srv.rtmgr.failed_worker() {
+			bail!("critical worker {} stopped unexpectedly", worker);
+		}
 		Ok(())
 	}
 

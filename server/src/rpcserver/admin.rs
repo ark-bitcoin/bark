@@ -275,6 +275,8 @@ pub async fn run_watchmand_admin_rpc_server(
 	daemon: Arc<crate::watchman::Daemon>,
 	rtmgr: RuntimeManager,
 ) -> anyhow::Result<()> {
+	let _worker = rtmgr.spawn_critical("WatchmandAdminRpcServer");
+
 	info!("Starting watchmand admin gRPC service on address {}", addr);
 
 	let routes = tonic::service::Routes::default()
