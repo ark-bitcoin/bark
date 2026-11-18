@@ -799,7 +799,7 @@ impl Server {
 		check_max_amount("board", vtxo.amount(), self.config.max_board_amount)?;
 
 		// A retry of a registered board needs no bitcoind lookups.
-		if self.db.read(async |t| t.try_get_bare_vtxo_by_id(vtxo.id()).await).await?.is_some() {
+		if self.is_registered_board(&vtxo).await? {
 			return Ok(());
 		}
 
@@ -903,6 +903,33 @@ impl Server {
 		}
 
 		Ok(())
+	}
+
+	/// Whether `vtxo` is a registered board, encoded exactly as stored.
+	///
+	/// The id only commits to the vtxo's point, so the whole encoding is
+	/// compared. Not the chain's txs: building the chain of an unvalidated vtxo
+	/// can panic. Refuses a vtxo with a stored vtxo's id but another encoding.
+	async fn is_registered_board(&self, vtxo: &Vtxo<Full>) -> anyhow::Result<bool> {
+		let id = vtxo.id();
+		let stored = self.db.read(async |t| t.get_existing_vtxos_by_id(&[id]).await).await?
+			.remove(&id)
+			.and_then(|s| s.try_into_user_vtxo_state().ok());
+		let Some(stored) = stored else {
+			return Ok(false);
+		};
+		if stored.vtxo.serialize() != vtxo.serialize() {
+			return badarg!("vtxo {} is registered as another vtxo", id);
+		}
+
+		// A board's chain is its exit tx, bound to its funding output.
+		let mut txs = stored.vtxo.transactions();
+		let exit_txid = match (txs.next(), txs.next()) {
+			(Some(item), None) => item.tx.compute_txid(),
+			_ => return Ok(false),
+		};
+		let anchor = stored.vtxo.chain_anchor();
+		self.db.read(async |t| t.is_board_exit(anchor, exit_txid).await).await
 	}
 
 	/// Refuses a vtxo whose chain spends an exited user vtxo through a

@@ -190,6 +190,21 @@ async fn board_validates_requests_and_replays_retries() {
 		assert!(builder.verify_cosign_response(&retry));
 		let vtxo = builder.build_vtxo(&cosign, &key).unwrap();
 		let register = protos::BoardVtxoRequest { board_vtxo: vtxo.serialize() };
+
+		// Another board on the same utxo with another expiry, cosigned before the
+		// board is registered. It has the same id, as the exit tx doesn't commit
+		// to the expiry.
+		let other_builder = BoardBuilder::new(
+			key.public_key(), expiry + 1, info.server_pubkey, info.vtxo_exit_delta,
+		).unwrap()
+			.set_funding_details(sat(500_000), sat(600), utxo).unwrap()
+			.generate_user_nonces();
+		let other_req = cosign_request(
+			&key, other_builder.user_pub_nonce(), expiry + 1, sat(500_000), utxo, &funding_tx,
+		);
+		let other_cosign = rpc.request_board_cosign(other_req).await.unwrap().into_inner();
+		let other_vtxo = other_builder.build_vtxo(&other_cosign.try_into().unwrap(), &key).unwrap();
+		assert_eq!(other_vtxo.id(), vtxo.id());
 		let register_chain = protos::RegisterVtxoTransactionsRequest { vtxos: vec![vtxo.serialize()] };
 
 		// The server knows the vtxo only once its board is registered
@@ -223,6 +238,12 @@ async fn board_validates_requests_and_replays_retries() {
 		// A client that lost the first response registers again, a block later.
 		confirm(utxo.txid, 1).await;
 		rpc.register_board_vtxo(register).await.unwrap();
+
+		// The other board has the registered board's id, but it isn't that board
+		let err = rpc.register_board_vtxo(protos::BoardVtxoRequest { board_vtxo: other_vtxo.serialize() })
+			.await.unwrap_err();
+		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+		assert!(err.message().contains("is registered as another vtxo"), "{err}");
 
 		let status = rpc.get_vtxo_status(protos::GetVtxoStatusRequest {
 			vtxo_id: vtxo.id().to_bytes().to_vec(),

@@ -1028,6 +1028,20 @@ impl<'t> Tx<'t> {
 		Ok(Txid::from_str(row.get("exit_txid"))?)
 	}
 
+	/// Whether a board funding output is bound to `exit_txid`.
+	pub async fn is_board_exit(
+		&self,
+		funding_outpoint: OutPoint,
+		exit_txid: Txid,
+	) -> anyhow::Result<bool> {
+		let stmt = self.prepare_typed(
+			"SELECT exit_txid FROM board_exit WHERE funding_outpoint = $1 AND exit_txid = $2;",
+			&[Type::TEXT, Type::TEXT],
+		).await?;
+		let rows = self.query(&stmt, &[&funding_outpoint.to_string(), &exit_txid.to_string()]).await?;
+		Ok(!rows.is_empty())
+	}
+
 	/// Flip `wallet_commit` from FALSE to TRUE for the given offboard.
 	/// Returns whether this call actually did the transition (`true`) or
 	/// found the row already committed (`false`). Errors if the row is
