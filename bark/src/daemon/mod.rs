@@ -332,6 +332,11 @@ impl DaemonProcess {
 				if let Err(e) = wallet.sync_pending_rounds().await {
 					warn!("An error occured while syncing pending rounds: {e:#}");
 				}
+
+				// Runs last so the wallet state it scans is up to date.
+				if let Err(e) = wallet.sync_force_exited_vtxos().await {
+					warn!("An error occured while scanning for force-exited VTXOs: {e:#}");
+				}
 			} else {
 				info!("Wallet has been dropped. Shutting down sync processes...");
 				break;

@@ -6121,20 +6121,13 @@
           {
             "type": "object",
             "required": [
-              "child_txid",
               "block",
-              "origin",
               "type"
             ],
             "properties": {
               "block": {
-                "$ref": "#/components/schemas/BlockRef"
-              },
-              "child_txid": {
-                "type": "string"
-              },
-              "origin": {
-                "$ref": "#/components/schemas/ExitTxOrigin"
+                "$ref": "#/components/schemas/BlockRef",
+                "description": "The block that confirmed the exit transaction."
               },
               "type": {
                 "type": "string",

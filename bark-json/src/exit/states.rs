@@ -34,10 +34,8 @@ pub enum ExitTxStatus {
 		origin: ExitTxOrigin,
 	},
 	Confirmed {
-		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-		child_txid: Txid,
+		/// The block that confirmed the exit transaction.
 		block: BlockRef,
-		origin: ExitTxOrigin,
 	},
 }
 
@@ -62,8 +60,8 @@ impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
 			bark::exit::ExitTxStatus::AwaitingConfirmation { child_txid, origin } => {
 				ExitTxStatus::AwaitingConfirmation { child_txid, origin: origin.into() }
 			},
-			bark::exit::ExitTxStatus::Confirmed { child_txid, block, origin } => {
-				ExitTxStatus::Confirmed { child_txid, block: block.into(), origin: origin.into() }
+			bark::exit::ExitTxStatus::Confirmed { block } => {
+				ExitTxStatus::Confirmed { block: block.into() }
 			},
 		}
 	}

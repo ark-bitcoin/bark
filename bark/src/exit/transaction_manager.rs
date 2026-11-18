@@ -87,16 +87,11 @@ impl ExitTransactionManager {
 				exit: info,
 			}
 		};
+		// A stored child can be confirmed in a later block than the exit tx, so the exit tx
+		// only counts as confirmed once the next sync looks it up itself.
 		let (status, child_txid) = match package.child.as_ref() {
 			None => (TxStatus::NotFound, None),
-			Some(child) => {
-				if let Some(block) = child.origin.confirmed_in() {
-					(TxStatus::Confirmed(block), Some(child.info.txid))
-				}
-				else {
-					(TxStatus::Mempool, Some(child.info.txid))
-				}
-			}
+			Some(child) => (TxStatus::Mempool, Some(child.info.txid)),
 		};
 		let package = Arc::new(RwLock::new(package));
 		self.index.insert(txid, Arc::downgrade(&package));
@@ -243,11 +238,26 @@ impl ExitTransactionManager {
 						// transaction may exist in the mempool or in a confirmed block.
 						// We will skip this step once a transaction is deeply confirmed.
 						trace!("Attempting to update child status from network for exit tx {}", txid);
-						let status = self.update_package_from_network(
+						// A confirmed exit tx is settled whatever its child does: the child
+						// can still be unconfirmed, or missing when a block includes the exit
+						// tx directly. It needs no child any more, so never broadcast one.
+						let confirmed = matches!(status, TxStatus::Confirmed(_));
+						let child_status = self.update_package_from_network(
 							&package,
 							status.confirmed_height().unwrap_or(tip),
-							broadcast_local,
+							broadcast_local && !confirmed,
 						).await?;
+						let status = match (status, child_status) {
+							(TxStatus::Confirmed(_), _) => status,
+							// A confirmed child means the exit tx confirmed after the lookup
+							// above. The child can be in a later block, so only a lookup of
+							// the exit tx itself gives its block.
+							(_, TxStatus::Confirmed(_)) => match self.get_tx_status(txid).await? {
+								TxStatus::NotFound => TxStatus::Mempool,
+								status => status,
+							},
+							(_, child_status) => child_status,
+						};
 						self.status.insert(txid, status);
 					},
 				}
@@ -809,6 +819,23 @@ mod test {
 		let db = SqliteClient::open(path).unwrap();
 		let chain = Arc::new(ChainSource::offline_for_test(Network::Regtest));
 		(ExitTransactionManager::new(Arc::new(db), chain).unwrap(), conn)
+	}
+
+	#[tokio::test]
+	async fn a_confirmed_stored_child_does_not_confirm_the_exit_tx() {
+		let (mut mgr, _conn) = manager();
+		let tx = exit_tx(&[OutPoint::new(txid(1), 0)]);
+		let exit_txid = tx.compute_txid();
+		let child = exit_tx(&[OutPoint::new(exit_txid, 0)]);
+		let origin = ExitTxOrigin::Wallet { confirmed_in: Some(block(100)) };
+		mgr.persister.store_exit_child_tx(exit_txid, &child, origin).await.unwrap();
+
+		mgr.track_exit_tx(tx).await.unwrap();
+
+		// The child can be in a later block than the exit tx, so its block must not be cached as
+		// the confirmation of the exit tx.
+		assert_eq!(mgr.status[&exit_txid], TxStatus::Mempool);
+		assert_eq!(mgr.get_child_status(exit_txid).await.unwrap().unwrap().origin, origin);
 	}
 
 	#[tokio::test]

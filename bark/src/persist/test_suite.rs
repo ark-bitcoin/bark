@@ -1016,7 +1016,6 @@ pub async fn test_exit_processing_state_roundtrip(db: &impl BarkPersister) {
 	let vtxo_id = VtxoId::from_slice(&[0xddu8; 36]).unwrap();
 	let txid = |n: u8| bitcoin::Txid::from_slice(&[n; 32]).unwrap();
 	let child_a = txid(0xa1);
-	let child_b = txid(0xb1);
 	let block = BlockRef {
 		height: BlockHeight::new(12_345),
 		hash: bitcoin::BlockHash::from_slice(&[0xcc; 32]).unwrap(),
@@ -1042,11 +1041,7 @@ pub async fn test_exit_processing_state_roundtrip(db: &impl BarkPersister) {
 			},
 			ExitTx {
 				txid: txid(0x07),
-				status: ExitTxStatus::Confirmed {
-					child_txid: child_b,
-					block,
-					origin: ExitTxOrigin::Block { confirmed_in: block },
-				},
+				status: ExitTxStatus::Confirmed { block },
 			},
 		],
 	};

@@ -27,9 +27,9 @@ pub enum ExitTxStatus {
 		origin: ExitTxOrigin,
 	},
 	Confirmed {
-		child_txid: Txid,
+		/// The block that confirmed the exit tx. A CPFP child only helps to get here, so it is
+		/// no longer tracked.
 		block: BlockRef,
-		origin: ExitTxOrigin,
 	},
 }
 
@@ -37,7 +37,6 @@ impl ExitTxStatus {
 	pub fn child_txid(&self) -> Option<&Txid> {
 		match self {
 			ExitTxStatus::AwaitingConfirmation { child_txid, .. } => Some(child_txid),
-			ExitTxStatus::Confirmed { child_txid, .. } => Some(child_txid),
 			_ => None,
 		}
 	}

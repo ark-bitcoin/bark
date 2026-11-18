@@ -334,6 +334,7 @@ pub struct ExitTransactionStatus {
 #[derive(Clone, Copy, Debug,  Eq, PartialEq)]
 pub struct ExitChildStatus {
 	pub txid: Txid,
+	/// The confirmation of the exit tx once it has one, the status of the child before that.
 	pub status: TxStatus,
 	pub origin: ExitTxOrigin,
 	pub fee_info: Option<FeeInfo>,
