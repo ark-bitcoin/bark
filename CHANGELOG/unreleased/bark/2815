@@ -1,0 +1,21 @@
+- Detect force-exited VTXOs while the daemon runs
+  The daemon only scanned for VTXOs that another party exited on-chain when it
+  started. A VTXO that was force-exited later stayed `Spendable` until a
+  restart or a manual sync, although the Ark server rejects it. The daemon now
+  scans on each sync pass and registers such VTXOs for emergency exit.
+  [#2815](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2815)
+- Recognize exit transactions that confirm before or without a CPFP child
+  Bark treated an exit transaction as confirmed only when a CPFP child that
+  spends its fee anchor confirmed. An exit transaction that a block includes
+  without a child stayed in `AwaitingCpfpBroadcast` and still asked for a CPFP
+  child. An exit transaction that confirms before its child stayed in
+  `AwaitingConfirmation`. Bark now uses the confirmation of the exit
+  transaction itself, so the emergency exit continues in both cases.
+  [#2815](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2815)
+  - **BREAKING:** `ExitTxStatus::Confirmed` no longer has the `child_txid` and
+    `origin` fields. Its `block` is the block that confirmed the exit
+    transaction. The barkd REST API drops both fields too.
+  - Bark no longer broadcasts a CPFP child for an exit transaction that is
+    confirmed.
+  - An exit that waits for its timelock now follows the exit transaction when
+    a reorg confirms it in another block.
