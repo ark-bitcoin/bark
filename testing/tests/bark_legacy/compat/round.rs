@@ -744,7 +744,7 @@ async fn stepwise_round() {
 				break;
 			} else {
 				if let RoundEvent::Finished(_) = event {
-					let status = ours.state_mut().sync(&bark).await.unwrap();
+					let status = ours.sync(&bark).await.unwrap();
 					panic!("Our round state says ongoing participation but we just got round \
 						finished event. status: {:?}", status,
 					);
@@ -774,7 +774,7 @@ async fn stepwise_round() {
 		let states = print_pending_rounds(&bark).await;
 		if let Some(ours) = states.into_iter().find(|s| s.id() == state_id) {
 			let mut ours = bark.lock_wait_round_state(ours.id()).await.unwrap().unwrap();
-			debug!("Result: {:#?}", ours.state_mut().sync(&bark).await);
+			debug!("Result: {:#?}", ours.sync(&bark).await);
 		} else {
 			info!("Our state is gone!");
 			break;
