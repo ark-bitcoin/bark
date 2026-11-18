@@ -279,13 +279,27 @@ impl ExitStateProgress for ExitAwaitingDeltaState {
 		let tip = ctx.tip_height().await?;
 
 		// Ensure the exit transaction hasn't disappeared from the mempool due to a reorg
-		if !ctx.check_confirmed(ctx.vtxo.point().txid).await {
+		let status = ctx.tx_manager.tx_status(ctx.vtxo.point().txid).await;
+		let Ok(TxStatus::Confirmed(block)) = status else {
 			error!("Exit for VTXO ({}) is no longer confirmed, verifying all transactions...",
 				ctx.vtxo.id(),
 			);
 			return Ok(ExitState::new_processing(
 				tip, ctx.exit_txids.iter().cloned(),
 			));
+		};
+
+		// The wait counts from the block that confirms the exit transaction, so it must follow
+		// that block when a reorg moves it.
+		if block != self.confirmed_block {
+			warn!("Exit for VTXO ({}) was confirmed in block {} but it is now confirmed in \
+				block {}, restarting the wait", ctx.vtxo.id(), self.confirmed_block.hash, block.hash,
+			);
+			let wait_delta = self.claimable_height.checked_sub(self.confirmed_block.height);
+			return Ok(match wait_delta {
+				Some(wait_delta) => ExitState::new_awaiting_delta(tip, block, wait_delta),
+				None => ExitState::new_processing(tip, ctx.exit_txids.iter().cloned()),
+			});
 		}
 
 		// Inform the user of any progress
