@@ -299,7 +299,11 @@ impl Wallet {
 		}
 	}
 
-	/// Sync with the mailbox on the Ark server and look for out-of-round received VTXOs.
+	/// Sync with the mailbox on the Ark server and process new messages: received arkoor VTXOs,
+	/// round results, and Lightning payment updates.
+	///
+	/// If a message cannot be processed yet, the sync stops at that message and returns `Ok`.
+	/// The next sync retries it from the same checkpoint.
 	pub async fn sync_mailbox(&self) -> anyhow::Result<()> {
 		let (mut srv, _) = self.require_server().await?;
 
@@ -743,8 +747,8 @@ impl Wallet {
 	}
 
 	/// Return the stored mailbox checkpoint — the tip position the wallet
-	/// has consumed up to. After a successful [`Self::sync_mailbox`], this value
-	/// reflects the server's latest advertised tip.
+	/// has consumed up to. [`Self::sync_mailbox`] can stop before the server's
+	/// latest tip, so this value can be lower than that tip after a sync.
 	pub async fn get_mailbox_checkpoint(&self) -> anyhow::Result<u64> {
 		Ok(self.inner.db.get_mailbox_checkpoint().await?)
 	}

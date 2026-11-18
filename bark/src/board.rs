@@ -294,7 +294,10 @@ impl Wallet {
 		Ok(vtxos)
 	}
 
-	/// Drives every in-progress board forward by one step or to its next park.
+	/// Drives every in-progress board until it parks, a step fails, or it finishes.
+	///
+	/// An error on one board is logged and does not stop the others.
+	/// It skips any board that another caller is already driving.
 	///
 	/// Each board is a [`Board`] wallet action that broadcasts the funding tx,
 	/// waits for [ark::ArkInfo::required_board_confirmations], registers with the

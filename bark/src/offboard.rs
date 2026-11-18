@@ -32,9 +32,10 @@ impl Wallet {
 		Ok(result)
 	}
 
-	/// Drives every pending offboard forward by one step (or to completion
-	/// if it's ready). Each action runs to its next park independently;
-	/// errors on one don't stop the others.
+	/// Drives every pending offboard until it parks, a step fails, or it finishes.
+	///
+	/// An error on one offboard is logged and does not stop the others.
+	/// It skips any offboard that another caller is already driving.
 	pub async fn sync_pending_offboards(&self) -> anyhow::Result<()> {
 		let pending = self.pending_offboards().await?;
 		if pending.is_empty() {

@@ -969,16 +969,24 @@ struct WalletInner {
 ///     - [Wallet::vtxos],
 ///     - [Wallet::vtxos_with],
 ///     - [Wallet::refresh_vtxos]
-///   - syncing with the Ark server, unilateral exits and performing general maintenance
-///     - [Wallet::maintenance]: Syncs everything offchain-related and refreshes VTXOs where
+///   - syncing with the Ark server, emergency exits and performing general maintenance
+///     - [Wallet::maintenance]: Syncs everything off-chain and refreshes VTXOs where
 ///       necessary,
+///     - [Wallet::maintenance_delegated]: Like [Wallet::maintenance], but schedules a
+///       delegated refresh, does not wait for the round, and does not cancel pending rounds,
 ///     - [Wallet::maintenance_refresh]: Refreshes VTXOs where necessary without syncing anything,
-///     - [Wallet::sync]: Syncs network fee-rates, ark rounds and arkoor payments,
-///     - [Wallet::sync_exits]: Updates the status of unilateral exits,
-///     - [Wallet::sync_pending_lightning_send_vtxos]: Updates the status of pending lightning payments,
-///     - [Wallet::try_claim_all_lightning_receives]: Wait for payment receipt of all open invoices, then claim them,
-///     - [Wallet::sync_pending_boards]: Registers boards which are available for use
-///       in offchain payments
+///     - [Wallet::sync]: Syncs feerates, the mailbox, rounds, boards, offboards, arkoor sends,
+///       Lightning sends and receives, force-exited VTXOs, and a recovery from seed in progress,
+///     - [Wallet::sync_onchain]: Syncs the on-chain wallet,
+///     - [Wallet::sync_exits]: Updates the status of emergency exits and advances each exit as
+///       far as possible,
+///     - [Wallet::sync_pending_lightning_send_vtxos]: Drives pending Lightning payments,
+///     - [Wallet::try_claim_all_lightning_receives]: Claims pending Lightning receives, and
+///       waits for payment when `wait` is true,
+///     - [Wallet::sync_pending_boards]: Drives pending boards: broadcasts them when it can, waits
+///       for confirmations, and registers them with the Ark server for use in off-chain
+///       payments. A board funded from an unfinalized PSBT waits for another party to
+///       broadcast its funding transaction
 ///
 /// Key capabilities
 /// - Address management:
@@ -1985,12 +1993,13 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Performs maintenance tasks and schedules delegated refresh when needed. This risks spending
-	/// users' funds because refreshing may cost fees and any pending exits will be progressed.
+	/// Performs maintenance tasks and schedules a delegated refresh when needed. This can
+	/// spend bitcoin because a refresh may cost fees.
 	///
-	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
-	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
-	/// refreshing VTXOs if necessary.
+	/// This syncs the wallet with [Wallet::sync], makes progress on pending rounds, and
+	/// schedules a delegated refresh of the VTXOs that need one. It does not wait for the
+	/// refresh round to finish. It does not sync the on-chain wallet or create CPFP
+	/// transactions for emergency exits.
 	pub async fn maintenance_delegated(&self) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance in delegated mode");
 		self.sync().await;
@@ -2218,11 +2227,11 @@ impl Wallet {
 		);
 	}
 
-	/// Sync the transaction status of unilateral exits
+	/// Sync the status of emergency exits
 	///
-	/// This will not progress the unilateral exits in any way, it will merely check the
-	/// transaction status of each transaction as well as check whether any exits have become
-	/// claimable or have been claimed.
+	/// This checks the transaction status of each exit, advances each exit as far as possible,
+	/// and rebroadcasts an exit package whose CPFP left the mempool. It does not create or
+	/// fee-bump CPFP transactions. Use [Wallet::progress_exits] for that.
 	pub async fn sync_exits(&self) -> anyhow::Result<()> {
 		self.exit_mgr().sync(&self).await?;
 		Ok(())
