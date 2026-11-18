@@ -1,6 +1,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::time::{Duration, Instant};
 
 use bitcoin::{Amount, Transaction, Txid};
 
@@ -12,6 +13,7 @@ use ark_testing::{btc, require_bark_version, sat, TestContext};
 use bark_rest_client::apis::exits_api;
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::barkd::Barkd;
+use ark_testing::util::poll_interval;
 use bark_json::exit::ExitState;
 use bark_json::exit::presign::{
 	PresignedExitPackage, PresignedExitStatus, PresignedExits, PresignedWave,
@@ -266,6 +268,43 @@ async fn exit_auto_progress_disconnected_barkd() {
 
 	// Let the daemon auto-progress. No exit_progress() call — the daemon does it.
 	wait_for_exits_claimable(&ctx, &barkd).await;
+}
+
+/// Verify that the running daemon notices on its own when a spendable VTXO
+/// is exited on-chain by someone else, and routes it into the exit flow.
+#[tokio::test]
+async fn daemon_detects_force_exited_vtxo_barkd() {
+	require_bark_version!(> "0.8.1");
+
+	let ctx = TestContext::new("barkd/daemon_detects_force_exited_vtxo_barkd").await;
+
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let barkd = ctx.barkd("barkd1", &srv).boarded(sat(500_000)).create().await;
+
+	let vtxos = barkd.vtxos(None).await;
+	assert_eq!(vtxos.len(), 1, "{:?}", vtxos);
+	let vtxo_id = vtxos[0].id.to_string();
+
+	// Mining the exit chain ourselves stands in for a third party exiting the
+	// VTXO. The wallet is not involved, and the block needs no fees.
+	ctx.mine(&exit_chain(&barkd, &vtxo_id).await).await;
+
+	// No exit_start() or sync() call. The daemon has to detect it.
+	let timeout = Duration::from_secs(30);
+	let start = Instant::now();
+	while barkd.get_live_exit_status(None, None).await.is_empty() {
+		assert!(start.elapsed() < timeout,
+			"daemon did not detect the force-exited VTXO within {:?}", timeout,
+		);
+		tokio::time::sleep(poll_interval()).await;
+	}
+
+	// The chain confirmed without CPFP children, so the exit needs no on-chain bitcoin.
+	wait_for_exits_claimable(&ctx, &barkd).await;
+	let exits = barkd.get_live_exit_status(None, None).await;
+	assert_eq!(exits.len(), 1, "{:?}", exits);
+	assert_eq!(exits[0].vtxo_id.to_string(), vtxo_id);
+	assert!(barkd.vtxos(None).await.is_empty(), "the exited VTXO should not be spendable");
 }
 
 #[tokio::test]
