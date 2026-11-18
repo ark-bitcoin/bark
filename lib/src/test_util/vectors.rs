@@ -179,7 +179,7 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 		total_amount: Amount::from_sat(1000),
 		policy: VtxoPolicy::new_pubkey("0229b7de0ce4d573192d002a6f9fd1109e00f7bae52bf10780d6f6e73e12a8390f".parse().unwrap()),
 	};
-	let builder = ArkoorPackageBuilder::new_with_checkpoints(
+	let builder = ArkoorPackageBuilder::new(
 		[board_vtxo.clone()], vec![arkoor1_dest1, arkoor1_dest2],
 	).unwrap().generate_user_nonces(&[board_user_key]).unwrap();
 	let cosign = ArkoorPackageBuilder::from_cosign_request(
@@ -202,7 +202,7 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 		total_amount: Amount::from_sat(1000),
 		policy: VtxoPolicy::new_pubkey("037039dc4f4b16e78059d2d56eb98d181cb1bdff2675694d39d92c4a2ea08ced88".parse().unwrap()),
 	};
-	let builder = ArkoorPackageBuilder::new_with_checkpoints(
+	let builder = ArkoorPackageBuilder::new(
 		[arkoor_htlc_out_vtxo.clone()], vec![arkoor2_dest1, arkoor2_dest2],
 	).unwrap().generate_user_nonces(&[arkoor_htlc_out_user_key]).unwrap();
 	let cosign = ArkoorPackageBuilder::from_cosign_request(
@@ -368,7 +368,7 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 		total_amount: Amount::from_sat(10_000),
 		policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: arkoor3_user_key.public_key() }),
 	};
-	let builder = ArkoorPackageBuilder::new_with_checkpoints(
+	let builder = ArkoorPackageBuilder::new(
 		[round2_vtxo.clone()], vec![arkoor3_dest],
 	).unwrap().generate_user_nonces(&[round2_user_key]).unwrap();
 	let cosign = ArkoorPackageBuilder::from_cosign_request(

@@ -959,28 +959,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 }
 
 impl ArkoorBuilder<state::Initial> {
-	/// Create builder with checkpoint transaction
-	pub fn new_with_checkpoint(
-		input: Vtxo<Full>,
-		outputs: Vec<ArkoorDestination>,
-		isolated_outputs: Vec<ArkoorDestination>,
-	) -> Result<Self, ArkoorConstructionError> {
-		Self::new(input, outputs, isolated_outputs)
-	}
-
-	/// Create builder with checkpoint and automatic dust isolation
+	/// Create builder with automatic dust isolation
 	///
 	/// This constructor takes a single list of outputs and spreads them over
 	/// the normal and isolated lists. See the dust isolation section in the
 	/// module docs.
-	pub fn new_with_checkpoint_isolate_dust(
-		input: Vtxo<Full>,
-		outputs: Vec<ArkoorDestination>,
-	) -> Result<Self, ArkoorConstructionError> {
-		Self::new_isolate_dust(input, outputs)
-	}
-
-	pub(crate) fn new_isolate_dust(
+	pub fn new_isolate_dust(
 		input: Vtxo<Full>,
 		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
@@ -1037,7 +1021,16 @@ impl ArkoorBuilder<state::Initial> {
 		}
 	}
 
-	pub(crate) fn new(
+	#[deprecated(note = "use ArkoorBuilder::new_isolate_dust instead")]
+	pub fn new_with_checkpoint_isolate_dust(
+		input: Vtxo<Full>,
+		outputs: Vec<ArkoorDestination>,
+	) -> Result<Self, ArkoorConstructionError> {
+		Self::new_isolate_dust(input, outputs)
+	}
+
+	/// Create builder with the specified normal and isolated outputs
+	pub fn new(
 		input: Vtxo<Full>,
 		outputs: Vec<ArkoorDestination>,
 		isolated_outputs: Vec<ArkoorDestination>,
@@ -1137,6 +1130,15 @@ impl ArkoorBuilder<state::Initial> {
 			full_signatures: None,
 			_state: PhantomData,
 		})
+	}
+
+	#[deprecated(note = "use ArkoorBuilder::new instead")]
+	pub fn new_with_checkpoint(
+		input: Vtxo<Full>,
+		outputs: Vec<ArkoorDestination>,
+		isolated_outputs: Vec<ArkoorDestination>,
+	) -> Result<Self, ArkoorConstructionError> {
+		Self::new(input, outputs, isolated_outputs)
 	}
 
 	/// Generates the user nonces and moves the builder to the [state::UserGeneratedNonces] state
@@ -1592,7 +1594,7 @@ mod test {
 			}
 		];
 
-		let user_builder = ArkoorBuilder::new_with_checkpoint(
+		let user_builder = ArkoorBuilder::new(
 			alice_vtxo.clone(),
 			dest.clone(),
 			vec![], // no isolation outputs
@@ -1675,7 +1677,7 @@ mod test {
 			}
 		];
 
-		let user_builder = ArkoorBuilder::new_with_checkpoint(
+		let user_builder = ArkoorBuilder::new(
 			alice_vtxo.clone(),
 			outputs.clone(),
 			dust_outputs.clone(),
@@ -1747,7 +1749,7 @@ mod test {
 		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
 
 		// only dust is allowed
-		ArkoorBuilder::new_with_checkpoint(
+		ArkoorBuilder::new(
 			alice_vtxo.clone(),
 			vec![
 				ArkoorDestination {
@@ -1759,7 +1761,7 @@ mod test {
 		).unwrap();
 
 		// empty outputs vec is not allowed (need at least one normal output)
-		let res_empty = ArkoorBuilder::new_with_checkpoint(
+		let res_empty = ArkoorBuilder::new(
 			alice_vtxo.clone(),
 			vec![],
 			vec![
@@ -1775,7 +1777,7 @@ mod test {
 		}
 
 		// normal case: non-dust in normal outputs and dust in isolation
-		ArkoorBuilder::new_with_checkpoint(
+		ArkoorBuilder::new(
 			alice_vtxo.clone(),
 			vec![
 				ArkoorDestination {
@@ -1792,7 +1794,7 @@ mod test {
 		).unwrap();
 
 		// mixing with isolation sum < 330 should fail
-		let res_mixed_small = ArkoorBuilder::new_with_checkpoint(
+		let res_mixed_small = ArkoorBuilder::new(
 			alice_vtxo.clone(),
 			vec![
 				ArkoorDestination {
@@ -1849,7 +1851,7 @@ mod test {
 			}
 		];
 
-		let user_builder = ArkoorBuilder::new_with_checkpoint(
+		let user_builder = ArkoorBuilder::new(
 			alice_vtxo.clone(),
 			dust_outputs,
 			vec![],
@@ -1940,7 +1942,7 @@ mod test {
 			}
 		];
 
-		let user_builder = ArkoorBuilder::new_with_checkpoint(
+		let user_builder = ArkoorBuilder::new(
 			alice_vtxo.clone(),
 			dust_outputs,
 			vec![],
@@ -2017,7 +2019,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_isolate_dust(
 			alice_vtxo,
 			vec![
 				ArkoorDestination {
@@ -2058,7 +2060,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_isolate_dust(
 			alice_vtxo,
 			vec![
 				ArkoorDestination {
@@ -2100,7 +2102,7 @@ mod test {
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
 		// 600 non-dust + 200 + 200 dust = 400 dust total (>= 330)
-		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_isolate_dust(
 			alice_vtxo,
 			vec![
 				ArkoorDestination {
@@ -2146,7 +2148,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_isolate_dust(
 			alice_vtxo,
 			vec![
 				ArkoorDestination {
@@ -2198,7 +2200,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_isolate_dust(
 			alice_vtxo,
 			vec![
 				ArkoorDestination {
@@ -2244,7 +2246,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_isolate_dust(
 			alice_vtxo,
 			vec![
 				ArkoorDestination {
@@ -2305,7 +2307,7 @@ mod test {
 			},
 		];
 
-		let result = ArkoorBuilder::new_with_checkpoint(alice_vtxo, outputs, vec![]);
+		let result = ArkoorBuilder::new(alice_vtxo, outputs, vec![]);
 		assert_eq!(result.err(), Some(ArkoorConstructionError::Overflow));
 	}
 
@@ -2338,7 +2340,7 @@ mod test {
 		let outputs = normal_amounts.iter().map(dest).collect::<Vec<_>>();
 		let isolated_outputs = isolation_amounts.iter().map(dest).collect::<Vec<_>>();
 
-		ArkoorBuilder::new_with_checkpoint(vtxo, outputs, isolated_outputs).map(|_| ())
+		ArkoorBuilder::new(vtxo, outputs, isolated_outputs).map(|_| ())
 	}
 
 	#[test]
@@ -2391,7 +2393,7 @@ mod test {
 	#[test]
 	#[ignore = "slow; run on demand with --run-ignored all"]
 	fn isolate_dust_fuzz() {
-		// new_with_checkpoint_isolate_dust must find a placement that satisfies
+		// new_isolate_dust must find a placement that satisfies
 		// the dust isolation rules for every list of non-zero outputs.
 		// Self::new validates the placement, so Ok means the rules hold.
 		let mut rng = rand::rngs::StdRng::seed_from_u64(1105);
@@ -2419,7 +2421,7 @@ mod test {
 					policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
 				}).collect::<Vec<_>>();
 
-				let result = ArkoorBuilder::new_with_checkpoint_isolate_dust(vtxo, outputs);
+				let result = ArkoorBuilder::new_isolate_dust(vtxo, outputs);
 				assert!(result.is_ok(), "amounts {:?}: {:?}", amounts, result.err());
 			}
 		}

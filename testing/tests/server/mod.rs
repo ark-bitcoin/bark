@@ -1103,7 +1103,7 @@ async fn arkoor_caps_inputs_before_loading_vtxos() {
 	let mut rpc = srv.get_public_rpc().await;
 
 	let (_, input) = DummyTestVtxoSpec::default().build();
-	let client = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let client = ArkoorPackageBuilder::new_claim_all(
 		[input], VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
 	).unwrap().generate_user_nonces(&[*DUMMY_USER_KEY]).unwrap();
 	let mut sample: protos::ArkoorPackageCosignRequest = client.cosign_request().into();
@@ -1161,7 +1161,7 @@ async fn double_spend_arkoor() {
 	let pk1 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 	let pk2 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
-	let builder1 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+	let builder1 = ArkoorPackageBuilder::new_single_output(
 		[vtxo.clone()],
 		ArkoorDestination {
 			total_amount: sat(100_000),
@@ -1169,7 +1169,7 @@ async fn double_spend_arkoor() {
 		},
 		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder2 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+	let builder2 = ArkoorPackageBuilder::new_single_output(
 		[vtxo.clone()],
 		ArkoorDestination {
 			total_amount: sat(200_000), // other amount
@@ -1177,7 +1177,7 @@ async fn double_spend_arkoor() {
 		},
 		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder3 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+	let builder3 = ArkoorPackageBuilder::new_single_output(
 		[vtxo.clone()],
 		ArkoorDestination {
 			total_amount: sat(100_000),
@@ -1253,7 +1253,7 @@ async fn reject_expired_arkoor_cosign() {
 	let vtxo = bark_client.get_full_vtxo(bare_vtxo.id()).await.unwrap();
 	let change_pk = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
-	let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+	let builder = ArkoorPackageBuilder::new_single_output(
 		[vtxo.clone()],
 		ArkoorDestination {
 			total_amount: sat(100_000),

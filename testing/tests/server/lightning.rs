@@ -150,7 +150,7 @@ async fn revoke_htlc_vtxos(
 	// Any pubkey works for the revocation output; the tests never claim it.
 	let revocation_pubkey =
 		Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key();
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all(
 		htlc_vtxos,
 		ark::VtxoPolicy::new_pubkey(revocation_pubkey),
 	).unwrap().generate_user_nonces(keypairs).unwrap();
@@ -1018,7 +1018,7 @@ async fn request_second_htlc_cosign(
 		policy: ark::VtxoPolicy::new_server_htlc_send(htlc_key, second_hash, htlc_expiry),
 	}];
 
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_with_checkpoints(
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new(
 		htlc_vtxos.clone(), outputs,
 	).unwrap().generate_user_nonces(&keypairs).unwrap();
 
@@ -1131,7 +1131,7 @@ async fn cosign_htlc_send_to_pubkey(
 	let htlc_expiry = tip + srv.config().htlc_send_expiry_delta + BlockDelta::new(2);
 	let policy = ark::VtxoPolicy::new_server_htlc_send(owner, payment_hash, htlc_expiry);
 
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all(
 		inputs.clone(), policy,
 	).unwrap().generate_user_nonces(&keypairs).unwrap();
 
@@ -1179,7 +1179,7 @@ async fn unfunded_htlc_revocation_keeps_receive() {
 		.await.unwrap().unwrap();
 
 	let keys = vec![refund_key; htlcs.len()];
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all(
 		htlcs.iter().cloned(),
 		ark::VtxoPolicy::new_pubkey(refund_key.public_key()),
 	).unwrap().generate_user_nonces(&keys).unwrap();
@@ -1225,7 +1225,7 @@ async fn htlc_cosign_is_replayed_after_blocks_were_mined() {
 	let policy = ark::VtxoPolicy::new_server_htlc_send(htlc_key.public_key(), payment_hash, htlc_expiry);
 
 	// The first response never reaches the client.
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all(
 		[lost_input.clone()], policy.clone(),
 	).unwrap().generate_user_nonces(&[lost_key]).unwrap();
 	rpc.request_lightning_pay_htlc_cosign(protos::LightningPayHtlcCosignRequest {
@@ -1238,7 +1238,7 @@ async fn htlc_cosign_is_replayed_after_blocks_were_mined() {
 	// A request with this expiry that the server never cosigned is too late now.
 	let other_hash = PaymentHash::from(sha256::Hash::hash(b"too late").to_byte_array());
 	let other_policy = ark::VtxoPolicy::new_server_htlc_send(htlc_key.public_key(), other_hash, htlc_expiry);
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all(
 		[fresh_input], other_policy,
 	).unwrap().generate_user_nonces(&[fresh_key]).unwrap();
 	let status = rpc.request_lightning_pay_htlc_cosign(protos::LightningPayHtlcCosignRequest {
@@ -1247,7 +1247,7 @@ async fn htlc_cosign_is_replayed_after_blocks_were_mined() {
 	assert!(status.message().contains("requested expiry is too low"), "unexpected error: {status:?}");
 
 	// The client sends the lost request again, with new nonces like bark does.
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all(
 		[lost_input], policy,
 	).unwrap().generate_user_nonces(&[lost_key]).unwrap();
 	let response = rpc.request_lightning_pay_htlc_cosign(protos::LightningPayHtlcCosignRequest {
@@ -2265,7 +2265,7 @@ async fn refuse_receive_claim_after_incoming_htlc_expiry() {
 	// The attack: claim the granted VTXOs cooperatively. The inbound HTLC is
 	// expired, so the server can never settle its hold invoice: cosigning here
 	// pays the attacker twice (granted VTXOs plus the refunded payment).
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all(
 		granted.iter().cloned(),
 		ark::VtxoPolicy::new_pubkey(
 			Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key(),
@@ -3940,7 +3940,7 @@ async fn self_payment_claim_rejected_after_sender_onchain_refund() {
 		"the receive grants must still be live");
 
 	let keys = vec![receiver_key.clone(); grants.len()];
-	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all(
 		grants,
 		ark::VtxoPolicy::new_pubkey(receiver_key.public_key()),
 	).unwrap().generate_user_nonces(&keys).unwrap();

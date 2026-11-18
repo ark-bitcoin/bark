@@ -2935,7 +2935,7 @@ mod test {
 
 		// An arkoor spend of the still-locked leaf puts the hash-locked
 		// transition before the arkoor transition.
-		let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		let builder = ArkoorPackageBuilder::new_claim_all(
 			[locked], VtxoPolicy::new_pubkey(user_key.public_key()),
 		).unwrap().generate_user_nonces(&[user_key]).unwrap();
 		let cosign = ArkoorPackageBuilder::from_cosign_request(builder.cosign_request()).unwrap()

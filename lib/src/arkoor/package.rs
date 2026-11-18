@@ -187,19 +187,11 @@ impl ArkoorPackageBuilder<state::Initial> {
 		Ok(allocations)
 	}
 
-	/// Create builder with checkpoints for multiple outputs
-	pub fn new_with_checkpoints(
-		inputs: impl IntoIterator<Item = Vtxo<Full>>,
-		outputs: Vec<ArkoorDestination>,
-	) -> Result<Self, ArkoorConstructionError> {
-		Self::new(inputs, outputs)
-	}
-
 	/// Convenience constructor for single output with automatic change
 	///
 	/// Calculates change amount and creates appropriate output
 	/// (backward-compatible with old API)
-	pub fn new_single_output_with_checkpoints(
+	pub fn new_single_output(
 		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		output: ArkoorDestination,
 		change_policy: VtxoPolicy,
@@ -226,11 +218,11 @@ impl ArkoorPackageBuilder<state::Initial> {
 			]
 		};
 
-		Self::new_with_checkpoints(inputs, outputs)
+		Self::new(inputs, outputs)
 	}
 
 	/// Convenience constructor for single output that claims all inputs
-	pub fn new_claim_all_with_checkpoints(
+	pub fn new_claim_all(
 		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		output_policy: VtxoPolicy,
 	) -> Result<Self, ArkoorConstructionError> {
@@ -243,10 +235,36 @@ impl ArkoorPackageBuilder<state::Initial> {
 			policy: output_policy,
 		};
 
-		Self::new_with_checkpoints(inputs, vec![output])
+		Self::new(inputs, vec![output])
 	}
 
-	fn new(
+	#[deprecated(note = "use ArkoorPackageBuilder::new instead")]
+	pub fn new_with_checkpoints(
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
+		outputs: Vec<ArkoorDestination>,
+	) -> Result<Self, ArkoorConstructionError> {
+		Self::new(inputs, outputs)
+	}
+
+	#[deprecated(note = "use ArkoorPackageBuilder::new_single_output instead")]
+	pub fn new_single_output_with_checkpoints(
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
+		output: ArkoorDestination,
+		change_policy: VtxoPolicy,
+	) -> Result<Self, ArkoorConstructionError> {
+		Self::new_single_output(inputs, output, change_policy)
+	}
+
+	#[deprecated(note = "use ArkoorPackageBuilder::new_claim_all instead")]
+	pub fn new_claim_all_with_checkpoints(
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
+		output_policy: VtxoPolicy,
+	) -> Result<Self, ArkoorConstructionError> {
+		Self::new_claim_all(inputs, output_policy)
+	}
+
+	/// Create builder for multiple outputs
+	pub fn new(
 		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
@@ -553,7 +571,7 @@ mod test {
 		// She owns a single vtxo and fully spends it
 		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(100_000));
 
-		let package_builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package_builder = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(100_000),
@@ -572,7 +590,7 @@ mod test {
 		// She only has a vtxo worth a 1000 sats
 		// She will create two outputs: 900 for Bob, 100 subdust change for Alice
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
-		let package_builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package_builder = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(900),
@@ -600,7 +618,7 @@ mod test {
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(17_000),
@@ -638,7 +656,7 @@ mod test {
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(16_000),
@@ -679,7 +697,7 @@ mod test {
 		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(1_000));
 
-		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo_1, alice_vtxo_2],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(5_700),
@@ -706,7 +724,7 @@ mod test {
 		// She only has a vtxo worth a 900 sats
 		// She will not be able to send the payment
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(900));
-		let result = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let result = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(1000),
@@ -734,7 +752,7 @@ mod test {
 		let (_funding_tx, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (_funding_tx, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(20_000),
@@ -764,7 +782,7 @@ mod test {
 		let (_funding_tx, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 		let (_funding_tx, alice_vtxo_4) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 
-		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(2000),
@@ -799,7 +817,7 @@ mod test {
 			},
 		];
 
-		let package = ArkoorPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new(
 			[alice_vtxo.clone()],
 			outputs,
 		).expect("Valid package");
@@ -850,7 +868,7 @@ mod test {
 			},
 		];
 
-		let package = ArkoorPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2],
 			outputs,
 		).expect("Valid package");
@@ -883,7 +901,7 @@ mod test {
 			},
 		];
 
-		let package = ArkoorPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2],
 			outputs,
 		).expect("Valid package");
@@ -911,7 +929,7 @@ mod test {
 			},
 		];
 
-		let result = ArkoorPackageBuilder::new_with_checkpoints(
+		let result = ArkoorPackageBuilder::new(
 			[alice_vtxo],
 			outputs,
 		);
@@ -929,7 +947,7 @@ mod test {
 	fn empty_outputs_rejected() {
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 
-		let result = ArkoorPackageBuilder::new_with_checkpoints(
+		let result = ArkoorPackageBuilder::new(
 			[alice_vtxo],
 			vec![],
 		);
@@ -959,7 +977,7 @@ mod test {
 			},
 		];
 
-		let package = ArkoorPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			outputs,
 		).expect("Valid package");
@@ -991,7 +1009,7 @@ mod test {
 			},
 		];
 
-		let package = ArkoorPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
 			outputs,
 		).expect("Valid package");
@@ -1034,7 +1052,7 @@ mod test {
 			},
 		];
 
-		let package = ArkoorPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new(
 			[alice_vtxo],
 			outputs,
 		).expect("Valid package");
@@ -1066,7 +1084,7 @@ mod test {
 			},
 		];
 
-		let package = ArkoorPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2],
 			outputs,
 		).expect("Valid package");
@@ -1087,7 +1105,7 @@ mod test {
 			},
 		];
 
-		let result = ArkoorPackageBuilder::new_with_checkpoints(
+		let result = ArkoorPackageBuilder::new(
 			Vec::<Vtxo<Full>>::new(),
 			outputs,
 		);
@@ -1127,7 +1145,7 @@ mod test {
 			},
 		];
 
-		let package = ArkoorPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			outputs,
 		).expect("Valid package");
@@ -1154,7 +1172,7 @@ mod test {
 		);
 		let input_id = alice_vtxo.id();
 
-		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(100_000),
@@ -1206,7 +1224,7 @@ mod test {
 		);
 		let input_id = alice_vtxo.id();
 
-		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(900),
@@ -1269,7 +1287,7 @@ mod test {
 			alice_vtxo_3.id(),
 		];
 
-		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			ArkoorDestination {
 				total_amount: Amount::from_sat(16_000),
@@ -1330,7 +1348,7 @@ mod test {
 			},
 		];
 
-		let result = ArkoorBuilder::new_with_checkpoint_isolate_dust(vtxo, outputs);
+		let result = ArkoorBuilder::new_isolate_dust(vtxo, outputs);
 		assert_eq!(result.err(), Some(ArkoorConstructionError::ZeroValueOutput));
 	}
 
@@ -1393,7 +1411,7 @@ mod test {
 			},
 		];
 
-		let result = ArkoorPackageBuilder::new_with_checkpoints([alice_vtxo], outputs);
+		let result = ArkoorPackageBuilder::new([alice_vtxo], outputs);
 		assert_eq!(result.err(), Some(ArkoorConstructionError::Overflow));
 	}
 }

@@ -247,7 +247,7 @@ impl Wallet {
 			});
 		}
 
-		let builder = ArkoorPackageBuilder::new_with_checkpoints(inputs, outputs)
+		let builder = ArkoorPackageBuilder::new(inputs, outputs)
 			.context("Failed to construct arkoor package")?
 			.generate_user_nonces(&user_keypairs)
 			.context("invalid nb of keypairs")?;
