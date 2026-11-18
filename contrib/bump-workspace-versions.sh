@@ -17,6 +17,7 @@ lockstep="
 	bark-cli/Cargo.toml
 	bark-common/Cargo.toml
 	bark-json/Cargo.toml
+	bark-nwc/Cargo.toml
 	bark-rest-client/Cargo.toml
 	bark-rest/Cargo.toml
 	bark-runtime/Cargo.toml
@@ -33,6 +34,7 @@ packages="
 	bark-cli
 	bark-common
 	bark-json
+	bark-nwc
 	bark-rest-client
 	bark-rest
 	bark-runtime
@@ -47,7 +49,6 @@ packages="
 # Cargo.toml files that version on their own but pin lockstep crates. Only
 # their pins are swept.
 dependents="
-	bark-nwc/Cargo.toml
 	cln-rpc/Cargo.toml
 "
 
