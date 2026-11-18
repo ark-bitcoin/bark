@@ -727,8 +727,10 @@ mod builder_test {
 	use ark::rounds::ROUND_TX_VTXO_TREE_VOUT;
 	use bdk_wallet::chain::BlockId;
 	use bdk_wallet::coin_selection::{DefaultCoinSelectionAlgorithm, SingleRandomDraw};
+	use bdk_wallet::chain::ConfirmationBlockTime;
 	use bdk_wallet::test_utils::{
-		get_test_tr_single_sig_xprv, insert_checkpoint, insert_tx, receive_output_in_latest_block,
+		get_test_tr_single_sig_xprv, insert_anchor, insert_checkpoint, insert_tx,
+		receive_output_in_latest_block,
 	};
 	use bitcoin::{BlockHash, ScriptBuf, Txid};
 	use bitcoin::hashes::Hash;
@@ -1090,6 +1092,50 @@ mod builder_test {
 		assert_eq!(psbt.unsigned_tx.output[ROUND_TX_VTXO_TREE_VOUT as usize].script_pubkey,
 			tree_spk, "the tree output must stay at vout {}", ROUND_TX_VTXO_TREE_VOUT,
 		);
+	}
+
+	/// A CPFP whose block was reorged out can be replaced like one that was
+	/// never mined.
+	#[test]
+	fn evict_spenders_frees_the_input_of_a_reorged_cpfp() {
+		let (mut wallet, coins) = wallet_with_coins(&[Amount::from_btc(1.0).unwrap()]);
+		let parent = Transaction {
+			version: bitcoin::transaction::Version(3),
+			lock_time: bitcoin::absolute::LockTime::ZERO,
+			input: vec![bitcoin::TxIn {
+				previous_output: OutPoint::new(Txid::all_zeros(), 0),
+				..Default::default()
+			}],
+			output: vec![bitcoin_ext::fee::fee_anchor()],
+		};
+		let (anchor, _) = parent.fee_anchor().unwrap();
+		let signers = wallet.build_signers(get_test_tr_single_sig_xprv()).unwrap();
+		let cpfp = wallet.make_signed_p2a_cpfp(
+			&parent, MakeCpfpFees::Effective(sat_per_vb(10)), &signers,
+		).unwrap();
+		wallet.commit_tx(&cpfp);
+
+		// Mined in block 1001, which a reorg then replaces.
+		let mined = BlockId { height: 1_001, hash: BlockHash::from_byte_array([1; 32]) };
+		insert_checkpoint(&mut wallet, mined);
+		insert_anchor(&mut wallet, cpfp.compute_txid(), ConfirmationBlockTime {
+			block_id: mined, confirmation_time: 1_234_567_000,
+		});
+		let unspent = |w: &Wallet| w.list_unspent().map(|u| u.outpoint).collect::<Vec<_>>();
+		assert!(!unspent(&wallet).contains(&coins[0]));
+		insert_checkpoint(&mut wallet, BlockId { height: 1_001, hash: BlockHash::from_byte_array([2; 32]) });
+		assert!(!unspent(&wallet).contains(&coins[0]), "the reorged CPFP is still canonical");
+		let pos = wallet.transactions().find(|t| t.tx_node.txid == cpfp.compute_txid()).unwrap().chain_position;
+		assert!(!pos.is_confirmed(), "the reorg didn't apply: {:?}", pos);
+
+		let evicted = wallet.evict_spenders(anchor);
+		assert!(unspent(&wallet).contains(&coins[0]));
+		let replacement = wallet.make_signed_p2a_cpfp(
+			&parent, MakeCpfpFees::Effective(sat_per_vb(20)), &signers,
+		).unwrap();
+		assert!(replacement.input.iter().any(|i| i.previous_output == coins[0]));
+		evicted.restore(&mut wallet);
+		assert!(!unspent(&wallet).contains(&coins[0]));
 	}
 
 	/// A CPFP bump spends the fee input of the CPFP it replaces.
