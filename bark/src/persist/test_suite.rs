@@ -1043,7 +1043,7 @@ pub async fn test_exit_processing_state_roundtrip(db: &impl BarkPersister) {
 			ExitTx {
 				txid: txid(0x07),
 				status: ExitTxStatus::Confirmed {
-					child_txid: child_b,
+					child_txid: Some(child_b),
 					block,
 					origin: ExitTxOrigin::Block { confirmed_in: block },
 				},

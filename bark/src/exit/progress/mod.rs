@@ -8,7 +8,7 @@ use log::debug;
 
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 
-use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxStatus};
+use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::{Wallet, WalletVtxo};
 
@@ -142,13 +142,21 @@ impl<'a> ProgressContext<'a> {
 					})
 				},
 				TxStatus::Confirmed(b) => Ok(ExitTxStatus::Confirmed {
-					child_txid: child.txid,
+					child_txid: Some(child.txid),
 					block: b,
 					origin: child.origin,
 				})
 			}
 		} else {
-			Ok(ExitTxStatus::AwaitingCpfpBroadcast)
+			// An exit tx needs no child when a block includes it directly.
+			match self.tx_manager.tx_status(exit.txid).await? {
+				TxStatus::Confirmed(b) => Ok(ExitTxStatus::Confirmed {
+					child_txid: None,
+					block: b,
+					origin: ExitTxOrigin::Block { confirmed_in: b },
+				}),
+				TxStatus::NotFound | TxStatus::Mempool => Ok(ExitTxStatus::AwaitingCpfpBroadcast),
+			}
 		}
 	}
 

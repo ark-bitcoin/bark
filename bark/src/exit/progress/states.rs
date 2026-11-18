@@ -252,9 +252,9 @@ async fn progress_exit_tx(
 			match &new_status {
 				ExitTxStatus::Confirmed { child_txid: new_txid, block: new_block, .. } => {
 					if new_block != block || new_txid != child_txid {
-						warn!("Exit transaction {} was confirmed with block {} but it has been \
-							replaced by {} in block {}",
-							exit.txid, block.hash, new_txid, new_block.hash
+						warn!("Exit transaction {} was confirmed in block {} with child {:?} but \
+							it is now confirmed in block {} with child {:?}",
+							exit.txid, block.hash, child_txid, new_block.hash, new_txid,
 						);
 					}
 				},

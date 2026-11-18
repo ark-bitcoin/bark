@@ -6121,7 +6121,6 @@
           {
             "type": "object",
             "required": [
-              "child_txid",
               "block",
               "origin",
               "type"
@@ -6131,7 +6130,11 @@
                 "$ref": "#/components/schemas/BlockRef"
               },
               "child_txid": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "`null` when the exit transaction confirmed without a CPFP child."
               },
               "origin": {
                 "$ref": "#/components/schemas/ExitTxOrigin"

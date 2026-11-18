@@ -5,7 +5,7 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **block** | [**models::BlockRef**](BlockRef.md) |  | 
-**child_txid** | **String** |  | 
+**child_txid** | Option<**String**> | `null` when the exit transaction confirmed without a CPFP child. | [optional]
 **origin** | [**models::ExitTxOrigin**](ExitTxOrigin.md) |  | 
 **r#type** | **Type** |  (enum: confirmed) | 
 

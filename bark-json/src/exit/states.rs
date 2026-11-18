@@ -34,8 +34,9 @@ pub enum ExitTxStatus {
 		origin: ExitTxOrigin,
 	},
 	Confirmed {
-		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-		child_txid: Txid,
+		/// `null` when the exit transaction confirmed without a CPFP child.
+		#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
+		child_txid: Option<Txid>,
 		block: BlockRef,
 		origin: ExitTxOrigin,
 	},

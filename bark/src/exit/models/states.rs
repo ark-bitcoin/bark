@@ -27,7 +27,8 @@ pub enum ExitTxStatus {
 		origin: ExitTxOrigin,
 	},
 	Confirmed {
-		child_txid: Txid,
+		/// `None` when the exit tx confirmed without a CPFP child.
+		child_txid: Option<Txid>,
 		block: BlockRef,
 		origin: ExitTxOrigin,
 	},
@@ -37,7 +38,7 @@ impl ExitTxStatus {
 	pub fn child_txid(&self) -> Option<&Txid> {
 		match self {
 			ExitTxStatus::AwaitingConfirmation { child_txid, .. } => Some(child_txid),
-			ExitTxStatus::Confirmed { child_txid, .. } => Some(child_txid),
+			ExitTxStatus::Confirmed { child_txid, .. } => child_txid.as_ref(),
 			_ => None,
 		}
 	}
