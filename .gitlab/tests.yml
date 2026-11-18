@@ -81,7 +81,7 @@ build:
       - target/ci/barkd
     expire_in: 1 day
 
-build-test-archives:
+build-unit-test-archive:
   interruptible: true
   stage: build
   extends: .test-rules-no-tags
@@ -92,19 +92,45 @@ build-test-archives:
     # Stats query inside the same shell that ran the build, same reason as
     # in the `build` job — the outer sccache in `after_script` sees zero
     # because it's a different sccache instance.
-    - bash contrib/ci-env/ci.sh bash -c "just build-unit-tests-ci && just build-integration-tests-ci && echo '=== sccache stats (inside .#ci) ===' && sccache --show-stats"
-    # Same breakout as `build`: materialize the archives inside
+    - bash contrib/ci-env/ci.sh bash -c "just build-unit-tests-ci && echo '=== sccache stats (inside .#ci) ===' && sccache --show-stats"
+    # Same breakout as `build`: materialize the archive inside
     # $CI_PROJECT_DIR because GitLab won't follow the target symlink.
     - |
       if [ -L target ]; then
         src="$(readlink target)/ci"
         rm target
         mkdir -p target/ci
-        cp -aL "$src/unit-tests.tar.zst" "$src/integration-tests.tar.zst" target/ci/
+        cp -aL "$src/unit-tests.tar.zst" target/ci/
       fi
   artifacts:
     paths:
       - target/ci/unit-tests.tar.zst
+    expire_in: 1 day
+
+# Separate from the unit test archive, so the integration jobs do not
+# wait for the unit test build.
+build-integration-test-archive:
+  interruptible: true
+  stage: build
+  extends: .test-rules-no-tags
+  needs:
+    - prechecks
+  script:
+    - git log --oneline -1
+    # Stats query inside the same shell that ran the build, same reason as
+    # in the `build` job.
+    - bash contrib/ci-env/ci.sh bash -c "just build-integration-tests-ci && echo '=== sccache stats (inside .#ci) ===' && sccache --show-stats"
+    # Same breakout as `build`: materialize the archive inside
+    # $CI_PROJECT_DIR because GitLab won't follow the target symlink.
+    - |
+      if [ -L target ]; then
+        src="$(readlink target)/ci"
+        rm target
+        mkdir -p target/ci
+        cp -aL "$src/integration-tests.tar.zst" target/ci/
+      fi
+  artifacts:
+    paths:
       - target/ci/integration-tests.tar.zst
     expire_in: 1 day
 
@@ -131,7 +157,7 @@ test-unit:
   extends: .test-rules-no-tags
   needs:
     - prechecks
-    - build-test-archives
+    - build-unit-test-archive
   script:
     - git log --oneline -1
     - bash contrib/ci-env/ci.sh bash -c "just test-unit-prebuilt"
@@ -255,7 +281,7 @@ bark-esplora:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     CHAIN_SOURCE: esplora
     TEST_DIRECTORY: ./test/esplora
@@ -284,7 +310,7 @@ bark-mempool:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     CHAIN_SOURCE: mempool
     TEST_DIRECTORY: ./test/mempool
@@ -313,7 +339,7 @@ bark-btc30:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/btc30
     NEXTEST_TEST_THREADS: "4"
@@ -345,7 +371,7 @@ bark-filestore:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     CHAIN_SOURCE: mempool
     USE_FILESTORE: "1"
@@ -397,7 +423,7 @@ core-server:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/core-server
     NEXTEST_TEST_THREADS: "4"
@@ -424,7 +450,7 @@ bark-sdk:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-sdk
     NEXTEST_TEST_THREADS: "4"
@@ -450,7 +476,7 @@ bark-int-action-reentrancy:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-int-action-reentrancy
     NEXTEST_TEST_THREADS: "4"
@@ -484,7 +510,7 @@ server-migrations-0.9.0:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/server-migrations-0.9.0
     NEXTEST_TEST_THREADS: "4"
@@ -523,7 +549,7 @@ compat-bark-0.5.0:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-0.5.0
     NEXTEST_TEST_THREADS: "4"
@@ -569,7 +595,7 @@ compat-bark-0.6.0:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-0.6.0
     NEXTEST_TEST_THREADS: "4"
@@ -615,7 +641,7 @@ compat-bark-0.6.2:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-0.6.2
     NEXTEST_TEST_THREADS: "4"
@@ -661,7 +687,7 @@ compat-bark-0.7.0:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-0.7.0
     NEXTEST_TEST_THREADS: "4"
@@ -707,7 +733,7 @@ compat-bark-0.7.1:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-0.7.1
     NEXTEST_TEST_THREADS: "4"
@@ -753,7 +779,7 @@ compat-bark-0.8.0:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-0.8.0
     NEXTEST_TEST_THREADS: "4"
@@ -799,7 +825,7 @@ compat-bark-0.8.1:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-0.8.1
     NEXTEST_TEST_THREADS: "4"
@@ -851,7 +877,7 @@ compat-bark-0.9.0:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/bark-0.9.0
     NEXTEST_TEST_THREADS: "4"
@@ -906,7 +932,7 @@ upgrade-bark-0.9.0:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     TEST_DIRECTORY: ./test/upgrade-bark-0.9.0
     NEXTEST_TEST_THREADS: "4"
@@ -952,7 +978,7 @@ upgrade-bark-0.9.0-filestore:
     - prechecks
     - check-commits
     - build
-    - build-test-archives
+    - build-integration-test-archive
   variables:
     USE_FILESTORE: "1"
     TEST_DIRECTORY: ./test/upgrade-bark-0.9.0-filestore
