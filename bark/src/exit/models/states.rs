@@ -27,8 +27,10 @@ pub enum ExitTxStatus {
 		origin: ExitTxOrigin,
 	},
 	Confirmed {
-		/// `None` when the exit tx confirmed without a CPFP child.
+		/// `None` when the exit tx confirmed without a CPFP child. A child can still be
+		/// unconfirmed, `origin` tells.
 		child_txid: Option<Txid>,
+		/// The block that confirmed the exit tx.
 		block: BlockRef,
 		origin: ExitTxOrigin,
 	},

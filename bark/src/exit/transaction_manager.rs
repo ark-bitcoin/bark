@@ -248,12 +248,12 @@ impl ExitTransactionManager {
 							status.confirmed_height().unwrap_or(tip),
 							broadcast_local,
 						).await?;
-						// An exit tx that a block includes directly confirms without a child,
-						// so nothing ever spends its anchor. Keep its own confirmation then.
-						let childless = package.read().await.child.is_none();
+						// A confirmed exit tx is settled whatever its child does: the child
+						// can still be unconfirmed, or missing when a block includes the exit
+						// tx directly.
 						let status = match status {
-							TxStatus::Confirmed(_) if childless => status,
-							_ => child_status,
+							TxStatus::Confirmed(_) => status,
+							TxStatus::NotFound | TxStatus::Mempool => child_status,
 						};
 						self.status.insert(txid, status);
 					},

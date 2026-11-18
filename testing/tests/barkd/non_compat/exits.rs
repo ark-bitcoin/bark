@@ -2,7 +2,7 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use bitcoin::{Amount, Txid};
+use bitcoin::{Amount, Transaction, Txid};
 
 use ark::{ProtocolEncoding, VtxoId};
 use bark_json::movements::MovementStatus;
@@ -25,12 +25,17 @@ use ark_testing::barkd_helpers::{
 	wait_for_onchain_balance, wait_for_rounds_complete,
 };
 
-/// Decode the wallet's full VTXO and return its exit chain txids in broadcast order.
-async fn expected_exit_txids(barkd: &Barkd, vtxo_id: &str) -> Vec<Txid> {
+/// Decode the wallet's full VTXO and return its exit chain in broadcast order.
+async fn exit_chain(barkd: &Barkd, vtxo_id: &str) -> Vec<Transaction> {
 	let encoded = barkd.get_vtxo_encoded(vtxo_id).await;
 	let vtxo: ark::Vtxo = ark::Vtxo::deserialize_hex(&encoded.encoded.0)
 		.expect("encoded VTXO should decode");
-	vtxo.transactions().map(|item| item.tx.compute_txid()).collect()
+	vtxo.transactions().map(|item| item.tx).collect()
+}
+
+/// The txids of [exit_chain].
+async fn expected_exit_txids(barkd: &Barkd, vtxo_id: &str) -> Vec<Txid> {
+	exit_chain(barkd, vtxo_id).await.iter().map(|tx| tx.compute_txid()).collect()
 }
 
 /// The `(exit, child)` packages of one VTXO, in broadcast order across waves.
@@ -367,6 +372,52 @@ async fn cannot_cancel_broadcast_exit_barkd() {
 	assert!(!matches!(statuses[0].state, ExitState::Canceled(_)),
 		"exit should not have been canceled, got {:?}", statuses[0].state);
 	assert!(bark.get_finished_exits(None, None).await.is_empty());
+}
+
+/// An exit transaction that confirms while the wallet's CPFP child stays unconfirmed counts as
+/// confirmed, so the exit does not wait for the child.
+#[tokio::test]
+async fn exit_tx_confirms_before_its_child_barkd() {
+	require_bark_version!(> "0.8.1");
+
+	let ctx = TestContext::new("barkd/exit_tx_confirms_before_its_child_barkd").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	// Manual-sync so we control each progress pass; funded for CPFP fees.
+	let bark = ctx.barkd("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(1_000_000))
+		.create().await;
+
+	bark.onchain_sync().await;
+	let board = bark.board_amount(sat(500_000)).await;
+	ctx.await_transaction(board.funding_tx.txid).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	let vtxos = bark.vtxos(None).await;
+	assert_eq!(vtxos.len(), 1);
+	let exit_chain = exit_chain(&bark, &vtxos[0].id.to_string()).await;
+
+	// One progress broadcasts the board's single exit transaction with a CPFP child.
+	bark.exit_start_all().await;
+	bark.exit_progress().await;
+	let statuses = bark.get_live_exit_status(None, None).await;
+	let ExitState::Processing(ref processing) = statuses[0].state else {
+		panic!("exit should be Processing, got {:?}", statuses[0].state);
+	};
+	assert!(
+		matches!(processing.transactions[0].status, ExitTxStatus::AwaitingConfirmation { .. }),
+		"the exit tx should have a CPFP child, got {:?}", processing.transactions[0].status,
+	);
+
+	// A block that holds only the exit transaction leaves the child in the mempool.
+	ctx.mine(&exit_chain).await;
+	ctx.await_block_count_sync().await;
+	bark.exit_progress().await;
+
+	let statuses = bark.get_live_exit_status(None, None).await;
+	assert!(matches!(statuses[0].state, ExitState::AwaitingDelta(_)),
+		"the exit should not wait for the CPFP child, got {:?}", statuses[0].state);
 }
 
 /// A canceled exit can be restarted over REST and driven to completion — even after some of its

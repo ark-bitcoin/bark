@@ -5,7 +5,7 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **block** | [**models::BlockRef**](BlockRef.md) |  | 
-**child_txid** | Option<**String**> | `null` when the exit transaction confirmed without a CPFP child. | [optional]
+**child_txid** | Option<**String**> | `null` when the exit transaction confirmed without a CPFP child. A child can still be unconfirmed, `origin` tells. | [optional]
 **origin** | [**models::ExitTxOrigin**](ExitTxOrigin.md) |  | 
 **r#type** | **Type** |  (enum: confirmed) | 
 

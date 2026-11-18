@@ -6134,7 +6134,7 @@
                   "string",
                   "null"
                 ],
-                "description": "`null` when the exit transaction confirmed without a CPFP child."
+                "description": "`null` when the exit transaction confirmed without a CPFP child. A child can still\nbe unconfirmed, `origin` tells."
               },
               "origin": {
                 "$ref": "#/components/schemas/ExitTxOrigin"
