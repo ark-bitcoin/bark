@@ -34,12 +34,8 @@ pub enum ExitTxStatus {
 		origin: ExitTxOrigin,
 	},
 	Confirmed {
-		/// `null` when the exit transaction confirmed without a CPFP child. A child can still
-		/// be unconfirmed, `origin` tells.
-		#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
-		child_txid: Option<Txid>,
+		/// The block that confirmed the exit transaction.
 		block: BlockRef,
-		origin: ExitTxOrigin,
 	},
 }
 
@@ -64,8 +60,8 @@ impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
 			bark::exit::ExitTxStatus::AwaitingConfirmation { child_txid, origin } => {
 				ExitTxStatus::AwaitingConfirmation { child_txid, origin: origin.into() }
 			},
-			bark::exit::ExitTxStatus::Confirmed { child_txid, block, origin } => {
-				ExitTxStatus::Confirmed { child_txid, block: block.into(), origin: origin.into() }
+			bark::exit::ExitTxStatus::Confirmed { block } => {
+				ExitTxStatus::Confirmed { block: block.into() }
 			},
 		}
 	}

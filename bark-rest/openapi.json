@@ -6122,22 +6122,12 @@
             "type": "object",
             "required": [
               "block",
-              "origin",
               "type"
             ],
             "properties": {
               "block": {
-                "$ref": "#/components/schemas/BlockRef"
-              },
-              "child_txid": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "`null` when the exit transaction confirmed without a CPFP child. A child can still\nbe unconfirmed, `origin` tells."
-              },
-              "origin": {
-                "$ref": "#/components/schemas/ExitTxOrigin"
+                "$ref": "#/components/schemas/BlockRef",
+                "description": "The block that confirmed the exit transaction."
               },
               "type": {
                 "type": "string",

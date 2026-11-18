@@ -8,7 +8,7 @@ use log::debug;
 
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 
-use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus};
+use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::{Wallet, WalletVtxo};
 
@@ -133,30 +133,16 @@ impl<'a> ProgressContext<'a> {
 		&mut self,
 		exit: &ExitTx,
 	) -> anyhow::Result<ExitTxStatus, ExitError> {
-		if let Some(child) = self.tx_manager.get_child_status(exit.txid).await? {
-			match child.status {
-				TxStatus::NotFound | TxStatus::Mempool => {
-					Ok(ExitTxStatus::AwaitingConfirmation {
-						child_txid: child.txid,
-						origin: child.origin,
-					})
-				},
-				TxStatus::Confirmed(b) => Ok(ExitTxStatus::Confirmed {
-					child_txid: Some(child.txid),
-					block: b,
-					origin: child.origin,
-				})
-			}
-		} else {
-			// An exit tx needs no child when a block includes it directly.
-			match self.tx_manager.tx_status(exit.txid).await? {
-				TxStatus::Confirmed(b) => Ok(ExitTxStatus::Confirmed {
-					child_txid: None,
-					block: b,
-					origin: ExitTxOrigin::Block { confirmed_in: b },
-				}),
-				TxStatus::NotFound | TxStatus::Mempool => Ok(ExitTxStatus::AwaitingCpfpBroadcast),
-			}
+		// A confirmed exit tx is settled, whatever its child does.
+		if let TxStatus::Confirmed(block) = self.tx_manager.tx_status(exit.txid).await? {
+			return Ok(ExitTxStatus::Confirmed { block });
+		}
+		match self.tx_manager.get_child_status(exit.txid).await? {
+			Some(child) => Ok(ExitTxStatus::AwaitingConfirmation {
+				child_txid: child.txid,
+				origin: child.origin,
+			}),
+			None => Ok(ExitTxStatus::AwaitingCpfpBroadcast),
 		}
 	}
 

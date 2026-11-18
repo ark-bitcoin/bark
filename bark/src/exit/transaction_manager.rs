@@ -243,14 +243,15 @@ impl ExitTransactionManager {
 						// transaction may exist in the mempool or in a confirmed block.
 						// We will skip this step once a transaction is deeply confirmed.
 						trace!("Attempting to update child status from network for exit tx {}", txid);
+						// A confirmed exit tx is settled whatever its child does: the child
+						// can still be unconfirmed, or missing when a block includes the exit
+						// tx directly. It needs no child any more, so never broadcast one.
+						let confirmed = matches!(status, TxStatus::Confirmed(_));
 						let child_status = self.update_package_from_network(
 							&package,
 							status.confirmed_height().unwrap_or(tip),
-							broadcast_local,
+							broadcast_local && !confirmed,
 						).await?;
-						// A confirmed exit tx is settled whatever its child does: the child
-						// can still be unconfirmed, or missing when a block includes the exit
-						// tx directly.
 						let status = match status {
 							TxStatus::Confirmed(_) => status,
 							TxStatus::NotFound | TxStatus::Mempool => child_status,

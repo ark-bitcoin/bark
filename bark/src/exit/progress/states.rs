@@ -246,15 +246,15 @@ async fn progress_exit_tx(
 				},
 			}
 		},
-		ExitTxStatus::Confirmed { child_txid, block, .. } => {
+		ExitTxStatus::Confirmed { block } => {
 			// Handle cases where we might get a block-reorg so our transaction may unconfirm
 			let new_status = ctx.get_exit_tx_status(exit).await?;
 			match &new_status {
-				ExitTxStatus::Confirmed { child_txid: new_txid, block: new_block, .. } => {
-					if new_block != block || new_txid != child_txid {
-						warn!("Exit transaction {} was confirmed in block {} with child {:?} but \
-							it is now confirmed in block {} with child {:?}",
-							exit.txid, block.hash, child_txid, new_block.hash, new_txid,
+				ExitTxStatus::Confirmed { block: new_block } => {
+					if new_block != block {
+						warn!("Exit transaction {} was confirmed in block {} but it is now \
+							confirmed in block {}",
+							exit.txid, block.hash, new_block.hash,
 						);
 					}
 				},
