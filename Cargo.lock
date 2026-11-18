@@ -128,7 +128,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "ark-lib"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "bark-bitcoin-ext",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "bark-bitcoin-ext"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "bark-cli"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "bark-common"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "bark-json"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "bark-nwc"
-version = "0.7.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "bark-bitcoin-ext",
@@ -541,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "bark-rest"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "bark-rest-client"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "bark-json",
  "bark-rest",
@@ -585,7 +585,7 @@ dependencies = [
 
 [[package]]
 name = "bark-runtime"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "futures",
  "gloo-timers",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "bark-server"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "bark-server-log"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "ark-lib",
  "bark-bitcoin-ext",
@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "bark-server-rpc"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "ark-lib",
  "bitcoin",
@@ -707,7 +707,7 @@ dependencies = [
 
 [[package]]
 name = "bark-wallet"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ark-lib",

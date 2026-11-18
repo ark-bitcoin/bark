@@ -1,6 +1,0 @@
-- barkd serves Nostr Wallet Connect (NIP-47)
-  Create a connection with `bark-cli nwc create <name>` and add a relay with
-  `bark-cli nwc relays add <url>`, or use the new `/api/v1/nwc` REST routes.
-  Connections and relays are kept in `nwc.json` in the datadir, and barkd
-  connects to no relay until one is added.
-  [#2589](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2589)

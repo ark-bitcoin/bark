@@ -1,5 +1,0 @@
-- Arkoor payments put all dust outputs in the dust isolation tx
-  An arkoor payment with an output below 330 sats now puts that output in the
-  dust isolation tx, also when all outputs are dust. Servers from this release
-  refuse the old format, so upgrade bark to make these payments.
-  [#2822](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2822)

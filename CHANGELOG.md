@@ -6,6 +6,186 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.9.0
+
+- `ark-lib`
+  - Refuse a board expiry height or exit delta that a policy doesn't accept
+    `BoardBuilder` panicked on an expiry at or above `LOCK_TIME_THRESHOLD`.
+    [#2767](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2767)
+    - **BREAKING:** `BoardBuilder::new` now returns `Result<BoardBuilder, PolicyError>`
+  - An arkoor checkpoint tx never has a dust output
+    `ArkoorBuilder` puts every output below 330 sats in the dust isolation tx,
+    also when all outputs are dust. The checkpoint tx then always has standard
+    outputs. Only an input VTXO below 330 sats keeps its dust outputs on the
+    checkpoint tx.
+    [#2822](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2822)
+    - An arkoor always uses a checkpoint tx.
+    - `ArkoorBuilder::new` and `ArkoorBuilder::new_isolate_dust` are now public.
+    - The arkoor constructors lose `with_checkpoint` from their names:
+      `ArkoorBuilder::new`, `ArkoorBuilder::new_isolate_dust`,
+      `ArkoorPackageBuilder::new`, `ArkoorPackageBuilder::new_single_output` and
+      `ArkoorPackageBuilder::new_claim_all`. The old names are deprecated.
+    - **BREAKING:** `ArkoorBuilder` returns `ArkoorConstructionError::Dust` for
+      a normal output below 330 sats when the input is 330 sats or more. Put
+      these outputs in the isolated outputs, or use
+      `ArkoorBuilder::new_isolate_dust`.
+    - **BREAKING:** `ArkoorBuilder::new_without_checkpoint`,
+      `ArkoorPackageBuilder::new_without_checkpoints` and
+      `ArkoorPackageBuilder::new_claim_all_without_checkpoints` are removed.
+    - **BREAKING:** `ArkoorCosignRequest` has no `use_checkpoint` field, and
+      `ArkoorCosignRequest::new` and `ArkoorCosignRequest::new_with_attestation`
+      have no `use_checkpoint` argument.
+
+- `bark`
+  - Serve Nostr Wallet Connect (NIP-47) from a wallet
+    Apps can read the balance, create and pay invoices, look up invoices and
+    list payments over NWC. Enable the `nwc` feature and call
+    `Wallet::init_nwc` with a `ConnectionStore` and a `ConnectionPersister`.
+    Relays are stored with the connections, and nothing is served until one is
+    set with `NwcManager::set_relays`.
+    [#2589](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2589)
+  - A retry of a failed lightning payment gets its own movement
+    [#2664](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2664)
+    - **BREAKING:** `BarkPersister` implementations must provide `unlink_movement_from_action`
+  - Recovery from seed resumes on every sync until it is done
+    A VTXO whose status the server can't give yet stays locked and is retried
+    later, instead of being lost to a single failed attempt.
+    [#2678](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2678)
+    - **BREAKING:** `RecoveryStatus` has a new `InProgress` variant
+    - **BREAKING:** Renamed `RecoveryReport::seen` to `RecoveryReport::contains`
+  - `Wallet::board_psbt` returns an error for an invalid expiry height
+    It used to panic on an expiry at or above `LOCK_TIME_THRESHOLD`.
+    [#2767](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2767)
+  - fix Lightning send action for failure during HTLC cosign
+    [#2771](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2771)
+  - Apply the replacement rules in `MakeCpfpFees::Rbf`
+    A CPFP replacement now pays what bitcoind requires: the replaced fee plus
+    the incremental relay fee over the replacement, the new child or the whole
+    package if the parent is new too, and a feerate above the replaced one by
+    the incremental relay fee.
+    [#2781](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2781)
+    - **BREAKING:** `MakeCpfpFees::Rbf` renames `current_package_fee` to
+      `replaced_fee` and adds `replaced_fee_rate`, `incremental_relay_fee`
+      and `parent_in_mempool`. Use `DEFAULT_INCREMENTAL_RELAY_FEE` when the
+      node's isn't known.
+  - Add `BoardBuilder` to set the expiry of a board
+    `wallet.board().expiry(..)` sets the block height at which a board vtxo
+    expires, and `Config::board_lifetime` sets the default lifetime.
+    [#2802](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2802)
+    - Code that calls `board_amount` or `board_all` keeps working unchanged.
+    - Mainnet boards now default to 432 blocks (3 days) instead of the server's
+      vtxo lifetime. Testnets default to 4320 blocks. Both are capped at the
+      server's vtxo lifetime.
+    - **BREAKING:** Code that funds a board externally with
+      `board_funding_address` and `board_psbt` must be updated.
+      `board_funding_address` and the deprecated `board_tx` are removed, and
+      `board_psbt` takes a `BoardFundingAddress` instead of a keypair and expiry
+      height. Store the `BoardFundingAddress` (it implements serde) instead of
+      the keypair and expiry height.
+      Before:
+      ```rust
+      let (keypair, _) = wallet.derive_store_next_keypair().await?;
+      let (address, expiry_height) = wallet.board_funding_address(&keypair).await?;
+      // build `psbt` paying `address`
+      wallet.board_psbt(psbt, keypair, expiry_height).await?;
+      ```
+      After:
+      ```rust
+      let funding = wallet.board().funding_address().await?;
+      // build `psbt` paying `funding.address()`
+      wallet.board_psbt(psbt, &funding).await?;
+      ```
+      For a funding address handed out before upgrading, rebuild the
+      `BoardFundingAddress` from the stored keypair and expiry height:
+      ```rust
+      let funding = wallet.legacy_board_funding_address(keypair.public_key(), expiry_height).await?;
+      wallet.board_psbt(psbt, &funding).await?;
+      ```
+    - **BREAKING:** `board_psbt` refuses to cosign when too few blocks remain
+      before the funding address expires. Fund a funding address immediately:
+      once it expires, the server can sweep the funding output.
+    - **BREAKING:** `Config` has a new field, `board_lifetime`. Code that builds
+      `Config` as a struct literal without `..Config::network_default(..)` must
+      set it.
+  - Fix a vulnerability reported by [MrHodl](https://github.com/MrHodlX)
+    Bark didn't check that the unlock hash of its forfeits matched the one
+    locking its new VTXOs.
+    [#2803](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2803)
+  - Limit a round participation to 1000 inputs
+    A refresh takes the 1000 VTXOs that expire first.
+    [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
+  - Detect force-exited VTXOs while the daemon runs
+    The daemon only scanned for VTXOs that another party exited on-chain when it
+    started. A VTXO that was force-exited later stayed `Spendable` until a
+    restart or a manual sync, although the Ark server rejects it. The daemon now
+    scans on each sync pass and registers such VTXOs for emergency exit.
+    [#2815](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2815)
+  - Recognize exit transactions that confirm before or without a CPFP child
+    Bark treated an exit transaction as confirmed only when a CPFP child that
+    spends its fee anchor confirmed. An exit transaction that a block includes
+    without a child stayed in `AwaitingCpfpBroadcast` and still asked for a CPFP
+    child. An exit transaction that confirms before its child stayed in
+    `AwaitingConfirmation`. Bark now uses the confirmation of the exit
+    transaction itself, so the emergency exit continues in both cases.
+    [#2815](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2815)
+    - **BREAKING:** `ExitTxStatus::Confirmed` no longer has the `child_txid` and
+      `origin` fields. Its `block` is the block that confirmed the exit
+      transaction. The barkd REST API drops both fields too.
+    - Bark no longer broadcasts a CPFP child for an exit transaction that is
+      confirmed.
+    - An exit that waits for its timelock now follows the exit transaction when
+      a reorg confirms it in another block.
+  - Arkoor payments put all dust outputs in the dust isolation tx
+    An arkoor payment with an output below 330 sats now puts that output in the
+    dust isolation tx, also when all outputs are dust. Servers from this release
+    refuse the old format, so upgrade bark to make these payments.
+    [#2822](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2822)
+
+- `bark-cli`
+  - barkd serves Nostr Wallet Connect (NIP-47)
+    Create a connection with `bark-cli nwc create <name>` and add a relay with
+    `bark-cli nwc relays add <url>`, or use the new `/api/v1/nwc` REST routes.
+    Connections and relays are kept in `nwc.json` in the datadir, and barkd
+    connects to no relay until one is added.
+    [#2589](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2589)
+
+- `server`
+  - Always require the funding tx on board cosign and drop `require_board_funding_tx`
+    [#2768](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2768)
+  - Fix the watchman's fee bumps of stuck exit progress
+    The watchman now measures the feerate of a progress package in the
+    mempool on every pass, and replaces a package that pays too little by
+    outbidding what it evicts. Before, a large but cheap child on the
+    progress tx, for example one an attacker attached to its anchor, could
+    get every bump rejected while a timelock ran out.
+    [#2781](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2781)
+  - Harden the server against expensive and probing requests
+    [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
+    - **BREAKING:** A round participation can have at most 1000 inputs.
+  - Ban the inputs of a cosigner that withholds round signatures
+    Set the duration with `round_withheld_signatures_ban` (default 9 blocks).
+    [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
+  - Apply `max_arkoor_amount` to lightning sends
+    [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
+    - **BREAKING:** `max_ln_send_amount` must not exceed `max_arkoor_amount`.
+  - Fix lightning payment and watchman reliability issues
+    [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
+  - The server does not co-sign an arkoor checkpoint tx with a dust output
+    The server refuses an arkoor co-sign request that puts an output below 330
+    sats on the checkpoint tx. These outputs must be in the dust isolation tx.
+    The server also refuses an arkoor co-sign request without a checkpoint tx.
+    [#2822](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2822)
+    - **BREAKING:** bark 0.8.1 and older can not make an arkoor payment with an
+      output below 330 sats, except from a VTXO below 330 sats. The error tells
+      the user to upgrade the wallet and retry.
+  - Verify round input attestations before they reach the round coordinator
+    Checking them costs inputs times outputs, so `SubmitPayment` now does it on
+    its own task and the coordinator only compares the attempt challenge. A
+    large request no longer stalls the round for everyone else. `SubmitPayment`
+    also fails with `InvalidArgument` when no round attempt is collecting
+    payments instead of dropping the request silently.
+    [#2762](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2762)
+
 # v0.8.1
 
 - `bark`

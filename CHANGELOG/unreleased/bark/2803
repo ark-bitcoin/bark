@@ -1,4 +1,0 @@
-- Fix a vulnerability reported by [MrHodl](https://github.com/MrHodlX)
-  Bark didn't check that the unlock hash of its forfeits matched the one
-  locking its new VTXOs.
-  [#2803](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2803)

@@ -1,3 +1,0 @@
-- Limit a round participation to 1000 inputs
-  A refresh takes the 1000 VTXOs that expire first.
-  [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
