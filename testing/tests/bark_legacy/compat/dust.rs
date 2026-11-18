@@ -4,6 +4,8 @@ use ark_testing::{btc, require_bark_version, sat, TestContext};
 
 #[tokio::test]
 async fn bark_allows_sending_dust_arkoor_but_errors_on_dust_refresh() {
+	require_bark_version!(>= "0.9.0");
+
 	let ctx = TestContext::new("bark/bark_allows_sending_dust_arkoor_but_errors_on_dust_refresh").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
@@ -27,7 +29,7 @@ async fn bark_allows_sending_dust_arkoor_but_errors_on_dust_refresh() {
 async fn bark_can_spend_small_vtxo_to_dust_outputs() {
 	// A released bark puts these dust outputs on the checkpoint tx. The server
 	// does not co-sign that.
-	require_bark_version!(> "0.8.1");
+	require_bark_version!(>= "0.9.0");
 
 	let ctx = TestContext::new("bark/bark_can_spend_small_vtxo_to_dust_outputs").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;

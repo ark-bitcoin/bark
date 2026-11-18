@@ -164,6 +164,8 @@ async fn board_fails_when_funding_tx_double_spent() {
 
 #[tokio::test]
 async fn bark_rejects_boarding_subdust_amount() {
+	require_bark_version!(>= "0.9.0");
+
 	let ctx = TestContext::new("bark/bark_rejects_boarding_subdust_amount").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
@@ -282,6 +284,8 @@ async fn board_psbt_rejects_wrong_funding_address() {
 
 #[tokio::test]
 async fn board_psbt_rejects_dust_amount() {
+	require_bark_version!(>= "0.9.0");
+
 	let ctx = TestContext::new("bark/board_psbt_rejects_dust_amount").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.min_board_amount = Amount::ZERO;
