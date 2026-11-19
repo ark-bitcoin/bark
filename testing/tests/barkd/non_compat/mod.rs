@@ -1,3 +1,4 @@
+mod boards;
 mod cli_lifecycle;
 mod core;
 mod exits;

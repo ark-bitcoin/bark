@@ -4,7 +4,7 @@ use std::time::Duration;
 use bitcoin::{Amount, FeeRate};
 
 use ark::fees::{
-	BoardFees, LightningReceiveFees, LightningSendFees, OffboardFees, PpmExpiryFeeEntry,
+	LightningReceiveFees, LightningSendFees, OffboardFees, PpmExpiryFeeEntry,
 	PpmFeeRate, RefreshFees,
 };
 use bark_json::movements::{MovementDestination, PaymentMethod};
@@ -41,126 +41,6 @@ async fn wait_for_fee_event(
 			Err(_) => panic!("timed out waiting for {} ArkFeeRecorded event", op_type),
 		}
 	}
-}
-
-#[tokio::test]
-async fn board_fee_base_and_ppm() {
-	let ctx = TestContext::new("fees/board_fee_base_and_ppm").await;
-	let srv = ctx.captaind("server").cfg(|cfg| {
-		cfg.fees.board = BoardFees {
-			min_fee: Amount::ZERO,
-			base_fee: sat(100),
-			ppm: PpmFeeRate::ONE_PERCENT,
-		};
-	}).create().await;
-	ctx.fund_captaind(&srv, btc(1)).await;
-
-	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
-
-	// Estimate before performing the operation
-	let estimate = bark.estimate_board_offchain_fee(sat(100_000)).await;
-
-	let mut fee_logs = srv.subscribe_log::<ArkFeeRecorded>();
-	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
-
-	// Fee = base(100) + 100,000 * 10,000 / 1,000,000 = 100 + 1,000 = 1,100
-	let expected_fee = sat(1_100);
-	let expected_vtxo_amount = sat(100_000) - expected_fee;
-
-	// Board emits one ArkFeeRecorded at register_board (post-confirmation);
-	// board has no routing component so user == net and routing is None.
-	let fee_log = wait_for_fee_event(&mut fee_logs, "board", Duration::from_secs(15)).await;
-	assert_eq!(fee_log.net_fee_sat, expected_fee.to_sat());
-	assert_eq!(fee_log.user_fee_sat, expected_fee.to_sat());
-	assert_eq!(fee_log.routing_fee_sat, None);
-	assert_eq!(fee_log.round_seq, None);
-
-	let vtxos = bark.vtxos().await;
-	assert_eq!(vtxos.len(), 1);
-	assert_eq!(vtxos[0].amount, expected_vtxo_amount,
-		"VTXO amount should be board amount minus fee");
-
-	let movements = bark.history().await;
-	assert_eq!(movements.len(), 1);
-	let board_mvt = &movements[0];
-	assert_eq!(board_mvt.offchain_fee, expected_fee);
-	assert_eq!(board_mvt.intended_balance, sat(100_000).to_signed().unwrap());
-	assert_eq!(board_mvt.effective_balance, expected_vtxo_amount.to_signed().unwrap());
-
-	// Verify estimate matches actual
-	assert_eq!(estimate.fee, board_mvt.offchain_fee);
-	assert_eq!(estimate.gross_amount, board_mvt.intended_balance.to_unsigned().unwrap());
-	assert_eq!(estimate.net_amount, board_mvt.effective_balance.to_unsigned().unwrap());
-	assert_eq_unordered(&estimate.vtxos_spent, &board_mvt.input_vtxos);
-}
-
-#[tokio::test]
-async fn board_fee_min_fee_applies() {
-	let ctx = TestContext::new("fees/board_fee_min_fee_applies").await;
-	let srv = ctx.captaind("server").cfg(|cfg| {
-		cfg.fees.board = BoardFees {
-			min_fee: sat(5_000),
-			base_fee: Amount::ZERO,
-			ppm: PpmFeeRate::ZERO,
-		};
-	}).create().await;
-	ctx.fund_captaind(&srv, btc(1)).await;
-
-	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
-
-	// Estimate before performing the operation
-	let estimate = bark.estimate_board_offchain_fee(sat(100_000)).await;
-
-	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
-
-	// Fee = max(5,000, 0 + 0) = 5,000
-	let expected_fee = sat(5_000);
-	let expected_vtxo_amount = sat(95_000);
-
-	let vtxos = bark.vtxos().await;
-	assert_eq!(vtxos.len(), 1);
-	assert_eq!(vtxos[0].amount, expected_vtxo_amount);
-
-	let movements = bark.history().await;
-	assert_eq!(movements.len(), 1);
-	assert_eq!(movements[0].offchain_fee, expected_fee);
-	assert_eq!(movements[0].effective_balance, expected_vtxo_amount.to_signed().unwrap());
-
-	// Verify estimate matches actual
-	assert_eq!(estimate.fee, movements[0].offchain_fee);
-	assert_eq!(estimate.gross_amount, movements[0].intended_balance.to_unsigned().unwrap());
-	assert_eq!(estimate.net_amount, movements[0].effective_balance.to_unsigned().unwrap());
-	assert_eq_unordered(&estimate.vtxos_spent, &movements[0].input_vtxos);
-}
-
-#[tokio::test]
-async fn board_fee_rejects_when_fee_exceeds_amount() {
-	let ctx = TestContext::new("fees/board_fee_rejects_when_fee_exceeds_amount").await;
-	let srv = ctx.captaind("server").cfg(|cfg| {
-		cfg.fees.board = BoardFees {
-			min_fee: sat(50_000),
-			base_fee: Amount::ZERO,
-			ppm: PpmFeeRate::ZERO,
-		};
-	}).create().await;
-	ctx.fund_captaind(&srv, btc(1)).await;
-
-	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
-
-	// Estimate should succeed even though the operation will fail
-	let estimate = bark.estimate_board_offchain_fee(sat(30_000)).await;
-	assert_eq!(estimate.fee, sat(50_000), "fee should exceed amount");
-	assert_eq!(estimate.net_amount, Amount::ZERO);
-
-	// Board 30,000 sats (above min_board_amount=20,000 but fee=50,000 > amount)
-	let err = bark.try_board(sat(30_000)).await.unwrap_err();
-	assert!(
-		err.to_alt_string().contains("exceeds amount"),
-		"Expected fee exceeds amount error, got: {:#}", err,
-	);
-
-	// Balance should be unchanged - no VTXOs created
-	assert_eq!(bark.vtxos().await.len(), 0);
 }
 
 #[tokio::test]

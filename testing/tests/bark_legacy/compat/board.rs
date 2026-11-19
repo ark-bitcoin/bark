@@ -1,5 +1,3 @@
-use std::sync::Arc;
-use std::sync::atomic::{self, AtomicUsize};
 
 use bitcoin::{Amount, OutPoint, Psbt, ScriptBuf, SignedAmount, Transaction, TxIn, TxOut, Txid};
 use bitcoin::absolute::LockTime;
@@ -10,87 +8,10 @@ use bark::onchain::OnchainWalletTrait;
 use bark_json::movements::MovementStatus;
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin_ext::rpc::RpcApi;
-use server_rpc::protos;
 
-use ark_testing::{btc, require_bark_version, sat, TestContext};
+use ark_testing::{require_bark_version, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
-use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::{action_drive_factor, ToAltString};
-
-#[tokio::test]
-async fn board_bark() {
-	const BOARD_AMOUNT: u64 = 90_000;
-	let ctx = TestContext::new("bark/board_bark").await;
-	let srv = ctx.captaind("server").create().await;
-	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
-
-	let board = bark1.board(sat(BOARD_AMOUNT)).await;
-
-	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
-	assert_eq!(board.vtxos[0], vtxo.id);
-	assert!(matches!(vtxo.state, VtxoStateInfo::Locked { .. }));
-
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	assert_eq!(sat(BOARD_AMOUNT), bark1.spendable_balance().await);
-
-	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO, "balance should be reset to zero");
-}
-
-#[tokio::test]
-async fn board_twice_bark() {
-	const BOARD_AMOUNT: u64 = 90_000;
-	let ctx = TestContext::new("bark/board_twice_bark").await;
-	let srv = ctx.captaind("server").create().await;
-	let bark1 = ctx.bark("bark1", &srv).funded(sat(200_000)).create().await;
-
-	let board_a = bark1.board(sat(BOARD_AMOUNT)).await;
-	let board_b = bark1.board(sat(BOARD_AMOUNT)).await;
-
-	let vtxos = bark1.vtxos().await;
-	assert_eq!(vtxos.len(), 2, "should have 2 board vtxos");
-	assert!(vtxos.iter().any(|v| v.id == board_a.vtxos[0]));
-	assert!(vtxos.iter().any(|v| v.id == board_b.vtxos[0]));
-	assert!(vtxos.iter().all(|v| matches!(v.state, VtxoStateInfo::Locked { .. })));
-
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	assert_eq!(sat(BOARD_AMOUNT) * 2, bark1.spendable_balance().await);
-
-	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO, "balance should be reset to zero");
-}
-
-#[tokio::test]
-async fn board_all_bark() {
-	let ctx = TestContext::new("bark/board_all_bark").await;
-
-	let srv = ctx.captaind("server").create().await;
-	let bark1 = ctx.bark("bark1", &srv).create().await;
-
-	// Get the bark-address and fund it
-	ctx.fund_bark(&bark1, sat(100_000)).await;
-	assert_eq!(bark1.onchain_balance().await, sat(100_000));
-
-	let board = bark1.board_all().await;
-	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
-	assert_eq!(board.vtxos[0], vtxo.id);
-	assert!(matches!(vtxo.state, VtxoStateInfo::Locked { .. }));
-
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	// Check that we emptied our onchain balance
-	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
-
-	// Check if the boarding tx's output value is the same as our off-chain balance
-	let board_tx = ctx.bitcoind().await_transaction(board.funding_tx.txid).await;
-	assert_eq!(
-		bark1.spendable_balance().await,
-		board_tx.output.last().unwrap().value,
-	);
-	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
-
-	assert_eq!(bark1.pending_board_balance().await, Amount::ZERO, "balance should be reset to zero");
-}
+use ark_testing::util::ToAltString;
 
 /// A board whose funding tx input is spent by a confirmed conflicting tx can
 /// never confirm: the board action must fail the board (vtxo dropped, movement
@@ -160,91 +81,6 @@ async fn board_fails_when_funding_tx_double_spent() {
 		!onchain.list_transactions().iter().any(|tx| tx.compute_txid() == board.funding_tx.txid),
 		"onchain wallet should have dropped the double-spent board funding tx",
 	);
-}
-
-#[tokio::test]
-async fn bark_rejects_boarding_subdust_amount() {
-	require_bark_version!(>= "0.9.0");
-
-	let ctx = TestContext::new("bark/bark_rejects_boarding_subdust_amount").await;
-	let srv = ctx.captaind("server").funded(btc(10)).create().await;
-	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
-
-	let board_amount = sat(P2TR_DUST_SAT - 1);
-	let res = bark1.try_board(board_amount).await;
-
-	// This is taken care by BDK
-	assert!(res.unwrap_err().to_alt_string().contains(&format!("Output below the dust limit: 0")));
-}
-
-#[tokio::test]
-async fn bark_rejects_boarding_below_minimum_board_amount() {
-	let ctx = TestContext::new("bark/bark_rejects_boarding_below_minimum_board_amount").await;
-	// Set up server with `min_board_amount` of 30 000 sats
-	const MIN_BOARD_AMOUNT_SATS: u64 = 30_000;
-	let srv = ctx.captaind("server").cfg(|cfg| {
-		cfg.min_board_amount = sat(MIN_BOARD_AMOUNT_SATS);
-	}).create().await;
-	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
-
-	let board_amount = sat(MIN_BOARD_AMOUNT_SATS - 1);
-	let res = bark1.try_board(board_amount).await;
-
-	assert!(res.unwrap_err().to_alt_string().contains(&format!(
-		"board amount of 0.00029999 BTC is less than minimum board amount required by server (0.00030000 BTC)",
-	)));
-}
-
-#[tokio::test]
-async fn bark_recover_unregistered_board() {
-	let ctx = TestContext::new("bark/recover_unregistered_board").await;
-
-	// Set up the server.
-	// The server misbehaves and drops the first request to register_board_vtxo
-	let srv = ctx.captaind("server").funded(btc(1)).create().await;
-
-	/// This proxy drops the first `action_drive_factor()` requests to
-	/// register_board (2 under the double-drive reentrancy mode, which runs
-	/// each advance step twice, 1 otherwise), so the first maintenance cycle
-	/// always leaves the board unregistered.
-	#[derive(Clone)]
-	struct Proxy(Arc<AtomicUsize>);
-
-	#[async_trait::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn register_board_vtxo(
-			&self, upstream: &mut ArkClient, req: protos::BoardVtxoRequest,
-		) -> Result<protos::Empty, tonic::Status> {
-			let dropped = self.0.fetch_update(
-				atomic::Ordering::Relaxed, atomic::Ordering::Relaxed, |n| n.checked_sub(1),
-			).is_ok();
-			if dropped {
-				Err(tonic::Status::from_error(
-					"Nope! I do not register on the first attempt!".into(),
-				))
-			} else {
-				Ok(upstream.register_board_vtxo(req).await?.into_inner())
-			}
-		}
-	}
-
-	let proxy = srv.start_proxy_no_mailbox(
-		Proxy(Arc::new(AtomicUsize::new(action_drive_factor()))),
-	).await;
-
-	let bark = ctx.bark("bark", &proxy.address).funded(sat(1_000_00)).create().await;
-	// Only asks server to cosign, not register a board.
-	bark.board_all().await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	//
-	// The board registration should have failed and the pending board balance should still be greater than 0.
-	assert!(bark.pending_board_balance().await > Amount::ZERO);
-	assert_eq!(bark.vtxos().await.len(), 1);
-
-	ctx.generate_blocks(12).await;
-	// The board registration will succeed during maintenance her and the pending board balance should be 0.
-	assert_eq!(bark.pending_board_balance().await, Amount::ZERO);
 }
 
 #[tokio::test]

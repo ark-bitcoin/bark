@@ -508,12 +508,17 @@ impl Barkd {
 	/// Board the specified amount into Ark.
 	pub async fn board_amount(&self, amount: Amount) -> PendingBoardInfo {
 		tokio::time::sleep(Duration::from_millis(500)).await;
-		info!("{}: Boarding {} via REST", self.name, amount);
-		let config = self.client_config();
-		let ret = boards_api::board_amount(&config, BoardRequest { amount_sat: amount.to_sat() }).await
-			.expect("barkd board_amount failed");
+		let ret = self.try_board_amount(amount).await.expect("barkd board_amount failed");
 		tokio::time::sleep(Duration::from_millis(500)).await;
 		ret
+	}
+
+	/// Board the specified amount, surfacing the REST error if it fails.
+	pub async fn try_board_amount(&self, amount: Amount) -> anyhow::Result<PendingBoardInfo> {
+		info!("{}: Boarding {} via REST", self.name, amount);
+		let config = self.client_config();
+		boards_api::board_amount(&config, BoardRequest { amount_sat: amount.to_sat() }).await
+			.map_err(|e| anyhow::anyhow!("barkd board_amount failed: {}", rest_error(e)))
 	}
 
 	/// Return all pending boards (funding transactions not yet confirmed).
