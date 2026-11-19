@@ -819,6 +819,8 @@ mod test {
 		concat!(env!("CARGO_MANIFEST_DIR"), "/captaind.default.toml");
 	const DEFAULT_WATCHMAND_CONFIG_PATH: &str =
 		concat!(env!("CARGO_MANIFEST_DIR"), "/watchmand.default.toml");
+	const IMAGE_CAPTAIND_CONFIG_PATH: &str =
+		concat!(env!("CARGO_MANIFEST_DIR"), "/../.gitlab/images/releases/captaind/captaind.toml");
 
 	#[test]
 	fn parse_validate_default_captaind_config_file() {
@@ -829,6 +831,14 @@ mod test {
 		cfg.bitcoind.cookie = Some(".cookie".into());
 
 		cfg.validate().expect("error validating default config");
+	}
+
+	#[test]
+	fn parse_validate_image_captaind_config_file() {
+		let cfg = Config::load_with_custom_env(IMAGE_CAPTAIND_CONFIG_PATH, Some(HashMap::new()))
+			.expect("error loading config");
+
+		cfg.validate().expect("error validating image config");
 	}
 
 	#[test]
