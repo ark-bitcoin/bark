@@ -36,6 +36,18 @@ pub enum ExitTxStatus {
 	Confirmed {
 		/// The block that confirmed the exit transaction.
 		block: BlockRef,
+		/// **Deprecated**: confirmed exit transactions no longer track a CPFP
+		/// child. This field is always an empty string and will be removed in
+		/// a future release.
+		#[deprecated(note = "no longer tracked")]
+		#[serde(default)]
+		#[cfg_attr(feature = "utoipa", schema(required = true))]
+		child_txid: String,
+		/// **Deprecated**: use `block`. This field is always a `block` origin
+		/// confirmed in `block`, kept for backwards compatibility, and will be
+		/// removed in a future release.
+		#[deprecated(note = "use `block`")]
+		origin: ExitTxOrigin,
 	},
 }
 
@@ -46,6 +58,7 @@ impl fmt::Display for ExitTxStatus {
 }
 
 impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
+	#[allow(deprecated)] // child_txid and origin kept for old clients
 	fn from(v: bark::exit::ExitTxStatus) -> Self {
 		match v {
 			bark::exit::ExitTxStatus::VerifyInputs => {
@@ -61,7 +74,12 @@ impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
 				ExitTxStatus::AwaitingConfirmation { child_txid, origin: origin.into() }
 			},
 			bark::exit::ExitTxStatus::Confirmed { block } => {
-				ExitTxStatus::Confirmed { block: block.into() }
+				let block = BlockRef::from(block);
+				ExitTxStatus::Confirmed {
+					block,
+					child_txid: String::new(),
+					origin: ExitTxOrigin::Block { confirmed_in: block },
+				}
 			},
 		}
 	}

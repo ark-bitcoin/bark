@@ -3,16 +3,16 @@
     "bark": {
       "flake": false,
       "locked": {
-        "lastModified": 1789124636,
-        "narHash": "sha256-nHoMhOqAVPjMePqKrJLuZxBIjHstA+AHLc0b/T/pnfQ=",
+        "lastModified": 1793915930,
+        "narHash": "sha256-Pok3NkMZNyv6AoyVJHPt21lQ+8rB7BDk92NEzexnpqw=",
         "owner": "ark-bitcoin",
         "repo": "bark",
-        "rev": "8f5d8c4f4afae87c8e4b3c6fb26fe06e9ae50e6a",
+        "rev": "303682063ed7559b06dcf37c5cb37bb7037b943f",
         "type": "gitlab"
       },
       "original": {
         "owner": "ark-bitcoin",
-        "ref": "bark-0.7.1",
+        "ref": "bark-0.8.1",
         "repo": "bark",
         "type": "gitlab"
       }
@@ -29,11 +29,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1792584011,
-        "narHash": "sha256-bIPlrHH9k4qaxFP1p9aAHVYI4RUoD2joX4AbGDGKNKw=",
+        "lastModified": 1794791552,
+        "narHash": "sha256-OrNJjhQtyQzAuXeSt+GEzJsqbjUHGi49sYrWbARTgis=",
         "owner": "ark-bitcoin",
         "repo": "bark-web",
-        "rev": "54cd204a6984cdea498b8cef7ae5a20d45816287",
+        "rev": "135c8afb3eeb66c6bbfda4b6dcc6f56d43773a92",
         "type": "gitlab"
       },
       "original": {

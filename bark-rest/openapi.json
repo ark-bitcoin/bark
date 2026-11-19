@@ -6122,12 +6122,23 @@
             "type": "object",
             "required": [
               "block",
+              "child_txid",
+              "origin",
               "type"
             ],
             "properties": {
               "block": {
                 "$ref": "#/components/schemas/BlockRef",
                 "description": "The block that confirmed the exit transaction."
+              },
+              "child_txid": {
+                "type": "string",
+                "description": "**Deprecated**: confirmed exit transactions no longer track a CPFP\nchild. This field is always an empty string and will be removed in\na future release.",
+                "deprecated": true
+              },
+              "origin": {
+                "$ref": "#/components/schemas/ExitTxOrigin",
+                "description": "**Deprecated**: use `block`. This field is always a `block` origin\nconfirmed in `block`, kept for backwards compatibility, and will be\nremoved in a future release."
               },
               "type": {
                 "type": "string",
