@@ -1103,7 +1103,7 @@ async fn arkoor_caps_inputs_before_loading_vtxos() {
 	let mut rpc = srv.get_public_rpc().await;
 
 	let (_, input) = DummyTestVtxoSpec::default().build();
-	let client = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let client = ArkoorPackageBuilder::new_claim_all(
 		[input], VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
 	).unwrap().generate_user_nonces(&[*DUMMY_USER_KEY]).unwrap();
 	let mut sample: protos::ArkoorPackageCosignRequest = client.cosign_request().into();
@@ -1136,6 +1136,57 @@ async fn arkoor_caps_inputs_before_loading_vtxos() {
 	}
 }
 
+/// The server does not co-sign a checkpoint tx with a dust output. It can not
+/// relay that tx to stop an emergency exit of the input.
+#[tokio::test]
+async fn arkoor_rejects_dust_on_checkpoint_tx() {
+	let ctx = TestContext::new("server/arkoor_rejects_dust_on_checkpoint_tx").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	// bark2 gets a small VTXO that is not dust
+	let dust = sat(P2TR_DUST_SAT - 1);
+	bark1.send_oor(&bark2.address().await, dust * 4).await;
+	assert_eq!(bark2.spendable_balance().await, dust * 4);
+
+	let bark2_client = bark2.client().await;
+	let bare_vtxo = bark2_client.vtxos().await
+		.unwrap().into_iter().next().unwrap().vtxo;
+	let vtxo_keypair = bark2_client.pubkey_keypair(&bare_vtxo.user_pubkey()).await
+		.unwrap().unwrap().1;
+	let vtxo = bark2_client.get_full_vtxo(bare_vtxo.id()).await.unwrap();
+
+	// It spends the VTXO to four dust outputs. All of them are isolated.
+	let outputs = vec![
+		ArkoorDestination {
+			total_amount: dust,
+			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
+		}; 4
+	];
+	let isolated = protos::ArkoorPackageCosignRequest::from(
+		ArkoorPackageBuilder::new([vtxo], outputs).unwrap()
+			.generate_user_nonces(&[vtxo_keypair]).unwrap()
+			.cosign_request(),
+	);
+	assert!(isolated.parts[0].outputs.is_empty());
+	assert_eq!(isolated.parts[0].isolated_outputs.len(), 4);
+
+	// An old wallet puts the dust outputs on the checkpoint tx.
+	let mut on_checkpoint = isolated.clone();
+	let part = &mut on_checkpoint.parts[0];
+	part.outputs = part.isolated_outputs.drain(..).collect();
+
+	let mut rpc = srv.get_public_rpc().await;
+	let err = rpc.request_arkoor_cosign(on_checkpoint).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+	assert!(err.message().contains("below the dust threshold"), "{err}");
+	assert!(err.message().contains("upgrade your wallet and retry"), "{err}");
+
+	rpc.request_arkoor_cosign(isolated).await.expect("the isolated dust outputs are accepted");
+}
+
 #[tokio::test]
 async fn double_spend_arkoor() {
 	let ctx = TestContext::new("server/double_spend_arkoor").await;
@@ -1161,7 +1212,7 @@ async fn double_spend_arkoor() {
 	let pk1 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 	let pk2 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
-	let builder1 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+	let builder1 = ArkoorPackageBuilder::new_single_output(
 		[vtxo.clone()],
 		ArkoorDestination {
 			total_amount: sat(100_000),
@@ -1169,7 +1220,7 @@ async fn double_spend_arkoor() {
 		},
 		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder2 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+	let builder2 = ArkoorPackageBuilder::new_single_output(
 		[vtxo.clone()],
 		ArkoorDestination {
 			total_amount: sat(200_000), // other amount
@@ -1177,7 +1228,7 @@ async fn double_spend_arkoor() {
 		},
 		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder3 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+	let builder3 = ArkoorPackageBuilder::new_single_output(
 		[vtxo.clone()],
 		ArkoorDestination {
 			total_amount: sat(100_000),
@@ -1253,7 +1304,7 @@ async fn reject_expired_arkoor_cosign() {
 	let vtxo = bark_client.get_full_vtxo(bare_vtxo.id()).await.unwrap();
 	let change_pk = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
-	let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+	let builder = ArkoorPackageBuilder::new_single_output(
 		[vtxo.clone()],
 		ArkoorDestination {
 			total_amount: sat(100_000),

@@ -1,0 +1,8 @@
+- The server does not co-sign an arkoor checkpoint tx with a dust output
+  The server refuses an arkoor co-sign request that puts an output below 330
+  sats on the checkpoint tx. These outputs must be in the dust isolation tx.
+  The server also refuses an arkoor co-sign request without a checkpoint tx.
+  [#2822](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2822)
+  - **BREAKING:** bark 0.8.1 and older can not make an arkoor payment with an
+    output below 330 sats, except from a VTXO below 330 sats. The error tells
+    the user to upgrade the wallet and retry.

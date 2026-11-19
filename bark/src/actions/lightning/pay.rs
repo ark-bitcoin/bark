@@ -536,7 +536,7 @@ async fn request_lightning_send_htlcs(
 		});
 	}
 
-	let builder = ArkoorPackageBuilder::new_with_checkpoints(
+	let builder = ArkoorPackageBuilder::new(
 		full_inputs.clone(),
 		outputs,
 	)
@@ -747,7 +747,7 @@ async fn revoke_lightning_send_htlcs(
 	}
 
 	let revocation_claim_policy = VtxoPolicy::new_pubkey(revocation.key);
-	let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ArkoorPackageBuilder::new_claim_all(
 		htlc_vtxos.iter().cloned(),
 		revocation_claim_policy,
 	)

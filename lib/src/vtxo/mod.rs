@@ -155,7 +155,7 @@ pub enum VtxoStandardnessError {
 	/// ```
 	///
 	/// Even when the builder is asked to apply dust isolation (see
-	/// [`ArkoorBuilder::new_with_checkpoint_isolate_dust`](crate::arkoor::ArkoorBuilder::new_with_checkpoint_isolate_dust)),
+	/// [`ArkoorBuilder::new_isolate_dust`](crate::arkoor::ArkoorBuilder::new_isolate_dust)),
 	/// the total is too small to fix. An isolation output has to be
 	/// at least `P2TR_DUST` (330 sat) to clear the relay limit. Bob's
 	/// 200 sat already lives in the dust pool; to reach 330 the builder

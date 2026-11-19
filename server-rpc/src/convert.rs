@@ -634,7 +634,8 @@ impl<V: VtxoRef> From<ArkoorCosignRequest<V>> for protos::ArkoorCosignRequest {
 			isolated_outputs: v.isolated_outputs.into_iter()
 				.map(|output| output.into())
 				.collect::<Vec<_>>(),
-			use_checkpoint: v.use_checkpoint,
+			// Servers that still have the option reject a request without it.
+			use_checkpoint: true,
 			attestation: v.attestation.serialize().to_vec(),
 		}
 	}
@@ -644,6 +645,12 @@ impl<V: VtxoRef> From<ArkoorCosignRequest<V>> for protos::ArkoorCosignRequest {
 impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 	type Error = ConvertError;
 	fn try_from(v: protos::ArkoorCosignRequest) -> Result<Self, Self::Error> {
+		if !v.use_checkpoint {
+			return Err(
+				"arkoor without checkpoint is not supported, upgrade your wallet and retry".into()
+			);
+		}
+
 		let req = Self::new_with_attestation(
 			v.user_pub_nonces.into_iter()
 				.map(|n| musig::PublicNonce::from_bytes(&n))
@@ -655,7 +662,6 @@ impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 			v.isolated_outputs.into_iter()
 				.map(|output| ArkoorDestination::try_from(output))
 				.collect::<Result<Vec<_>, _>>()?,
-			v.use_checkpoint,
 			ArkoorCosignAttestation::deserialize(&v.attestation)
 				.map_err(|_| "Failed to parse attestation")?,
 		);
@@ -792,6 +798,17 @@ mod test {
 	use std::str::FromStr;
 	use bitcoin::hex::FromHex;
 	use super::*;
+
+	#[test]
+	fn arkoor_cosign_request_without_checkpoint_is_rejected() {
+		let req = protos::ArkoorCosignRequest {
+			use_checkpoint: false,
+			..Default::default()
+		};
+		let err = ArkoorCosignRequest::<VtxoId>::try_from(req).unwrap_err();
+		assert!(err.msg.contains("arkoor without checkpoint is not supported"), "{}", err.msg);
+		assert!(err.msg.contains("upgrade your wallet and retry"), "{}", err.msg);
+	}
 
 	#[test]
 	fn test_preimage_bytes() {

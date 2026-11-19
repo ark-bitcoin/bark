@@ -234,11 +234,10 @@ impl Server {
 		let request = request.set_vtxos(input_vtxos.iter().map(|v| v.vtxo.clone()))?;
 
 		let validation = ArkoorCosignRequestValidationParams {
-			use_checkpoints: true,
 			max_outputs_per_input: self.config.max_arkoor_fanout,
 			max_input_exit_depth: Some(self.config.max_vtxo_exit_depth),
 		};
-		let builder = self.build_cosign_request(validation.use_checkpoints, request)
+		let builder = self.build_cosign_request(request)
 			.badarg("invalid cosign request")?;
 
 		let spend_map = builder.spend_info().collect::<HashMap<VtxoId, bitcoin::Txid>>();
@@ -522,7 +521,6 @@ impl Server {
 		let cosign_request = cosign_request.set_vtxos(htlc_vtxos)?;
 
 		let validation = ArkoorCosignRequestValidationParams {
-			use_checkpoints: true,
 			max_outputs_per_input: 1, // should claim all
 			max_input_exit_depth: None, // recovery op, exempt from the depth limit
 		};
@@ -1117,11 +1115,7 @@ impl Server {
 			v.vtxo
 		});
 
-		// Force checkpoints once the client speaks the LN-receive-checkpoint protocol version:
-		// the watchman then stops at the checkpoint instead of force-exiting the claimed leaf.
-		let use_checkpoints = pver >= server_rpc::pver::PROTOCOL_VERSION_LN_RECEIVE_CHECKPOINT;
 		let validation = ArkoorCosignRequestValidationParams {
-			use_checkpoints,
 			max_outputs_per_input: 1, // should claim all
 			max_input_exit_depth: None, // recovery op, exempt from the depth limit
 		};

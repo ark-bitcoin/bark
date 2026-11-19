@@ -409,7 +409,7 @@ impl VtxoPool {
 		// The checkpoint caps the watchman's on-chain traversal when an exit
 		// anchors an allocation chain: checkpoints are swept at expiry instead
 		// of progressed further.
-		let builder = ArkoorPackageBuilder::new_with_checkpoints(
+		let builder = ArkoorPackageBuilder::new(
 			input_vtxos.into_iter().map(|v| v.into_inner()),
 			outputs,
 		).context("arkoor builder error")?;

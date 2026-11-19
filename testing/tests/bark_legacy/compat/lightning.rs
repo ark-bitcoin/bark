@@ -442,7 +442,7 @@ async fn bark_refresh_payment_revocation() {
 
 #[tokio::test]
 async fn bark_allows_sending_dust_bolt11_payment() {
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(>= "0.9.0");
 
 	let ctx = TestContext::new("lightningd/bark_allows_sending_dust_bolt11_payment").await;
 
@@ -642,8 +642,7 @@ async fn bark_can_receive_lightning_when_pool_spend_creates_subdust_output(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
-	// The new ServerHtlcRecv policy breaks LN receive for bark 0.5.0 and older
-	require_bark_version!(> "0.5.0");
+	require_bark_version!(>= "0.9.0");
 
 	srv.wait_for_vtxopool(&ctx).await;
 

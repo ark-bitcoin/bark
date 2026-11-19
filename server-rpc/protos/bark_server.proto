@@ -342,6 +342,7 @@ message ArkoorCosignRequest {
 	repeated bytes user_pub_nonces = 3;
 	// outputs used for dust isolation
 	repeated ArkoorDestination isolated_outputs = 4;
+	// Must be true. An arkoor without checkpoint is no longer supported.
 	bool use_checkpoint = 5;
 	bytes attestation = 6;
 }

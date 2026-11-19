@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use anyhow::Context;
 use bitcoin::Txid;
 
-use ark::util::IteratorExt;
 use ark::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo};
 use ark::vtxo::Full;
+use ark::arkoor::{ArkoorConstructionError, ArkoorSigningError};
 use ark::arkoor::state::{ServerCanCosign, ServerSigned};
 use ark::arkoor::package::{
 	ArkoorPackageCosignRequest, ArkoorPackageCosignResponse, ArkoorPackageBuilder,
@@ -17,8 +17,6 @@ use crate::error::ContextExt;
 use crate::{check_max_amount, Server};
 
 pub(crate) struct ArkoorCosignRequestValidationParams {
-	/// whether checkpoints should be used
-	pub use_checkpoints: bool,
 	/// maximum number of outputs from a single input
 	pub max_outputs_per_input: usize,
 	/// maximum allowed exit depth (genesis items) of each input VTXO;
@@ -72,14 +70,13 @@ impl Server {
 		for (idx, req) in cosign_req.requests.iter().enumerate() {
 			check_input_limits(&params, idx, &req.input, req.all_outputs().count())?;
 		}
-		self.build_cosign_request(params.use_checkpoints, cosign_req)
+		self.build_cosign_request(cosign_req)
 	}
 
 	/// Create the arkoor builder for the cosign request, without applying
 	/// the limits of [Server::check_cosign_request_limits].
 	pub(crate) fn build_cosign_request(
 		&self,
-		use_checkpoints: bool,
 		cosign_req: ArkoorPackageCosignRequest<Vtxo<Full>>,
 	) -> anyhow::Result<ArkoorPackageBuilder<ServerCanCosign>> {
 		// this we can check before creating the builder
@@ -88,20 +85,23 @@ impl Server {
 			bail!("empty request");
 		}
 
-		let use_checkpoint = cosign_req.requests.iter()
-			.all_same(|r| r.use_checkpoint)
-			.context("not all requests have the same use_checkpoints value")?;
-		if use_checkpoints && !use_checkpoint {
-			bail!("should use arkoor checkpoints");
-		} else if !use_checkpoints && use_checkpoint {
-			bail!("should not use arkoor checkpoints");
-		}
-
 		// then we create the builder
 		match ArkoorPackageBuilder::from_cosign_request(cosign_req) {
 			Ok(ret) => Ok(ret),
 			Err((idx, e)) => {
-				badarg!("invalid cosign request at index #{idx}: {e}")
+				// A wallet from before the current dust isolation rules puts
+				// dust outputs on the checkpoint tx.
+				let is_dust = matches!(e, ArkoorSigningError::ArkoorConstructionError(
+					ArkoorConstructionError::Dust,
+				));
+				if is_dust {
+					badarg!(
+						"invalid cosign request at index #{idx}: {e}, \
+						upgrade your wallet and retry",
+					)
+				} else {
+					badarg!("invalid cosign request at index #{idx}: {e}")
+				}
 			}
 		}
 	}
@@ -195,7 +195,6 @@ impl Server {
 		check_max_amount("arkoor send", total_input_amount, self.config.max_arkoor_amount)?;
 
 		let validation = ArkoorCosignRequestValidationParams {
-			use_checkpoints: true,
 			max_outputs_per_input: self.config.max_arkoor_fanout,
 			max_input_exit_depth: Some(self.config.max_vtxo_exit_depth),
 		};

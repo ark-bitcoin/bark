@@ -191,6 +191,8 @@ async fn bark_send_onchain_too_much() {
 
 #[tokio::test]
 async fn bark_rejects_offboarding_dust_amount() {
+	require_bark_version!(>= "0.9.0");
+
 	let ctx = TestContext::new("bark/bark_rejects_offboarding_dust_amount").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;

@@ -699,7 +699,7 @@ async fn prepare_lightning_receive_claim(
 	// The claim is built from our own stored vtxos, so failing to build it
 	// is deterministic: abort, which abandons the receive while the preimage
 	// is still ours.
-	let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+	let builder = ArkoorPackageBuilder::new_claim_all(
 		inputs, receive_policy,
 	).context("creating claim arkoor builder failed").abort()?
 		.generate_user_nonces(&keypairs)
