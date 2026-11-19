@@ -2484,7 +2484,11 @@ impl Wallet {
 		}))
 	}
 
-	/// This will refresh all provided VTXOs in an interactive round and wait until end
+	/// This will refresh the provided VTXOs in an interactive round and wait until end
+	///
+	/// A round participation takes at most [MAX_NB_ROUND_PARTICIPATION_INPUTS]
+	/// VTXOs, so only the ones that expire first are refreshed. The rest stay
+	/// as they are, to refresh in another call.
 	///
 	/// Returns the [RoundStatus] of the round if a successful refresh occurred.
 	/// It will return [None] if no [Vtxo] needed to be refreshed.
@@ -2500,7 +2504,12 @@ impl Wallet {
 		Ok(Some(self.participate_round(participation, Some(RoundMovement::Refresh)).await?))
 	}
 
-	/// This will refresh all provided VTXOs in delegated (non-interactive) mode
+	/// This will refresh the provided VTXOs in delegated (non-interactive) mode
+	///
+	/// Like [Wallet::refresh_vtxos], it refreshes at most
+	/// [MAX_NB_ROUND_PARTICIPATION_INPUTS] VTXOs, the ones that expire first.
+	/// The inputs of the returned state's participation are the VTXOs that
+	/// were included.
 	///
 	/// Returns the [StoredRoundState] which can be used to track the round's
 	/// progress later by calling sync. It will return [None] if no [Vtxo]
