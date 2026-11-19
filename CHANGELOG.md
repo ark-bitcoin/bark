@@ -35,6 +35,10 @@ Below is a more detailed summary for each version.
     - **BREAKING:** `ArkoorCosignRequest` has no `use_checkpoint` field, and
       `ArkoorCosignRequest::new` and `ArkoorCosignRequest::new_with_attestation`
       have no `use_checkpoint` argument.
+  - `Invoice::network` no longer panics on an unknown BOLT12 chain
+    [#2795](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2795)
+    - **BREAKING:** `Invoice::network` returns `Option<Network>`. It is `None`
+      for a BOLT12 invoice whose chain is not a known network.
 
 - `bark`
   - Serve Nostr Wallet Connect (NIP-47) from a wallet
@@ -45,7 +49,7 @@ Below is a more detailed summary for each version.
     set with `NwcManager::set_relays`.
     [#2589](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2589)
   - A retry of a failed lightning payment gets its own movement
-    [#2664](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2664)
+    [#2788](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2788)
     - **BREAKING:** `BarkPersister` implementations must provide `unlink_movement_from_action`
   - Recovery from seed resumes on every sync until it is done
     A VTXO whose status the server can't give yet stays locked and is retried
@@ -53,7 +57,7 @@ Below is a more detailed summary for each version.
     [#2678](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2678)
     - **BREAKING:** `RecoveryStatus` has a new `InProgress` variant
     - **BREAKING:** Renamed `RecoveryReport::seen` to `RecoveryReport::contains`
-  - `Wallet::board_psbt` returns an error for an invalid expiry height
+  - An invalid board expiry height returns an error
     It used to panic on an expiry at or above `LOCK_TIME_THRESHOLD`.
     [#2767](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2767)
   - fix Lightning send action for failure during HTLC cosign
@@ -130,7 +134,8 @@ Below is a more detailed summary for each version.
     [#2815](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2815)
     - **BREAKING:** `ExitTxStatus::Confirmed` no longer has the `child_txid` and
       `origin` fields. Its `block` is the block that confirmed the exit
-      transaction. The barkd REST API drops both fields too.
+      transaction. The barkd REST API keeps both fields on `confirmed` as
+      deprecated stubs, and `child_txid` is always empty.
     - Bark no longer broadcasts a CPFP child for an exit transaction that is
       confirmed.
     - An exit that waits for its timelock now follows the exit transaction when
@@ -140,6 +145,10 @@ Below is a more detailed summary for each version.
     dust isolation tx, also when all outputs are dust. Servers from this release
     refuse the old format, so upgrade bark to make these payments.
     [#2822](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2822)
+  - Refuse a mainnet server whose VTXO lifetime is too short to refresh
+    The wallet refuses to connect when the server's `vtxo_lifetime` is not more
+    than twice `vtxo_refresh_expiry_threshold`, 288 blocks by default.
+    [#2798](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2798)
 
 - `bark-cli`
   - barkd serves Nostr Wallet Connect (NIP-47)
@@ -168,6 +177,8 @@ Below is a more detailed summary for each version.
   - Apply `max_arkoor_amount` to lightning sends
     [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
     - **BREAKING:** `max_ln_send_amount` must not exceed `max_arkoor_amount`.
+      An unset `max_ln_send_amount` counts as unlimited, so set it when
+      `max_arkoor_amount` is set.
   - Fix lightning payment and watchman reliability issues
     [#2812](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2812)
   - The server does not co-sign an arkoor checkpoint tx with a dust output
@@ -175,9 +186,10 @@ Below is a more detailed summary for each version.
     sats on the checkpoint tx. These outputs must be in the dust isolation tx.
     The server also refuses an arkoor co-sign request without a checkpoint tx.
     [#2822](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2822)
-    - **BREAKING:** bark 0.8.1 and older can not make an arkoor payment with an
-      output below 330 sats, except from a VTXO below 330 sats. The error tells
-      the user to upgrade the wallet and retry.
+    - **BREAKING:** bark 0.8.1 and older can not make some arkoor and lightning
+      payments that leave an output below 330 sats on the checkpoint tx, for
+      example when every output from one input VTXO is below 330 sats. The
+      error tells the user to upgrade the wallet and retry.
   - Verify round input attestations before they reach the round coordinator
     Checking them costs inputs times outputs, so `SubmitPayment` now does it on
     its own task and the coordinator only compares the attempt challenge. A
@@ -185,6 +197,9 @@ Below is a more detailed summary for each version.
     also fails with `InvalidArgument` when no round attempt is collecting
     payments instead of dropping the request silently.
     [#2762](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2762)
+  - Remove the `undo-round` command
+    [#2755](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2755)
+    - **BREAKING:** `captaind undo-round` no longer exists.
 
 # v0.8.1
 
