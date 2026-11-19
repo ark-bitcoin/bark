@@ -5,6 +5,7 @@
 //! token) live on the action as top-level fields; the mutable bit is
 //! [`Progress`], representing the current phase of the state machine.
 
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -554,6 +555,14 @@ async fn prepare_lightning_receive_htlcs(
 		.map(|b| Vtxo::deserialize(&b))
 		.collect::<Result<Vec<_>, _>>()
 		.context("invalid htlc vtxos from server").abort()?;
+
+	// A repeated VTXO would count toward the invoice amount more than once.
+	let mut seen_ids = HashSet::with_capacity(vtxos.len());
+	for vtxo in &vtxos {
+		if !seen_ids.insert(vtxo.id()) {
+			abort!("server returned HTLC VTXO {} more than once", vtxo.id());
+		}
+	}
 
 	// Sanity-check the vtxos.
 	let mut htlc_amount = Amount::ZERO;

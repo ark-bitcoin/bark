@@ -1686,6 +1686,74 @@ async fn bark_rejects_htlc_recv_vtxo_with_inflated_expiry_delta() {
 	assert!(bark.list_lightning_receives().await.is_empty());
 }
 
+/// A server that lists the same HTLC-recv VTXO twice would get the preimage
+/// for an invoice backed by half the collateral.
+#[tokio::test]
+async fn bark_rejects_repeated_htlc_recv_vtxo() {
+	require_bark_version!(> "0.9.0");
+
+	let ctx = TestContext::new("lightningd/bark_rejects_repeated_htlc_recv_vtxo").await;
+
+	#[derive(Clone)]
+	struct RepeatedHtlcVtxoProxy;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for RepeatedHtlcVtxoProxy {
+		async fn prepare_lightning_receive_claim(
+			&self, upstream: &mut ArkClient, req: protos::PrepareLightningReceiveClaimRequest,
+		) -> Result<protos::PrepareLightningReceiveClaimResponse, tonic::Status> {
+			let mut res = upstream.prepare_lightning_receive_claim(req).await?.into_inner();
+			res.htlc_vtxos = res.htlc_vtxos.iter()
+				.flat_map(|v| [v.clone(), v.clone()])
+				.collect();
+			Ok(res)
+		}
+	}
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("server").lightningd(&lightning.internal)
+		.funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let proxy = srv.start_proxy_no_mailbox(RepeatedHtlcVtxoProxy).await;
+
+	let bark = ctx.bark("bark1", &proxy.address).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let invoice = invoice_info.invoice.clone();
+	tokio::spawn(async move {
+		lightning.external.pay_bolt11(invoice).await;
+	});
+
+	// The attempts made while the payer is still on its way find nothing to
+	// claim yet and park, so keep driving until one of them sees the grant.
+	let mut rejection = None;
+	for _ in 0..20 {
+		let res = bark.try_lightning_receive_no_wait(&invoice_info.invoice)
+			.try_wait_millis(15_000).await.expect("claim command timed out");
+		if let Err(e) = res {
+			rejection = Some(e);
+			break;
+		}
+		// Don't sync here: a syncing balance command also drives the receive
+		// and would swallow the rejection.
+		if bark.spendable_balance_no_sync().await != btc(2) {
+			break;
+		}
+		tokio::time::sleep(Duration::from_secs(1)).await;
+	}
+
+	// We never revealed the preimage, so we still hold only the board vtxo.
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(2));
+
+	let rejection = rejection.expect("expected bark to reject the repeated HTLC vtxo");
+	assert!(format!("{:?}", rejection).contains("more than once"), "{rejection:?}");
+
+	assert!(bark.list_lightning_receives().await.is_empty());
+}
+
 /// A grant's HTLC leaf timelocks can look safe while the backing tree expires
 /// first, letting the server sweep it after learning the preimage.
 #[tokio::test]
