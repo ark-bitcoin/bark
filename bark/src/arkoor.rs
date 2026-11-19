@@ -328,8 +328,10 @@ impl Wallet {
 			.collect())
 	}
 
-	/// Drives every pending arkoor send forward by one step or to
-	/// completion if it's ready.
+	/// Drives every pending arkoor send until it parks, a step fails, or it finishes.
+	///
+	/// An error on one arkoor send is logged and does not stop the others.
+	/// It skips any arkoor send that another caller is already driving.
 	pub async fn sync_pending_arkoor_sends(&self) -> anyhow::Result<()> {
 		let pending = self.pending_arkoor_sends().await?;
 		if pending.is_empty() {

@@ -1,0 +1,6 @@
+- Fix outdated `Wallet` sync and maintenance docs
+  The docs of `sync_exits`, `maintenance_delegated`, `sync_mailbox`,
+  `sync_pending_rounds`, the `sync_pending_*` action syncs, and the `Wallet`
+  overview now match what the functions do. This helps you pick the right
+  function and know its side effects.
+  [#2820](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2820)

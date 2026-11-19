@@ -2502,7 +2502,8 @@ impl Wallet {
 		Ok(ret)
 	}
 
-	/// Sync pending rounds that have finished but are waiting for confirmations
+	/// Sync each pending round that has no attempt in progress, and return the
+	/// status of each round it synced.
 	pub async fn sync_pending_rounds(&self) -> anyhow::Result<HashMap<RoundStateId, RoundStatus>> {
 		let states = self.pending_round_states().await?;
 		if states.is_empty() {

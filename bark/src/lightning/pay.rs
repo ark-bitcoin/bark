@@ -99,9 +99,10 @@ impl Wallet {
 		Ok(vtxos)
 	}
 
-	/// Drives every pending lightning send forward by one step (or to
-	/// completion if it's ready). Each action runs to its next park
-	/// independently; errors on one don't stop the others.
+	/// Drives every pending Lightning send until it parks, a step fails, or it finishes.
+	///
+	/// An error on one Lightning send is logged and does not stop the others.
+	/// It skips any Lightning send that another caller is already driving.
 	pub async fn sync_pending_lightning_send_vtxos(&self) -> anyhow::Result<()> {
 		let pending = self.pending_lightning_sends().await?;
 		if pending.is_empty() {

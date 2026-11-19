@@ -151,9 +151,10 @@ impl Wallet {
 		Ok(total)
 	}
 
-	/// Drives every pending lightning receive forward by one step (or to
-	/// completion if it's ready). Each action runs to its next park
-	/// independently; errors on one don't stop the others.
+	/// Drives every pending Lightning receive until it parks, a step fails, or it finishes.
+	///
+	/// An error on one Lightning receive is logged and does not stop the others.
+	/// It skips any Lightning receive that another caller is already driving.
 	pub async fn sync_pending_lightning_receives(&self) -> anyhow::Result<()> {
 		let pending = self.pending_lightning_receives().await?;
 		if pending.is_empty() {
