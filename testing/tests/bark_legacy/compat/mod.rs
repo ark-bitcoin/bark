@@ -1,7 +1,6 @@
 mod access_token;
 mod arkoor;
 mod base;
-mod board;
 mod dust;
 mod estimate;
 mod fees;
