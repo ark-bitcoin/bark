@@ -257,7 +257,13 @@ impl Daemon {
 
 	/// Starts the server and waits until it terminates.
 	///
-	/// This is equivalent to calling [crate::Server::start] and [crate::Server::wait] in one go.
+	/// Starts the daemon, then the admin gRPC server if `admin_address` is set,
+	/// and waits until the daemon shuts down.
+	///
+	/// Returns an error if a critical worker stopped the daemon, including an
+	/// admin server that can't bind its address. `watchmand start` then exits
+	/// with status 1, so a supervisor that restarts on failure, like systemd's
+	/// `Restart=on-failure`, restarts it.
 	pub async fn run(cfg: Config) -> anyhow::Result<()> {
 		let admin_address = cfg.admin_address;
 		let srv = Arc::new(Self::start(cfg).await?);
@@ -276,6 +282,9 @@ impl Daemon {
 		}
 
 		srv.wait().await;
+		if let Some(worker) = srv.rtmgr.failed_worker() {
+			bail!("critical worker {} stopped unexpectedly", worker);
+		}
 		Ok(())
 	}
 
