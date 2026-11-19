@@ -794,7 +794,7 @@ compat-bark-0.8.1:
   tags:
     - integration
     - datastore
-  extends: .test-rules-no-tags
+  extends: .test-rules-not-merge-train
   needs:
     - prechecks
     - check-commits
@@ -813,6 +813,58 @@ compat-bark-0.8.1:
     BARK_CLIENT_RELEASE_SHA256: 9ccf8d0c1ec4090a8c2359831dc1d74c2112cc5e5cb1398f2576c97067a2ee54
   cache:
     key: bark-0.8.1
+    paths:
+      - .bark-release-cache/
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
+    - >-
+      export BARK_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
+      --url "$BARK_RELEASE_URL"
+      --sha256 "$BARK_RELEASE_SHA256"
+      --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
+    - >-
+      export BARKD_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
+      --url "$BARKD_RELEASE_URL"
+      --sha256 "$BARKD_RELEASE_SHA256"
+      --name barkd
+      --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
+    - >-
+      export BARK_CLIENT_EXEC=$(bash contrib/ci-env/ci.sh python3 contrib/fetch-bark-release.py
+      --url "$BARK_CLIENT_RELEASE_URL"
+      --sha256 "$BARK_CLIENT_RELEASE_SHA256"
+      --name bark-cli
+      --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
+    - bash ./contrib/ci-run-test.sh test-integration-compat-prebuilt
+
+compat-bark-0.9.0:
+  interruptible: true
+  allow_failure: false
+  stage: test
+  tags:
+    - integration
+    - datastore
+  extends: .test-rules-no-tags
+  needs:
+    - prechecks
+    - check-commits
+    - build
+    - build-test-archives
+  variables:
+    TEST_DIRECTORY: ./test/bark-0.9.0
+    NEXTEST_TEST_THREADS: "4"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.9.0/downloads/bark-0.9.0-linux-x86_64
+    BARK_RELEASE_SHA256: e4d912c8598865763cf71abb41730cb299a370984e671ec6d933e3d55cfe61ca
+    BARKD_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.9.0/downloads/barkd-0.9.0-linux-x86_64
+    BARKD_RELEASE_SHA256: 840d559de5a6b744bac0fedeea66e32d985e01c62763393f1e896e0c53dc1eb4
+    BARK_CLIENT_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.9.0/downloads/bark-cli-0.9.0-linux-x86_64
+    BARK_CLIENT_RELEASE_SHA256: 52fb6ccd31e5affa0466bcbe5cc5e4ab7f7d74830da7fee997a4a72a2ff22535
+  cache:
+    key: bark-0.9.0
     paths:
       - .bark-release-cache/
   script:
@@ -961,6 +1013,8 @@ tar-and-print-test-data:
     - job: compat-bark-0.8.0
       optional: true
     - job: compat-bark-0.8.1
+      optional: true
+    - job: compat-bark-0.9.0
       optional: true
     - job: upgrade-bark-0.8.1
       optional: true
