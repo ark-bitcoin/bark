@@ -169,11 +169,24 @@ async fn board_with_expiry_and_external_funding() {
 		.expect("board with an expiry");
 	let vtxo = wallet.get_vtxo_by_id(board.vtxos[0]).await.unwrap();
 	assert_eq!(vtxo.expiry_height(), expiry_height);
+	assert!(matches!(vtxo.state, VtxoState::Locked { .. }));
+	assert_eq!(wallet.balance().await.unwrap().pending_board, sat(100_000));
+
+	// One confirmation short: the board stays locked.
+	ctx.generate_blocks(BOARD_CONFIRMATIONS.checked_sub(1).unwrap()).await;
+	wallet.sync_pending_boards().await.unwrap();
+	let vtxo = wallet.get_vtxo_by_id(board.vtxos[0]).await.unwrap();
+	assert!(matches!(vtxo.state, VtxoState::Locked { .. }));
+	assert_eq!(wallet.balance().await.unwrap().pending_board, sat(100_000));
 
 	// The board becomes spendable once confirmed and registered.
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	ctx.generate_blocks(1).await;
 	wallet.sync_pending_boards().await.unwrap();
-	assert_eq!(wallet.balance().await.unwrap().spendable, sat(100_000));
+	let vtxo = wallet.get_vtxo_by_id(board.vtxos[0]).await.unwrap();
+	assert!(matches!(vtxo.state, VtxoState::Spendable));
+	let balance = wallet.balance().await.unwrap();
+	assert_eq!(balance.spendable, sat(100_000));
+	assert_eq!(balance.pending_board, Amount::ZERO);
 
 	// Board from another wallet, e.g. as a payjoin receiver. The funding address
 	// is persisted while waiting for the other party's PSBT.
