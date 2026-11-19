@@ -1,7 +1,0 @@
-- Serve Nostr Wallet Connect (NIP-47) from a wallet
-  Apps can read the balance, create and pay invoices, look up invoices and
-  list payments over NWC. Enable the `nwc` feature and call
-  `Wallet::init_nwc` with a `ConnectionStore` and a `ConnectionPersister`.
-  Relays are stored with the connections, and nothing is served until one is
-  set with `NwcManager::set_relays`.
-  [#2589](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2589)

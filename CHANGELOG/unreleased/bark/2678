@@ -1,6 +1,0 @@
-- Recovery from seed resumes on every sync until it is done
-  A VTXO whose status the server can't give yet stays locked and is retried
-  later, instead of being lost to a single failed attempt.
-  [#2678](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2678)
-  - **BREAKING:** `RecoveryStatus` has a new `InProgress` variant
-  - **BREAKING:** Renamed `RecoveryReport::seen` to `RecoveryReport::contains`
