@@ -279,7 +279,7 @@ pub async fn estimate_exit_fee(
 	config: &Configuration,
 ) -> anyhow::Result<()> {
 	// The endpoint takes the IDs as one comma-separated query param and
-	// omitting it means estimating all spendable VTXOs.
+	// omitting it means estimating the entire wallet.
 	let vtxo_ids = match (opts.vtxos.is_empty(), opts.all) {
 		(false, false) => Some(opts.vtxos.iter()
 			.map(|v| v.to_string()).collect::<Vec<_>>().join(",")),

@@ -402,8 +402,8 @@ pub async fn estimate_exit_fee(
 
 	let vtxos = match (opts.vtxos.is_empty(), opts.all) {
 		(false, false) => opts.vtxos,
-		(true, true) => wallet.spendable_vtxos().await?
-			.into_iter().map(|v| v.vtxo.id()).collect(),
+		(true, true) => wallet.exit_mgr().entire_wallet_exit_vtxos().await?
+			.into_iter().map(|v| v.id()).collect(),
 		(true, false) => bail!("Either --vtxo or --all must be specified"),
 		(false, true) => bail!("Cannot specify both --vtxo and --all"),
 	};

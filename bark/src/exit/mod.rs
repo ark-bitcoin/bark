@@ -219,6 +219,29 @@ pub(crate) struct ExitInner {
 }
 
 impl ExitInner {
+	/// Returns the unspent VTXOs eligible for exit and the number of non-standard ones skipped.
+	async fn entire_wallet_exit_vtxos(&self) -> anyhow::Result<(Vec<Vtxo<Bare>>, usize)> {
+		let all_vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES).await?;
+
+		// Partition: separate eligible VTXOs from dust
+		let total_vtxos = all_vtxos.len();
+		let mut eligible = Vec::with_capacity(total_vtxos);
+		for v in all_vtxos {
+			// Skip non-standard VTXOs
+			match self.persister.get_full_vtxo(v.id()).await {
+				Ok(Some(full)) => match full.check_standard() {
+					Ok(()) => eligible.push(v.vtxo),
+					Err(e) => warn!("Skipping non-standard VTXO {}: {:#}", v.id(), e),
+				},
+				Ok(None) => error!("Failed to retrieve full VTXO: {}", v.id()),
+				Err(e) => error!("Failed to retrieve full VTXO {}: {:#}", v.id(), e),
+			}
+		}
+
+		let ineligible = total_vtxos - eligible.len();
+		Ok((eligible, ineligible))
+	}
+
 	/// Starts exits for the given vtxos.
 	/// Used by both [Exit::start_exit_for_vtxos] and [Exit::start_exit_for_entire_wallet].
 	async fn start_exit_for_vtxos(
@@ -576,6 +599,11 @@ impl Exit {
 		highest_claimable_height
 	}
 
+	/// Returns the VTXOs [Exit::start_exit_for_entire_wallet] would exit.
+	pub async fn entire_wallet_exit_vtxos(&self) -> anyhow::Result<Vec<Vtxo<Bare>>> {
+		Ok(self.inner.read().await.entire_wallet_exit_vtxos().await?.0)
+	}
+
 	/// Starts the unilateral exit process for the entire wallet (all eligible VTXOs).
 	///
 	/// It does not block until completion, you must use [Exit::progress_exits] to advance each exit.
@@ -584,26 +612,9 @@ impl Exit {
 	/// doing this.
 	pub async fn start_exit_for_entire_wallet(&self) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
-		let all_vtxos = guard.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES).await?
-			.into_iter();
-
-		// Partition: separate eligible VTXOs from dust
-		let total_vtxos = all_vtxos.len();
-		let mut eligible = Vec::with_capacity(total_vtxos);
-		for v in all_vtxos {
-			// Skip non-standard VTXOs
-			match guard.persister.get_full_vtxo(v.id()).await {
-				Ok(Some(full)) => match full.check_standard() {
-					Ok(()) => eligible.push(v.vtxo),
-					Err(e) => warn!("Skipping non-standard VTXO {}: {:#}", v.id(), e),
-				},
-				Ok(None) => error!("Failed to retrieve full VTXO: {}", v.id()),
-				Err(e) => error!("Failed to retrieve full VTXO {}: {:#}", v.id(), e),
-			}
-		}
+		let (eligible, ineligible) = guard.entire_wallet_exit_vtxos().await?;
 
 		// If everything is dust.
-		let ineligible = total_vtxos - eligible.len();
 		if eligible.is_empty() && ineligible > 0 {
 			warn!(
 				"Exit not started: all {} VTXOs are non-standard. To exit and consolidate you \
