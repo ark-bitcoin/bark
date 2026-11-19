@@ -186,10 +186,13 @@ Below is a more detailed summary for each version.
     sats on the checkpoint tx. These outputs must be in the dust isolation tx.
     The server also refuses an arkoor co-sign request without a checkpoint tx.
     [#2822](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2822)
-    - **BREAKING:** bark 0.8.1 and older can not make some arkoor and lightning
-      payments that leave an output below 330 sats on the checkpoint tx, for
-      example when every output from one input VTXO is below 330 sats. The
-      error tells the user to upgrade the wallet and retry.
+    - **BREAKING:** bark 0.8.1 and older can not make an arkoor payment, a
+      lightning send or an on-chain send when the last input VTXO it spends is
+      between 330 and about 1,320 sats and the old builder leaves an output
+      below 330 sats on the checkpoint tx, for example a 600-sat VTXO that pays
+      100 sats. The size of the payment does not matter. A VTXO below 330 sats
+      is not affected. The error tells the user to upgrade the wallet and
+      retry.
   - Verify round input attestations before they reach the round coordinator
     Checking them costs inputs times outputs, so `SubmitPayment` now does it on
     its own task and the coordinator only compares the attempt challenge. A
