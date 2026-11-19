@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bitcoin::hashes::Hash;
@@ -7,6 +8,7 @@ use tokio_stream::StreamExt;
 use ark::VtxoId;
 use ark::fees::RefreshFees;
 use ark::rounds::RoundEvent;
+use ark::tree::signed::UnlockPreimage;
 use bark::movement::MovementStatus;
 use bark::round::RoundFlowKind;
 use bark::subsystem::RoundMovement;
@@ -530,6 +532,92 @@ async fn scheduled_delegated_refresh_refuses_unexitable_replacements() {
 	);
 }
 
+/// A captaind proxy that, while armed, fails every forfeit nonce request
+#[derive(Clone, Default)]
+struct FailForfeitNoncesProxy {
+	armed: Arc<AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for FailForfeitNoncesProxy {
+	async fn request_forfeit_nonces(
+		&self, upstream: &mut ArkClient, req: protos::ForfeitNoncesRequest,
+	) -> Result<protos::ForfeitNoncesResponse, tonic::Status> {
+		if self.armed.load(Ordering::SeqCst) {
+			return Err(tonic::Status::unavailable("no forfeit nonces"));
+		}
+		Ok(upstream.request_forfeit_nonces(req).await?.into_inner())
+	}
+}
+
+/// Like [scheduled_delegated_refresh_refuses_unexitable_replacements], but the
+/// wallet already got the leaves of its replacements cosigned in an earlier
+/// sync that failed before the forfeits went out. A server that stalls the
+/// forfeit nonces until the replacements leave no room for a unilateral exit
+/// must still not get our forfeits.
+#[tokio::test]
+async fn delegated_refresh_rechecks_exit_room_after_failed_forfeit_nonces() {
+	// Pin the vtxo lifetime: the test walks the chain right up to the
+	// input's expiry.
+	const VTXO_LIFETIME: u16 = 432;
+
+	let ctx = TestContext::new(
+		"bark_sdk/delegated_refresh_rechecks_exit_room_after_failed_forfeit_nonces",
+	).await;
+	let srv = ctx.captaind("server").funded(btc(1))
+		.cfg(|cfg| cfg.vtxo_lifetime = BlockDelta::new(VTXO_LIFETIME))
+		.create().await;
+	let proxy = FailForfeitNoncesProxy::default();
+	let proxy_srv = srv.start_proxy_no_mailbox(proxy.clone()).await;
+
+	let wallet = ctx.bark_sdk("bark", &proxy_srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(300_000))
+		.create().await;
+
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.len(), 1, "expected one boarded vtxo");
+	let input_id = vtxos[0].id();
+	let input_expiry = vtxos[0].expiry_height();
+
+	let round = wallet.refresh_vtxos_delegated(vec![input_id]).await
+		.expect("submit delegated refresh")
+		.expect("a participation should have been submitted");
+	let round_id = round.id();
+	let unlock_hash = round.state().unlock_hash()
+		.expect("delegated participation carries an unlock hash")
+		.to_byte_array().to_vec();
+	drop(round);
+
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	log_round_finished.recv().wait(Duration::from_secs(60)).await
+		.expect("round should include the delegated refresh");
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+
+	// The replacements still leave room for an exit here, so this sync gets
+	// as far as asking for the forfeit nonces.
+	proxy.armed.store(true, Ordering::SeqCst);
+	wallet.sync_pending_rounds().await.expect("sync pending rounds");
+
+	// Advance to the last block on which our input is still alive, where the
+	// replacements no longer leave room for an exit.
+	let tip = srv.bitcoind().get_block_count().await as u32;
+	ctx.generate_blocks(input_expiry.to_u32() - 1 - tip).await;
+	proxy.armed.store(false, Ordering::SeqCst);
+	wallet.sync_pending_rounds().await.expect("sync pending rounds");
+
+	assert_ne!(
+		participation_status(&srv, unlock_hash).await,
+		protos::RoundParticipationStatus::RoundPartReleased as i32,
+		"the wallet must not have sent forfeits for unexitable replacements",
+	);
+	let pending = wallet.pending_round_states().await.expect("pending round states");
+	assert!(pending.iter().any(|s| s.id() == round_id),
+		"the refused refresh must stay pending rather than be recorded as successful",
+	);
+}
+
 /// The mirror image of
 /// [scheduled_delegated_refresh_refuses_unexitable_replacements]: when the
 /// inputs have expired along with the replacements, there is nothing left to
@@ -621,6 +709,137 @@ async fn delegated_refresh_completes_with_expired_inputs() {
 	assert!(output.expiry_height().to_u32() <= tip,
 		"the replacement should be expired too, expires at {} (tip {})",
 		output.expiry_height(), tip,
+	);
+}
+
+/// A captaind proxy that, once armed, plays a server that takes the forfeits of
+/// a delegated refresh but holds back the unlock preimage: it passes the
+/// forfeits on and withholds the reply, then claims not to know the
+/// participation. It keeps the preimage the server released so the test can
+/// play the part of the chain revealing it.
+#[derive(Clone, Default)]
+struct WithholdPreimageProxy {
+	armed: Arc<AtomicBool>,
+	released_preimage: Arc<Mutex<Option<UnlockPreimage>>>,
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::ArkRpcProxy for WithholdPreimageProxy {
+	async fn round_participation_status(
+		&self, upstream: &mut ArkClient, req: protos::RoundParticipationStatusRequest,
+	) -> Result<protos::RoundParticipationStatusResponse, tonic::Status> {
+		if self.armed.load(Ordering::SeqCst) && self.released_preimage.lock().unwrap().is_some() {
+			return Err(tonic::Status::not_found("round participation not found"));
+		}
+		Ok(upstream.round_participation_status(req).await?.into_inner())
+	}
+
+	async fn forfeit_vtxos(
+		&self, upstream: &mut ArkClient, req: protos::ForfeitVtxosRequest,
+	) -> Result<protos::ForfeitVtxosResponse, tonic::Status> {
+		let resp = upstream.forfeit_vtxos(req).await?.into_inner();
+		if !self.armed.load(Ordering::SeqCst) {
+			return Ok(resp);
+		}
+		let preimage = resp.unlock_preimage.as_slice().try_into().expect("32-byte preimage");
+		*self.released_preimage.lock().unwrap() = Some(preimage);
+		Err(tonic::Status::unavailable("withholding the unlock preimage"))
+	}
+}
+
+/// Once the wallet sent the forfeits of a delegated refresh, the server holds
+/// its inputs, so the wallet must keep what it needs to claim the
+/// replacements: the funding tx and the cosigned replacement VTXOs, stored
+/// before the forfeits go out. A server that withholds the preimage and then
+/// reports the participation as not found must not make the wallet drop the
+/// round and hand the forfeited inputs back as spendable.
+#[tokio::test]
+async fn delegated_refresh_keeps_forfeited_round_when_server_withholds_preimage() {
+	let ctx = TestContext::new(
+		"bark_sdk/delegated_refresh_keeps_forfeited_round_when_server_withholds_preimage",
+	).await;
+	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+	let proxy = WithholdPreimageProxy::default();
+	let proxy_srv = srv.start_proxy_no_mailbox(proxy.clone()).await;
+
+	let wallet = ctx.bark_sdk("bark", &proxy_srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(300_000))
+		.create().await;
+
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.len(), 1, "expected one boarded vtxo");
+	let input_id = vtxos[0].id();
+
+	let round = wallet.refresh_vtxos_delegated(vec![input_id]).await
+		.expect("submit delegated refresh")
+		.expect("a participation should have been submitted");
+	let round_id = round.id();
+	drop(round);
+
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	log_round_finished.recv().wait(Duration::from_secs(60)).await
+		.expect("round should include the delegated refresh");
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+
+	proxy.armed.store(true, Ordering::SeqCst);
+
+	// The first sync sends the forfeits and loses the reply. The second one
+	// hears the participation is not found.
+	wallet.sync_pending_rounds().await.expect("sync pending rounds");
+	let preimage = proxy.released_preimage.lock().unwrap()
+		.expect("the server should have accepted the forfeits");
+	wallet.sync_pending_rounds().await.expect("sync pending rounds");
+
+	let stored = wallet.pending_round_states().await.expect("pending round states")
+		.into_iter().find(|s| s.id() == round_id)
+		.expect("a round whose forfeits went out must stay tracked");
+	let funding_tx = stored.state().funding_tx()
+		.expect("the round's funding tx should be stored").clone();
+	let mut outputs = stored.state().output_vtxos()
+		.expect("the replacement VTXOs should be stored").to_vec();
+	assert_eq!(outputs.len(), 1, "expected one replacement VTXO");
+	// The server can only claim the inputs by revealing the preimage, and the
+	// stored replacements must then be claimable without the server.
+	for output in &mut outputs {
+		assert!(output.provide_unlock_preimage(preimage),
+			"the stored replacement {} should be locked by the released preimage", output.id(),
+		);
+		output.validate(&funding_tx).expect("the stored replacement should be fully signed");
+	}
+
+	assert!(
+		matches!(wallet.get_vtxo_by_id(input_id).await.expect("input vtxo").state,
+			VtxoState::Locked { .. }),
+		"the forfeited input must not become spendable again",
+	);
+	let refresh_status = |movements: Vec<bark::movement::Movement>| movements.into_iter()
+		.filter(|m| m.subsystem.name == "bark.round" && m.subsystem.kind == "refresh")
+		.find(|m| m.input_vtxos.contains(&input_id))
+		.expect("expected a refresh movement for the boarded vtxo")
+		.status;
+	assert_eq!(refresh_status(wallet.history().await.expect("list movements")),
+		MovementStatus::Pending,
+		"the refresh must not be recorded as failed",
+	);
+
+	// Once the server answers again, the refresh completes.
+	proxy.armed.store(false, Ordering::SeqCst);
+	let statuses = wallet.sync_pending_rounds().await.expect("sync pending rounds");
+	let status = statuses.get(&round_id)
+		.expect("the pending round should have been synced without error");
+	assert!(status.is_success(), "the refresh should complete, got {status:?}");
+	assert_eq!(wallet.get_vtxo_by_id(input_id).await.expect("input vtxo").state,
+		VtxoState::Spent,
+		"the forfeited input should be marked spent",
+	);
+	assert_eq!(wallet.get_vtxo_by_id(outputs[0].id()).await.expect("output vtxo").state,
+		VtxoState::Spendable,
+		"the replacement should be spendable",
+	);
+	assert_eq!(refresh_status(wallet.history().await.expect("list movements")),
+		MovementStatus::Successful,
 	);
 }
 
