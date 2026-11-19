@@ -714,9 +714,9 @@ impl<'t> Tx<'t> {
 	}
 
 	/// Store the completed round participations in their mailboxes, one
-	/// message per distinct pair, all under a single checkpoint.
+	/// message and checkpoint per distinct pair.
 	///
-	/// Returns `None` if there is nothing to store.
+	/// Returns the highest checkpoint, or `None` if there is nothing to store.
 	pub async fn store_round_participations_in_mailbox(
 		&self,
 		participations: impl IntoIterator<Item = (MailboxIdentifier, UnlockHash)>,
@@ -737,22 +737,22 @@ impl<'t> Tx<'t> {
 			&format!("SELECT pg_advisory_xact_lock({})", AdvisoryLock::MailboxWrite as i64), &[],
 		).await?;
 
-		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
-
+		// Each pair is a single-row message, and the reader allows only one of
+		// those per checkpoint, so next_checkpoint() runs once per row.
 		let statement = self.prepare_typed("
 			INSERT INTO mailbox (unblinded_mailbox_id, unlock_hash, checkpoint, mailbox_type, created_at)
-			SELECT m, h, $3, $4::TEXT::mailbox_type, NOW()
-			FROM unnest($1::TEXT[], $2::TEXT[]) AS p(m, h);
-		", &[Type::TEXT_ARRAY, Type::TEXT_ARRAY, Type::INT8, Type::TEXT]).await?;
-		let rows_updated = self.execute(&statement, &[
+			SELECT m, h, next_checkpoint(), $3::TEXT::mailbox_type, NOW()
+			FROM unnest($1::TEXT[], $2::TEXT[]) AS p(m, h)
+			RETURNING checkpoint;
+		", &[Type::TEXT_ARRAY, Type::TEXT_ARRAY, Type::TEXT]).await?;
+		let rows = self.query(&statement, &[
 			&mailbox_ids,
 			&unlock_hashes,
-			&checkpoint,
 			&MailboxType::RoundParticipationCompleted.as_str(),
 		]).await?;
-		debug_assert_eq!(rows_updated, mailbox_ids.len() as u64);
+		debug_assert_eq!(rows.len(), mailbox_ids.len());
 
-		Ok(Some(checkpoint as u64))
+		Ok(rows.iter().map(|r| r.get::<_, i64>("checkpoint") as u64).max())
 	}
 
 	/// Store a lightning receive notification in the mailbox.

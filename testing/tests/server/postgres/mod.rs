@@ -2679,6 +2679,33 @@ async fn round_participation_mailbox() {
 		ref other => panic!("expected RoundParticipationCompleted payload, got {:?}", other),
 	};
 	assert_eq!(unlock_hash, hash2);
+
+	// Distinct participations stored together get a checkpoint each
+	let hash3 = sha256::Hash::hash(b"unlock-hash-3");
+	let hash4 = sha256::Hash::hash(b"unlock-hash-4");
+	let cp4 = db.write(async |t| t.store_round_participations_in_mailbox(
+		[(mailbox_id, hash3), (mailbox_id, hash4)],
+	).await).await.unwrap().expect("should return a checkpoint");
+
+	// Page through them one checkpoint at a time
+	let mut cursor = cp2;
+	let mut hashes = Vec::new();
+	for _ in 0..2 {
+		let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, cursor, 1).await)
+			.await.unwrap();
+		assert_eq!(messages.len(), 1);
+		assert!(messages[0].checkpoint > cursor);
+		cursor = messages[0].checkpoint;
+		match messages[0].payload {
+			MailboxPayload::RoundParticipationCompleted { unlock_hash } => hashes.push(unlock_hash),
+			ref other => panic!("expected RoundParticipationCompleted payload, got {:?}", other),
+		}
+	}
+	assert_eq!(cursor, cp4);
+	hashes.sort();
+	let mut expected = vec![hash3, hash4];
+	expected.sort();
+	assert_eq!(hashes, expected);
 }
 
 #[tokio::test]
