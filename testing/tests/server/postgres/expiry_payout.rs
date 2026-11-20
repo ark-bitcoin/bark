@@ -318,15 +318,17 @@ async fn expiry_payout_owner_migration_rejects_legacy_gap() {
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 	let id = vtxo.id().to_string();
 	db.write(async |t| {
-		// Recreate the schema immediately before V3, then add an older
-		// held coin using SQL, as an existing database may contain one.
+		// Remove the V3 owner checks and the later V4 payout view so the
+		// migration runner can apply both after we insert the legacy coin.
 		t.batch_execute("DROP TRIGGER vtxo_require_owner_mailbox ON vtxo;
 			DROP TRIGGER vtxo_owner_mailbox_immutable ON vtxo_owner_mailbox;
 			DROP TRIGGER vtxo_owner_mailbox_no_truncate ON vtxo_owner_mailbox;
 			DROP FUNCTION require_vtxo_owner_mailbox();
 			DROP FUNCTION preserve_vtxo_owner_mailbox();
 			DROP FUNCTION vtxo_requires_owner_mailbox(spend_state, bytea);
-			DELETE FROM expiry_payout_schema_history WHERE version = 3;").await?;
+			DROP VIEW v_expiry_payout_state;
+			DROP FUNCTION expiry_payout_observed(bigint);
+			DELETE FROM expiry_payout_schema_history WHERE version IN (3, 4);").await?;
 		insert_raw_vtxo(t, &vtxo, SpendState::Spendable).await
 	}).await.unwrap();
 	let error = Db::connect(&config).await.err().expect("upgrade must reject missing binding");
