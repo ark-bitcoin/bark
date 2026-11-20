@@ -138,6 +138,11 @@ impl Barkd {
 		format!("http://127.0.0.1:{}", self.inner.port())
 	}
 
+	/// The bearer token of the REST API.
+	pub fn auth_token(&self) -> String {
+		self.inner.auth_token.encode()
+	}
+
 	pub fn client_config(&self) -> Configuration {
 		let mut headers = reqwest::header::HeaderMap::new();
 		headers.insert(

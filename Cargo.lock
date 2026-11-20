@@ -185,6 +185,7 @@ dependencies = [
  "rand 0.10.1",
  "regex",
  "reqwest 0.13.4",
+ "scuttle-pos",
  "semver",
  "serde",
  "serde_json",
@@ -4755,6 +4756,39 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "scuttle-pos"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ark-lib",
+ "axum",
+ "bark-bitcoin-ext",
+ "bark-json",
+ "bark-rest-client",
+ "bark-server-rpc",
+ "bb8",
+ "bb8-postgres",
+ "bdk_wallet",
+ "bitcoin",
+ "chrono",
+ "clap",
+ "config",
+ "lightning-invoice",
+ "postgres-types",
+ "refinery",
+ "reqwest 0.13.4",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
 
 [[package]]
 name = "sdd"

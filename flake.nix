@@ -213,6 +213,12 @@
 					];
 				};
 
+				posPackage = import ./nix/package-pos.nix {
+					pkgs = releasePkgs;
+					inherit lib craneLib;
+					gitHash = self.rev or self.dirtyRev or "unknown";
+				};
+
 				serverPackages = import ./nix/package-server.nix {
 					pkgs = releasePkgs;
 					inherit lib craneLib;
@@ -246,6 +252,10 @@
 					bark-web-dist = barkWebDist;
 
 					"slog-tools" = slog-tools;
+
+					# posd, the point-of-sale service, for the current system.
+					scuttle-pos = posPackage;
+					scuttle-pos-web = posPackage.webDist;
 				}
 				# `bark` and `bark-server` build for the current system. Only
 				# defined when the host triple is one of the packaged targets.
@@ -270,6 +280,8 @@
 				} // lib.optionalAttrs (builtins.hasAttr hostRustTarget serverPackages) {
 					captaind  = mkApp serverPackages.${hostRustTarget} "captaind";
 					watchmand = mkApp serverPackages.${hostRustTarget} "watchmand";
+				} // {
+					posd = mkApp posPackage "posd";
 				};
 
 				# NB each of our shell files exposes a `env` and a `shell` which respectively

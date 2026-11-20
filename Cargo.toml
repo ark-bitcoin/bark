@@ -17,7 +17,8 @@ members = [
   "cln-rpc",
   "bark-rest-client",
   "bip321",
-  "wasm-testing"
+  "wasm-testing",
+  "pos"
 ]
 
 resolver = "2"

@@ -19,6 +19,7 @@ pub mod postgres;
 pub mod exit;
 pub mod payout_wallet;
 pub mod control_server;
+pub mod pos;
 
 pub use context::TestContext;
 pub use daemon::{Daemon, DaemonHelper};

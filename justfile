@@ -228,8 +228,18 @@ alias int-tor := test-integration-tor
 # run integration tests for core and server test files only
 test-integration-core: ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
-		--test core --test server
+		--test core --test server --test pos
 alias int-core := test-integration-core
+
+# Run the point-of-sale service tests. posd runs inside the test process.
+test-integration-pos: ensure-build-bins docker-pull
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+		--test pos
+alias int-pos := test-integration-pos
+
+# Build the terminal PWA that posd embeds. Rebuild posd afterwards.
+build-pos-web:
+	cd pos/web && npm ci && npm run build
 
 test-integration-prebuilt TEST="": docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst {{TEST}}
@@ -249,7 +259,7 @@ test-integration-bark-sdk-prebuilt: docker-pull
 
 test-integration-core-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
-		-E 'binary(core) + binary(server)'
+		-E 'binary(core) + binary(server) + binary(=pos)'
 
 test-integration-upgrade-prebuilt: docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
@@ -349,6 +359,7 @@ rustdocs-internal:
 # cleans most of our crates, doesn't clean grpc gens, they are sometimes slow to build
 clean:
 	cargo clean \
+		-p scuttle-pos \
 		-p ark-lib \
 		-p ark-testing \
 		-p bark-bitcoin-ext \

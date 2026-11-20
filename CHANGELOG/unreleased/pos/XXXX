@@ -1,0 +1,10 @@
+- Add posd, a point-of-sale service with a terminal web app
+  Staff pair a phone or tablet with a store through a single-use link and
+  take payments by Lightning, by Ark from a scuttle wallet on the same Ark
+  server, and on-chain. Every payment goes to the store owner's wallet,
+  which does not need to be online. posd holds no funds and terminals
+  cannot send. A sale is paid when the funds are delivered: barkd delivered
+  the Lightning claim, the Ark server certified the arkoor, or the on-chain
+  payment has 1 confirmation. Stores also get a Lightning address, sales
+  history and CSV export.
+  [#XXXX](https://github.com/SatoshiPortal/scuttle/pull/XXXX)

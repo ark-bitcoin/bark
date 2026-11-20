@@ -1,0 +1,60 @@
+# posd configuration. Every value can be overridden with an environment
+# variable: POSD__<SECTION>__<KEY>, for example POSD__POSTGRES__PASSWORD.
+
+network = "bitcoin"
+
+# The Ark server's public gRPC address.
+ark_server_url = "https://ark.example.com"
+
+[http]
+listen = "127.0.0.1:3080"
+# The public base URL, without a trailing slash. Pairing links and the
+# Lightning address domain come from it.
+public_url = "https://pay.example.com"
+
+# posd's own database.
+[postgres]
+host = "localhost"
+port = 5432
+name = "posd"
+user = "posd"
+# password = ""
+
+# A read-only role on the Ark server's database. It needs only:
+#   GRANT SELECT ON v_arkoor_receive_delivery TO posd_receipts;
+[ark_server_postgres]
+host = "localhost"
+port = 5432
+name = "captaind"
+user = "posd_receipts"
+# password = ""
+
+# The private barkd that issues and claims forwarding invoices. Do not
+# expose it publicly.
+[barkd]
+url = "http://127.0.0.1:3000"
+# token = ""
+
+# posd creates a watch-only wallet with this name and imports one address per
+# on-chain sale. It holds no keys.
+[bitcoind]
+url = "http://127.0.0.1:8332"
+cookie = "/var/lib/bitcoind/.cookie"
+wallet = "posd"
+
+[price]
+url = "https://api.bullbitcoin.com/public/price"
+cache_secs = 60
+# A fixed price per bitcoin in every currency, for test networks only:
+# fixed_btc_price = "62500000.00"
+
+[sales]
+# How long a sale and its invoices stay open.
+expiry_secs = 600
+# The on-chain minimum for a new store. The owner can change it per store.
+default_onchain_min_sat = 50000
+# The largest Lightning address payment.
+lnurl_max_sat = 10000000
+poll_interval_ms = 2000
+# How long an on-chain address is checked after its sale, for late payments.
+onchain_watch_secs = 604800

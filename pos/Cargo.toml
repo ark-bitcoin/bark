@@ -1,0 +1,46 @@
+[package]
+name = "scuttle-pos"
+version = "0.1.0"
+license = "MIT"
+description = "Point-of-sale service that pays a store owner's Ark wallet by Lightning, Ark and on-chain"
+edition = "2024"
+
+[lib]
+name = "pos"
+path = "src/lib.rs"
+
+[[bin]]
+name = "posd"
+path = "src/bin/posd/main.rs"
+
+[dependencies]
+ark-lib = { path = "../lib" }
+bark-json = { path = "../bark-json" }
+bark-rest-client = { path = "../bark-rest-client" }
+bark-server-rpc = { path = "../server-rpc" }
+bark-bitcoin-ext = { path = "../bitcoin-ext" }
+
+anyhow.workspace = true
+axum = { version = "0.8.4", features = ["macros", "tokio", "http1", "query", "json"], default-features = false }
+bb8.workspace = true
+bb8-postgres.workspace = true
+bdk_wallet.workspace = true
+bitcoin.workspace = true
+chrono.workspace = true
+clap.workspace = true
+config.workspace = true
+lightning-invoice.workspace = true
+postgres-types.workspace = true
+refinery = { version = "0.8.14", default-features = false, features = ["tokio-postgres"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rust-embed = { version = "8.5", features = ["mime-guess", "interpolate-folder-path"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+tokio-postgres.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url = "2.5"
+
+[dev-dependencies]

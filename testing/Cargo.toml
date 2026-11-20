@@ -41,6 +41,10 @@ name = "server-migrations"
 path = "tests/server-migrations/mod.rs"
 
 [[test]]
+name = "pos"
+path = "tests/pos/mod.rs"
+
+[[test]]
 name = "upgrade"
 path = "tests/upgrade/mod.rs"
 
@@ -50,6 +54,7 @@ slow_test = []
 [dependencies]
 ark-lib = { path = "../lib", features = ["test-util"] }
 bark-server = { path = "../server" }
+scuttle-pos = { path = "../pos" }
 bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server"] }
 bark-cln-rpc = { path = "../cln-rpc"}
