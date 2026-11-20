@@ -15,6 +15,12 @@ fn sorted_ids(inputs: &[VtxoId]) -> Vec<String> {
 }
 
 impl Tx<'_> {
+	pub(crate) async fn verify_arkoor_receive_outputs(&self, ids: &[VtxoId]) -> anyhow::Result<()> {
+		let ids = ids.iter().map(ToString::to_string).collect::<Vec<_>>();
+		self.query_one("SELECT verify_arkoor_receive_outputs($1)", &[&ids]).await?;
+		Ok(())
+	}
+
 	/// Settle the open receive `id` by a new arkoor that spends `inputs`,
 	/// and record those inputs. An arkoor that the server co-signed before,
 	/// through any call, has already paid where it pays, so it cannot settle

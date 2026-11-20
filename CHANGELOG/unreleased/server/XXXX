@@ -5,3 +5,10 @@
   also fails with `InvalidArgument` when no round attempt is collecting
   payments instead of dropping the request silently.
   [#XXXX](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/XXXX)
+
+- Add a delivery receipt for hinted invoices in expiry payout mode
+  Operators can match a sale to its registered outputs in the receiver's
+  mailbox while the receiver is offline and recover the same receipt after
+  the receiver spends the outputs. The receipt includes the amount
+  delivered and the earliest output expiry.
+  [#XXXX](https://github.com/SatoshiPortal/scuttle/pull/XXXX)

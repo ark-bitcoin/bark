@@ -134,3 +134,43 @@ with the payer, and an expiry payout pays it to the payer.
 
 The server reports the receive as settled when it co-signs the arkoor. A client
 must treat the invoice as paid only when the wallet holds the VTXOs.
+
+## Operator receipt for a hinted invoice
+
+In expiry payout mode, a checkout service on the same operator can read
+`v_arkoor_receive_delivery` while the receiving wallet is offline. Grant its
+database role `SELECT` on this view. The role can read receipts for all
+merchants on that server. Keep this role in the operator service and authorize
+each till against its own sale.
+
+Use the hash, claim key, unblinded mailbox, server key and amount stored with
+the sale. The amount is in sats.
+
+```sql
+SELECT vtxo_ids, amount_sat, expiry_height
+FROM v_arkoor_receive_delivery
+WHERE payment_hash = $1 AND claim_pubkey = $2 AND receiver_mailbox_id = $3
+	AND server_pubkey = $4 AND amount_sat >= $5;
+```
+
+At co-sign, the server records which outputs pay the invoice key. It certifies
+each output when it has both the registered signed VTXO and the identical
+mailbox post. At certification it checks the mailbox owner and verifies that
+the output is unspent, unexpired, has no confirmed exit and has no payout
+decision. A temporary ban can delay spending a delivered output.
+
+The receipt appears after all expected outputs qualify. Each output retains
+its proof even if the owner spends it before the other outputs arrive. The
+receipt includes the earliest output expiry.
+
+A receipt proves delivery at the time of certification. A later spend, expiry
+or payout leaves it available for replay. The server tracks outputs for hinted
+receives co-signed after this migration. Earlier payments need separate
+evidence for reconciliation.
+
+Record any excess against the sale. Save the actual amount and output IDs
+with the sale and its single fulfillment request in one transaction before
+the till shows paid. After a crash before commit, retry the same lookup.
+Continue checking the other rail after the first payment. Save each payment
+hash separately and use the sale ID as the fulfillment key across retries and
+rails.

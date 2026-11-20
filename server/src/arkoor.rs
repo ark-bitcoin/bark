@@ -170,6 +170,13 @@ impl Server {
 				t.settle_lightning_receive_by_arkoor(receive.id, &source_ids).await?;
 			}
 			let inserted = t.execute_vtxo_tree_update(update).await?;
+			if let Some(receive) = paid_receive.filter(|_| self.config.expiry_payouts) {
+				let policy = VtxoPolicy::new_pubkey(receive.claim_pubkey.context("hinted invoice has no claim key")?);
+				let outputs = builder.build_unsigned_vtxos().filter(|v| v.policy() == &policy)
+					.map(|v| v.id().to_string()).collect::<Vec<_>>();
+				t.execute("INSERT INTO arkoor_receive_output (subscription_id, vtxo_id)
+					SELECT $1, unnest($2::text[])", &[&receive.id, &outputs]).await?;
+			}
 			htlc_vtxo::set_htlc_vtxo_resolutions(
 				&t, &claimed_htlc_recvs, HtlcResolution::Fulfilled,
 			).await?;
