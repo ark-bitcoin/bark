@@ -29,6 +29,11 @@ pub type HandlerFuture<'a> =
 ///
 /// [ConnectionStore::authorise]: crate::ConnectionStore::authorise
 ///
+/// A request can reach `handle` more than once: the service keeps no record
+/// of the requests it handled, so a relay can resend a signed request after
+/// a restart. A method that moves money must be safe to repeat: a keysend
+/// without a client-supplied preimage is not.
+///
 /// The transport knows nothing about wallets and the wallet knows nothing about
 /// relays, which is what lets the relay loop be tested without a wallet behind
 /// it.
