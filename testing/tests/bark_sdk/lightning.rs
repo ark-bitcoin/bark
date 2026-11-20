@@ -930,3 +930,67 @@ async fn receive_claim_survives_a_lost_reply() {
 	assert_eq!((receives[0].status, receives[0].effective_balance),
 		(MovementStatus::Successful, amount.to_signed().unwrap()));
 }
+
+/// A BIP 321 URI with an `ark-lightning` invoice for an offline receiver and a
+/// `lightning` invoice for every other payer. A payer whose long-lived VTXOs
+/// cover the amount pays the `ark-lightning` invoice with an arkoor of those
+/// VTXOs, without `lightning_ark_address_hints`. A payer whose VTXOs all
+/// expire too soon pays the `lightning` invoice.
+#[tokio::test]
+async fn ark_lightning_invoice_needs_long_lived_vtxos() {
+	let ctx = TestContext::new("bark_sdk/ark_lightning_invoice_needs_long_lived_vtxos").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10))
+		.cfg(|cfg| {
+			cfg.ln_receive_ark_address_hints = true;
+			cfg.expiry_payouts = true;
+		})
+		.create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+	// The board VTXOs live 432 blocks.
+	let long_lived = ctx.bark_sdk("long_lived", &srv).boarded(sat(200_000))
+		.cfg(|cfg| cfg.direct_pay_min_expiry = BlockDelta::new(100))
+		.create().await;
+	let short_lived = ctx.bark_sdk("short_lived", &srv).boarded(sat(200_000))
+		.cfg(|cfg| cfg.direct_pay_min_expiry = BlockDelta::new(1_000))
+		.create().await;
+	let merchant = manual_hint_receiver(&ctx, &srv).await;
+	let forwarder = ctx.bark_sdk("forwarder", &srv).create().await;
+	lightning.sync().await;
+
+	let amount = sat(30_000);
+	let sale = async || {
+		let ark_invoice = merchant.bolt11_invoice(amount, None, None).await.unwrap();
+		assert!(ark_invoice.ark_address().is_some());
+		let invoice = forwarder.bolt11_invoice(amount, None, None).await.unwrap();
+		assert!(invoice.ark_address().is_none());
+		let uri = format!("bitcoin:?lightning={}&ark-lightning={}", invoice, ark_invoice);
+		(uri, PaymentHash::from(&invoice), PaymentHash::from(&ark_invoice))
+	};
+
+	// Long-lived VTXOs pay the `ark-lightning` invoice with an arkoor.
+	let (uri, hash, ark_hash) = sale().await;
+	let request = long_lived.parse_payment_request(&uri).await.unwrap();
+	let option = request.default_option().unwrap().clone();
+	assert!(matches!(&option.method, bark::movement::PaymentMethod::Invoice(i)
+		if i.payment_hash() == ark_hash));
+	long_lived.send_payment(&option.method, None, None::<String>, true).await.unwrap();
+	assert_eq!(server_receive_status(&srv, ark_hash).await, protos::LightningReceiveStatus::Settled);
+	assert_eq!(server_receive_status(&srv, hash).await, protos::LightningReceiveStatus::Created);
+	assert_eq!(long_lived.balance().await.unwrap().spendable, sat(200_000) - amount,
+		"an arkoor charges no fee");
+
+	// VTXOs that expire too soon leave only the `lightning` invoice.
+	let (uri, hash, ark_hash) = sale().await;
+	let request = short_lived.parse_payment_request(&uri).await.unwrap();
+	let option = request.default_option().unwrap().clone();
+	assert!(matches!(&option.method, bark::movement::PaymentMethod::Invoice(i)
+		if i.payment_hash() == hash));
+	let (paid, claimed) = tokio::join!(
+		short_lived.send_payment(&option.method, None, None::<String>, true),
+		forwarder.try_claim_lightning_receive(hash, true),
+	);
+	paid.unwrap();
+	assert!(matches!(claimed.unwrap(), LightningReceiveState::Settled(_)));
+	assert_eq!(server_receive_status(&srv, ark_hash).await, protos::LightningReceiveStatus::Created);
+}
