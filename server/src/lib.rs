@@ -47,7 +47,7 @@ pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 pub use bark_common::{fs_perms, secret};
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -732,11 +732,12 @@ impl Server {
 			}
 			Ok(())
 		}).await?;
-		// check that all the inputs is known
-		for inp in &funding_tx.input {
-			let txid = inp.previous_output.txid;
-			let status = bcd::tx_status(&self.bitcoind, txid).await?;
-			if !status.is_known() {
+		// check that all the inputs are known, looking up each tx once
+		let input_txids = funding_tx.input.iter()
+			.map(|i| i.previous_output.txid)
+			.collect::<BTreeSet<_>>();
+		for txid in input_txids {
+			if !bcd::tx_is_known(&self.bitcoind, txid).await? {
 				return badarg!("invalid funding tx: unknown input tx {}", txid);
 			}
 		}
