@@ -3,13 +3,29 @@ use bitcoin::{OutPoint, Transaction};
 use ark::encode::ProtocolEncoding;
 use ark::offboard::OffboardForfeitResult;
 use ark::test_util::VTXO_VECTORS;
-use ark::{ServerVtxo, ServerVtxoPolicy};
+use ark::{ServerVtxo, ServerVtxoPolicy, VtxoPolicy};
 use bitcoin_ext::{BlockDelta, P2TR_DUST};
 use server::database::data_migrations;
 use server::database::tree::VtxoTreeUpdate;
 use server::database::Db;
 
 use ark_testing::TestContext;
+
+#[tokio::test]
+async fn arkoor_receive_delivery() {
+	let mut ctx = TestContext::new_minimal("postgresd/arkoor_receive_delivery").await;
+	ctx.init_central_postgres().await;
+	let config = ctx.new_postgres(&ctx.test_name).await;
+	Db::create(&config).await.unwrap();
+	let client = ctx.postgres_manager().database_client(Some(&config.name)).await;
+	let merchant = VTXO_VECTORS.board_vtxo.user_pubkey();
+	let policy = VtxoPolicy::new_pubkey(merchant).serialize();
+	client.query_one("SELECT set_config('receipt_test.merchant', $1, false),
+		set_config('receipt_test.policy', encode($2, 'hex'), false)",
+		&[&merchant.to_string(), &policy]).await.unwrap();
+	client.batch_execute(include_str!("arkoor_receive_delivery.sql"))
+		.await.expect("the operator receipt matches the server schema and delivery states");
+}
 
 #[tokio::test]
 async fn get_bare_vtxo_by_id() {

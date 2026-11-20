@@ -740,20 +740,78 @@ async fn expiry_payout_pays_unclaimed_forward_to_provider() {
 /// Ark address in its invoices if `hints`.
 async fn hint_setup(
 	ctx: &TestContext, lightning: &ark_testing::context::LightningPaymentSetup, hints: bool,
-) -> (Arc<Captaind>, Wallet, Wallet) {
+) -> (Arc<Captaind>, Wallet, Wallet, bip39::Mnemonic) {
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).no_vtxo_pool()
 		.cfg(|cfg| {
 			cfg.expiry_payouts = true;
 			cfg.ln_receive_ark_address_hints = true;
 		}).create().await;
 	let payer = ctx.bark_sdk("payer", &srv).boarded(sat(100_000))
-		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
-	let receiver = ctx.bark_sdk("receiver", &srv)
+		.cfg(|cfg| { cfg.daemon_manual_sync = true; cfg.lightning_ark_address_hints = true; }).create().await;
+	let seed = bip39::Mnemonic::generate(12).unwrap();
+	let receiver = ctx.bark_sdk("receiver", &srv).mnemonic(seed.clone())
 		.cfg(move |cfg| {
 			cfg.lightning_ark_address_hints = hints;
 			cfg.daemon_manual_sync = true;
 		}).create().await;
-	(srv, payer, receiver)
+	(srv, payer, receiver, seed)
+}
+
+/// The operator issues an invoice using only the offline owner's enrolled
+/// address and mailbox. Check the signed mailbox bodies against the registered
+/// bodies and validate the outputs reported by the delivery view.
+#[tokio::test]
+async fn arkoor_receive_delivery_for_offline_owner() {
+	let ctx = TestContext::new("server/arkoor_receive_delivery_for_offline_owner").await;
+	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
+	let (srv, payer, owner, seed) = hint_setup(&ctx, &lightning, true).await;
+	let address = owner.new_address().await.unwrap();
+	let mailbox = owner.mailbox_identifier();
+	drop(owner);
+
+	let key = address.policy().user_pubkey();
+	let hash = Preimage::random().compute_payment_hash();
+	let mut service = srv.get_public_rpc().await;
+	let invoice = service.start_lightning_receive(protos::StartLightningReceiveRequest {
+		payment_hash: hash.to_vec(), amount_sat: 35_000, min_cltv_delta: 58,
+		mailbox_id: Some(mailbox.serialize()), claim_pubkey: Some(key.serialize().to_vec()),
+		ark_address_hint: true, ..Default::default()
+	}).await.unwrap().into_inner().bolt11.parse::<bark::lightning_invoice::Bolt11Invoice>().unwrap();
+	assert_eq!(invoice.ark_address(), Some(address));
+	payer.pay_lightning_invoice(invoice, None, true).await.unwrap();
+
+	let db = ctx.postgres_manager().database_client(Some(&srv.config().postgres.name)).await;
+	let receipt = async || db.query_one("SELECT amount_sat, vtxo_ids FROM v_arkoor_receive_delivery
+		WHERE payment_hash=$1 AND claim_pubkey=$2 AND receiver_mailbox_id=$3",
+		&[&hash.to_string(), &key.to_string(), &mailbox.to_string()]).await.unwrap();
+	let row = receipt().await;
+	let ids: Vec<String> = row.get("vtxo_ids");
+	let mut total = Amount::ZERO;
+	for id in &ids {
+		let bodies = db.query_one("SELECT v.vtxo, m.vtxo FROM vtxo v JOIN mailbox m USING (vtxo_id)
+			WHERE v.vtxo_id=$1 AND m.mailbox_type='arkoor-receive' AND m.unblinded_mailbox_id=$2",
+			&[&id, &mailbox.to_string()]).await.unwrap();
+		let registered: Vec<u8> = bodies.get(0);
+		let posted: Vec<u8> = bodies.get(1);
+		assert_eq!(posted, registered);
+		let vtxo = Vtxo::<Full>::deserialize(&posted).unwrap();
+		payer.validate_vtxo(&vtxo).await.unwrap();
+		assert_eq!(&vtxo.id().to_string(), id);
+		assert_eq!(vtxo.user_pubkey(), key);
+		total += vtxo.amount();
+	}
+	assert_eq!(total, sat(35_000));
+	assert_eq!(row.get::<_, i64>("amount_sat"), 35_000);
+
+	let restored = ctx.bark_sdk("owner-restored", &srv).mnemonic(seed).create().await;
+	restored.sync_mailbox().await.unwrap();
+	restored.send_arkoor_payment(&payer.new_address().await.unwrap(), total).await.unwrap();
+	let spent: i64 = db.query_one("SELECT count(*) FROM vtxo WHERE vtxo_id = ANY($1)
+		AND spend_state = 'spent'", &[&ids]).await.unwrap().get(0);
+	assert_eq!(spent as usize, ids.len());
+	let replay = receipt().await;
+	assert_eq!(replay.get::<_, Vec<String>>("vtxo_ids"), ids);
+	assert_eq!(replay.get::<_, i64>("amount_sat"), 35_000);
 }
 
 /// An arkoor of the board of `payer` to the claim key of the receive of
@@ -788,7 +846,7 @@ async fn hold_state(lightning: &ark_testing::context::LightningPaymentSetup, has
 async fn expiry_payout_receive_arkoor_retry_finishes_the_receive() {
 	let ctx = TestContext::new("server/expiry_payout_receive_arkoor_retry_finishes_the_receive").await;
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
-	let (srv, payer, receiver) = hint_setup(&ctx, &lightning, true).await;
+	let (srv, payer, receiver, _) = hint_setup(&ctx, &lightning, true).await;
 	let invoice = receiver.bolt11_invoice(sat(50_000), None, None).await.unwrap();
 	assert!(invoice.ark_address().is_some());
 	let hash = PaymentHash::from(&invoice);
@@ -836,7 +894,7 @@ async fn expiry_payout_receive_arkoor_retry_finishes_the_receive() {
 async fn expiry_payout_invoice_without_ark_address_is_not_paid_by_arkoor() {
 	let ctx = TestContext::new("server/expiry_payout_invoice_without_ark_address_is_not_paid_by_arkoor").await;
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
-	let (srv, payer, receiver) = hint_setup(&ctx, &lightning, false).await;
+	let (srv, payer, receiver, _) = hint_setup(&ctx, &lightning, false).await;
 	let invoice = receiver.bolt11_invoice(sat(50_000), None, None).await.unwrap();
 	assert!(invoice.ark_address().is_none());
 	let hash = PaymentHash::from(&invoice);
