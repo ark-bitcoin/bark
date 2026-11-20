@@ -69,13 +69,15 @@ impl Posd {
 				url: forwarder.base_url(),
 				token: Some(forwarder.auth_token()),
 			},
-			bitcoind: BitcoindConfig {
+			// The esplora test lane covers the Esplora chain source.
+			bitcoind: ctx.electrs.is_none().then(|| BitcoindConfig {
 				url: bitcoind.rpc_url(),
 				cookie: Some(bitcoind.rpc_cookie()),
 				rpc_user: None,
 				rpc_password: None,
 				wallet: "posd".into(),
-			},
+			}),
+			esplora_url: ctx.electrs.as_ref().map(|e| e.rest_url()),
 			price: config::Price {
 				url: String::new(),
 				fixed_btc_price: Some(TEST_BTC_PRICE.into()),

@@ -9,7 +9,7 @@ be online. posd holds no funds, and a terminal cannot send.
 |---|---|---|
 | Lightning | Any Lightning wallet | barkd delivers the claim to the owner's mailbox |
 | Ark | A scuttle wallet on the same Ark server, with long-lived VTXOs | the Ark server certifies delivery (`v_arkoor_receive_delivery`) |
-| On-chain | Any bitcoin wallet, at or above the store minimum | 1 confirmation; "in progress" before that |
+| On-chain | Any bitcoin wallet, at or above the store minimum | 1 confirmation (bitcoind or Esplora); "in progress" before that |
 
 The API is in [docs/api.md](docs/api.md).
 
@@ -22,7 +22,8 @@ The API is in [docs/api.md](docs/api.md).
   root.
 - A private barkd. It issues the forwarding invoices and claims them to the
   owner's Ark address. It needs no funds.
-- A bitcoind. posd creates a watch-only wallet on it.
+- A chain source for on-chain sales: a bitcoind, where posd creates a
+  watch-only wallet, or an Esplora API.
 - A Postgres database for posd.
 
 ## Build and run

@@ -1,9 +1,11 @@
 //! The on-chain rail: one address per sale, derived from the owner's
 //! public descriptor.
 //!
-//! posd watches the addresses in a watch-only wallet of its own on bitcoind.
-//! Each sale address is imported when the sale is created. A fresh address
-//! has no history, so the import needs no rescan.
+//! posd reads the chain from one of two sources:
+//! - bitcoind: a watch-only wallet of posd's own. Each sale address is
+//!   imported when the sale is created. A fresh address has no history, so
+//!   the import needs no rescan.
+//! - Esplora: address lookups over HTTP, with nothing to import.
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -77,16 +79,90 @@ pub struct BitcoindConfig {
 
 fn default_wallet() -> String { "posd".into() }
 
-pub struct Chain {
+/// The chain source for the on-chain rail.
+pub enum Chain {
+	Bitcoind(Bitcoind),
+	Esplora(Esplora),
+}
+
+impl Chain {
+	/// Connects to the source the config names: exactly one of `bitcoind`
+	/// and `esplora_url`.
+	pub async fn connect(cfg: &crate::config::Config) -> anyhow::Result<Chain> {
+		match (&cfg.bitcoind, &cfg.esplora_url) {
+			(Some(b), None) => Ok(Chain::Bitcoind(Bitcoind::connect(b.clone()).await?)),
+			(None, Some(url)) => Ok(Chain::Esplora(Esplora::new(url)?)),
+			_ => bail!("set exactly one of [bitcoind] and esplora_url"),
+		}
+	}
+
+	/// Starts watching an address for a new sale.
+	pub async fn watch(&self, address: &Address) -> anyhow::Result<()> {
+		match self {
+			Chain::Bitcoind(b) => b.watch(address).await,
+			// Esplora indexes every address.
+			Chain::Esplora(_) => Ok(()),
+		}
+	}
+
+	/// The payments to an address. Spends from it do not count: the owner
+	/// spending a payment does not undo the sale.
+	pub async fn funds(&self, address: &Address) -> anyhow::Result<AddressFunds> {
+		match self {
+			Chain::Bitcoind(b) => b.funds(address).await,
+			Chain::Esplora(e) => e.funds(address).await,
+		}
+	}
+}
+
+pub struct Esplora {
+	client: esplora_client::AsyncClient,
+}
+
+impl Esplora {
+	pub fn new(url: &str) -> anyhow::Result<Esplora> {
+		let client = esplora_client::Builder::new(url.trim_end_matches('/'))
+			.timeout(30)
+			.build_async()
+			.context("failed to create the Esplora client")?;
+		Ok(Esplora { client })
+	}
+
+	async fn funds(&self, address: &Address) -> anyhow::Result<AddressFunds> {
+		let script = address.script_pubkey();
+		// A sale address is fresh, so its history fits in the first page.
+		let txs = self.client.scripthash_txs(&script, None).await
+			.context("Esplora address lookup failed")?;
+		let mut funds = AddressFunds::default();
+		for tx in txs {
+			let paid = tx.vout.iter()
+				.filter(|o| o.scriptpubkey == script)
+				.map(|o| Amount::from_sat(o.value))
+				.sum::<Amount>();
+			if paid == Amount::ZERO {
+				continue;
+			}
+			if tx.status.confirmed {
+				funds.confirmed += paid;
+			} else {
+				funds.pending += paid;
+			}
+			funds.txids.push(tx.txid.to_string());
+		}
+		Ok(funds)
+	}
+}
+
+pub struct Bitcoind {
 	cfg: BitcoindConfig,
 	http: reqwest::Client,
 }
 
-impl Chain {
+impl Bitcoind {
 	/// Connects, and creates or loads the watch-only wallet.
-	pub async fn connect(cfg: BitcoindConfig) -> anyhow::Result<Chain> {
+	pub async fn connect(cfg: BitcoindConfig) -> anyhow::Result<Bitcoind> {
 		let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-		let chain = Chain { cfg, http };
+		let chain = Bitcoind { cfg, http };
 		chain.open_wallet().await?;
 		Ok(chain)
 	}
@@ -107,7 +183,7 @@ impl Chain {
 	}
 
 	/// Starts watching an address. Its history starts now.
-	pub async fn watch(&self, address: &Address) -> anyhow::Result<()> {
+	async fn watch(&self, address: &Address) -> anyhow::Result<()> {
 		let desc = format!("addr({})", address);
 		let info = self.call(None, "getdescriptorinfo", json!([desc])).await?;
 		let desc = info.get("descriptor").and_then(|d| d.as_str())
@@ -124,9 +200,7 @@ impl Chain {
 		Ok(())
 	}
 
-	/// The payments to an address. Spends from it do not count: the owner
-	/// spending a payment does not undo the sale.
-	pub async fn funds(&self, address: &Address) -> anyhow::Result<AddressFunds> {
+	async fn funds(&self, address: &Address) -> anyhow::Result<AddressFunds> {
 		let wallet = Some(self.cfg.wallet.as_str());
 		let addr = address.to_string();
 		let all = self.call(wallet, "getreceivedbyaddress", json!([addr, 0])).await?;
@@ -212,4 +286,18 @@ mod test {
 		assert_eq!(btc_value(&json!(0)).unwrap(), Amount::ZERO);
 		assert_eq!(btc_value(&json!(21.12345678)).unwrap(), Amount::from_sat(2_112_345_678));
 	}
+}
+
+/// Checks the Esplora source against a live server. Run with
+/// `POSD_ESPLORA=<url> POSD_ADDRESS=<address> POSD_CONFIRMED_SAT=<n>
+/// cargo test -p scuttle-pos esplora_live -- --ignored`.
+#[cfg(test)]
+#[tokio::test]
+#[ignore]
+async fn esplora_live() {
+	let url = std::env::var("POSD_ESPLORA").unwrap();
+	let address = Address::from_str(&std::env::var("POSD_ADDRESS").unwrap()).unwrap().assume_checked();
+	let expected = std::env::var("POSD_CONFIRMED_SAT").unwrap().parse::<u64>().unwrap();
+	let funds = Esplora::new(&url).unwrap().funds(&address).await.unwrap();
+	assert_eq!(funds.confirmed, Amount::from_sat(expected), "{:?}", funds);
 }

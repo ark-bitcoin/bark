@@ -29,6 +29,7 @@ bitcoin.workspace = true
 chrono.workspace = true
 clap.workspace = true
 config.workspace = true
+esplora-client.workspace = true
 lightning-invoice.workspace = true
 postgres-types.workspace = true
 refinery = { version = "0.8.14", default-features = false, features = ["tokio-postgres"] }

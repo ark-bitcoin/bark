@@ -56,7 +56,7 @@ impl App {
 		let app = App {
 			price: PriceFeed::new(cfg.price.clone())?,
 			forwarder: Forwarder::new(&cfg.barkd)?,
-			chain: Chain::connect(cfg.bitcoind.clone()).await.context("failed to set up bitcoind")?,
+			chain: Chain::connect(&cfg).await.context("failed to set up the chain source")?,
 			sale_changes: watch::channel(0).0,
 			db,
 			ark,

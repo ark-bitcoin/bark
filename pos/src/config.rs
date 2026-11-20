@@ -125,8 +125,10 @@ pub struct Config {
 	/// `v_arkoor_receive_delivery`.
 	pub ark_server_postgres: Postgres,
 	pub barkd: Barkd,
-	/// The bitcoind that watches on-chain payments.
-	pub bitcoind: crate::rails::onchain::BitcoindConfig,
+	/// The chain source for on-chain payments: a bitcoind, where posd keeps
+	/// a watch-only wallet, or an Esplora API. Set exactly one.
+	pub bitcoind: Option<crate::rails::onchain::BitcoindConfig>,
+	pub esplora_url: Option<String>,
 	pub price: Price,
 	#[serde(default)]
 	pub sales: Sales,

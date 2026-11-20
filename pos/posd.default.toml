@@ -35,8 +35,10 @@ user = "posd_receipts"
 url = "http://127.0.0.1:3000"
 # token = ""
 
-# posd creates a watch-only wallet with this name and imports one address per
-# on-chain sale. It holds no keys.
+# The chain source for on-chain sales: either a bitcoind, where posd creates
+# a watch-only wallet and imports one address per sale (it holds no keys),
+# or a public Esplora API. Set exactly one.
+# esplora_url = "https://blockstream.info/api"
 [bitcoind]
 url = "http://127.0.0.1:8332"
 cookie = "/var/lib/bitcoind/.cookie"
