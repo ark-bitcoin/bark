@@ -118,6 +118,16 @@ pub async fn tx_status(client: &Client, txid: Txid) -> Result<TxStatus, ClientEr
 	}
 }
 
+/// Whether bitcoind has the tx in its mempool or in the active chain.
+///
+/// One RPC, unlike [tx_status]: a tx in a stale block reports no confirmations.
+pub async fn tx_is_known(client: &Client, txid: Txid) -> Result<bool, ClientError> {
+	Ok(match custom_get_raw_transaction_info(client, txid, None).await? {
+		Some(tx) => tx.blockhash.is_none() || tx.confirmations.unwrap_or(0) > 0,
+		None => false,
+	})
+}
+
 /// Broadcast a transaction. Swallows the
 /// [`RPC_VERIFY_ALREADY_IN_UTXO_SET`] error so a re-broadcast of an
 /// already-mined tx is not surfaced as an error.
