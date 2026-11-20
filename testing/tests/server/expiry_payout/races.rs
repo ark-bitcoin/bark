@@ -304,6 +304,72 @@ async fn expiry_payout_decision_refuses_a_later_offboard() {
 	offboard_race("expiry_payout_decision_refuses_a_later_offboard", OffboardRace::DecisionFirst).await;
 }
 
+#[tokio::test]
+async fn expiry_payout_broadcasts_during_decision_pass() {
+	let ctx = TestContext::new("server/expiry_payout_broadcasts_during_decision_pass").await;
+	let srv = ctx.captaind("server").bitcoind(ctx.bitcoind_arc()).no_vtxo_pool().watchmand()
+		.cfg(|cfg| { cfg.expiry_payouts = true; cfg.vtxo_lifetime = BlockDelta::new(40); }).create().await;
+	let wallet = ctx.bark_sdk("owner", &srv).funded(sat(500_000)).create().await;
+	let [one, two] = ctx.board(&wallet, &[sat(100_000); 2]).await.try_into().unwrap();
+	wallet.stop_daemon_wait().await.unwrap();
+	let expiry = one.vtxo.expiry_height();
+	assert_eq!(expiry, two.vtxo.expiry_height());
+	fund_watchman(&ctx, &srv, sat(100_000)).await;
+
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	// Hold each decision after its validation, regardless of the order
+	// of the two roots in the frontier.
+	db.write(async |t| {
+		t.batch_execute("
+			CREATE SEQUENCE test_decision_lock START WITH 101;
+			CREATE FUNCTION test_hold_decision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+				PERFORM pg_advisory_xact_lock(nextval('test_decision_lock'));
+				RETURN NEW;
+			END $$;
+			CREATE TRIGGER test_hold_decision BEFORE INSERT ON expiry_payout
+				FOR EACH ROW EXECUTE FUNCTION test_hold_decision();
+		").await?;
+		Ok(())
+	}).await.unwrap();
+	let decision_write = "INSERT INTO expiry_payout(expiry_height)%";
+	let (held, locked) = oneshot::channel();
+	let (release, released) = oneshot::channel();
+	let last_lock = tokio::spawn({
+		let db = db.clone();
+		async move {
+			db.write(async move |t| {
+				t.execute("SELECT pg_advisory_xact_lock(102)", &[]).await?;
+				held.send(()).unwrap();
+				released.await.unwrap();
+				Ok(())
+			}).await.unwrap();
+		}
+	});
+	locked.wait_millis(15_000).await.unwrap();
+	db.write(async |t| {
+		t.execute("SELECT pg_advisory_xact_lock(101)", &[]).await?;
+		let tip = ctx.bitcoind().get_block_count().await as u32;
+		assert!(tip < expiry.to_u32());
+		mine(&ctx, &srv, expiry.to_u32() - tip).await;
+		wait_for_query_lock(t, decision_write).await?;
+		mine(&ctx, &srv, 1).await;
+		Ok(())
+	}).await.unwrap();
+
+	// The last tree still waits on its advisory lock. The first payout must
+	// reach bitcoind before this decision pass can finish.
+	let (payout, undecided) = tokio::select! {
+		(_, payout) = wait_payout(&db, one.id()) => (payout, two.id()),
+		(_, payout) = wait_payout(&db, two.id()) => (payout, one.id()),
+	};
+	assert!(ctx.bitcoind().sync_client().get_raw_mempool().unwrap().contains(&payout.compute_txid()));
+	assert!(current_share(&db, undecided).await.is_none());
+	db.read(async |t| wait_for_query_lock(t, decision_write).await).await.unwrap();
+	release.send(()).unwrap();
+	last_lock.await.unwrap();
+	wait_payout(&db, undecided).await;
+}
+
 /// While an expiry decision is stalled in the database, the watchman still
 /// broadcasts the exit progress of other VTXOs.
 #[tokio::test]

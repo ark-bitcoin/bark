@@ -259,8 +259,8 @@ impl Watchman {
 		loop {
 			tokio::select! {
 				// Payout mode runs the sweep pass on each block, in a background
-				// task. A payout then waits at most one block, and a long pass
-				// does not delay the reactions.
+				// task. During a long pass, the next send runs after a new
+				// block and the current tree decision. Reactions run separately.
 				Ok(()) = completed.changed(), if self.db.expiry_payouts() => {
 					self.enqueue_expiry_sweep(&mut expiry_sweeps, &mut sweep_pending);
 				},

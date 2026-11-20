@@ -71,6 +71,7 @@ impl Watchman {
 			}
 		}
 		// Decided payouts need no frontier scan, so publish them first.
+		let last_payout_tip = self.db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await?;
 		self.process_expiry_payouts().await?;
 		// Forfeited offboard outputs and pool VTXOs belong to the server.
 		// The upstream claim sweeps them, and the server pays its fee.
@@ -99,7 +100,7 @@ impl Watchman {
 			let spends = self.measure_mempool_spends(claims.iter().map(|v| v.id()).collect()).await;
 			self.process_claims(claims, &spends).await?;
 		}
-		self.expiry_decision_pass(sweeps).await;
+		self.expiry_decision_pass(sweeps, last_payout_tip).await?;
 		self.process_expiry_payouts().await?;
 		Ok(())
 	}
@@ -308,8 +309,10 @@ impl Watchman {
 		Ok(())
 	}
 
-	/// Decide the payout of each expired root. An error holds only its root.
-	async fn expiry_decision_pass(&self, mut roots: Vec<ServerVtxo>) {
+	/// Decide the payout of each expired root and send pending payouts on a new tip.
+	async fn expiry_decision_pass(
+		&self, mut roots: Vec<ServerVtxo>, mut last_payout_tip: Option<BlockRef>,
+	) -> anyhow::Result<()> {
 		// An exposed user VTXO follows its own claim and refund rules.
 		roots.retain(|root| !matches!(root.policy(), ServerVtxoPolicy::User(_)));
 		roots.sort_by_key(|root| root.expiry_height());
@@ -318,7 +321,13 @@ impl Watchman {
 			if let Err(error) = self.decide_expiry_root(root).await {
 				warn!(root = %id, error = %format_args!("{error:#}"), "Expiry payout decision failed");
 			}
+			let tip = self.db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await?;
+			if tip.is_some() && tip != last_payout_tip {
+				self.process_expiry_payouts().await?;
+				last_payout_tip = tip;
+			}
 		}
+		Ok(())
 	}
 
 	/// Decide one root: one expiry payout and one payout transaction. Each
