@@ -150,7 +150,9 @@ impl rpc::server::ArkService for Server {
 
 		let id = VtxoId::from_bytes(req.vtxo_id)?;
 
-		let vtxo_state = self.db.read(async |t| t.get_server_vtxo_by_id(id).await).await
+		// Not server-internal records: they are keyed by public outpoints, e.g. a
+		// board's funding output, and describe contracts the chain doesn't reveal.
+		let vtxo_state = self.db.read(async |t| t.get_user_vtxo_by_id(id).await).await
 			.to_status()?;
 
 		let response = protos::GetVtxoResponse {
@@ -209,7 +211,8 @@ impl rpc::server::ArkService for Server {
 
 		// Unknown ids are reported, not an error, so one bad id does not
 		// cost the client the whole batch.
-		let found = self.db.read(async |t| t.get_existing_server_vtxos_by_id(&ids).await).await
+		// Server-internal records are reported missing, as in GetVtxo.
+		let found = self.db.read(async |t| t.get_existing_user_vtxos_by_id(&ids).await).await
 			.to_status()?;
 
 		let mut missing = Vec::new();
