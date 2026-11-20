@@ -5,3 +5,6 @@
 - Broadcast decided expiry payouts during long decision passes
   After a new block, the watchman sends pending payouts between tree decisions.
   [#11](https://github.com/SatoshiPortal/scuttle/pull/11)
+- Limit payout status lookups to the relevant expiry payouts
+  Receipt and decision queries avoid a full scan of payout history.
+  [#11](https://github.com/SatoshiPortal/scuttle/pull/11)

@@ -90,6 +90,45 @@ async fn write_behind_decision(db: &Db, vtxo: &str, write: Write) -> anyhow::Res
 	writer.await.unwrap()
 }
 
+#[tokio::test]
+async fn expiry_payout_receipt_lookup_skips_unrelated_history() {
+	let (_ctx, db) = payout_db("expiry_payout_receipt_lookup_skips_unrelated_history").await;
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
+	let historical = ServerVtxo::from(VTXO_VECTORS.round2_vtxo.clone());
+	let id = vtxo.id().to_string();
+	db.write(async |t| {
+		insert_raw_vtxo(t, &vtxo, SpendState::Spent).await?;
+		decide_for_payout(t, std::slice::from_ref(&id)).await?;
+		t.execute("INSERT INTO expiry_payout_input(expiry_payout_id, vtxo_id)
+			SELECT id, $1 FROM expiry_payout", &[&id]).await?;
+		insert_raw_vtxo(t, &historical, SpendState::Spent).await?;
+		t.execute("WITH history AS (
+			INSERT INTO expiry_payout(expiry_height) SELECT 0 FROM generate_series(1, 1000) RETURNING id
+		) INSERT INTO expiry_payout_input(expiry_payout_id, vtxo_id) SELECT id, $1 FROM history",
+			&[&historical.id().to_string()]).await?;
+		t.batch_execute("ANALYZE expiry_payout; ANALYZE expiry_payout_input;").await?;
+		Ok(())
+	}).await.unwrap();
+
+	let (status, rows_read) = db.read(async |t| {
+		let status = t.query_one("SELECT DISTINCT ON (c.vtxo_id) a.status
+			FROM expiry_payout_vtxo c
+			JOIN v_expiry_payout_state a ON a.id = c.expiry_payout_id
+			JOIN vtxo v ON v.vtxo_id = c.vtxo_id
+			WHERE c.vtxo_id = ANY($1)
+			ORDER BY c.vtxo_id, (a.status = 'confirmed') DESC, c.expiry_payout_id DESC",
+			&[&std::slice::from_ref(&id)]).await?.get::<_, String>(0);
+		// Count the inputs read to compute status, independently of
+		// the join plan for the small payout header table.
+		let rows_read = t.query_one("SELECT seq_tup_read + COALESCE(idx_tup_fetch, 0)
+			FROM pg_stat_xact_user_tables WHERE relid = 'expiry_payout_input'::regclass",
+			&[]).await?.get::<_, i64>(0);
+		Ok((status, rows_read))
+	}).await.unwrap();
+	assert_eq!(status, "pending");
+	assert!(rows_read < 100, "one receipt scanned {rows_read} payout input rows");
+}
+
 /// The writer that marks the sources of a successful payment spent waits
 /// behind an expiry decision on a source, and then leaves the decided
 /// source alone: one VTXO has one spend.

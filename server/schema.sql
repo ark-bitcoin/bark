@@ -160,6 +160,90 @@ CREATE TYPE public.wallet_kind AS ENUM (
 
 
 --
+-- Name: expiry_payout_attempt; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.expiry_payout_attempt (
+    expiry_payout_id bigint NOT NULL,
+    txid text NOT NULL,
+    signed_tx bytea NOT NULL,
+    fee_sat bigint NOT NULL,
+    CONSTRAINT expiry_payout_attempt_fee_sat_check CHECK ((fee_sat >= 0)),
+    CONSTRAINT expiry_payout_attempt_txid_check CHECK ((length(txid) = 64))
+);
+
+
+--
+-- Name: expiry_payout_input; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.expiry_payout_input (
+    expiry_payout_id bigint NOT NULL,
+    vtxo_id text NOT NULL
+);
+
+
+--
+-- Name: vtxo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vtxo (
+    id bigint NOT NULL,
+    vtxo_id text NOT NULL,
+    vtxo bytea NOT NULL,
+    expiry integer NOT NULL,
+    oor_spent_txid text,
+    spent_in_round bigint,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    lightning_htlc_subscription_id bigint,
+    offboarded_in text,
+    vtxo_txid text NOT NULL,
+    exit_delta integer NOT NULL,
+    policy_type text NOT NULL,
+    policy bytea NOT NULL,
+    server_pubkey text NOT NULL,
+    amount bigint NOT NULL,
+    anchor_point text NOT NULL,
+    banned_until_height integer,
+    spend_state public.spend_state NOT NULL,
+    frontier_at timestamp with time zone,
+    confirmed_height integer,
+    onchain_spent_height integer,
+    onchain_spent_txid text
+);
+
+
+--
+-- Name: watchmand_block; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.watchmand_block (
+    height bigint NOT NULL,
+    hash text NOT NULL
+);
+
+
+--
+-- Name: expiry_payout_observed(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.expiry_payout_observed(payout_id bigint) RETURNS TABLE(confirmed boolean, conflicted boolean, confirmed_txid text, height bigint)
+    LANGUAGE sql STABLE
+    BEGIN ATOMIC
+ SELECT ((count(i.vtxo_id) > 0) AND bool_and(((v.onchain_spent_txid IS NOT NULL) AND (b.height IS NOT NULL) AND (p.txid IS NOT NULL))) AND (count(DISTINCT v.onchain_spent_txid) = 1)),
+     (bool_or(((v.onchain_spent_txid IS NOT NULL) AND (p.txid IS NULL))) OR (count(DISTINCT v.onchain_spent_txid) > 1)),
+     min(v.onchain_spent_txid) AS min,
+     min(b.height) AS min
+    FROM (((public.expiry_payout_input i
+      LEFT JOIN public.vtxo v ON ((v.vtxo_id = i.vtxo_id)))
+      LEFT JOIN public.watchmand_block b ON ((b.height = v.onchain_spent_height)))
+      LEFT JOIN public.expiry_payout_attempt p ON (((p.expiry_payout_id = i.expiry_payout_id) AND (p.txid = v.onchain_spent_txid))))
+   WHERE (i.expiry_payout_id = expiry_payout_observed.payout_id);
+END;
+
+
+--
 -- Name: integration_api_key_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -858,20 +942,6 @@ CREATE TABLE public.expiry_payout (
 
 
 --
--- Name: expiry_payout_attempt; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.expiry_payout_attempt (
-    expiry_payout_id bigint NOT NULL,
-    txid text NOT NULL,
-    signed_tx bytea NOT NULL,
-    fee_sat bigint NOT NULL,
-    CONSTRAINT expiry_payout_attempt_fee_sat_check CHECK ((fee_sat >= 0)),
-    CONSTRAINT expiry_payout_attempt_txid_check CHECK ((length(txid) = 64))
-);
-
-
---
 -- Name: expiry_payout_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -888,16 +958,6 @@ CREATE SEQUENCE public.expiry_payout_id_seq
 --
 
 ALTER SEQUENCE public.expiry_payout_id_seq OWNED BY public.expiry_payout.id;
-
-
---
--- Name: expiry_payout_input; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.expiry_payout_input (
-    expiry_payout_id bigint NOT NULL,
-    vtxo_id text NOT NULL
-);
 
 
 --
@@ -1650,37 +1710,6 @@ ALTER SEQUENCE public.sweep_id_seq OWNED BY public.sweep.id;
 
 
 --
--- Name: vtxo; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.vtxo (
-    id bigint NOT NULL,
-    vtxo_id text NOT NULL,
-    vtxo bytea NOT NULL,
-    expiry integer NOT NULL,
-    oor_spent_txid text,
-    spent_in_round bigint,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    lightning_htlc_subscription_id bigint,
-    offboarded_in text,
-    vtxo_txid text NOT NULL,
-    exit_delta integer NOT NULL,
-    policy_type text NOT NULL,
-    policy bytea NOT NULL,
-    server_pubkey text NOT NULL,
-    amount bigint NOT NULL,
-    anchor_point text NOT NULL,
-    banned_until_height integer,
-    spend_state public.spend_state NOT NULL,
-    frontier_at timestamp with time zone,
-    confirmed_height integer,
-    onchain_spent_height integer,
-    onchain_spent_txid text
-);
-
-
---
 -- Name: v_cascade_roots; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -1778,36 +1807,10 @@ CREATE VIEW public.v_conflicted_vtxos AS
 
 
 --
--- Name: watchmand_block; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.watchmand_block (
-    height bigint NOT NULL,
-    hash text NOT NULL
-);
-
-
---
 -- Name: v_expiry_payout_state; Type: VIEW; Schema: public; Owner: -
 --
 
 CREATE VIEW public.v_expiry_payout_state AS
- WITH observed AS (
-         SELECT a_1.id,
-            ((count(i.vtxo_id) > 0) AND bool_and(((v.onchain_spent_txid IS NOT NULL) AND (b.height IS NOT NULL) AND (EXISTS ( SELECT 1
-                   FROM public.expiry_payout_attempt p
-                  WHERE ((p.expiry_payout_id = a_1.id) AND (p.txid = v.onchain_spent_txid)))))) AND (count(DISTINCT v.onchain_spent_txid) = 1)) AS confirmed,
-            (bool_or(((v.onchain_spent_txid IS NOT NULL) AND (NOT (EXISTS ( SELECT 1
-                   FROM public.expiry_payout_attempt p
-                  WHERE ((p.expiry_payout_id = a_1.id) AND (p.txid = v.onchain_spent_txid))))))) OR (count(DISTINCT v.onchain_spent_txid) > 1)) AS conflicted,
-            min(v.onchain_spent_txid) AS confirmed_txid,
-            min(b.height) AS height
-           FROM (((public.expiry_payout a_1
-             LEFT JOIN public.expiry_payout_input i ON ((i.expiry_payout_id = a_1.id)))
-             LEFT JOIN public.vtxo v ON ((v.vtxo_id = i.vtxo_id)))
-             LEFT JOIN public.watchmand_block b ON ((b.height = v.onchain_spent_height)))
-          GROUP BY a_1.id
-        )
  SELECT a.id,
     a.expiry_height,
         CASE
@@ -1823,9 +1826,9 @@ CREATE VIEW public.v_expiry_payout_state AS
             WHEN o.confirmed THEN 'confirmed'::text
             WHEN (o.conflicted OR (EXISTS ( SELECT 1
                FROM ((public.expiry_payout_vtxo c
-                 JOIN public.expiry_payout_vtxo paid ON ((paid.vtxo_id = c.vtxo_id)))
-                 JOIN observed prior ON ((prior.id = paid.expiry_payout_id)))
-              WHERE ((c.expiry_payout_id = a.id) AND prior.confirmed AND (prior.id <> a.id))))) THEN 'conflicted'::text
+                 JOIN public.expiry_payout_vtxo paid ON (((paid.vtxo_id = c.vtxo_id) AND (paid.expiry_payout_id <> a.id))))
+                 CROSS JOIN LATERAL public.expiry_payout_observed(paid.expiry_payout_id) prior(confirmed, conflicted, confirmed_txid, height))
+              WHERE ((c.expiry_payout_id = a.id) AND prior.confirmed)))) THEN 'conflicted'::text
             ELSE 'pending'::text
         END AS status,
         CASE
@@ -1833,7 +1836,7 @@ CREATE VIEW public.v_expiry_payout_state AS
             ELSE NULL::bigint
         END AS confirmed_height
    FROM (((public.expiry_payout a
-     JOIN observed o ON ((o.id = a.id)))
+     CROSS JOIN LATERAL public.expiry_payout_observed(a.id) o(confirmed, conflicted, confirmed_txid, height))
      LEFT JOIN public.expiry_payout_attempt winner ON (((winner.expiry_payout_id = a.id) AND (winner.txid = o.confirmed_txid))))
      LEFT JOIN LATERAL ( SELECT p.txid,
             p.signed_tx
