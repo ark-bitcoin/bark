@@ -1,0 +1,14 @@
+- Pay an invoice on its Ark address only with long-lived VTXOs
+  An invoice paid with an arkoor gives the receiver the payer's VTXOs with
+  their expiry. When the wallet's VTXOs that expire more than
+  `Config::direct_pay_min_expiry` blocks after the tip cover the amount,
+  the wallet pays an invoice that carries an Ark address of its Ark server
+  with an arkoor of those VTXOs only. This also applies without
+  `Config::lightning_ark_address_hints`, which now only adds the arkoor
+  payment with VTXOs of any expiry.
+  [#XXXX](https://github.com/SatoshiPortal/scuttle/pull/XXXX)
+  - A BIP 321 URI can carry such an invoice in an `ark-lightning`
+    parameter. A Lightning wallet cannot pay it, so the URI also carries a
+    `lightning` invoice. The wallet makes the `ark-lightning` invoice the
+    default payment option only when it can pay it with long-lived VTXOs.
+    Otherwise the option has the error `NoDirectArkPayment`.

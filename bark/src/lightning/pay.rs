@@ -345,16 +345,44 @@ impl Wallet {
 		self.make_lightning_payment_with(invoice, original_payment_method, user_amount, opts).await
 	}
 
-	/// The Ark address in the route hints of `invoice` that we can pay
-	/// it on with an arkoor, see [crate::Config::lightning_ark_address_hints].
-	async fn ark_address_to_pay(&self, invoice: &Bolt11Invoice) -> anyhow::Result<Option<ark::Address>> {
-		if !self.config().lightning_ark_address_hints {
+	/// The VTXOs that can pay `amount` with an arkoor to the Ark address of
+	/// an invoice: they all expire more than [crate::Config::direct_pay_min_expiry]
+	/// blocks after the tip. Returns `None` if such VTXOs do not cover
+	/// `amount`.
+	///
+	/// The receiver of such an arkoor gets VTXOs with the payer's expiry, so
+	/// only VTXOs that live long enough pay it.
+	pub(crate) async fn long_lived_arkoor_inputs(
+		&self,
+		amount: Amount,
+	) -> anyhow::Result<Option<Vec<WalletVtxo>>> {
+		let tip = self.inner.chain.tip().await?;
+		let min_expiry = tip + self.config().direct_pay_min_expiry;
+		let selection = self.spend_input_selection().await?.expires_after(min_expiry);
+		Ok(selection.select(self.spendable_vtxos().await?, amount).ok())
+	}
+
+	/// The Ark address in the route hints of `invoice` that we pay it on with
+	/// an arkoor of `amount`, instead of over lightning.
+	///
+	/// The address must be for our Ark server. We pay on it when our
+	/// long-lived VTXOs cover `amount`, see [Self::long_lived_arkoor_inputs],
+	/// or with any VTXOs when [crate::Config::lightning_ark_address_hints]
+	/// is on.
+	pub(crate) async fn ark_address_to_pay(
+		&self,
+		invoice: &Bolt11Invoice,
+		amount: Amount,
+	) -> anyhow::Result<Option<ark::Address>> {
+		let Some(address) = invoice.ark_address() else { return Ok(None) };
+		let (_, ark_info) = self.require_server().await?;
+		if !address.is_for_server(ark_info.server_pubkey) {
 			return Ok(None);
 		}
-		let Some(address) = invoice.ark_address() else { return Ok(None) };
 
-		let (_, ark_info) = self.require_server().await?;
-		Ok(address.is_for_server(ark_info.server_pubkey).then_some(address))
+		let pay = self.config().lightning_ark_address_hints
+			|| Box::pin(self.long_lived_arkoor_inputs(amount)).await?.is_some();
+		Ok(pay.then_some(address))
 	}
 
 	/// Same as [`Self::make_lightning_payment`], with [`LightningSendOptions`].
@@ -373,8 +401,9 @@ impl Wallet {
 		let mode = if opts.wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
 
 		if let Invoice::Bolt11(bolt11) = invoice {
-			if let Some(address) = self.ark_address_to_pay(bolt11).await? {
-				let amount = invoice.get_payment_amount(user_amount)?;
+			let amount = invoice.get_payment_amount(user_amount)?;
+			// Boxed so the future of every lightning payment stays small.
+			if let Some(address) = Box::pin(self.ark_address_to_pay(bolt11, amount)).await? {
 				info!("Paying invoice {} with an arkoor of {} to {}", payment_hash, amount, address);
 				// Boxed so every lightning payment's future does not carry the
 				// arkoor send's state machine inline.

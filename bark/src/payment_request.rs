@@ -26,7 +26,7 @@ use lnurllib::lnurl::LnUrl;
 use log::warn;
 use url::Url;
 
-use ark::lightning::{Bolt11Invoice, Invoice, Offer, OfferAmountExt};
+use ark::lightning::{Bolt11Invoice, Bolt11InvoiceExt, Invoice, Offer, OfferAmountExt};
 use bip321::{Bip321Error, Bip321Uri, ExtensionHandler, FieldWithAttributes};
 use bitcoin_ext::AmountExt;
 use log::debug;
@@ -70,15 +70,35 @@ impl FromStr for ArkAddressType {
 	}
 }
 
+/// The BIP 321 parameter of an invoice that only a wallet on the Ark server
+/// of its Ark address pays, with an arkoor.
+///
+/// The invoice carries the receiver's Ark address in its route hints. A
+/// Lightning wallet cannot pay it, so a URI also carries a `lightning`
+/// invoice for every other payer.
+pub const ARK_LIGHTNING_PARAM: &str = "ark-lightning";
+
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct BarkExtension {
 	ark: Vec<FieldWithAttributes<ArkAddressType>>,
+	ark_lightning: Vec<FieldWithAttributes<Bolt11Invoice>>,
 }
 
 impl BarkExtension {
 	/// The Ark addresses carried by the URI's `ark=` parameters.
 	pub fn ark(&self) -> &[FieldWithAttributes<ArkAddressType>] {
 		&self.ark
+	}
+
+	/// The invoices carried by the URI's `ark-lightning=` parameters.
+	pub fn ark_lightning(&self) -> &[FieldWithAttributes<Bolt11Invoice>] {
+		&self.ark_lightning
+	}
+
+	/// Add an invoice that only a wallet on its Ark server pays, see
+	/// [ARK_LIGHTNING_PARAM].
+	pub fn push_ark_lightning(&mut self, invoice: Bolt11Invoice, required: bool) {
+		self.ark_lightning.push(FieldWithAttributes::new(invoice, required));
 	}
 }
 
@@ -97,19 +117,26 @@ impl ExtensionHandler for BarkExtension {
 
 			self.ark.push(FieldWithAttributes::new(addr, required));
 			Ok(true)
+		} else if key == ARK_LIGHTNING_PARAM {
+			let invoice = Bolt11Invoice::from_str(value)
+				.map_err(|e| Bip321Error::ExtensionError(e.to_string()))?;
+			self.ark_lightning.push(FieldWithAttributes::new(invoice, required));
+			Ok(true)
 		} else {
 			Ok(false)
 		}
 	}
 
 	fn is_empty(&self) -> bool {
-		self.ark.is_empty()
+		self.ark.is_empty() && self.ark_lightning.is_empty()
 	}
 
 	fn serialize_params(&self) -> Vec<(String, String)> {
-		self.ark.iter()
-			.map(|a| ("ark".to_string(), a.inner().to_string()))
-			.collect()
+		let ark = self.ark.iter()
+			.map(|a| ("ark".to_string(), a.inner().to_string()));
+		let ark_lightning = self.ark_lightning.iter()
+			.map(|i| (ARK_LIGHTNING_PARAM.to_string(), i.inner().to_string()));
+		ark.chain(ark_lightning).collect()
 	}
 }
 
@@ -137,6 +164,10 @@ pub enum PaymentMethodParsingError {
 	/// The payment option is not supported.
 	#[error("unsupported payment option")]
 	Unsupported,
+	/// The invoice of an `ark-lightning` parameter has no Ark address of our
+	/// Ark server, or our long-lived VTXOs do not cover it.
+	#[error("cannot pay the invoice with an arkoor of long-lived VTXOs")]
+	NoDirectArkPayment,
 }
 
 /// A single payment option with its validation issues.
@@ -486,6 +517,35 @@ impl Wallet {
 		}
 	}
 
+	/// The option of an invoice in an `ark-lightning` parameter. It is
+	/// usable only when we pay it with an arkoor of long-lived VTXOs, see
+	/// [Wallet::long_lived_arkoor_inputs]. Otherwise the payer pays the
+	/// `lightning` invoice of the URI.
+	async fn details_for_ark_lightning(
+		&self,
+		bolt11: &Bolt11Invoice,
+		network: Network,
+		uri_amount: Option<Amount>,
+	) -> anyhow::Result<AvailablePaymentMethod> {
+		let mut details = Self::details_for_bolt11(bolt11, network, uri_amount);
+		let amount = bolt11.amount_milli_satoshis().map(Amount::from_msat_ceil).or(uri_amount);
+		let for_server = match bolt11.ark_address() {
+			Some(address) => {
+				let (_, ark_info) = self.require_server().await?;
+				address.is_for_server(ark_info.server_pubkey)
+			},
+			None => false,
+		};
+		let payable = match amount {
+			Some(amount) if for_server => Box::pin(self.long_lived_arkoor_inputs(amount)).await?.is_some(),
+			_ => false,
+		};
+		if !payable {
+			details.errors.push(PaymentMethodParsingError::NoDirectArkPayment);
+		}
+		Ok(details)
+	}
+
 	async fn details_for_ark_address(
 		&self,
 		ark_address: &ArkAddressType,
@@ -538,6 +598,13 @@ impl Wallet {
 			let details = Self::details_for_bitcoin_address(
 				&extension.inner().as_unchecked(), network
 			);
+			options.push(details);
+		}
+
+		// An `ark-lightning` invoice comes before the `lightning` ones, so
+		// it is the default when we can pay it.
+		for extension in uri.extensions().ark_lightning() {
+			let details = self.details_for_ark_lightning(extension.inner(), network, amount).await?;
 			options.push(details);
 		}
 
@@ -716,6 +783,13 @@ impl Wallet {
 		-> anyhow::Result<FeeEstimate>
 	{
 		match &option.method {
+			PaymentMethod::Invoice(Invoice::Bolt11(bolt11)) => {
+				if self.ark_address_to_pay(bolt11, amount).await?.is_some() {
+					self.estimate_arkoor_payment_fee(amount).await
+				} else {
+					self.estimate_lightning_send_fee(amount).await
+				}
+			},
 			PaymentMethod::Invoice(_) => self.estimate_lightning_send_fee(amount).await,
 			PaymentMethod::Offer(_) => self.estimate_lightning_send_fee(amount).await,
 			PaymentMethod::LightningAddress(_) => self.estimate_lightning_send_fee(amount).await,
@@ -791,6 +865,8 @@ impl Wallet {
 			warn!("retry_for ignored for payment method {}", payment_method.type_str());
 		}
 
+		// The lightning sends are boxed, so this future stays small enough
+		// for the stack of a caller that awaits it directly.
 		let output = match payment_method {
 			PaymentMethod::Bitcoin(address) => {
 				let address = address.clone().require_network(network)?;
@@ -799,16 +875,16 @@ impl Wallet {
 				PaymentInitOutput::Onchain(txid)
 			},
 			PaymentMethod::Invoice(invoice) => {
-				let paid_invoice = self.pay_lightning_invoice_with(invoice.clone(), input_amount, opts).await?;
+				let paid_invoice = Box::pin(self.pay_lightning_invoice_with(invoice.clone(), input_amount, opts)).await?;
 				PaymentInitOutput::Lightning(paid_invoice)
 			},
 			PaymentMethod::Offer(offer) => {
-				let paid_invoice = self.pay_lightning_offer_with(offer.clone(), input_amount, opts).await?;
+				let paid_invoice = Box::pin(self.pay_lightning_offer_with(offer.clone(), input_amount, opts)).await?;
 				PaymentInitOutput::Lightning(paid_invoice)
 			},
 			PaymentMethod::LightningAddress(address) => {
 				let amount = input_amount.context("amount is required for lightning address")?;
-				let paid_invoice = self.pay_lightning_address_with(&address, amount, comment, opts).await?;
+				let paid_invoice = Box::pin(self.pay_lightning_address_with(&address, amount, comment, opts)).await?;
 				PaymentInitOutput::Lightning(paid_invoice)
 			},
 			PaymentMethod::Ark(address) => {
@@ -818,7 +894,7 @@ impl Wallet {
 			},
 			PaymentMethod::Lnurl(lnurl) => {
 				let amount = input_amount.context("amount is required for lnurl payment")?;
-				let paid_invoice = self.pay_lnurl_with(&lnurl, amount, comment, opts).await?;
+				let paid_invoice = Box::pin(self.pay_lnurl_with(&lnurl, amount, comment, opts)).await?;
 				PaymentInitOutput::Lightning(paid_invoice)
 			},
 			PaymentMethod::OutputScript(_) => {
@@ -980,6 +1056,36 @@ mod test {
 
 		assert!(request(vec![ark_option(err.clone()), onchain_option(err)]).default_option().is_none());
 		assert!(request(vec![]).default_option().is_none());
+	}
+
+	/// An `ark-lightning` invoice survives a parse and a serialization of the
+	/// URI, next to the `lightning` invoice.
+	#[test]
+	fn ark_lightning_param_round_trip() {
+		let uri_str = format!("bitcoin:?lightning={0}&ark-lightning={0}", INVOICE);
+		let uri = BarkBip321Uri::from_str(&uri_str).unwrap();
+		assert_eq!(uri.lightning().len(), 1);
+		let ark_lightning = uri.extensions().ark_lightning();
+		assert_eq!(ark_lightning.len(), 1);
+		assert_eq!(ark_lightning[0].inner().to_string(), INVOICE);
+
+		let again = BarkBip321Uri::from_str(&uri.to_string()).unwrap();
+		assert_eq!(again, uri);
+
+		// A malformed invoice fails the URI.
+		assert!(BarkBip321Uri::from_str("bitcoin:?ark-lightning=lnbc1nope").is_err());
+	}
+
+	/// An `ark-lightning` invoice that we cannot pay with an arkoor of
+	/// long-lived VTXOs is never the default, so the `lightning` one is.
+	#[test]
+	fn unpayable_ark_lightning_is_not_the_default() {
+		let unpayable = lightning_option(vec![PaymentMethodParsingError::NoDirectArkPayment]);
+		let req = request(vec![unpayable.clone(), lightning_option(vec![])]);
+		let default = req.default_option().unwrap();
+		assert!(default.method.is_lightning());
+		assert!(default.errors.is_empty());
+		assert!(request(vec![unpayable]).default_option().is_none());
 	}
 
 	/// The prefix match ignores ASCII case.

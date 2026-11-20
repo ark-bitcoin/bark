@@ -66,6 +66,11 @@ pub const DEFAULT_VTXO_KEY_GAP_LIMIT: u32 = 250;
 /// unbounded work. The worst real case seen so far needed 10,000.
 pub const MAX_VTXO_KEY_GAP_LIMIT: u32 = 100_000;
 
+/// The default for [Config::direct_pay_min_expiry].
+fn default_direct_pay_min_expiry() -> BlockDelta {
+	BlockDelta::new(2016)
+}
+
 /// Configuration of the Bark wallet.
 ///
 /// - [Config::esplora_address] or [Config::bitcoind_address] must be provided.
@@ -248,8 +253,10 @@ pub struct Config {
 
 	/// Put this wallet's Ark address in the route hints of its Lightning
 	/// invoices, and pay an invoice that carries an Ark address of the same
-	/// Ark server with an arkoor instead of over Lightning. The server must
-	/// allow it.
+	/// Ark server with an arkoor of any VTXOs instead of over Lightning. The
+	/// server must allow it. Without this setting, the wallet pays such an
+	/// invoice with an arkoor only when its long-lived VTXOs cover it, see
+	/// [Config::direct_pay_min_expiry].
 	///
 	/// The server and the receiving wallet settle an invoice paid this way
 	/// like one paid over Lightning, but the payer gets no preimage as
@@ -258,6 +265,21 @@ pub struct Config {
 	/// Default value: false
 	#[serde(default)]
 	pub lightning_ark_address_hints: bool,
+
+	/// The remaining lifetime, in blocks past the chain tip, that every VTXO
+	/// must have to pay an invoice on its Ark address with an arkoor.
+	///
+	/// An invoice paid this way gives the receiver the VTXOs of the payer, so
+	/// they keep the payer's expiry. When the VTXOs of the wallet that live
+	/// this long cover the amount, the wallet pays an invoice that carries an
+	/// Ark address of its Ark server with an arkoor of only those VTXOs, also
+	/// without [Config::lightning_ark_address_hints]. A BIP 321 URI can carry
+	/// such an invoice in its `ark-lightning` parameter, and the wallet picks
+	/// it over the `lightning` invoice only in this case.
+	///
+	/// Default value: 2016 (about two weeks)
+	#[serde(default = "default_direct_pay_min_expiry")]
+	pub direct_pay_min_expiry: BlockDelta,
 
 	/// Open the wallet only with an Ark server in expiry payout mode.
 	///
@@ -297,6 +319,7 @@ impl Config {
 			change_vtxo_split_factor: 2,
 			vtxo_key_gap_limit: DEFAULT_VTXO_KEY_GAP_LIMIT,
 			lightning_ark_address_hints: false,
+			direct_pay_min_expiry: default_direct_pay_min_expiry(),
 			require_expiry_payouts: false,
 		};
 
