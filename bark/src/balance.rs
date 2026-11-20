@@ -200,6 +200,9 @@ impl Wallet {
 				WalletActionCheckpoint::Offboard(a) => {
 					balance.pending_offboard += held_by(a, &vtxos, &mut counted);
 				},
+				// A received VTXO is the wallet's only once the server registers it,
+				// and then it is spendable.
+				WalletActionCheckpoint::ArkoorReceive(_) => {},
 				// A VTXO recovery holds may well be spent until the server says
 				// otherwise, so it is no part of the balance.
 				WalletActionCheckpoint::Recovery(_) => {},

@@ -444,6 +444,14 @@ impl DaemonProcess {
 						warn!("An error occurred while syncing pending lightning sends: {e:#}");
 					}
 
+					if let Err(e) = wallet.sync_pending_arkoor_sends().await {
+						warn!("An error occurred while syncing pending arkoor sends: {e:#}");
+					}
+
+					if let Err(e) = wallet.sync_pending_arkoor_receives().await {
+						warn!("An error occurred while syncing pending arkoor receives: {e:#}");
+					}
+
 					// Ahead of the arkoor sends, so an arkoor send stuck on a
 					// dead connection does not hold up a claim the payer waits on.
 					if let Err(e) = wallet.sync_pending_lightning_receives().await {

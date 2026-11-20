@@ -1,10 +1,16 @@
-//! Arkoor receive.
+//! Arkoor receive wallet action.
 //!
-//! The checks that decide whether a received arkoor VTXO is a payment to this
-//! wallet.
+//! The received VTXOs are immutable and live on [`ArkoorReceive`]; the mutable
+//! bit is the [`Progress`] enum. The VTXOs are stored locked by the action and
+//! only become spendable once the server registers them.
+
+use std::collections::HashMap;
 
 use anyhow::Context;
-use log::{error, warn};
+use bitcoin::Amount;
+use bitcoin::hashes::{sha256, Hash, HashEngine};
+use log::{error, info, warn};
+use server_rpc::StatusExt;
 
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::Full;
@@ -12,6 +18,145 @@ use ark::vtxo::policy::VtxoPolicyKind;
 use ark::vtxo::policy::signing::VtxoSigner;
 
 use crate::Wallet;
+use crate::actions::{
+	Advance, AdvanceError, IntoAdvanceResult, WalletAction, WalletActionCheckpoint, WalletActionId,
+};
+use crate::movement::{MovementDestination, MovementStatus};
+use crate::movement::update::MovementUpdate;
+use crate::subsystem::{ArkoorMovement, Subsystem};
+use crate::vtxo::VtxoLockHolder;
+
+const ARKOOR_RECV_NAMESPACE: &str = "arkoor_recv";
+
+/// A received arkoor package, persisted as a single checkpoint row from the
+/// moment the wallet reads it from its mailbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArkoorReceive {
+	// Immutable state:
+	pub id: WalletActionId,
+	/// The received VTXOs, sorted by id.
+	#[serde(with = "ark::encode::serde::vec")]
+	pub vtxos: Vec<Vtxo<Full>>,
+
+	// Mutable state:
+	pub progress: Progress,
+}
+
+impl ArkoorReceive {
+	/// A receive of the given VTXOs, which must not be empty. Its id is a hash
+	/// of the sorted VTXO ids, so a package always maps to the same action and
+	/// two packages share an action only if they hold the same VTXOs.
+	pub(crate) fn new(mut vtxos: Vec<Vtxo<Full>>) -> anyhow::Result<Self> {
+		if vtxos.is_empty() {
+			bail!("an arkoor receive needs at least one VTXO");
+		}
+		vtxos.sort_unstable_by_key(|v| v.id());
+		let mut engine = sha256::Hash::engine();
+		for vtxo in &vtxos {
+			engine.input(&vtxo.id().to_bytes());
+		}
+		let hash = sha256::Hash::from_engine(engine);
+		Ok(ArkoorReceive {
+			id: format!("{ARKOOR_RECV_NAMESPACE}.{hash}"),
+			vtxos,
+			progress: Progress::Received,
+		})
+	}
+
+	pub fn id(&self) -> WalletActionId {
+		self.id.clone()
+	}
+
+	pub fn vtxo_ids(&self) -> impl Iterator<Item = VtxoId> + '_ {
+		self.vtxos.iter().map(|v| v.id())
+	}
+}
+
+/// The phases of an arkoor receive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Progress {
+	/// The package was read from the mailbox. Its VTXOs are not stored yet.
+	Received,
+	/// The VTXOs are stored locked by the action. Each drive asks the server
+	/// to register the VTXOs that are neither registered nor lost yet, and a
+	/// drive that leaves some of them unresolved records a pending receive
+	/// movement.
+	Registering(Resolution),
+	/// Every VTXO is registered or lost. The registered ones still need to
+	/// become spendable and the lost ones spent.
+	Settling(Resolution),
+}
+
+/// The VTXOs of the receive that are not to be registered any more.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resolution {
+	/// The VTXOs the server registered, sorted.
+	pub registered: Vec<VtxoId>,
+	/// The VTXOs whose chain lost a double spend on-chain, sorted.
+	pub lost: Vec<VtxoId>,
+}
+
+impl Resolution {
+	fn is_resolved(&self, id: VtxoId) -> bool {
+		self.registered.contains(&id) || self.lost.contains(&id)
+	}
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl WalletAction for ArkoorReceive {
+	fn id(&self) -> WalletActionId { ArkoorReceive::id(self) }
+
+	fn from_checkpoint(checkpoint: WalletActionCheckpoint) -> Option<Self> {
+		checkpoint.into_arkoor_receive()
+	}
+
+	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
+		let progress = match &self.progress {
+			Progress::Received => {
+				start_arkoor_receive(wallet, &self).await?;
+				Progress::Registering(Resolution::default())
+			},
+			Progress::Registering(resolution) => {
+				let resolution = match register_arkoor_receive(wallet, &self, resolution.clone()).await {
+					Ok(resolution) => resolution,
+					Err(e) => {
+						record_pending_arkoor_receive(wallet, &self).await?;
+						return Err(e);
+					},
+				};
+				if self.vtxo_ids().all(|id| resolution.is_resolved(id)) {
+					Progress::Settling(resolution)
+				} else {
+					record_pending_arkoor_receive(wallet, &self).await?;
+					return Ok(Advance::Park {
+						state: ArkoorReceive { progress: Progress::Registering(resolution), ..self },
+						wake_after: None,
+						error: None,
+					});
+				}
+			},
+			Progress::Settling(resolution) => {
+				settle_arkoor_receive(wallet, &self, resolution).await?;
+				return Ok(Advance::Done);
+			},
+		};
+
+		Ok(Advance::Next(ArkoorReceive { progress, ..self }))
+	}
+
+	/// None: the VTXOs are not the wallet's until the server registers them,
+	/// and once it does they are spendable.
+	fn pending_balance_vtxo_ids(&self) -> Vec<VtxoId> {
+		Vec::new()
+	}
+
+	/// Parks the action. Finishing it would make every VTXO it holds locked
+	/// spendable, registered or not.
+	async fn on_abort(self, _wallet: &Wallet, error: anyhow::Error) -> Advance<Self> {
+		Advance::Park { state: self, wake_after: None, error: Some(error) }
+	}
+}
 
 /// Refuses the received arkoor VTXOs that are not a payment to this wallet,
 /// logging why.
@@ -94,6 +239,190 @@ fn check_arkoor_receive_policy(
 	Ok(())
 }
 
+/// Received -> Registering. Stores the VTXOs locked by the action.
+async fn start_arkoor_receive(wallet: &Wallet, recv: &ArkoorReceive) -> Result<(), AdvanceError> {
+	wallet.store_locked_vtxos(
+		&recv.vtxos,
+		Some(VtxoLockHolder::Action { id: recv.id() }),
+	).await.retry()
+}
+
+/// The receive movement of `recv`, crediting `credited` of its VTXOs.
+async fn arkoor_receive_movement_update(
+	wallet: &Wallet,
+	recv: &ArkoorReceive,
+	credited: &[Vtxo<Full>],
+) -> Result<MovementUpdate, AdvanceError> {
+	let intended = recv.vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+	let effective = credited.iter().map(|v| v.amount()).sum::<Amount>();
+	Ok(MovementUpdate::new()
+		.intended_balance(intended.to_signed().context("receive amount out of range").abort()?)
+		.effective_balance(effective.to_signed().context("receive amount out of range").abort()?)
+		.replace_received_on(received_on_destinations(wallet, &recv.vtxos).await)
+		.produced_vtxos(credited))
+}
+
+/// Records the receive as a pending movement crediting nothing, unless the
+/// action already has its movement.
+async fn record_pending_arkoor_receive(
+	wallet: &Wallet,
+	recv: &ArkoorReceive,
+) -> Result<(), AdvanceError> {
+	wallet.inner.movements.get_or_create_movement_with_action(
+		Subsystem::ARKOOR,
+		ArkoorMovement::Receive.to_string(),
+		&recv.id(),
+		arkoor_receive_movement_update(wallet, recv, &[]).await?,
+	).await.context("failed to create arkoor receive movement").retry()?;
+	Ok(())
+}
+
+/// Asks the server to register the VTXOs not resolved yet. The VTXOs the server
+/// refuses stay unresolved, unless a confirmed transaction double spends their
+/// chain: then they are lost.
+async fn register_arkoor_receive(
+	wallet: &Wallet,
+	recv: &ArkoorReceive,
+	mut resolution: Resolution,
+) -> Result<Resolution, AdvanceError> {
+	let pending = recv.vtxos.iter()
+		.filter(|v| !resolution.is_resolved(v.id()))
+		.collect::<Vec<_>>();
+
+	// Registers them all at once first, and one by one when the server refuses the batch.
+	let refused = match wallet.register_vtxo_transactions_with_server(&pending).await {
+		Ok(()) => {
+			resolution.registered.extend(pending.iter().map(|v| v.id()));
+			Vec::new()
+		},
+		Err(e) if is_registration_refusal(&e) => {
+			let mut refused = Vec::new();
+			for vtxo in pending {
+				match wallet.register_vtxo_transactions_with_server([vtxo]).await {
+					Ok(()) => resolution.registered.push(vtxo.id()),
+					Err(e) if is_registration_refusal(&e) => refused.push((vtxo, e)),
+					Err(e) => return Err(e.context("failed to register received arkoor VTXO")).retry(),
+				}
+			}
+			refused
+		},
+		Err(e) => return Err(e.context("failed to register received arkoor VTXOs")).retry(),
+	};
+
+	for (vtxo, error) in refused {
+		if chain_double_spent(wallet, vtxo).await.retry()? {
+			warn!("Received arkoor VTXO {} lost a double spend on-chain, it will not be credited",
+				vtxo.id(),
+			);
+			resolution.lost.push(vtxo.id());
+		} else {
+			warn!("Server refused to register received arkoor VTXO {}, \
+				keeping it locked and retrying later: {:#}", vtxo.id(), error,
+			);
+		}
+	}
+
+	resolution.registered.sort_unstable();
+	resolution.lost.sort_unstable();
+	Ok(resolution)
+}
+
+/// Settling -> done. Makes the registered VTXOs spendable, marks the lost ones
+/// spent and finishes the movement, creating it if no drive recorded it as
+/// pending.
+async fn settle_arkoor_receive(
+	wallet: &Wallet,
+	recv: &ArkoorReceive,
+	resolution: &Resolution,
+) -> Result<(), AdvanceError> {
+	// Spend the lost VTXOs first: finishing the action makes any VTXO it still
+	// holds spendable.
+	wallet.mark_vtxos_as_spent(&resolution.lost).await.retry()?;
+	wallet.unlock_vtxos(
+		&resolution.registered,
+		Some(VtxoLockHolder::Action { id: recv.id() }),
+	).await.retry()?;
+
+	let credited = recv.vtxos.iter()
+		.filter(|v| resolution.registered.contains(&v.id()))
+		.cloned()
+		.collect::<Vec<_>>();
+	let status = if credited.is_empty() {
+		MovementStatus::Failed
+	} else {
+		MovementStatus::Successful
+	};
+	let movement_id = wallet.inner.movements.finish_movement_with_action(
+		Subsystem::ARKOOR,
+		ArkoorMovement::Receive.to_string(),
+		&recv.id(),
+		status,
+		arkoor_receive_movement_update(wallet, recv, &credited).await?,
+	).await.context("failed to finish arkoor receive movement").retry()?;
+
+	if credited.is_empty() {
+		warn!("Arkoor receive {} (movement {}) failed, none of its VTXOs were credited",
+			recv.id(), movement_id,
+		);
+	} else {
+		let balance = credited.iter().map(|v| v.amount()).sum::<Amount>();
+		info!("Received arkoor (movement {}) for {}", movement_id, balance);
+	}
+	Ok(())
+}
+
+/// Whether the server answered a registration request by refusing it, rather than failing to
+/// process it.
+fn is_registration_refusal(err: &anyhow::Error) -> bool {
+	err.downcast_ref::<tonic::Status>().is_some_and(|s| s.is_rejection())
+}
+
+/// Whether a confirmed transaction double spends the chain of `vtxo`, so that the VTXO can
+/// never confirm.
+///
+/// Follows the chain from its anchor while its transactions are confirmed. The first
+/// unconfirmed one lost a double spend exactly when one of its inputs is spent by a confirmed
+/// transaction.
+async fn chain_double_spent(wallet: &Wallet, vtxo: &Vtxo<Full>) -> anyhow::Result<bool> {
+	let chain = &wallet.inner.chain;
+	let anchor = vtxo.chain_anchor().txid;
+	if chain.tx_status(anchor).await?.confirmed_height().is_none() {
+		return Ok(false);
+	}
+	for item in vtxo.transactions() {
+		let txid = item.tx.compute_txid();
+		if chain.tx_status(txid).await?.confirmed_height().is_some() {
+			continue;
+		}
+		for input in &item.tx.input {
+			if chain.outpoint_spent_confirmed(input.previous_output).await? {
+				return Ok(true);
+			}
+		}
+		return Ok(false);
+	}
+	Ok(false)
+}
+
+/// The addresses the given VTXOs were received on, with the amount received on each.
+async fn received_on_destinations(
+	wallet: &Wallet,
+	vtxos: &[Vtxo<Full>],
+) -> Vec<MovementDestination> {
+	let mut received_by_address = HashMap::<ark::Address, Amount>::new();
+	for vtxo in vtxos {
+		if let Ok(Some((index, _))) = wallet.pubkey_keypair(&vtxo.user_pubkey()).await {
+			if let Ok(address) = wallet.peek_address(index).await {
+				*received_by_address.entry(address).or_default() += vtxo.amount();
+			}
+		}
+	}
+	received_by_address
+		.into_iter()
+		.map(|(addr, amount)| MovementDestination::ark(addr, amount))
+		.collect()
+}
+
 #[cfg(test)]
 mod test {
 	use super::*;
@@ -124,5 +453,20 @@ mod test {
 			.unwrap().public_key();
 		check_arkoor_receive_policy(good, foreign_server)
 			.expect_err("a vtxo for a foreign server must be refused");
+	}
+
+	#[test]
+	fn arkoor_receive_id_covers_every_vtxo() {
+		let vectors = &*VTXO_VECTORS;
+		let a = vectors.board_vtxo.clone();
+		let b = vectors.arkoor2_vtxo.clone();
+		let c = vectors.round1_vtxo.clone();
+		let id = |vtxos: Vec<Vtxo<Full>>| ArkoorReceive::new(vtxos).unwrap().id();
+
+		assert_eq!(id(vec![a.clone(), b.clone()]), id(vec![b.clone(), a.clone()]));
+		assert_ne!(id(vec![a.clone(), b.clone()]), id(vec![a.clone(), c.clone()]));
+		assert_ne!(id(vec![a.clone(), b.clone()]), id(vec![a.clone()]));
+		assert_ne!(id(vec![a.clone(), b.clone()]), id(vec![a, b, c]));
+		ArkoorReceive::new(Vec::new()).expect_err("an empty receive must be refused");
 	}
 }

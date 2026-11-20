@@ -5,14 +5,13 @@ pub extern crate bip39;
 pub extern crate lightning_invoice;
 pub extern crate lnurl as lnurllib;
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ops::ControlFlow;
 use std::sync::{Arc, Weak};
 
 use anyhow::Context;
 use ark::tree::signed::UnlockHash;
 use bitcoin::hashes::Hash;
-use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
 use futures::{FutureExt, Stream, StreamExt};
@@ -29,11 +28,8 @@ use server_rpc::protos::mailbox_server::MailboxMessage;
 
 use crate::{Wallet, WalletInner, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::actions::DriveMode;
-use crate::actions::arkoor_receive::validate_arkoor_receive;
+use crate::actions::arkoor_receive::{validate_arkoor_receive, ArkoorReceive};
 use crate::actions::lightning::pay::{ln_pay_action_id, LightningSend, Progress};
-use crate::movement::{MovementDestination, MovementStatus};
-use crate::movement::update::MovementUpdate;
-use crate::subsystem::{ArkoorMovement, Subsystem};
 use crate::utils::ReconnectBackoff;
 
 /// Key for the lock that serializes the arkoor receive dedup within a wallet.
@@ -44,22 +40,21 @@ use crate::utils::ReconnectBackoff;
 /// [`Wallet::sync_mailbox`]), and a REST deployment can fire concurrent
 /// `/sync` and `/sync/mailbox` requests. The server hands each consumer the
 /// same messages from its checkpoint, so without serialization the
-/// peek-then-store dedup in arkoor processing races: every consumer that wins
-/// the [`crate::persist::BarkPersister::get_wallet_vtxo`] check before the
-/// others store records its own receive movement, double-counting the receive.
+/// peek-then-create dedup in arkoor processing races: every consumer that wins
+/// the check before the others create the receive starts its own receive,
+/// double-counting it.
 ///
-/// Holding this lock across that check-then-store (in
+/// Holding this lock across that check-then-create (in
 /// [`Wallet::process_received_arkoor_package`]) makes it atomic across
-/// consumers. The VTXO row is `INSERT OR IGNORE`, so once one consumer has
-/// stored the package the rest see the VTXO already present and skip the
-/// movement.
+/// consumers. Once one consumer has created the receive, the rest see its
+/// VTXOs in a pending receive or in the wallet and skip them.
 pub(crate) const MAILBOX_PROCESSING_LOCK_KEY: &str = "mailbox.processing";
 
 /// How long a consumer waits for the arkoor dedup lock before giving up.
 ///
 /// The critical section is a couple of server round trips plus local DB
-/// writes, normally well under a second. On timeout we error rather than
-/// block, handled like any other arkoor processing error: this message's
+/// writes, normally well under a second. On timeout we error rather than block, handled like any other
+/// arkoor processing error: this message's
 /// checkpoint isn't advanced and processing halts (see
 /// [`Wallet::process_mailbox_message`]) so a later message can't bury it. A
 /// timeout only happens if a holder is stuck for the full duration; normally
@@ -71,6 +66,11 @@ pub(crate) const MAILBOX_PROCESSING_LOCK_TIMEOUT: std::time::Duration =
 /// of the send to release the lock of the send. Other mailbox messages wait
 /// meanwhile, so keep it short.
 const LIGHTNING_SEND_LOCK_TIMEOUT: std::time::Duration =
+	std::time::Duration::from_secs(10);
+
+/// How long the handler of an arkoor package waits for a drive of its receive
+/// to release the lock of the receive.
+const ARKOOR_RECEIVE_LOCK_TIMEOUT: std::time::Duration =
 	std::time::Duration::from_secs(10);
 
 impl Wallet {
@@ -403,8 +403,8 @@ impl Wallet {
 		}
 	}
 
-	/// Store the VTXOs of a received arkoor package the wallet doesn't hold yet,
-	/// and record their receive movement.
+	/// Start an arkoor receive for the VTXOs of a received arkoor package the
+	/// wallet doesn't hold yet, and drive it.
 	///
 	/// Returns `false` when the package is left to the recovery from seed in
 	/// progress, see [`Wallet::recovery_reads_regular_mailbox`].
@@ -417,30 +417,37 @@ impl Wallet {
 		let vtxos = vtxos.into_iter().filter(|v| !invalid.contains(&v.id())).collect::<Vec<_>>();
 
 		// Serialize the receive dedup across all consumers of this wallet's
-		// mailbox so two of them can't both record a movement for the same
-		// package. See MAILBOX_PROCESSING_LOCK_KEY. On lock failure we
+		// mailbox so two of them can't both start a receive for the same
+		// package, and so a consumer that finds a package being received
+		// returns only once its first drive ended. See
+		// MAILBOX_PROCESSING_LOCK_KEY. On lock failure we
 		// return like any other arkoor processing error, leaving this
 		// message's checkpoint unadvanced.
 		let _guard = self.inner.lock_manager.lock(
 			MAILBOX_PROCESSING_LOCK_KEY, MAILBOX_PROCESSING_LOCK_TIMEOUT,
 		).await.context("failed to acquire mailbox processing lock")?;
 
-		// A package is stored here as spendable without asking the server, so
-		// one the recovery has yet to read could be a spent VTXO. The recovery
-		// stores it with the server's word, and the package is redelivered.
+		// A package the recovery has yet to read could hold a spent VTXO. The
+		// recovery stores it with the server's word, and the package is
+		// redelivered.
 		if self.recovery_reads_regular_mailbox().await? {
 			return Ok(false);
 		}
 
 		// Everything works off of a deduplicated set. This is important to avoid accounting
-		// mistakes in the movement and marking the entire package as spendable, even if it contains
-		// VTXOs we already marked as spent.
+		// mistakes in the movement and crediting VTXOs we already marked as spent.
+		let receiving = self.pending_arkoor_receives().await?.iter()
+			.flat_map(|r| r.vtxo_ids().collect::<Vec<_>>())
+			.collect::<HashSet<_>>();
 		let mut new_vtxos = Vec::<Vtxo<Full>>::with_capacity(vtxos.len());
 		for vtxo in vtxos {
-			// Skip if the VTXO is already in the wallet or is in the VTXO list multiple times.
+			// Skip if the VTXO is already in the wallet, already being received or is in the VTXO
+			// list multiple times.
 			let vtxo_id = vtxo.id();
 			if new_vtxos.iter().any(|v| v.id() == vtxo_id) {
 				debug!("Ignoring duplicate VTXO {} in arkoor package", vtxo_id);
+			} else if receiving.contains(&vtxo_id) {
+				debug!("Ignoring VTXO {} in arkoor package, it is being received", vtxo_id);
 			} else if self.inner.db.get_wallet_vtxo(vtxo_id).await?.is_some() {
 				debug!("Ignoring already-known VTXO {} in arkoor package", vtxo_id);
 			} else {
@@ -452,51 +459,18 @@ impl Wallet {
 			return Ok(true);
 		}
 
-		// Redundantly re-register the received vtxos with the server. An
-		// up-to-date sender already does this after cosign, but older
-		// senders may not, so we do it on receive too to make sure the
-		// server has signed_tx rows for our spendable vtxos. Any failure
-		// is logged and swallowed: the receive must still proceed so we
-		// don't lose track of the vtxos locally, and later spends will
-		// retry registration if still needed.
-		if let Err(e) = self.register_vtxo_transactions_with_server(&new_vtxos).await {
-			warn!("Failed to register received arkoor vtxo transactions with server: {:#}", e);
+		// Once its checkpoint is stored, the receive no longer needs this message: a wallet sync
+		// drives it to the end.
+		let action = ArkoorReceive::new(new_vtxos)?;
+		let id = action.id();
+		let mut checkpoint = self.lock_action::<ArkoorReceive>(&id, ARKOOR_RECEIVE_LOCK_TIMEOUT).await
+			.context("failed to lock arkoor receive")?;
+		if checkpoint.get().is_none() {
+			checkpoint.create(self, action).await?;
 		}
-
-		// TODO: Make sure we don't effectively skip the entire package if the movement fails to
-		//       be recorded due to bark getting killed after this point.
-		let balance = new_vtxos
-			.iter()
-			.map(|vtxo| vtxo.amount()).sum::<Amount>()
-			.to_signed()?;
-		self.store_spendable_vtxos(&new_vtxos).await?;
-
-		// Build received_on destinations from received VTXOs, aggregated by address
-		let mut received_by_address = HashMap::<ark::Address, Amount>::new();
-		for vtxo in &new_vtxos {
-			if let Ok(Some((index, _))) = self.pubkey_keypair(&vtxo.user_pubkey()).await {
-				if let Ok(address) = self.peek_address(index).await {
-					*received_by_address.entry(address).or_default() += vtxo.amount();
-				}
-			}
+		if let Err(e) = self.drive_checkpoint(checkpoint, DriveMode::UntilParkOrDone).await {
+			warn!("Arkoor receive {} did not finish, leaving it to the next sync: {:#}", id, e);
 		}
-		let received_on: Vec<_> = received_by_address
-			.iter()
-			.map(|(addr, amount)| MovementDestination::ark(addr.clone(), *amount))
-			.collect();
-
-		let movement_id = self.inner.movements.new_finished_movement(
-			Subsystem::ARKOOR,
-			ArkoorMovement::Receive.to_string(),
-			MovementStatus::Successful,
-			MovementUpdate::new()
-				.produced_vtxos(&new_vtxos)
-				.intended_and_effective_balance(balance)
-				.received_on(received_on),
-		).await?;
-
-		info!("Received arkoor (movement {}) for {}", movement_id, balance);
-
 		Ok(true)
 	}
 

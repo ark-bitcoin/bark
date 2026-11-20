@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 use bark::{BarkNetwork, Config, OpenWalletArgs, WalletSeed};
-use bark::actions::{WalletActionCheckpoint as Cp, arkoor_send, board, offboard, recovery};
+use bark::actions::{WalletActionCheckpoint as Cp, arkoor_receive, arkoor_send, board, offboard, recovery};
 use bark::actions::lightning::{pay, receive};
 use bark::lock_manager::memory::MemoryLockManager;
 use bark::onchain::OnchainWallet;
@@ -311,6 +311,11 @@ impl Bark {
 				arkoor_send::Progress::Registration { .. } => "Registration",
 				arkoor_send::Progress::Delivery { .. } => "Delivery",
 				arkoor_send::Progress::Finalizing { .. } => "Finalizing",
+			}),
+			Cp::ArkoorReceive(r) => format!("arkoor_recv.{}", match r.progress {
+				arkoor_receive::Progress::Received => "Received",
+				arkoor_receive::Progress::Registering(_) => "Registering",
+				arkoor_receive::Progress::Settling(_) => "Settling",
 			}),
 			Cp::Offboard(o) => format!("offboard.{}", match o.progress {
 				offboard::Progress::Start => "Start",

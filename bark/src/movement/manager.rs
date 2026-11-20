@@ -181,6 +181,51 @@ impl MovementManager {
 		Ok(id)
 	}
 
+	/// Finishes the movement owned by `action_id` with `status` and `update`.
+	///
+	/// When the action has no movement yet, the movement is created already
+	/// finished and dispatched once as created, like
+	/// [MovementManager::new_finished_movement]. A pending one is finished like
+	/// [MovementManager::finish_movement_with_update]. A finished one is left as
+	/// is, so a re-driven step dispatches nothing.
+	///
+	/// Errors:
+	/// - If [MovementStatus::Pending] is given.
+	/// - If a database error occurs.
+	pub async fn finish_movement_with_action(
+		&self,
+		subsystem_id: Subsystem,
+		movement_kind: impl Into<String>,
+		action_id: &str,
+		status: MovementStatus,
+		update: MovementUpdate,
+	) -> anyhow::Result<MovementId, MovementError> {
+		if status == MovementStatus::Pending {
+			return Err(MovementError::IncorrectPendingStatus);
+		}
+		let subsystem = MovementSubsystem {
+			name: subsystem_id.as_name().to_string(),
+			kind: movement_kind.into(),
+		};
+		let at = chrono::Local::now();
+		let (id, created) = self.db.get_or_create_movement_for_action(
+			&subsystem, at, action_id, update.clone(),
+		).await.map_err(|e| MovementError::CreationError { e })?;
+
+		let mut movement = self.db.get_movement_by_id(id).await
+			.map_err(|e| MovementError::LoadError { id, e })?;
+		if created {
+			movement.status = status;
+			movement.time.completed_at = Some(at);
+			self.db.update_movement(&movement).await
+				.map_err(|e| MovementError::PersisterError { id, e })?;
+			self.notifications.dispatch_movement_created(movement);
+		} else if movement.status == MovementStatus::Pending {
+			self.finish_movement_with_update(id, status, update).await?;
+		}
+		Ok(id)
+	}
+
 	/// Similar to [MovementManager::new_guarded_movement] but it immediately calls
 	/// [MovementManager::update_movement] after creating the [Movement].
 	///
