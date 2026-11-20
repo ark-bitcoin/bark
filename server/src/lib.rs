@@ -814,7 +814,7 @@ impl Server {
 		let confirmations = tx_info.confirmations.unwrap_or(0) as usize;
 		if confirmations < self.config.required_board_confirmations {
 			slog!(UnconfirmedBoardRegisterAttempt, vtxo: vtxo.id(), confirmations);
-			return badarg!(
+			bail!(
 				"funding tx has {confirmations} confirmations, requires {}: {}",
 				self.config.required_board_confirmations, vtxo.id(),
 			);
