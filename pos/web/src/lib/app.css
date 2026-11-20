@@ -1,0 +1,110 @@
+@import 'tailwindcss';
+
+/* Ported from bullnym (pwa/lib/app.css), which ports nostr-pos's design
+   system: warm cream light theme, Bebas Neue display font, dark variant
+   through prefers-color-scheme. */
+
+@theme {
+	--font-display: 'Bebas Neue', ui-sans-serif, system-ui, sans-serif;
+	--tracking-display: 0.03em;
+	--radius-md: 8px;
+}
+
+@font-face {
+	font-family: 'Bebas Neue';
+	font-style: normal;
+	font-weight: 100 900;
+	font-display: swap;
+	src: url('/BebasNeue-Regular.woff2') format('woff2');
+}
+
+:root {
+	color-scheme: light;
+	font-family: 'Aptos', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+	background: #f5f0e8;
+	color: #211f1a;
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+}
+
+html {
+	min-width: 320px;
+	min-height: 100%;
+	overflow-x: hidden;
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	min-width: 320px;
+	min-height: 100vh;
+	min-height: 100dvh;
+	overflow-x: hidden;
+	overscroll-behavior: none;
+	-webkit-tap-highlight-color: transparent;
+}
+
+#app {
+	min-height: 100dvh;
+}
+
+button,
+input,
+textarea {
+	font: inherit;
+}
+
+button,
+a,
+[role='button'] {
+	touch-action: manipulation;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		color-scheme: dark;
+		background: #161512;
+		color: #f8f1e6;
+	}
+}
+
+/* Receipt print layout: ReceiptScreen sets the @page size per paper width. */
+/* Kiosk scroll without desktop scrollbar chrome. */
+.scrollbar-none {
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+	display: none;
+}
+
+@media print {
+	body {
+		background: white;
+		color: black;
+	}
+
+	.no-print {
+		display: none !important;
+	}
+
+	.receipt-paper {
+		box-shadow: none !important;
+		border: 0 !important;
+	}
+
+	body.paper-58 .receipt-paper,
+	body.paper-80 .receipt-paper {
+		width: 100%;
+		max-width: none;
+		margin: 0;
+		padding: 0.5rem;
+	}
+
+	body.paper-a4 .receipt-paper {
+		max-width: 80mm;
+		margin: 0 auto;
+	}
+}

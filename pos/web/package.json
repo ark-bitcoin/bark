@@ -1,0 +1,31 @@
+{
+	"name": "scuttle-pos-terminal",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"preview": "vite preview",
+		"check": "svelte-check --tsconfig ./tsconfig.json",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"canvas-confetti": "1.9.4",
+		"lucide-svelte": "0.468.0",
+		"qrcode": "1.5.4"
+	},
+	"devDependencies": {
+		"@sveltejs/vite-plugin-svelte": "4.0.4",
+		"@tailwindcss/vite": "4.3.2",
+		"@types/canvas-confetti": "^1.6.4",
+		"@types/qrcode": "^1.5.5",
+		"svelte": "5.56.4",
+		"svelte-check": "4.7.1",
+		"tailwindcss": "4.3.2",
+		"typescript": "5.9.3",
+		"vite": "5.4.21",
+		"vite-plugin-pwa": "^0.21.2",
+		"vitest": "2.1.9"
+	}
+}

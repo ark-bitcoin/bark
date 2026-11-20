@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<meta name="theme-color" content="#f5f0e8" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#161512" media="(prefers-color-scheme: dark)" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+		<link rel="icon" type="image/png" href="/icons/icon-192.png" />
+		<link rel="apple-touch-icon" href="/icons/icon-192.png" />
+		<title>Point of sale</title>
+		<script>
+			// An install link must install with its own manifest, whose
+			// start_url carries the pairing code. posd serves both manifests.
+			;(function () {
+				var match = location.pathname.match(/^\/pair\/([^/]+)\/?$/)
+				var link = document.createElement('link')
+				link.rel = 'manifest'
+				link.href = match ? '/pair/' + match[1] + '/manifest.webmanifest' : '/manifest.webmanifest'
+				document.head.appendChild(link)
+			})()
+		</script>
+	</head>
+	<body>
+		<div id="app"></div>
+		<script type="module" src="/src/main.ts"></script>
+	</body>
+</html>
