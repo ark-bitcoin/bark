@@ -1,4 +1,8 @@
 - Recover a released round after an old input is paid out
   The wallet checks that the server released the participation before
-  canceling a pending round whose input has an expiry payout decision.
+  canceling a pending round whose input has an expiry payout decision. It
+  asks about its inputs right before it sends its forfeits, and never
+  cancels a round whose forfeits may have gone out: like upstream after its
+  fix for withheld preimages, it keeps the round until the server releases
+  it.
   [#8](https://github.com/SatoshiPortal/scuttle/pull/8)

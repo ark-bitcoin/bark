@@ -702,36 +702,20 @@ impl RoundState {
 	/// [SyncStep::Checkpoint].
 	async fn sync_step(&mut self, wallet: &Wallet) -> anyhow::Result<SyncStep> {
 		// A server in expiry payout mode cancels a participation when it
-		// pays out one of its inputs, and accepts no forfeit for it.
-		let awaits_forfeit = match self.flow {
+		// pays out one of its inputs, and accepts no forfeit for it. Once our
+		// forfeits may have gone out, the server can claim our inputs with
+		// them, so from then on the round is never canceled on the server's
+		// word: like a round reported not found, it waits for the release.
+		let awaits_forfeit = !self.sent_forfeit_sigs && match self.flow {
 			RoundFlowState::NonInteractivePending { .. } => true,
 			RoundFlowState::Finished { .. } => !self.done,
 			_ => false,
 		};
-		if awaits_forfeit && wallet.has_expiry_payout_input(&self.participation).await? {
-			// A released participation already forfeited its inputs to this
-			// round. The wallet must still recover its output after a restart,
-			// even if a later expiry decision marked an old input paid out.
-			let released = if let Some(unlock_hash) = self.unlock_hash() {
-				let (mut srv, _) = wallet.require_server().await?;
-				let request = protos::RoundParticipationStatusRequest {
-					unlock_hash: unlock_hash.to_byte_array().to_vec(),
-					attestation: RoundParticipationStatusAttestation::new(
-						unlock_hash, &wallet.mailbox_keypair(),
-					).serialize(),
-				};
-				match srv.client.round_participation_status(request).await {
-					Ok(resp) => resp.into_inner().status == protos::RoundParticipationStatus::RoundPartReleased as i32,
-					Err(e) if e.code() == tonic::Code::NotFound => false,
-					Err(e) => return Err(e.into()),
-				}
-			} else {
-				false
-			};
-			if !released {
-				info!("Server pays out an input of this round at its expiry, canceling the round");
-				self.flow = RoundFlowState::Canceled;
-			}
+		if awaits_forfeit && wallet.has_expiry_payout_input(&self.participation).await?
+			&& !self.participation_released(wallet).await?
+		{
+			info!("Server pays out an input of this round at its expiry, canceling the round");
+			self.flow = RoundFlowState::Canceled;
 		}
 
 		match self.flow {
@@ -868,6 +852,18 @@ impl RoundState {
 				// with the preimage it reveals. So the forfeits only go out
 				// once the cosigned VTXOs are stored.
 				if !self.sent_forfeit_sigs {
+					// The round is not canceled for an expiry payout once the
+					// forfeits may have gone out, so ask about our inputs right
+					// before they do, not only what an earlier sync learned.
+					let input_ids = self.participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+					if wallet.check_expiry_payout(&input_ids).await?
+						&& !self.participation_released(wallet).await?
+					{
+						info!("Server pays out an input of this round at its expiry, canceling the round");
+						self.flow = RoundFlowState::Canceled;
+						return Ok(SyncStep::Checkpoint);
+					}
+
 					hark_cosign_leaves(
 						wallet, &self.participation, &mut self.new_vtxos, &funding_tx,
 					).await.context("error preparing to forfeit VTXOs after round")?;
@@ -883,6 +879,30 @@ impl RoundState {
 						sent forfeit signatures to server")?;
 				self.finish_swap(wallet, &forfeits).await.map(SyncStep::Done)
 			},
+		}
+	}
+
+	/// Whether the server reports this participation released, which it
+	/// does once it holds our forfeits
+	///
+	/// A round state stored before the wallet recorded sent forfeits ahead of
+	/// sending them can have sent them unrecorded, so this is asked before a
+	/// participation is canceled for an expiry payout.
+	async fn participation_released(&self, wallet: &Wallet) -> anyhow::Result<bool> {
+		let Some(unlock_hash) = self.unlock_hash() else {
+			return Ok(false);
+		};
+		let (mut srv, _) = wallet.require_server().await?;
+		let request = protos::RoundParticipationStatusRequest {
+			unlock_hash: unlock_hash.to_byte_array().to_vec(),
+			attestation: RoundParticipationStatusAttestation::new(
+				unlock_hash, &wallet.mailbox_keypair(),
+			).serialize(),
+		};
+		match srv.client.round_participation_status(request).await {
+			Ok(resp) => Ok(resp.into_inner().status == protos::RoundParticipationStatus::RoundPartReleased as i32),
+			Err(e) if e.code() == tonic::Code::NotFound => Ok(false),
+			Err(e) => Err(e.into()),
 		}
 	}
 
