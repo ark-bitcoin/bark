@@ -14,6 +14,7 @@ use ark::address::VtxoDelivery;
 use ark::attestations::{LightningReceiveClaimAttestation, VtxoStatusAttestation};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
+use ark::tree::signed::UnlockPreimage;
 use bark::Wallet;
 use bark::actions::offboard;
 use bark::actions::lightning::pay;
@@ -22,6 +23,7 @@ use bark::exit::ExitState;
 use bark::movement::{Movement, MovementStatus};
 use bark::persist::BarkPersister;
 use bark::persist::sqlite::SqliteClient;
+use bark::round::RoundStatus;
 use bark::vtxo::{ExpiryPayoutState, VtxoLockHolder, VtxoState};
 use server::database::Db;
 use server_rpc::protos;
@@ -55,6 +57,14 @@ struct PayoutProxy {
 	stall_lightning_initiation: Arc<AtomicBool>,
 	/// A round's forfeit was accepted; hold its subsequent output registration.
 	forfeit_accepted: Arc<AtomicBool>,
+	/// Pass a round's forfeits on, keep the unlock preimage the server
+	/// released and withhold the reply.
+	withhold_forfeit_reply: Arc<AtomicBool>,
+	released_preimage: Arc<Mutex<Option<UnlockPreimage>>>,
+	/// Report every round participation as cancelled for an expiry payout.
+	cancel_participation: Arc<AtomicBool>,
+	/// Fail every request for forfeit nonces, so a round's forfeits stay unsent.
+	fail_forfeit_nonces: Arc<AtomicBool>,
 	/// Refuse Lightning payments, revocations and receive claims.
 	refuse_lightning: Arc<AtomicBool>,
 	/// Refuse every round participation as spending a VTXO that is decided
@@ -76,6 +86,14 @@ const PAYOUT: protos::ExpiryPayout = protos::ExpiryPayout {
 
 fn refusal() -> tonic::Status {
 	tonic::Status::invalid_argument("refused by the test proxy")
+}
+
+/// The reply of a server in payout mode about a participation that an expiry
+/// payout cancelled.
+fn participation_cancelled() -> tonic::Status {
+	let mut status = tonic::Status::not_found("round participation was cancelled for an expiry payout");
+	status.metadata_mut().insert("expiry-payout-reason", "round_cancelled_before_forfeit".parse().unwrap());
+	status
 }
 
 fn payout_decision_refusal() -> tonic::Status {
@@ -136,7 +154,30 @@ impl ArkRpcProxy for PayoutProxy {
 	{
 		let response = upstream.forfeit_vtxos(req).await?.into_inner();
 		self.forfeit_accepted.store(true, Ordering::SeqCst);
+		if self.withhold_forfeit_reply.load(Ordering::SeqCst) {
+			let preimage = response.unlock_preimage.as_slice().try_into().expect("32-byte preimage");
+			*self.released_preimage.lock().unwrap() = Some(preimage);
+			return Err(tonic::Status::unavailable("withholding the unlock preimage"));
+		}
 		Ok(response)
+	}
+
+	async fn request_forfeit_nonces(&self, upstream: &mut ArkClient, req: protos::ForfeitNoncesRequest)
+		-> Result<protos::ForfeitNoncesResponse, tonic::Status>
+	{
+		if self.fail_forfeit_nonces.load(Ordering::SeqCst) {
+			return Err(tonic::Status::unavailable("no forfeit nonces"));
+		}
+		Ok(upstream.request_forfeit_nonces(req).await?.into_inner())
+	}
+
+	async fn round_participation_status(&self, upstream: &mut ArkClient, req: protos::RoundParticipationStatusRequest)
+		-> Result<protos::RoundParticipationStatusResponse, tonic::Status>
+	{
+		if self.cancel_participation.load(Ordering::SeqCst) {
+			return Err(participation_cancelled());
+		}
+		Ok(upstream.round_participation_status(req).await?.into_inner())
 	}
 
 	async fn initiate_lightning_payment(&self, upstream: &mut ArkClient, req: protos::InitiateLightningPaymentRequest)
@@ -603,6 +644,126 @@ async fn expiry_payout_released_round_recovers_output_after_restart() {
 	wallet.sync_pending_rounds().await.unwrap();
 	assert_eq!(wallet.spendable_vtxos().await.unwrap().len(), 1);
 	assert_eq!(movement(&wallet, "bark.round").await.status, MovementStatus::Successful);
+}
+
+/// A server in payout mode whose rounds wallet is funded, with a VTXO
+/// lifetime that leaves the new VTXOs of a refresh room for an exit.
+async fn round_payout_server(ctx: &TestContext) -> (Arc<Captaind>, PayoutProxy, ArkRpcProxyServer) {
+	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
+		cfg.expiry_payouts = true;
+		cfg.vtxo_lifetime = BlockDelta::new(288);
+	}).create().await;
+	ctx.fund_captaind(&srv, btc(1)).await;
+	let proxy = PayoutProxy::default();
+	let server = srv.start_proxy_no_mailbox(proxy.clone()).await;
+	(srv, proxy, server)
+}
+
+/// A server that took the forfeits of a delegated refresh and withholds the
+/// unlock preimage could claim the inputs with them. Reporting an input paid
+/// out and the participation cancelled must not make the wallet drop the
+/// round and hand the forfeited inputs back as spendable.
+#[tokio::test]
+async fn expiry_payout_keeps_forfeited_round_when_server_withholds_preimage() {
+	let ctx = TestContext::new(
+		"bark_sdk/expiry_payout_keeps_forfeited_round_when_server_withholds_preimage",
+	).await;
+	let (srv, proxy, server) = round_payout_server(&ctx).await;
+	let wallet = ctx.bark_sdk("bark", &server).boarded(sat(200_000))
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	let input = wallet.spendable_vtxos().await.unwrap().remove(0);
+	let round_id = wallet.refresh_vtxos_delegated(vec![input.id()]).await.unwrap()
+		.expect("refresh joined").id();
+	let mut finished = srv.subscribe_log::<server_log::RoundFinished>();
+	srv.trigger_round().await;
+	finished.recv().wait(Duration::from_secs(60)).await.expect("round completed");
+	let tip = ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	srv.wait_for_sync_height(tip).await;
+
+	// The forfeits go out and the reply is lost.
+	proxy.withhold_forfeit_reply.store(true, Ordering::SeqCst);
+	wallet.sync_pending_rounds().await.unwrap();
+	let preimage = proxy.released_preimage.lock().unwrap()
+		.expect("the server should have accepted the forfeits");
+
+	// At the input's expiry, the server reports it paid out to us and the
+	// participation cancelled.
+	let tip = ctx.bitcoind().get_block_count().await as u32;
+	let tip = ctx.generate_blocks(input.expiry_height().to_u32() - tip).await;
+	srv.wait_for_sync_height(tip).await;
+	wallet.chain().invalidate_caches().await;
+	proxy.decide_for(&wallet);
+	proxy.cancel_participation.store(true, Ordering::SeqCst);
+	wallet.sync().wait_millis(60_000).await;
+	assert_eq!(wallet.get_vtxo_by_id(input.id()).await.unwrap().expiry_payout_state,
+		Some(ExpiryPayoutState::Paid), "the wallet should have seen the reported payout",
+	);
+
+	let stored = wallet.pending_round_states().await.unwrap()
+		.into_iter().find(|s| s.id() == round_id)
+		.expect("a round whose forfeits went out must stay tracked");
+	let funding_tx = stored.state().funding_tx().expect("funding tx stored").clone();
+	let mut outputs = stored.state().output_vtxos().expect("new VTXOs stored").to_vec();
+	assert_eq!(outputs.len(), 1);
+	for output in &mut outputs {
+		assert!(output.provide_unlock_preimage(preimage),
+			"the stored new VTXO {} should be locked by the released preimage", output.id(),
+		);
+		output.validate(&funding_tx).expect("the stored new VTXO should be fully signed");
+	}
+	// The reported payout marks the input spent; the forfeits went out, so it
+	// must not become spendable again.
+	assert_eq!(wallet.get_vtxo_by_id(input.id()).await.unwrap().state, VtxoState::Spent);
+	assert_eq!(movement(&wallet, "bark.round").await.status, MovementStatus::Pending);
+
+	// Once the server answers honestly again, the refresh completes.
+	proxy.decide.store(false, Ordering::SeqCst);
+	proxy.cancel_participation.store(false, Ordering::SeqCst);
+	proxy.withhold_forfeit_reply.store(false, Ordering::SeqCst);
+	let status = wallet.sync_pending_rounds().await.unwrap();
+	assert!(status.get(&round_id).is_some_and(|s| s.is_success()), "{status:?}");
+	assert_eq!(wallet.get_vtxo_by_id(input.id()).await.unwrap().state, VtxoState::Spent);
+	let spendable = wallet.spendable_vtxos().await.unwrap();
+	assert_eq!(spendable.iter().map(|v| v.id()).collect::<Vec<_>>(), vec![outputs[0].id()]);
+	assert_eq!(movement(&wallet, "bark.round").await.status, MovementStatus::Successful);
+}
+
+/// A refresh that the wallet knows is issued, and that the server then
+/// cancels for an expiry payout of its input, is cancelled without forfeits:
+/// the wallet asks about its inputs right before it forfeits them, it does
+/// not rely on what an earlier sync learned.
+#[tokio::test]
+async fn expiry_payout_cancels_issued_refresh_before_forfeits() {
+	let ctx = TestContext::new("bark_sdk/expiry_payout_cancels_issued_refresh_before_forfeits").await;
+	let (srv, proxy, server) = round_payout_server(&ctx).await;
+	let wallet = ctx.bark_sdk("bark", &server).boarded(sat(200_000))
+		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+	let input = wallet.spendable_vtxos().await.unwrap().remove(0);
+	let round_id = wallet.refresh_vtxos_delegated(vec![input.id()]).await.unwrap()
+		.expect("refresh joined").id();
+	let mut finished = srv.subscribe_log::<server_log::RoundFinished>();
+	srv.trigger_round().await;
+	finished.recv().wait(Duration::from_secs(60)).await.expect("round completed");
+	let tip = ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	srv.wait_for_sync_height(tip).await;
+
+	// The wallet stores the issued round, but its forfeits do not go out.
+	proxy.fail_forfeit_nonces.store(true, Ordering::SeqCst);
+	wallet.sync_pending_rounds().await.unwrap();
+	assert_eq!(wallet.pending_round_states().await.unwrap().len(), 1);
+	assert_eq!(wallet.get_vtxo_by_id(input.id()).await.unwrap().expiry_payout_state, None);
+	proxy.fail_forfeit_nonces.store(false, Ordering::SeqCst);
+
+	proxy.decide_for(&wallet);
+	proxy.cancel_participation.store(true, Ordering::SeqCst);
+	let status = wallet.sync_pending_rounds().await.unwrap();
+
+	assert!(matches!(status.get(&round_id), Some(RoundStatus::Canceled)), "{status:?}");
+	assert!(!proxy.forfeit_accepted.load(Ordering::SeqCst), "no forfeit may go out");
+	assert!(wallet.pending_round_states().await.unwrap().is_empty());
+	assert_eq!(movement(&wallet, "bark.round").await.status, MovementStatus::Failed);
+	let paid = wallet.get_vtxo_by_id(input.id()).await.unwrap();
+	assert_eq!((paid.state, paid.expiry_payout_state), (VtxoState::Spent, Some(ExpiryPayoutState::Paid)));
 }
 
 /// The wallet daemon marks a VTXO it holds paid out once the server pays
