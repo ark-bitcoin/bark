@@ -790,10 +790,20 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 /// expires.
 #[tokio::test]
 async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
-	let ctx = TestContext::new("server/watchman_sweeps_offboard_forfeit_after_confiscation").await;
-	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+	sweep_offboard_forfeit("watchman_sweeps_offboard_forfeit_after_confiscation", false).await;
+}
+
+#[tokio::test]
+async fn watchman_sweeps_offboard_forfeit_and_pays_expired_board() {
+	sweep_offboard_forfeit("watchman_sweeps_offboard_forfeit_and_pays_expired_board", true).await;
+}
+
+async fn sweep_offboard_forfeit(name: &str, expiry_payouts: bool) {
+	let ctx = TestContext::new(&format!("server/{name}")).await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(move |cfg| {
 		cfg.vtxo_lifetime = BlockDelta::new(144);
 		cfg.vtxopool.vtxo_targets = vec![];
+		cfg.expiry_payouts = expiry_payouts;
 	}).watchmand_cfg(|cfg| {
 		cfg.watchman.reaction_interval = Duration::from_secs(15 * 60);
 		cfg.watchman.sweep_interval = Duration::from_secs(15 * 60);
@@ -818,6 +828,14 @@ async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 	let payout = ctx.bitcoind().get_new_address();
 	bark.offboard_all(&payout).await;
 	ctx.generate_blocks(1).await;
+
+	let owner_payout = if expiry_payouts {
+		let owner = ctx.bark_sdk("owner", &srv).boarded(sat(100_000))
+			.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
+		Some((owner.spendable_vtxos().await.unwrap()[0].id(), owner.payout_script()))
+	} else {
+		None
+	};
 
 	// the attacker exits the now-forfeited vtxo
 	evil.start_exit_all().await;
@@ -854,6 +872,13 @@ async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 	failures.assert_empty();
 	println!("Offboard forfeit sweep: {:#?}", msg);
 	assert_eq!(400_330, msg.total_input_value.to_sat());
+	let owner_payout = if let Some((id, script)) = owner_payout {
+		let db = Db::connect(&srv.config().postgres).await.unwrap();
+		let (_, payout) = super::expiry_payout::wait_payout(&db, id).await;
+		Some((payout, script))
+	} else {
+		None
+	};
 
 	// the forfeit output must actually be gone from the utxo set
 	let forfeit_point = msg.vtxo_ids[0].to_point();
@@ -864,11 +889,17 @@ async fn watchman_sweeps_offboard_forfeit_after_confiscation() {
 		"forfeit output {} should be spent by the sweep", forfeit_point,
 	);
 
-	// the confiscated funds must land in the rounds wallet
-	assert_eq!(srv.wallet_status().await.rounds.total_balance,
-		rounds_balance + msg.total_output_value,
-		"forfeit sweep must pay out to the rounds wallet",
-	);
+	// With no payout, the confiscated funds must land in the rounds wallet.
+	// A payout also pays an on-chain fee from that wallet, changing its net balance.
+	if !expiry_payouts {
+		assert_eq!(srv.wallet_status().await.rounds.total_balance,
+			rounds_balance + msg.total_output_value,
+			"forfeit sweep must pay out to the rounds wallet",
+		);
+	}
+	if let Some((payout, script)) = owner_payout {
+		super::expiry_payout::assert_paid(&ctx, &srv, &payout, &script, sat(98_000)).await;
+	}
 }
 
 #[tokio::test]

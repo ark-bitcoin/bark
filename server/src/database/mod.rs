@@ -439,6 +439,18 @@ impl<'t> Tx<'t> {
 		query::get_existing_vtxos_by_id(&self, ids).await
 	}
 
+	/// Read the spend states of existing VTXOs without loading their transaction chains.
+	pub(crate) async fn get_vtxo_spend_states(
+		&self,
+		ids: &[VtxoId],
+	) -> anyhow::Result<HashMap<VtxoId, SpendState>> {
+		let ids = ids.iter().map(ToString::to_string).collect::<Vec<_>>();
+		self.query("SELECT vtxo_id, spend_state::text FROM vtxo WHERE vtxo_id=ANY($1)", &[&ids])
+			.await?.into_iter()
+			.map(|row| Ok((row.get::<_, &str>(0).parse()?, row.get::<_, &str>(1).parse()?)))
+			.collect()
+	}
+
 	/// A page of at most `limit` VTXOs owned by `policy` ordered by id,
 	/// starting after the VTXO `after` when given, whatever their spend state.
 	pub async fn get_vtxos_by_policy_page(

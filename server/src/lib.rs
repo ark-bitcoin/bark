@@ -720,11 +720,27 @@ impl Server {
 		// The exit tx we cosign commits to `amount` as the funding output's
 		// value, so a funding output paying anything else yields a board
 		// that can neither be registered nor unilaterally exited.
-		let funding_value = funding_tx.output[utxo.vout as usize].value;
+		let funding_output = &funding_tx.output[utxo.vout as usize];
+		let funding_value = funding_output.value;
 		if funding_value != amount {
 			return badarg!("board amount {} does not match funding tx output value {}",
 				amount, funding_value,
 			);
+		}
+
+		let builder = BoardBuilder::new_for_cosign(
+			user_pubkey,
+			expiry_height,
+			self.server_pubkey,
+			self.config.vtxo_exit_delta,
+			amount,
+			fee,
+			utxo,
+			user_pub_nonce,
+		);
+		let spk = builder.funding_script_pubkey();
+		if self.config.expiry_payouts && spk != funding_output.script_pubkey {
+			return badarg!("board funding script does not match the funding tx output");
 		}
 
 		// validate funding tx is real
@@ -732,7 +748,8 @@ impl Server {
 		self.db.read(async |tx| {
 			// In payout mode the co-sign stores the funding transaction of a
 			// board, so a retry of the co-sign finds it.
-			let retry = self.config.expiry_payouts && tx.board_cosign_retry(utxo).await?;
+			let retry = self.config.expiry_payouts
+				&& tx.board_cosign_retry(utxo, &spk).await?;
 			// check the funding tx itself first, obviously can't exist
 			if !retry && tx.get_virtual_transaction_by_txid(utxo.txid).await?.is_some() {
 				return badarg!("invalid funding tx: known as virtual tx: {}", utxo.txid);
@@ -768,32 +785,23 @@ impl Server {
 			}
 		}
 
-		let builder = BoardBuilder::new_for_cosign(
-			user_pubkey,
-			expiry_height,
-			self.server_pubkey,
-			self.config.vtxo_exit_delta,
-			amount,
-			fee,
-			utxo,
-			user_pub_nonce,
-		);
-
 		if self.config.expiry_payouts && owner_mailbox.is_none() {
 			return badarg!("board output requires a payout mailbox");
 		}
 
 		// Fees and the exit delta can change, so bind the output to one exit
 		// before signing, or two signed exits could spend it.
-		let spk = builder.funding_script_pubkey();
 		let exit_txid = builder.exit_txid();
-		let bound = self.db.write(async |t| t.bind_board_exit(utxo, &spk, exit_txid).await).await?;
-		if bound != exit_txid {
-			return badarg!("board utxo {} is already cosigned for another exit tx", utxo);
-		}
-		if let Some(mailbox) = owner_mailbox.filter(|_| self.config.expiry_payouts) {
-			self.record_board_owner(builder.funding_vtxo(), exit_txid, user_pubkey, mailbox).await?;
-		}
+		self.db.write(async |t| {
+			let bound = t.bind_board_exit(utxo, &spk, exit_txid).await?;
+			if bound != exit_txid {
+				return badarg!("board utxo {} is already cosigned for another exit tx", utxo);
+			}
+			if let Some(mailbox) = owner_mailbox.filter(|_| self.config.expiry_payouts) {
+				t.record_board_owner(builder.funding_vtxo(), exit_txid, user_pubkey, mailbox).await?;
+			}
+			Ok(())
+		}).await?;
 
 		info!("Cosigning board request for utxo {}", utxo);
 		let resp = builder.server_cosign(self.server_key.leak_ref());
@@ -897,7 +905,7 @@ impl Server {
 				);
 			}
 			let update = if self.config.expiry_payouts {
-				let mailbox = t.board_owner_mailbox(vtxo.chain_anchor(), vtxo.user_pubkey()).await?;
+				let mailbox = t.board_owner_mailbox(vtxo.chain_anchor(), &spk, vtxo.user_pubkey()).await?;
 				update.bind_owner_mailboxes(builder.build_server_vtxos().into_iter()
 					.filter(|output| output.policy().user_pubkey().is_some())
 					.map(|output| (output.id(), mailbox)))?

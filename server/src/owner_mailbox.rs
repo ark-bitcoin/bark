@@ -192,7 +192,7 @@ pub(crate) fn pool_tree_update(
 		.insert_unspent_vtxos(vtxos.iter().cloned().map(ServerVtxo::from), SpendState::Pool))
 }
 
-impl crate::Server {
+impl crate::database::Tx<'_> {
 	/// Record the owner of a board that this server co-signs, and put its
 	/// funding output on the frontier. From now on the funding output owes
 	/// its owner a payout, even if the owner never registers the board.
@@ -204,17 +204,17 @@ impl crate::Server {
 		owner_mailbox: PublicKey,
 	) -> anyhow::Result<()> {
 		let utxo = root.point();
-		self.db.write(async |t| {
-			t.bind_board_owner(utxo, user_pubkey, owner_mailbox).await?;
-			let update = VtxoTreeUpdate::new()
-				.upsert_unsigned_funding_tx(utxo.txid)
-				.upsert_unsigned_tx([exit_txid])
-				.insert_oor_spent_vtxos([(root, exit_txid)]);
-			t.execute_vtxo_tree_update(update).await?;
-			t.add_funding_vtxos_to_frontier(utxo.txid, None).await
-		}).await
+		self.bind_board_owner(utxo, &root.txout().script_pubkey, user_pubkey, owner_mailbox).await?;
+		let update = VtxoTreeUpdate::new()
+			.upsert_unsigned_funding_tx(utxo.txid)
+			.upsert_unsigned_tx([exit_txid])
+			.insert_oor_spent_vtxos([(root, exit_txid)]);
+		self.execute_vtxo_tree_update(update).await?;
+		self.add_funding_vtxos_to_frontier(utxo.txid, None).await
 	}
+}
 
+impl crate::Server {
 	/// Verify that the key that owns every source signed this exact lightning
 	/// send, so nobody else can spend the HTLCs that the owner co-signed.
 	/// Returns the id of the send intent, or `None` if an attempt with this

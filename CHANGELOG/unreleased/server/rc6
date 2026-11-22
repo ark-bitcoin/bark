@@ -1,0 +1,3 @@
+- Continue expiry payouts when the watchman sweeps an offboard forfeit
+- Match payout-mode board registration to the board's funding script
+- Reject Lightning invoices whose payment hash differs from the request

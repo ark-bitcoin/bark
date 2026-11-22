@@ -356,6 +356,53 @@ async fn board(ctx: &TestContext, srv: &Captaind, owner: &Owner, key: Keypair) -
 	vtxo
 }
 
+#[tokio::test]
+async fn expiry_payout_board_registration_uses_the_funding_script() {
+	let ctx = TestContext::new("server/expiry_payout_board_registration_uses_the_funding_script").await;
+	let srv = server_with_watchman(&ctx, BlockDelta::new(24)).await;
+	let owner = Owner::new(&[117; 64]);
+	let (vtxo, funding) = cosign_board(&ctx, &srv, &owner, owner.key(1), true).await;
+	let point = vtxo.chain_anchor();
+	ctx.bitcoind().sync_client().send_raw_transaction(&funding).unwrap();
+
+	let info = srv.ark_info().await;
+	let wrong_key = owner.key(2).public_key();
+	let wrong_board = ark::board::BoardBuilder::new(
+		wrong_key, vtxo.expiry_height(), info.server_pubkey, info.vtxo_exit_delta,
+	).unwrap();
+	let wrong_script = wrong_board.funding_script_pubkey();
+	let wrong_board = wrong_board.set_funding_details(sat(100_000), Amount::ZERO, point)
+		.unwrap().generate_user_nonces();
+	let mut rpc = srv.get_public_rpc().await;
+	let error = rpc.request_board_cosign(protos::BoardCosignRequest {
+		owner_mailbox: Some(owner.mailbox_id().serialize()),
+		amount: 100_000,
+		utxo: serialize(&point),
+		expiry_height: vtxo.expiry_height().into(),
+		user_pubkey: wrong_key.serialize().to_vec(),
+		pub_nonce: wrong_board.user_pub_nonce().serialize().to_vec(),
+		funding_tx: serialize(&funding),
+	}).await.unwrap_err();
+	assert_eq!(error.code(), tonic::Code::InvalidArgument);
+
+	let db = Db::connect(&srv.config().postgres).await.unwrap();
+	db.write(async |tx| {
+		let row = tx.query_one("SELECT count(*) FROM board_exit WHERE funding_outpoint=$1",
+			&[&point.to_string()]).await?;
+		assert_eq!(row.get::<_, i64>(0), 1, "a refused co-sign left an exit binding");
+		// Simulate a stray binding left by an older server.
+		tx.bind_board_exit(point, &wrong_script, vtxo.id().to_point().txid).await?;
+		Ok(())
+	}).await.unwrap();
+
+	let tip = ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	srv.wait_for_sync_height(tip).await;
+	for _ in 0..2 {
+		rpc.register_board_vtxo(protos::BoardVtxoRequest { board_vtxo: vtxo.serialize() }).await.unwrap();
+	}
+	assert!(db.read(async |tx| tx.get_user_vtxo_by_id(vtxo.id()).await).await.is_ok());
+}
+
 /// Wait for the payout of `vtxo` and check that it pays its 100,000 sats
 /// minus the fee to `owner`.
 async fn assert_paid_to_owner(ctx: &TestContext, srv: &Captaind, owner: &Owner, vtxo: VtxoId) {

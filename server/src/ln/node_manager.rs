@@ -679,6 +679,8 @@ impl LightningManager {
 		}).await?.into_inner();
 
 		let invoice = Bolt11Invoice::from_str(&res.bolt11)?;
+		ensure!(PaymentHash::from(&invoice) == payment_hash,
+			"hold plugin returned an invoice for a different payment hash");
 
 		// Raw agent, not the bucketed label -- see start_payment.
 		let user_agent = telemetry::current_user_agent();

@@ -257,7 +257,7 @@ fn payout_output(tx: &Transaction, script: &ScriptBuf, amount: Amount) -> OutPoi
 
 /// Mine six blocks on `tx` and assert that its output to `script` pays
 /// `amount` and is unspent.
-async fn assert_paid(ctx: &TestContext, srv: &Captaind, tx: &Transaction, script: &ScriptBuf, amount: Amount) {
+pub(super) async fn assert_paid(ctx: &TestContext, srv: &Captaind, tx: &Transaction, script: &ScriptBuf, amount: Amount) {
 	let point = payout_output(tx, script, amount);
 	assert_eq!(ctx.bitcoind().await_transaction(point.txid).await, *tx);
 	mine(ctx, srv, 6).await;
@@ -382,7 +382,7 @@ async fn published_payout(db: &Db, vtxo: VtxoId) -> Option<(i64, Transaction)> {
 }
 
 /// Wait for the published payout of `vtxo`.
-async fn wait_payout(db: &Db, vtxo: VtxoId) -> (i64, Transaction) {
+pub(super) async fn wait_payout(db: &Db, vtxo: VtxoId) -> (i64, Transaction) {
 	async {
 		loop {
 			if let Some(payout) = published_payout(db, vtxo).await {

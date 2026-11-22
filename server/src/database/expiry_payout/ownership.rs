@@ -6,7 +6,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::{Amount, OutPoint};
+use bitcoin::{Amount, OutPoint, Script};
 use bitcoin::secp256k1::PublicKey;
 use tokio_postgres::error::SqlState;
 
@@ -373,15 +373,18 @@ impl Tx<'_> {
 	pub(crate) async fn bind_board_owner(
 		&self,
 		funding_outpoint: OutPoint,
+		funding_spk: &Script,
 		user_pubkey: PublicKey,
 		owner_mailbox: PublicKey,
 	) -> anyhow::Result<()> {
 		let outpoint = funding_outpoint.to_string();
+		let spk = funding_spk.as_bytes();
 		let (user_key, mailbox) = (user_pubkey.to_string(), owner_mailbox.to_string());
-		self.execute("UPDATE board_exit SET user_pubkey = $2, owner_mailbox = $3 \
-			WHERE funding_outpoint = $1 AND owner_mailbox IS NULL", &[&outpoint, &user_key, &mailbox]).await?;
-		let row = self.query_one("SELECT user_pubkey, owner_mailbox FROM board_exit WHERE funding_outpoint = $1",
-			&[&outpoint]).await?;
+		self.execute("UPDATE board_exit SET user_pubkey = $3, owner_mailbox = $4 \
+			WHERE funding_outpoint = $1 AND funding_spk = $2 AND owner_mailbox IS NULL",
+			&[&outpoint, &spk, &user_key, &mailbox]).await?;
+		let row = self.query_one("SELECT user_pubkey, owner_mailbox FROM board_exit \
+			WHERE funding_outpoint = $1 AND funding_spk = $2", &[&outpoint, &spk]).await?;
 		if row.get::<_, Option<&str>>("user_pubkey") != Some(user_key.as_str())
 			|| row.get::<_, Option<&str>>("owner_mailbox") != Some(mailbox.as_str())
 		{
@@ -394,10 +397,12 @@ impl Tx<'_> {
 	pub(crate) async fn board_owner_mailbox(
 		&self,
 		funding_outpoint: OutPoint,
+		funding_spk: &Script,
 		user_pubkey: PublicKey,
 	) -> anyhow::Result<PublicKey> {
-		let row = self.query_one("SELECT user_pubkey, owner_mailbox FROM board_exit WHERE funding_outpoint = $1",
-			&[&funding_outpoint.to_string()]).await?;
+		let row = self.query_one("SELECT user_pubkey, owner_mailbox FROM board_exit \
+			WHERE funding_outpoint = $1 AND funding_spk = $2",
+			&[&funding_outpoint.to_string(), &funding_spk.as_bytes()]).await?;
 		if row.get::<_, Option<&str>>("user_pubkey") != Some(user_pubkey.to_string().as_str()) {
 			return badarg!("board output has another owner key");
 		}
@@ -419,13 +424,16 @@ impl Tx<'_> {
 	/// Whether a board co-sign for the funding output is a retry: this
 	/// server co-signed a board exit for it and stored its funding
 	/// transaction.
-	pub(crate) async fn board_cosign_retry(&self, funding_outpoint: OutPoint) -> anyhow::Result<bool> {
+	pub(crate) async fn board_cosign_retry(&self, funding_outpoint: OutPoint, funding_spk: &Script)
+		-> anyhow::Result<bool>
+	{
 		let known = self.get_virtual_transaction_by_txid(funding_outpoint.txid).await?;
 		if !known.is_some_and(|tx| tx.is_funding) {
 			return Ok(false);
 		}
-		Ok(self.query_opt("SELECT exit_txid FROM board_exit WHERE funding_outpoint = $1",
-			&[&funding_outpoint.to_string()]).await?.is_some())
+		Ok(self.query_opt("SELECT exit_txid FROM board_exit \
+			WHERE funding_outpoint = $1 AND funding_spk = $2",
+			&[&funding_outpoint.to_string(), &funding_spk.as_bytes()]).await?.is_some())
 	}
 
 	/// Whether a lightning payment attempt exists for the signed send intent.

@@ -79,10 +79,10 @@ impl Watchman {
 		let ids = sweeps.iter().filter(|v| matches!(v.policy(), ServerVtxoPolicy::ServerOwned
 			| ServerVtxoPolicy::User(VtxoPolicy::Pubkey(_))))
 			.map(|v| v.id()).collect::<Vec<_>>();
-		let states = self.db.read(async |t| t.get_existing_server_vtxos_by_id(&ids).await).await?;
+		let states = self.db.read(async |t| t.get_vtxo_spend_states(&ids).await).await?;
 		let mut claims = Vec::new();
 		for vtxo in &sweeps {
-			let state = states.get(&vtxo.id()).map(|state| state.spend_state);
+			let state = states.get(&vtxo.id()).copied();
 			let owned = match (vtxo.policy(), state) {
 				(ServerVtxoPolicy::ServerOwned, Some(SpendState::OffboardForfeit)) => true,
 				(ServerVtxoPolicy::User(VtxoPolicy::Pubkey(policy)), Some(SpendState::Pool)) => {
