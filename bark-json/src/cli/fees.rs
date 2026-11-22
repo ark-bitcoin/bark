@@ -12,6 +12,37 @@ pub struct FeeSchedule {
 	pub refresh: RefreshFees,
 	pub lightning_receive: LightningReceiveFees,
 	pub lightning_send: LightningSendFees,
+	/// The Lightning fees of a payment between two wallets of this Ark
+	/// server. Absent when such a payment pays `lightning_send` and
+	/// `lightning_receive`.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub intra_ark: Option<IntraArkFees>,
+}
+
+/// The Lightning fees of a payment between two wallets of the same Ark server.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct IntraArkFees {
+	pub lightning_send: LightningSendFees,
+	pub lightning_receive: LightningReceiveFees,
+}
+
+impl From<ark::fees::IntraArkFees> for IntraArkFees {
+	fn from(v: ark::fees::IntraArkFees) -> Self {
+		Self {
+			lightning_send: v.lightning_send.into(),
+			lightning_receive: v.lightning_receive.into(),
+		}
+	}
+}
+
+impl From<IntraArkFees> for ark::fees::IntraArkFees {
+	fn from(v: IntraArkFees) -> Self {
+		Self {
+			lightning_send: v.lightning_send.into(),
+			lightning_receive: v.lightning_receive.into(),
+		}
+	}
 }
 
 impl From<ark::fees::FeeSchedule> for FeeSchedule {
@@ -22,6 +53,7 @@ impl From<ark::fees::FeeSchedule> for FeeSchedule {
 			refresh: v.refresh.into(),
 			lightning_receive: v.lightning_receive.into(),
 			lightning_send: v.lightning_send.into(),
+			intra_ark: v.intra_ark.map(Into::into),
 		}
 	}
 }
@@ -34,6 +66,7 @@ impl From<FeeSchedule> for ark::fees::FeeSchedule {
 			refresh: v.refresh.into(),
 			lightning_receive: v.lightning_receive.into(),
 			lightning_send: v.lightning_send.into(),
+			intra_ark: v.intra_ark.map(Into::into),
 		}
 	}
 }

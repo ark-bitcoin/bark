@@ -637,10 +637,11 @@ async fn prepare_lightning_receive_htlcs(
 		.context("ln receive invoice should have amount").abort()?;
 	let server_received_amount = res.receive.map(|r| Amount::from_sat(r.amount_sat));
 	let fee = {
-		let fee = server_received_amount
-			.and_then(|a| ark_info.fees.lightning_receive.calculate(a));
-		match (server_received_amount, fee) {
-			(Some(amount), Some(fee)) if htlc_amount + fee == amount => fee,
+		// An intra-Ark payment pays the intra-Ark receive fee.
+		let fee = |intra_ark: bool| server_received_amount
+			.and_then(|a| ark_info.fees.lightning_receive_fees(intra_ark).calculate(a));
+		match (server_received_amount, fee(false), fee(true)) {
+			(Some(amount), Some(fee), _) | (Some(amount), _, Some(fee)) if htlc_amount + fee == amount => fee,
 			// Validated when the invoice was created, but the fee schedule
 			// comes from the server and can change between drives.
 			_ => ark_info.fees.lightning_receive.calculate(invoice_amount)

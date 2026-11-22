@@ -541,6 +541,7 @@ impl TestContext {
 					base_fee: Amount::ZERO,
 					ppm_expiry_table: vec![],
 				},
+				intra_ark: None,
 			},
 			bitcoin_address_blocklist: None,
 			bitcoin_address_blocklist_refresh_interval: None,

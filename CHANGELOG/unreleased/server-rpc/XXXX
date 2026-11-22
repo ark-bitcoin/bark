@@ -1,0 +1,4 @@
+- Carry intra-Ark Lightning fees in the fee schedule
+  `FeeSchedule.intra_ark` is optional. A client that does not know it pays
+  the normal Lightning fees, which the server accepts.
+  [#XXXX](https://github.com/SatoshiPortal/scuttle/pull/XXXX)

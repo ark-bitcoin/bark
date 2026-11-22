@@ -148,6 +148,14 @@ message FeeSchedule {
 	RefreshFees refresh = 3;
 	LightningReceiveFees lightning_receive = 4;
 	LightningSendFees lightning_send = 5;
+	// The fees of a Lightning payment between two wallets of this server.
+	// Unset charges it lightning_send and lightning_receive.
+	optional IntraArkFees intra_ark = 6;
+}
+
+message IntraArkFees {
+	LightningSendFees lightning_send = 1;
+	LightningReceiveFees lightning_receive = 2;
 }
 
 message PpmExpiryFeeEntry {

@@ -406,9 +406,12 @@ pub(crate) async fn start_lightning_send(
 		bail!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
 	}
 
+	// The server charges the intra-Ark fee when it holds the receive itself.
+	let intra_ark = wallet.is_intra_ark_invoice(&invoice).await;
+	let fees = ark_info.fees.lightning_send_fees(intra_ark);
 	let (inputs, fee) = wallet.select_any_vtxos_to_cover_with_fee(
 		payment_amount,
-		|a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
+		|a, v| fees.calculate(a, v).context("fee overflowed"),
 	).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 
 	let input_total = inputs.iter().map(|v| v.amount()).sum::<Amount>();

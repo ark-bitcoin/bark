@@ -1,0 +1,6 @@
+- Add intra-Ark Lightning fees to the fee schedule
+  `FeeSchedule::intra_ark` holds the Lightning send and receive fees of a
+  payment between two wallets of the same Ark server, which the server
+  settles without Lightning. When it is absent, such a payment pays the
+  normal Lightning fees.
+  [#XXXX](https://github.com/SatoshiPortal/scuttle/pull/XXXX)

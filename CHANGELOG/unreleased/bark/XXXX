@@ -1,0 +1,6 @@
+- Pay the intra-Ark Lightning fee on invoices of our own Ark server
+  When the Ark server publishes intra-Ark fees, the wallet asks it whether
+  it holds the receive of an invoice before paying it. If it does, the
+  payment and its fee estimate use the intra-Ark send fee. A claim that
+  kept back the intra-Ark receive fee is recorded with that fee.
+  [#XXXX](https://github.com/SatoshiPortal/scuttle/pull/XXXX)

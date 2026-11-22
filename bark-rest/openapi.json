@@ -6383,6 +6383,17 @@
           "board": {
             "$ref": "#/components/schemas/BoardFees"
           },
+          "intra_ark": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IntraArkFees",
+                "description": "The Lightning fees of a payment between two wallets of this Ark\nserver. Absent when such a payment pays `lightning_send` and\n`lightning_receive`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lightning_receive": {
             "$ref": "#/components/schemas/LightningReceiveFees"
           },
@@ -6438,6 +6449,22 @@
         "properties": {
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "IntraArkFees": {
+        "type": "object",
+        "description": "The Lightning fees of a payment between two wallets of the same Ark server.",
+        "required": [
+          "lightning_send",
+          "lightning_receive"
+        ],
+        "properties": {
+          "lightning_receive": {
+            "$ref": "#/components/schemas/LightningReceiveFees"
+          },
+          "lightning_send": {
+            "$ref": "#/components/schemas/LightningSendFees"
           }
         }
       },

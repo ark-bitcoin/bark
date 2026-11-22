@@ -349,6 +349,10 @@ impl From<ark::fees::FeeSchedule> for protos::FeeSchedule {
 			refresh: Some(v.refresh.into()),
 			lightning_receive: Some(v.lightning_receive.into()),
 			lightning_send: Some(v.lightning_send.into()),
+			intra_ark: v.intra_ark.map(|f| protos::IntraArkFees {
+				lightning_send: Some(f.lightning_send.into()),
+				lightning_receive: Some(f.lightning_receive.into()),
+			}),
 		}
 	}
 }
@@ -362,6 +366,13 @@ impl TryFrom<protos::FeeSchedule> for ark::fees::FeeSchedule {
 			refresh: v.refresh.ok_or("missing refresh fees")?.into(),
 			lightning_receive: v.lightning_receive.ok_or("missing lightning receive fees")?.into(),
 			lightning_send: v.lightning_send.ok_or("missing lightning send fees")?.into(),
+			intra_ark: v.intra_ark.map(|f| -> Result<_, ConvertError> {
+				Ok(ark::fees::IntraArkFees {
+					lightning_send: f.lightning_send.ok_or("missing intra-Ark lightning send fees")?.into(),
+					lightning_receive: f.lightning_receive
+						.ok_or("missing intra-Ark lightning receive fees")?.into(),
+				})
+			}).transpose()?,
 		})
 	}
 }

@@ -408,11 +408,16 @@ impl Server {
 			}
 		}
 
-		if let Some(sub) = self.db.read(async |t|
+		// A receive of ours for this hash makes the payment intra-Ark, the
+		// same test that start_payment uses to settle it without Lightning.
+		let intra_ark = if let Some(sub) = self.db.read(async |t|
 			t.get_htlc_subscription_by_payment_hash(payment_hash).await
 		).await? {
 			validate_intra_ark_payment(&sub, &invoice, payment_amount)?;
-		}
+			true
+		} else {
+			false
+		};
 
 		// Verify we can actually perform the payment when fees are taken into account. If for some
 		// reason the client chooses to pay less than the sum of the HTLC VTXOs and the fees, then
@@ -420,7 +425,8 @@ impl Server {
 		let tip = self.sync_manager.chain_tip();
 		let vtxo_fee_infos = vtxos.iter()
 			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip.height));
-		let user_fee = self.config.fees.lightning_send.calculate(payment_amount, vtxo_fee_infos)
+		let user_fee = self.config.fees.lightning_send_fees(intra_ark)
+			.calculate(payment_amount, vtxo_fee_infos)
 			.context("fee overflowed")?;
 		let amount_with_fee = payment_amount.checked_add(user_fee).context("validation overflow")?;
 
@@ -965,9 +971,13 @@ impl Server {
 
 		self.verify_ln_receive_anti_dos(anti_dos, payment_hash, client_address).await?;
 
-		// Deduct the fees from the HTLC VTXOs.
+		// Deduct the fees from the HTLC VTXOs. An intra-Ark payment has an
+		// open payment attempt on this receive.
+		let intra_ark = self.db.read(async |t|
+			t.get_open_lightning_payment_attempt_by_subscription_id(sub.id).await
+		).await?.is_some();
 		let received_amount = sub.amount();
-		let fee = self.config.fees.lightning_receive.calculate(received_amount)
+		let fee = self.config.fees.lightning_receive_fees(intra_ark).calculate(received_amount)
 			.context("fee overflowed")?;
 		let htlc_amount = validate_and_subtract_fee(received_amount, fee)?;
 
@@ -1226,8 +1236,9 @@ impl Server {
 		slog!(LightningReceiveClaimed, payment_hash, vtxo_request,
 			amount: sub.amount());
 		if first_claim {
-			let user_fee = self.config.fees.lightning_receive.calculate(sub.amount())
-				.context("fee overflowed")?;
+			// The fee is what the grant kept back, which depends on whether
+			// the payment was intra-Ark.
+			let user_fee = sub.amount().checked_sub(htlc_amount).unwrap_or(Amount::ZERO);
 			telemetry::record_ark_fee(telemetry::ArkFeeOp::LightningReceive, user_fee.to_sat(), None);
 		}
 

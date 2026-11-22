@@ -1,0 +1,6 @@
+- Charge intra-Ark Lightning fees on payments between our own wallets
+  With `[fees.intra_ark]` set, a Lightning payment of an invoice that the
+  server issued for one of its own wallets pays the intra-Ark send fee, and
+  its receiver the intra-Ark receive fee. Payments to and from the outside
+  still pay `lightning_send` and `lightning_receive`.
+  [#XXXX](https://github.com/SatoshiPortal/scuttle/pull/XXXX)

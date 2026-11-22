@@ -716,7 +716,7 @@ impl Wallet {
 		-> anyhow::Result<FeeEstimate>
 	{
 		match &option.method {
-			PaymentMethod::Invoice(_) => self.estimate_lightning_send_fee(amount).await,
+			PaymentMethod::Invoice(invoice) => self.estimate_invoice_payment_fee(invoice, amount).await,
 			PaymentMethod::Offer(_) => self.estimate_lightning_send_fee(amount).await,
 			PaymentMethod::LightningAddress(_) => self.estimate_lightning_send_fee(amount).await,
 			PaymentMethod::Lnurl(_) => self.estimate_lightning_send_fee(amount).await,
