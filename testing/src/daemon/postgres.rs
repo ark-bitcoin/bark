@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use log::{debug, error, trace};
@@ -13,8 +13,9 @@ use server::secret::Secret;
 
 use crate::constants::env::POSTGRES_BINS;
 use crate::daemon::{Daemon, DaemonHelper};
+use crate::daemon::bitcoind::snapshot::open_lock_file;
 use crate::ports::pick_port;
-use crate::util::{poll_interval, resolve_path};
+use crate::util::{get_cargo_workspace, poll_interval, resolve_path};
 
 
 const LOCK_DIR: &str = "/tmp/ark-testing-postgres-locks";
@@ -45,6 +46,12 @@ impl Postgres {
 		} else {
 			panic!("POSTGRES_BINS env not set")
 		}
+	}
+
+	async fn initdb_version() -> anyhow::Result<String> {
+		let output = Command::new(Postgres::initdb()).arg("--version").output().await?;
+		ensure!(output.status.success(), "initdb --version failed: {:?}", output);
+		Ok(String::from_utf8(output.stdout)?)
 	}
 
 	fn postgres() -> PathBuf {
@@ -159,33 +166,19 @@ impl DaemonHelper for PostgresHelper {
 		}
 		fs::create_dir_all(&self.datadir()).await.expect("failed to create postgres datadir");
 
-		// also create dedicated dir for pgdata
-		fs::create_dir_all(&self.pgdata()).await.expect("failed to create pgdata dir");
+		let template_dir = get_cargo_workspace().join("test/_postgres_template");
+		ensure_template(&template_dir).await?;
 
-		let output = Command::new(Postgres::initdb())
-			.args(["-D", &self.pgdata().display().to_string(),
-				"--encoding=UTF8",
-				"--locale=C.UTF-8",
-			])
-			.output()
-			.await
-			.expect("cannot init postgres");
-
-
-		if !output.status.success() {
-			let stderr = String::from_utf8(output.clone().stderr)?;
-			error!("stderr: {}", stderr);
-			bail!("Failed to init postgres db: {:?}", output);
-		}
-
-		let conf_path = self.pgdata().join("postgresql.conf");
-		let shared_buffers = "\n# Custom shared memory settings\nshared_buffers = 256MB\n";
-		fs::OpenOptions::new()
-			.append(true)
-			.open(&conf_path)
-			.await?
-			.write_all(shared_buffers.as_bytes())
-			.await?;
+		// Copy under a shared lock, so a concurrent rebuild cannot delete
+		// the template during the copy.
+		let lock_file = open_lock_file(&template_dir);
+		lock_file.lock_shared().expect("failed to lock postgres template for copying");
+		let status = Command::new("cp")
+			.arg("-a")
+			.arg(template_dir.join("pg_data"))
+			.arg(self.pgdata())
+			.status().await?;
+		ensure!(status.success(), "failed to copy postgres template");
 
 		Ok(())
 	}
@@ -213,3 +206,62 @@ impl DaemonHelper for PostgresHelper {
 	}
 }
 
+/// Make sure `template_dir` holds a `pg_data` dir made by the current
+/// initdb. Tests copy it, because initdb takes most of the time of a
+/// postgres start.
+///
+/// The first test to see a missing or outdated template rebuilds it under
+/// an exclusive lock. Other tests wait for the lock and then reuse it.
+async fn ensure_template(template_dir: &Path) -> anyhow::Result<()> {
+	let version = Postgres::initdb_version().await?;
+	let version_file = template_dir.join("version");
+	let is_valid = || std::fs::read_to_string(&version_file).is_ok_and(|v| v == version);
+
+	if is_valid() {
+		return Ok(());
+	}
+
+	let lock_file = open_lock_file(template_dir);
+	lock_file.lock().expect("failed to lock postgres template");
+
+	// Another test can build the template while this test waits for the lock.
+	if is_valid() {
+		return Ok(());
+	}
+
+	trace!("Creating postgres template in {}", template_dir.display());
+	if template_dir.exists() {
+		fs::remove_dir_all(template_dir).await.expect("failed to remove outdated postgres template");
+	}
+	let pgdata = template_dir.join("pg_data");
+	fs::create_dir_all(&pgdata).await.expect("failed to create postgres template dir");
+
+	let output = Command::new(Postgres::initdb())
+		.args(["-D", &pgdata.display().to_string(),
+			"--encoding=UTF8",
+			"--locale=C.UTF-8",
+		])
+		.output()
+		.await
+		.expect("cannot init postgres");
+
+	if !output.status.success() {
+		let stderr = String::from_utf8(output.clone().stderr)?;
+		error!("stderr: {}", stderr);
+		bail!("Failed to init postgres db: {:?}", output);
+	}
+
+	let conf_path = pgdata.join("postgresql.conf");
+	let shared_buffers = "\n# Custom shared memory settings\nshared_buffers = 256MB\n";
+	fs::OpenOptions::new()
+		.append(true)
+		.open(&conf_path)
+		.await?
+		.write_all(shared_buffers.as_bytes())
+		.await?;
+
+	// Write the version last: its presence marks a complete template.
+	fs::write(&version_file, &version).await?;
+	debug!("Postgres template created in {}", template_dir.display());
+	Ok(())
+}

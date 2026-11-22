@@ -100,11 +100,11 @@ build-ci:
 build-unit-tests-ci:
 	cargo nextest archive --cargo-profile ci --workspace --exclude ark-testing \
 		--features bark-wallet/nwc \
-		--archive-file {{CARGO_TARGET}}/ci/unit-tests.tar.zst --zstd-level 19
+		--archive-file {{CARGO_TARGET}}/ci/unit-tests.tar.zst --zstd-level 3
 
 build-integration-tests-ci:
 	cargo nextest archive --cargo-profile ci --package ark-testing \
-		--archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst --zstd-level 19
+		--archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst --zstd-level 3
 
 build-bins:
 	cargo build --workspace --bins
