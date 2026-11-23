@@ -414,20 +414,26 @@ fn is_registration_refusal(err: &anyhow::Error) -> bool {
 ///
 /// Follows the chain from its anchor while its transactions are confirmed. The first
 /// unconfirmed one lost a double spend exactly when one of its inputs is spent by a confirmed
-/// transaction.
+/// transaction other than itself: a transaction that confirms while it is checked is followed
+/// further.
 async fn chain_double_spent(wallet: &Wallet, vtxo: &Vtxo<Full>) -> anyhow::Result<bool> {
 	let chain = &wallet.inner.chain;
 	let anchor = vtxo.chain_anchor().txid;
 	if chain.tx_status(anchor).await?.confirmed_height().is_none() {
 		return Ok(false);
 	}
-	for item in vtxo.transactions() {
+	'chain: for item in vtxo.transactions() {
 		let txid = item.tx.compute_txid();
 		if chain.tx_status(txid).await?.confirmed_height().is_some() {
 			continue;
 		}
 		for input in &item.tx.input {
 			if chain.outpoint_spent_confirmed(input.previous_output).await? {
+				// The chain source does not say which transaction spends the input, so it
+				// may be this one, confirmed since its status was read.
+				if chain.tx_status(txid).await?.confirmed_height().is_some() {
+					continue 'chain;
+				}
 				return Ok(true);
 			}
 		}
