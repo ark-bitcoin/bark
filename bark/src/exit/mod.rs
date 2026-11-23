@@ -143,7 +143,7 @@ use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use bitcoin::{
 	Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness, sighash
 };
@@ -219,28 +219,47 @@ pub(crate) struct ExitInner {
 	exit_vtxos: Vec<ExitVtxo>,
 }
 
+/// The unspent VTXOs of the wallet, sorted by whether they can be exited.
+struct EntireWalletExitVtxos {
+	/// The VTXOs eligible for exit.
+	eligible: Vec<Vtxo<Bare>>,
+	/// The non-standard VTXOs, which are skipped.
+	non_standard: Vec<VtxoId>,
+	/// The VTXOs whose full form could not be retrieved from the database.
+	unretrievable: Vec<VtxoId>,
+}
+
 impl ExitInner {
-	/// Returns the unspent VTXOs eligible for exit and the number of non-standard ones skipped.
-	async fn entire_wallet_exit_vtxos(&self) -> anyhow::Result<(Vec<Vtxo<Bare>>, usize)> {
+	/// Sorts the unspent VTXOs of the wallet by whether they can be exited.
+	async fn entire_wallet_exit_vtxos(&self) -> anyhow::Result<EntireWalletExitVtxos> {
 		let all_vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES).await?;
 
-		// Partition: separate eligible VTXOs from dust
-		let total_vtxos = all_vtxos.len();
-		let mut eligible = Vec::with_capacity(total_vtxos);
+		let mut ret = EntireWalletExitVtxos {
+			eligible: Vec::with_capacity(all_vtxos.len()),
+			non_standard: Vec::new(),
+			unretrievable: Vec::new(),
+		};
 		for v in all_vtxos {
-			// Skip non-standard VTXOs
 			match self.persister.get_full_vtxo(v.id()).await {
 				Ok(Some(full)) => match full.check_standard() {
-					Ok(()) => eligible.push(v.vtxo),
-					Err(e) => warn!("Skipping non-standard VTXO {}: {:#}", v.id(), e),
+					Ok(()) => ret.eligible.push(v.vtxo),
+					Err(e) => {
+						warn!("Skipping non-standard VTXO {}: {:#}", v.id(), e);
+						ret.non_standard.push(v.id());
+					},
 				},
-				Ok(None) => error!("Failed to retrieve full VTXO: {}", v.id()),
-				Err(e) => error!("Failed to retrieve full VTXO {}: {:#}", v.id(), e),
+				Ok(None) => {
+					error!("Failed to retrieve full VTXO: {}", v.id());
+					ret.unretrievable.push(v.id());
+				},
+				Err(e) => {
+					error!("Failed to retrieve full VTXO {}: {:#}", v.id(), e);
+					ret.unretrievable.push(v.id());
+				},
 			}
 		}
 
-		let ineligible = total_vtxos - eligible.len();
-		Ok((eligible, ineligible))
+		Ok(ret)
 	}
 
 	/// Starts exits for the given vtxos.
@@ -599,8 +618,11 @@ impl Exit {
 	}
 
 	/// Returns the VTXOs [Exit::start_exit_for_entire_wallet] would exit.
+	///
+	/// VTXOs whose full form cannot be retrieved from the database are
+	/// left out, while [Exit::start_exit_for_entire_wallet] fails on them.
 	pub async fn entire_wallet_exit_vtxos(&self) -> anyhow::Result<Vec<Vtxo<Bare>>> {
-		Ok(self.inner.read().await.entire_wallet_exit_vtxos().await?.0)
+		Ok(self.inner.read().await.entire_wallet_exit_vtxos().await?.eligible)
 	}
 
 	/// Starts the unilateral exit process for the entire wallet (all eligible VTXOs).
@@ -609,21 +631,27 @@ impl Exit {
 	///
 	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
 	/// doing this.
+	///
+	/// Fails without starting any exit if a VTXO's full form cannot be
+	/// retrieved from the database, so no VTXO is left out unnoticed.
 	pub async fn start_exit_for_entire_wallet(&self) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
-		let (eligible, ineligible) = guard.entire_wallet_exit_vtxos().await?;
+		let vtxos = guard.entire_wallet_exit_vtxos().await?;
 
-		// If everything is dust.
-		if eligible.is_empty() && ineligible > 0 {
+		if !vtxos.unretrievable.is_empty() {
+			bail!("failed to retrieve VTXOs {:?} from the database", vtxos.unretrievable);
+		}
+
+		if vtxos.eligible.is_empty() && !vtxos.non_standard.is_empty() {
 			warn!(
-				"Exit not started: all {} VTXOs are non-standard. To exit and consolidate you \
-				should try refreshing your VTXOs first",
-				ineligible,
+				"Exit not started: all {} VTXOs are non-standard: {:?}. To exit and consolidate \
+				you should try refreshing your VTXOs first",
+				vtxos.non_standard.len(), vtxos.non_standard,
 			);
 			return Ok(());
 		}
 
-		guard.start_exit_for_vtxos(&eligible, false).await
+		guard.start_exit_for_vtxos(&vtxos.eligible, false).await
 	}
 
 	/// Starts the unilateral exit process for the given VTXOs.
