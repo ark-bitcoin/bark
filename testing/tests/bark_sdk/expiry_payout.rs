@@ -609,23 +609,13 @@ async fn expiry_payout_retires_input_of_refused_refresh() {
 #[tokio::test]
 async fn expiry_payout_released_round_recovers_output_after_restart() {
 	let ctx = TestContext::new("bark_sdk/expiry_payout_released_round_recovers_output_after_restart").await;
-	let srv = ctx.captaind("server").no_vtxo_pool().cfg(|cfg| {
-		cfg.expiry_payouts = true;
-		cfg.vtxo_lifetime = BlockDelta::new(288);
-	}).create().await;
-	ctx.fund_captaind(&srv, btc(1)).await;
-	let proxy = PayoutProxy::default();
-	let server = srv.start_proxy_no_mailbox(proxy.clone()).await;
+	let (srv, proxy, server) = round_payout_server(&ctx).await;
 	let mnemonic = bip39::Mnemonic::generate(12).unwrap();
 	let wallet = ctx.bark_sdk("sender", &server).mnemonic(mnemonic.clone()).boarded(sat(200_000))
 		.cfg(|cfg| cfg.daemon_manual_sync = true).create().await;
 	let input = wallet.spendable_vtxos().await.unwrap().remove(0);
 	let round = wallet.refresh_vtxos_delegated(vec![input.id()]).await.unwrap().unwrap();
-	let mut finished = srv.subscribe_log::<server_log::RoundFinished>();
-	srv.trigger_round().await;
-	finished.recv().wait(Duration::from_secs(60)).await.expect("round completed");
-	let tip = ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-	srv.wait_for_sync_height(tip).await;
+	confirm_refresh_round(&ctx, &srv).await;
 	proxy.hold_registration.store(true, Ordering::SeqCst);
 	tokio::time::timeout(Duration::from_secs(60), async {
 		let sync = wallet.sync_pending_rounds();
@@ -669,6 +659,14 @@ async fn round_payout_server(ctx: &TestContext) -> (Arc<Captaind>, PayoutProxy, 
 	(srv, proxy, server)
 }
 
+async fn confirm_refresh_round(ctx: &TestContext, srv: &Captaind) {
+	let mut finished = srv.subscribe_log::<server_log::RoundFinished>();
+	srv.trigger_round().await;
+	finished.recv().wait(Duration::from_secs(60)).await.expect("round completed");
+	let tip = ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	srv.wait_for_sync_height(tip).await;
+}
+
 /// A server that took the forfeits of a delegated refresh and withholds the
 /// unlock preimage could claim the inputs with them. Reporting an input paid
 /// out and the participation cancelled must not make the wallet drop the
@@ -684,11 +682,7 @@ async fn expiry_payout_keeps_forfeited_round_when_server_withholds_preimage() {
 	let input = wallet.spendable_vtxos().await.unwrap().remove(0);
 	let round_id = wallet.refresh_vtxos_delegated(vec![input.id()]).await.unwrap()
 		.expect("refresh joined").id();
-	let mut finished = srv.subscribe_log::<server_log::RoundFinished>();
-	srv.trigger_round().await;
-	finished.recv().wait(Duration::from_secs(60)).await.expect("round completed");
-	let tip = ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-	srv.wait_for_sync_height(tip).await;
+	confirm_refresh_round(&ctx, &srv).await;
 
 	// The forfeits go out and the reply is lost.
 	proxy.withhold_forfeit_reply.store(true, Ordering::SeqCst);
@@ -751,11 +745,7 @@ async fn expiry_payout_cancels_issued_refresh_before_forfeits() {
 	let input = wallet.spendable_vtxos().await.unwrap().remove(0);
 	let round_id = wallet.refresh_vtxos_delegated(vec![input.id()]).await.unwrap()
 		.expect("refresh joined").id();
-	let mut finished = srv.subscribe_log::<server_log::RoundFinished>();
-	srv.trigger_round().await;
-	finished.recv().wait(Duration::from_secs(60)).await.expect("round completed");
-	let tip = ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-	srv.wait_for_sync_height(tip).await;
+	confirm_refresh_round(&ctx, &srv).await;
 
 	// The wallet stores the issued round, but its forfeits do not go out.
 	proxy.fail_forfeit_nonces.store(true, Ordering::SeqCst);
