@@ -220,7 +220,7 @@ impl Wallet {
 	}
 
 	/// Marks VTXOs as [VtxoState::Exited]. Called from the unilateral exit progression once
-	/// every exit transaction has been broadcast — at that point the VTXO is effectively gone
+	/// every exit transaction has confirmed — at that point the VTXO is effectively gone
 	/// from the protocol's view, but it shouldn't be confused with a forfeited VTXO.
 	///
 	/// This operation is idempotent: VTXOs already in [VtxoState::Exited] will remain exited

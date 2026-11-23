@@ -807,8 +807,8 @@ impl Exit {
 	}
 
 	/// Maps the current exit state onto the VTXO and movement bookkeeping:
-	/// - mark the VTXO `Exited` once every exit transaction has been broadcast (i.e. past
-	///   `Start`, with `Processing` having all txs broadcast or beyond),
+	/// - mark the VTXO `Exited` once every exit transaction has confirmed (i.e. from
+	///   `AwaitingDelta` onward),
 	/// - finish the movement as `Successful` when we reach `Claimed`,
 	/// - finish the movement as `Canceled` when we detect the VTXO was already spent.
 	///
