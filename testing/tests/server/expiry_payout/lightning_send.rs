@@ -36,7 +36,7 @@ use crate::lightning::{htlc_send_vtxo_ids, is_preimage_recorded, wait_for_hold_i
 use super::{
 	assert_paid, bind_outputs, bind_to_wallets, birth_owner, current_share, decide_during, fund_watchman,
 	full_vtxos, lightning_payout_server, mine, mine_past, outputs_to, payout_output, payout_shares, proposal,
-	revoke, send_request, wait_for_query_lock, wait_payout, wait_synced,
+	receive_invoice, revoke, send_request, wait_for_query_lock, wait_payout, wait_synced,
 };
 
 /// The status of the latest payment attempt for `hash`.
@@ -734,11 +734,7 @@ async fn expiry_payout_unrelated_preimage_keeps_failed_send() {
 	let key = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 	let mailbox = MailboxIdentifier::from_pubkey(key.public_key());
 	let mut rpc = srv.get_public_rpc().await;
-	let second = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
-		payment_hash: hash.to_vec(), amount_sat: 100_000, min_cltv_delta: 6,
-		mailbox_id: Some(mailbox.serialize()), description: None, expiry_secs: None,
-		claim_pubkey: Some(key.public_key().serialize().to_vec()),
-	}).await.unwrap().into_inner().bolt11;
+	let second = receive_invoice(&mut rpc, hash, sat(100_000), 6, mailbox, &key).await;
 	let paying = {
 		let payer = payer.clone();
 		tokio::spawn(async move { payer.try_pay_bolt11(second).await })

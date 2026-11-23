@@ -6,3 +6,6 @@
   Before upgrading a payout server, finish pending invoice-bound transfers
   and back up its database. See `docs/expiry-payouts.md`.
   [#21](https://github.com/SatoshiPortal/scuttle/pull/21)
+- Pay the full expiry amount when two mailbox keys share a Taproot address
+  Each payout address receives its combined amount in a single output.
+  [#21](https://github.com/SatoshiPortal/scuttle/pull/21)

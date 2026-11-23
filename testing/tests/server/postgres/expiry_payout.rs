@@ -129,6 +129,31 @@ async fn expiry_payout_receipt_lookup_skips_unrelated_history() {
 	assert!(rows_read < 100, "one receipt scanned {rows_read} payout input rows");
 }
 
+#[tokio::test]
+async fn expiry_payout_combines_mailboxes_with_the_same_payout_script() {
+	let (_ctx, db) = payout_db("expiry_payout_combines_mailboxes_with_the_same_payout_script").await;
+	let mailbox = test_server_mailbox_key().public_key();
+	let script_pubkey = ark::expiry_payout::payout_script(mailbox);
+	db.write(async |t| {
+		let id: i64 = t.query_one("INSERT INTO expiry_payout(expiry_height) VALUES(0) RETURNING id", &[]).await?.get(0);
+		for (vtxo, key, sats) in [
+			(&VTXO_VECTORS.board_vtxo, mailbox, 3_000_i64),
+			(&VTXO_VECTORS.round2_vtxo, mailbox.negate(&ark::SECP), 4_000),
+		] {
+			let vtxo = ServerVtxo::from(vtxo.clone());
+			insert_raw_vtxo(t, &vtxo, SpendState::Spent).await?;
+			let vtxo_id = vtxo.id().to_string();
+			t.execute("INSERT INTO expiry_payout_input(expiry_payout_id, vtxo_id) VALUES($1,$2)", &[&id, &vtxo_id]).await?;
+			t.execute("INSERT INTO expiry_payout_vtxo(expiry_payout_id,vtxo_id,owner_mailbox,disposition,gross_sat,fee_sat,payout_sat,replannable)
+				VALUES($1,$2,$3,'owner',$4,0,$4,FALSE)", &[&id, &vtxo_id, &key.to_string(), &sats]).await?;
+		}
+		let payouts = t.pending_expiry_payouts().await?;
+		assert_eq!(payouts.len(), 1);
+		assert_eq!(payouts[0].payouts, [bitcoin::TxOut { script_pubkey, value: bitcoin::Amount::from_sat(7_000) }]);
+		Ok(())
+	}).await.unwrap();
+}
+
 /// The writer that marks the sources of a successful payment spent waits
 /// behind an expiry decision on a source, and then leaves the decided
 /// source alone: one VTXO has one spend.

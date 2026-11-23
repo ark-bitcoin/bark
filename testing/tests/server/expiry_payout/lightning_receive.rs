@@ -33,7 +33,7 @@ use crate::lightning::{lightning_subscription_status, wait_for_subscription_stat
 use super::{
 	assert_paid, bind_outputs, birth_owner, confirm_exit_path, current_share, decide_during, fund_watchman,
 	grant_closures, htlc_send, lightning_payout_server, mine, mine_past, miner_fee, onchain_spend,
-	operator_script, outputs_to, payout_shares, proposal, receive_claim_keypair, revoke, send_request,
+	operator_script, outputs_to, payout_shares, proposal, receive_claim_keypair, receive_invoice, revoke, send_request,
 	wait_payout, wait_synced,
 };
 
@@ -339,12 +339,8 @@ async fn expiry_payout_decided_grant_claim_stores_no_preimage() {
 	let receiver = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 	let mailbox = MailboxIdentifier::from_pubkey(receiver.public_key());
 	let mut rpc = srv.get_public_rpc().await;
-	let invoice = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
-		payment_hash: hash.to_vec(), amount_sat: 100_000,
-		min_cltv_delta: srv.config().max_user_invoice_cltv_delta.into(),
-		mailbox_id: Some(mailbox.serialize()), description: None, expiry_secs: None,
-		claim_pubkey: Some(receiver.public_key().serialize().to_vec()),
-	}).await.unwrap().into_inner().bolt11;
+	let delta = srv.config().max_user_invoice_cltv_delta.into();
+	let invoice = receive_invoice(&mut rpc, hash, sat(100_000), delta, mailbox, &receiver).await;
 	let payer = lightning.external;
 	let payment = tokio::spawn(async move { payer.try_pay_bolt11(invoice).await });
 	srv.wait_for_lightning_receive_accepted(hash).await;
@@ -533,12 +529,8 @@ async fn expiry_payout_failed_intra_ark_payment_takes_no_grants() {
 	let hash = Preimage::random().compute_payment_hash();
 	let receiver = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 	let mut rpc = srv.get_public_rpc().await;
-	let invoice = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
-		payment_hash: hash.to_vec(), amount_sat: 90_000, min_cltv_delta: 58,
-		mailbox_id: Some(MailboxIdentifier::from_pubkey(receiver.public_key()).serialize()),
-		description: None, expiry_secs: None,
-		claim_pubkey: Some(receiver.public_key().serialize().to_vec()),
-	}).await.unwrap().into_inner().bolt11;
+	let mailbox = MailboxIdentifier::from_pubkey(receiver.public_key());
+	let invoice = receive_invoice(&mut rpc, hash, sat(90_000), 58, mailbox, &receiver).await;
 	lightning.sync().await;
 	let payment = tokio::spawn({
 		let invoice = invoice.clone();
@@ -594,12 +586,8 @@ async fn expiry_payout_sweeps_root_of_a_cancelled_receive() {
 	let receiver = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 	let mailbox = MailboxIdentifier::from_pubkey(receiver.public_key());
 	let mut rpc = srv.get_public_rpc().await;
-	let invoice = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
-		payment_hash: hash.to_vec(), amount_sat: 100_000,
-		min_cltv_delta: srv.config().max_user_invoice_cltv_delta.into(),
-		mailbox_id: Some(mailbox.serialize()), description: None, expiry_secs: None,
-		claim_pubkey: Some(receiver.public_key().serialize().to_vec()),
-	}).await.unwrap().into_inner().bolt11;
+	let delta = srv.config().max_user_invoice_cltv_delta.into();
+	let invoice = receive_invoice(&mut rpc, hash, sat(100_000), delta, mailbox, &receiver).await;
 	let pay = tokio::spawn({
 		let (payer, invoice) = (payer.clone(), invoice.clone());
 		async move { payer.try_pay_bolt11(invoice).await }
@@ -686,13 +674,9 @@ async fn expiry_payout_pays_unclaimed_forward_to_provider() {
 	let preimage = Preimage::random();
 	let hash = preimage.compute_payment_hash();
 	let mut rpc = srv.get_public_rpc().await;
-	let invoice = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
-		payment_hash: hash.to_vec(), amount_sat: 100_000,
-		min_cltv_delta: srv.config().max_user_invoice_cltv_delta.into(),
-		mailbox_id: Some(MailboxIdentifier::from_pubkey(provider.public_key()).serialize()),
-		description: None, expiry_secs: None,
-		claim_pubkey: Some(grant_key.public_key().serialize().to_vec()),
-	}).await.unwrap().into_inner().bolt11;
+	let mailbox = MailboxIdentifier::from_pubkey(provider.public_key());
+	let delta = srv.config().max_user_invoice_cltv_delta.into();
+	let invoice = receive_invoice(&mut rpc, hash, sat(100_000), delta, mailbox, &grant_key).await;
 	let pay = tokio::spawn({
 		let payer = payer.clone();
 		async move { payer.try_pay_bolt11(invoice).await }

@@ -207,11 +207,7 @@ impl Watchman {
 			};
 			*cache.witness_mut(index).context("missing payout witness slot")? = witness;
 		}
-		let input_amount = prevouts.iter().try_fold(Amount::ZERO, |sum, out|
-			sum.checked_add(out.value).context("payout input overflow"))?;
-		let output_amount = tx.output.iter().try_fold(Amount::ZERO, |sum, out|
-			sum.checked_add(out.value).context("payout output overflow"))?;
-		let fee = input_amount.checked_sub(output_amount).context("payout overspends inputs")?;
+		let fee = psbt.fee().context("calculating expiry payout fee")?;
 		ensure!(fee >= target.fee_wu(tx.weight()).context("payout fee overflow")?,
 			"payout fee falls below target");
 		Ok((tx, fee))
