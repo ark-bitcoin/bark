@@ -37,7 +37,7 @@ use crate::mailbox::{MAILBOX_PROCESSING_LOCK_KEY, MAILBOX_PROCESSING_LOCK_TIMEOU
 use crate::movement::MovementStatus;
 use crate::movement::update::MovementUpdate;
 use crate::round::RoundParticipation;
-use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
 use crate::vtxo::selection::InputSelection;
 
 /// The state of the expiry payout of a VTXO, as the server reports it.
@@ -371,23 +371,25 @@ impl Wallet {
 		if vtxo_ids.is_empty() || !self.expiry_payouts().await {
 			return Ok(false);
 		}
+		self.apply_expiry_payouts(self.inner.db.get_wallet_vtxos(vtxo_ids).await?).await
+	}
 
-		let mut keys = Vec::with_capacity(vtxo_ids.len());
-		for id in vtxo_ids {
-			let vtxo = self.get_vtxo_by_id(*id).await?;
-			keys.push((*id, self.get_vtxo_key(&vtxo).await?));
+	async fn apply_expiry_payouts(&self, vtxos: Vec<WalletVtxo>) -> anyhow::Result<bool> {
+		let mut keys = Vec::with_capacity(vtxos.len());
+		for vtxo in vtxos {
+			keys.push((vtxo.id(), self.get_vtxo_key(&vtxo).await?));
 		}
 		let queries = keys.iter().map(|(id, key)| (*id, key)).collect::<Vec<_>>();
 		let (statuses, _) = self.fetch_server_vtxo_statuses(&queries).await?;
 
 		let mut decided = false;
-		for id in vtxo_ids {
-			let Some(status) = statuses.get(id) else { continue };
+		for (id, _) in keys {
+			let Some(status) = statuses.get(&id) else { continue };
 			let Some(payout) = status.payout else { continue };
 			if status.own_mailbox {
-				self.inner.db.set_vtxo_expiry_payout_state(*id, payout).await?;
+				self.inner.db.set_vtxo_expiry_payout_state(id, payout).await?;
 			} else {
-				self.mark_vtxos_as_spent([*id]).await?;
+				self.mark_vtxos_as_spent([id]).await?;
 			}
 			decided = true;
 		}
@@ -400,12 +402,7 @@ impl Wallet {
 		if !self.check_expiry_payout(vtxo_ids).await? {
 			return Ok(false);
 		}
-		for id in vtxo_ids {
-			if self.get_vtxo_by_id(*id).await?.state.kind() != VtxoStateKind::Spent {
-				return Ok(false);
-			}
-		}
-		Ok(true)
+		Ok(self.inner.db.get_wallet_vtxos(vtxo_ids).await?.iter().all(|v| v.state.kind() == VtxoStateKind::Spent))
 	}
 
 	/// [Wallet::check_expiry_payout] for VTXOs that the wallet just stored as
@@ -429,7 +426,7 @@ impl Wallet {
 		}
 
 		let tip = self.chain().tip().await?;
-		let mut vtxo_ids = Vec::new();
+		let mut candidates = Vec::new();
 		for vtxo in self.inner.db.get_all_vtxos().await? {
 			if vtxo.state == (VtxoState::Locked { holder: Some(VtxoLockHolder::RoundPayoutCheck) }) {
 				if let Err(e) = self.release_round_output(&vtxo.vtxo).await {
@@ -440,10 +437,12 @@ impl Wallet {
 			let held = vtxo.expiry_height() <= tip
 				&& VtxoStateKind::UNSPENT_STATES.contains(&vtxo.state.kind());
 			if held || vtxo.expiry_payout_state == Some(ExpiryPayoutState::Pending) {
-				vtxo_ids.push(vtxo.id());
+				candidates.push(vtxo);
 			}
 		}
-		self.check_expiry_payout(&vtxo_ids).await?;
+		if !candidates.is_empty() && self.expiry_payouts().await {
+			self.apply_expiry_payouts(candidates).await?;
+		}
 		Ok(())
 	}
 
