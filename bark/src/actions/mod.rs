@@ -7,6 +7,7 @@
 //! This module defines the generic vocabulary; per-kind machinery (state
 //! machines, transition functions) lives in submodules.
 
+pub mod arkoor_receive;
 pub mod arkoor_send;
 pub mod board;
 pub mod lightning;
