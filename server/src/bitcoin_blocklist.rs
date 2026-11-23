@@ -121,8 +121,12 @@ impl BitcoinAddressBlocklist {
 	) -> anyhow::Result<Self> {
 		let path = path.as_ref().to_path_buf();
 		// Load the file a first time to get going
-		let list = parse_bitcoin_address_blocklist::<HashSet<_>>(network, &path).await
+		let parsed = parse_bitcoin_address_blocklist::<HashSet<_>>(network, &path).await
 			.context("error reading list")?;
+		if let Some(e) = parsed.invalid_lines_error(&path) {
+			error!("Bitcoin address blocklist: {:#}", e);
+		}
+		let list = parsed.addresses;
 
 		Ok(BitcoinAddressBlocklist {
 			path, network, bitcoind,
@@ -131,8 +135,13 @@ impl BitcoinAddressBlocklist {
 	}
 
 	async fn try_reload(&self) -> anyhow::Result<()> {
-		let mut new_list = parse_bitcoin_address_blocklist::<Vec<_>>(self.network, &self.path).await
+		let parsed = parse_bitcoin_address_blocklist::<Vec<_>>(self.network, &self.path).await
 			.context("error reading list")?;
+		// This only adds addresses, so a bad line can't unblock anything.
+		if let Some(e) = parsed.invalid_lines_error(&self.path) {
+			warn!("Bitcoin address blocklist: {:#}", e);
+		}
+		let mut new_list = parsed.addresses;
 
 		// We try to minimize the times and time we need to take the write lock.
 		// We will first take the read lock to see if we need to add any items.
@@ -152,10 +161,15 @@ impl BitcoinAddressBlocklist {
 
 	/// Re-read the file and replace the list, so removals apply too
 	///
-	/// Refuses to replace a non-empty list with an empty one.
+	/// Refuses a file with invalid lines, or an empty one to replace a non-empty
+	/// list: a damaged line would otherwise unblock its address.
 	pub async fn reload(&self) -> anyhow::Result<BlocklistReload> {
-		let new_list = parse_bitcoin_address_blocklist::<HashSet<_>>(self.network, &self.path).await
+		let parsed = parse_bitcoin_address_blocklist::<HashSet<_>>(self.network, &self.path).await
 			.context("error reading list")?;
+		if let Some(e) = parsed.invalid_lines_error(&self.path) {
+			return Err(e.context("keeping the current list"));
+		}
+		let new_list = parsed.addresses;
 
 		let mut list = self.list.write().await;
 		if new_list.is_empty() && !list.is_empty() {
@@ -277,13 +291,38 @@ impl BitcoinAddressBlocklist {
 	}
 }
 
+/// A parsed blocklist file
+struct ParsedBlocklist<T> {
+	/// The scriptPubkeys of the valid addresses
+	addresses: T,
+	/// The line numbers, from 1, that hold no valid address for the network
+	invalid_lines: Vec<usize>,
+}
+
+impl<T> ParsedBlocklist<T> {
+	/// An error naming the invalid lines, if there are any
+	fn invalid_lines_error(&self, path: &Path) -> Option<anyhow::Error> {
+		const MAX_SHOWN: usize = 10;
+		if self.invalid_lines.is_empty() {
+			return None;
+		}
+		let shown = self.invalid_lines.iter().take(MAX_SHOWN)
+			.map(|l| l.to_string())
+			.collect::<Vec<_>>();
+		Some(anyhow!("{} has {} invalid line(s): {}{}",
+			path.display(), self.invalid_lines.len(), shown.join(", "),
+			if self.invalid_lines.len() > MAX_SHOWN { ", ..." } else { "" },
+		))
+	}
+}
+
 /// Parse a bitcoin address blocklist file
 ///
-/// One address per line, returned as a vector of scriptPubkeys.
+/// One address per line. Blank lines and anything after a `#` are ignored.
 async fn parse_bitcoin_address_blocklist<T>(
 	network: Network,
 	path: &Path,
-) -> anyhow::Result<T>
+) -> anyhow::Result<ParsedBlocklist<T>>
 where
 	T: Default + Extend<ScriptBuf>,
 {
@@ -294,31 +333,30 @@ where
 
 	let reader = tokio::io::BufReader::new(file);
 	let mut lines = LinesStream::new(reader.lines()).enumerate();
-	let mut ret = T::default();
-	let mut nb_lines = 0;
-	let mut nb_success = 0;
+	let mut addresses = T::default();
+	let mut invalid_lines = Vec::new();
 	while let Some((idx, res)) = lines.next().await {
 		let line = res?;
-		match bitcoin::Address::from_str(&line)
-			.with_context(|| format!("error parsing blocklist address on line {}", idx))
+		let line_nb = idx + 1;
+		let line = line.split('#').next().unwrap_or_default().trim();
+		if line.is_empty() {
+			continue;
+		}
+		match bitcoin::Address::from_str(line)
+			.with_context(|| format!("error parsing blocklist address on line {}", line_nb))
 			.and_then(|addr| addr.require_network(network)
-				.with_context(|| format!("blocklist address on line {} not valid network", idx))
+				.with_context(|| format!("blocklist address on line {} not valid network", line_nb))
 			)
 		{
-			Ok(addr) => {
-				ret.extend([addr.script_pubkey()]);
-				nb_success += 1;
+			Ok(addr) => addresses.extend([addr.script_pubkey()]),
+			Err(e) => {
+				debug!("Error parsing blocklist address '{}': {:#}", line, e);
+				invalid_lines.push(line_nb);
 			},
-			Err(e) => debug!("Error parsing blocklist address '{}': {:#}", line, e),
 		}
-		nb_lines += 1;
 	}
 
-	if nb_lines > 5 && nb_success == 0 {
-		error!("blocklist: non-empty blocklist without any valid address");
-	}
-
-	Ok(ret)
+	Ok(ParsedBlocklist { addresses, invalid_lines })
 }
 
 #[cfg(test)]
