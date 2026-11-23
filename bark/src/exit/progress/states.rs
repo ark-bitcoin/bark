@@ -29,12 +29,12 @@ impl ExitStateProgress for ExitState {
 			return Ok(self);
 		}
 
-		// While the exit is still pre-broadcast another consumer (round forfeit, send, etc.)
+		// While the exit is not yet confirmed another consumer (round forfeit, send, etc.)
 		// can still take the VTXO out from under us. If we notice that's happened, bail to
 		// the terminal `VtxoAlreadySpent` state so the caller can cancel the movement.
-		// Once all exit txs are in mempool the underlying outpoint is committed to the
-		// exit chain and a competing offchain spend would either lose in mempool or be
-		// refused server-side, so we stop checking.
+		// Once all exit txs are confirmed the underlying outpoint is committed to the
+		// exit chain and a competing offchain spend would be refused server-side, so we
+		// stop checking.
 		if !self.warrants_exited_vtxo() && ctx.vtxo.state.kind() == VtxoStateKind::Spent {
 			warn!("VTXO {} was spent before its exit chain was fully broadcast, aborting exit",
 				ctx.vtxo.id());
