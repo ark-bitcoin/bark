@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 use super::{LockGuard, LockManager, PidLockError};
-use super::memory::MemoryLockManager;
+use super::internal_memory::InternalMemoryLockManager;
 
 /// File name used for the datadir-level PID lock.
 pub const LOCK_FILE: &str = "LOCK";
@@ -52,7 +52,7 @@ pub struct FlockPidLockManager {
 	// drop of the manager — at which point the OS releases the lock.
 	_pid_file: File,
 	datadir: PathBuf,
-	in_process: MemoryLockManager,
+	in_process: InternalMemoryLockManager,
 }
 
 impl FlockPidLockManager {
@@ -106,7 +106,7 @@ impl FlockPidLockManager {
 		Ok(Self {
 			_pid_file: file,
 			datadir,
-			in_process: MemoryLockManager::new(),
+			in_process: InternalMemoryLockManager::new(),
 		})
 	}
 
@@ -207,5 +207,19 @@ mod test {
 		assert!(g2.is_some(), "different key should be free");
 
 		let _ = fs::remove_dir_all(&dir);
+	}
+
+	#[tokio::test]
+	async fn distinct_datadirs_dont_share_keys() {
+		let dir_a = tmp_dir();
+		let dir_b = tmp_dir();
+		let a = FlockPidLockManager::new(&dir_a).unwrap();
+		let b = FlockPidLockManager::new(&dir_b).unwrap();
+
+		let _g = a.try_lock("bark.distinct.datadirs").await.unwrap();
+		assert!(b.try_lock("bark.distinct.datadirs").await.is_some());
+
+		let _ = fs::remove_dir_all(&dir_a);
+		let _ = fs::remove_dir_all(&dir_b);
 	}
 }
