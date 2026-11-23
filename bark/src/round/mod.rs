@@ -488,7 +488,7 @@ impl RoundState {
 		} else {
 			// Shrink against the inputs as they are now: more may have gone.
 			// Read-only: the replacement locks at its own attempt start.
-			let holder = self.movement_id.map(VtxoLockHolder::from);
+			let holder = self.lock_holder();
 			let lost = wallet.unavailable_vtxos(&self.participation.inputs, holder).await?;
 			let shrunk = match self.try_shrink_participation(wallet, &lost).await? {
 				Some(p) => p,
@@ -529,7 +529,7 @@ impl RoundState {
 	///
 	/// Returns false when nothing usable remains.
 	async fn lock_inputs_and_shrink(&mut self, wallet: &Wallet) -> anyhow::Result<bool> {
-		let holder = self.movement_id.map(VtxoLockHolder::from);
+		let holder = self.lock_holder();
 		let unavailable = wallet.lock_available_vtxos(
 			&self.participation.inputs, holder.clone(),
 		).await?;
@@ -718,7 +718,7 @@ impl RoundState {
 				// A pending participation does not lock its inputs, so another
 				// operation can have taken one while it waited. Read-only: it
 				// only claims what is left once its attempt starts.
-				let holder = self.movement_id.map(VtxoLockHolder::from);
+				let holder = self.lock_holder();
 				let lost = wallet.unavailable_vtxos(&self.participation.inputs, holder).await?;
 				if !lost.is_empty() {
 					match self.try_shrink_participation(wallet, &lost).await? {
@@ -760,7 +760,7 @@ impl RoundState {
 				// Only record the decision here; the next sync carries it out.
 				// Read-only: a pending participation must not claim an input
 				// an interactive registration can still take.
-				let holder = self.movement_id.map(VtxoLockHolder::from);
+				let holder = self.lock_holder();
 				let lost = wallet.unavailable_vtxos(&self.participation.inputs, holder).await?;
 				if !lost.is_empty() && lost.len() < self.participation.inputs.len() {
 					info!("Delegated round participation lost {} of its {} input(s); \
@@ -792,7 +792,7 @@ impl RoundState {
 						//  auto-exit.
 						info!("Server reports round participation not found (no forfeits sent)");
 						wallet.unlock_vtxos(
-							&self.participation.inputs, self.movement_id.map(|m| m.into()),
+							&self.participation.inputs, self.lock_holder(),
 						).await.context("failed to unlock delegated round inputs")?;
 						self.flow = RoundFlowState::Failed {
 							error: "server reports round participation not found".into(),
@@ -892,6 +892,7 @@ impl RoundState {
 	}
 
 	/// The holder under which this round locks its inputs.
+	#[allow(deprecated)]
 	pub fn lock_holder(&self) -> Option<VtxoLockHolder> {
 		self.movement_id.map(|id| VtxoLockHolder::Movement { id })
 	}
@@ -1604,7 +1605,9 @@ async fn progress_delegated(
 	// is forced: a recovered wallet can hold the inputs in any state, even
 	// imported as Spent.
 	let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
-	wallet.inner.db.steal_lock(&input_ids, movement_id.map(|m| m.into())).await
+	#[allow(deprecated)]
+	let holder = movement_id.map(|id| VtxoLockHolder::Movement { id });
+	wallet.inner.db.steal_lock(&input_ids, holder).await
 		.context("failed to lock inputs of issued delegated round")?;
 
 	if !confirmed {
@@ -1905,10 +1908,12 @@ async fn persist_round_failure(
 	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
 	debug!("Attempting to persist the failure of a round with the movement ID {:?}", movement_id);
+	#[allow(deprecated)]
+	let holder = movement_id.map(|id| VtxoLockHolder::Movement { id });
 	// Inputs the round never locked, or that another operation holds by now,
 	// are skipped: `unlock_vtxos` only releases what this holder locked.
 	let unlock_result = wallet.unlock_vtxos(
-		&participation.inputs, movement_id.map(|m| m.into()),
+		&participation.inputs, holder,
 	).await;
 	let finish_result = if let Some(movement_id) = movement_id {
 		wallet.inner.movements.finish_movement(movement_id, MovementStatus::Failed).await
@@ -2419,8 +2424,10 @@ impl Wallet {
 		};
 		let movement_id = movement.as_ref().map(|m| m.id());
 
+		#[allow(deprecated)]
+		let holder = movement_id.map(|id| VtxoLockHolder::Movement { id });
 		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
-		self.lock_vtxos(&input_ids, movement_id.map(|m| m.into())).await
+		self.lock_vtxos(&input_ids, holder.clone()).await
 			.context("error locking input VTXOs")?;
 
 		match self.join_attempt_interactive_inner(participation, attempt, movement_id).await {
@@ -2431,7 +2438,7 @@ impl Wallet {
 				Ok(state)
 			},
 			Err(e) => {
-				self.unlock_vtxos(&input_ids, movement_id.map(|m| m.into())).await
+				self.unlock_vtxos(&input_ids, holder).await
 					.context("error unlocking input VTXOs")?;
 				if let Some(mut m) = movement {
 					m.fail().await.context("error marking movement as failed")?;

@@ -237,6 +237,7 @@ pub enum VtxoStateInfo {
 }
 
 impl<'a> From<&'a VtxoState> for VtxoStateInfo {
+	#[allow(deprecated)]
 	fn from(state: &'a VtxoState) -> Self {
 		match state {
 			VtxoState::Spendable => VtxoStateInfo::Spendable,

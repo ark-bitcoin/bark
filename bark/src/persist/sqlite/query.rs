@@ -1273,6 +1273,7 @@ mod test {
 	/// no-ops, and another holder's lock is never touched. A `None` holder
 	/// is matched exactly like any other value.
 	#[test]
+	#[allow(deprecated)]
 	fn test_release_vtxo_lock() {
 		let (_, mut conn) = in_memory_db();
 		MigrationContext{}.do_all_migrations(&mut conn).unwrap();

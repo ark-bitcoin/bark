@@ -924,6 +924,7 @@ async fn maintenance_refresh_delegated_drops_server_rejected_vtxo() {
 /// mempool, a sync locks the inputs under the refresh movement, and the round
 /// subsystem reports them as its pending inputs. When the round confirms the
 #[tokio::test]
+#[allow(deprecated)]
 async fn delegated_round_locks_inputs_once_issued() {
 	let ctx = TestContext::new("bark_sdk/delegated_round_locks_inputs_once_issued").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;

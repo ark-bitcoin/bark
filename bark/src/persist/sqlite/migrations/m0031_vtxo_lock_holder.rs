@@ -17,6 +17,7 @@ enum LegacyVtxoState {
 }
 
 impl From<LegacyVtxoState> for VtxoState {
+	#[allow(deprecated)]
 	fn from(state: LegacyVtxoState) -> Self {
 		match state {
 			LegacyVtxoState::Spendable => VtxoState::Spendable,

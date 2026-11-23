@@ -32,7 +32,7 @@ use crate::persist::models::{SerdeRoundState, StoredExit, StoredRoundState, Unlo
 use crate::lock_manager::LockManager;
 use crate::lock_manager::memory::MemoryLockManager;
 use crate::round::{RoundFlowState, RoundParticipation, RoundState};
-use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
 use crate::WalletProperties;
 
 // ---------------------------------------------------------------------------
@@ -499,12 +499,13 @@ pub async fn test_vtxo_state_transition_rejected(db: &impl BarkPersister) {
 
 /// Transitioning within the same `state_kind` must still take effect:
 /// attaching a holder to a `Locked { holder: None }` row is a real state change.
+#[allow(deprecated)]
 pub async fn test_vtxo_state_transition_holder_upgrade(db: &impl BarkPersister) {
 	let vtxo = &VTXO_VECTORS.arkoor3_vtxo;
 	db.store_vtxos(&[(vtxo, &VtxoState::Locked { holder: None })]).await.expect("store_vtxos");
 
 	let target = VtxoState::Locked {
-		holder: Some(MovementId::new(42).into()),
+		holder: Some(VtxoLockHolder::Movement { id: MovementId::new(42) }),
 	};
 	let updated = db.update_vtxo_state_checked(vtxo.id(), target.clone(), &[VtxoStateKind::Locked])
 		.await.expect("holder upgrade");
@@ -547,6 +548,7 @@ pub async fn test_store_vtxos_idempotent(db: &impl BarkPersister) {
 		"a repeated store must not insert a second row");
 }
 
+#[allow(deprecated)]
 pub async fn test_steal_lock_to_spent(db: &impl BarkPersister) {
 	let spendable = &VTXO_VECTORS.round1_vtxo;
 	let locked = &VTXO_VECTORS.round2_vtxo;
@@ -555,7 +557,7 @@ pub async fn test_steal_lock_to_spent(db: &impl BarkPersister) {
 
 	db.store_vtxos(&[
 		(spendable, &VtxoState::Spendable),
-		(locked, &VtxoState::Locked { holder: Some(MovementId::new(1).into()) }),
+		(locked, &VtxoState::Locked { holder: Some(VtxoLockHolder::Movement { id: MovementId::new(1) }) }),
 		(already_spent, &VtxoState::Spent),
 		(exited, &VtxoState::Exited),
 	]).await.expect("store_vtxos");
@@ -580,6 +582,7 @@ pub async fn test_steal_lock_to_spent(db: &impl BarkPersister) {
 		"steal_lock_to_spent errors on an unknown id");
 }
 
+#[allow(deprecated)]
 pub async fn test_steal_lock(db: &impl BarkPersister) {
 	let spendable = &VTXO_VECTORS.round1_vtxo;
 	let locked = &VTXO_VECTORS.round2_vtxo;
@@ -588,12 +591,12 @@ pub async fn test_steal_lock(db: &impl BarkPersister) {
 
 	db.store_vtxos(&[
 		(spendable, &VtxoState::Spendable),
-		(locked, &VtxoState::Locked { holder: Some(MovementId::new(1).into()) }),
+		(locked, &VtxoState::Locked { holder: Some(VtxoLockHolder::Movement { id: MovementId::new(1) }) }),
 		(already_spent, &VtxoState::Spent),
 		(exited, &VtxoState::Exited),
 	]).await.expect("store_vtxos");
 
-	let holder = Some(MovementId::new(42).into());
+	let holder = Some(VtxoLockHolder::Movement { id: MovementId::new(42) });
 	db.steal_lock(&[spendable.id(), locked.id(), already_spent.id(), exited.id()], holder.clone()).await
 		.expect("steal_lock");
 

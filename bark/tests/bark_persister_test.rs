@@ -93,6 +93,7 @@ impl BarkPersister for Dummy {
 		}]))
 	}
 
+	#[allow(deprecated)]
 	async fn get_vtxos_by_state(&self, _state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::deserialize(&[])?,

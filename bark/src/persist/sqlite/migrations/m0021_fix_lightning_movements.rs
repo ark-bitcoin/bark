@@ -19,6 +19,7 @@ impl Migration for Migration0021 {
 
 	fn to_version(&self) -> i64 { 21 }
 
+	#[allow(deprecated)]
 	fn do_migration(&self, conn: &Transaction) -> anyhow::Result<()> {
 		// Mark HTLC VTXOs which are locked by a finished movement as spent.
 		//
