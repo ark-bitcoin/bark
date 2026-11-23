@@ -973,7 +973,7 @@ impl Server {
 
 		// Deduct the fees from the HTLC VTXOs. An intra-Ark payment has an
 		// open payment attempt on this receive.
-		let intra_ark = self.db.read(async |t|
+		let intra_ark = self.config.fees.intra_ark.is_some() && self.db.read(async |t|
 			t.get_open_lightning_payment_attempt_by_subscription_id(sub.id).await
 		).await?.is_some();
 		let received_amount = sub.amount();

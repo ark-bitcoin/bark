@@ -641,14 +641,14 @@ async fn prepare_lightning_receive_htlcs(
 		let fee = |intra_ark: bool| server_received_amount
 			.and_then(|a| ark_info.fees.lightning_receive_fees(intra_ark).calculate(a));
 		match (server_received_amount, fee(false), fee(true)) {
-			(Some(amount), Some(fee), _) | (Some(amount), _, Some(fee)) if htlc_amount + fee == amount => fee,
+			(Some(amount), Some(fee), _) | (Some(amount), _, Some(fee)) if htlc_amount.checked_add(fee) == Some(amount) => fee,
 			// Validated when the invoice was created, but the fee schedule
 			// comes from the server and can change between drives.
 			_ => ark_info.fees.lightning_receive.calculate(invoice_amount)
 				.context("lightning receive fee overflows").abort()?,
 		}
 	};
-	let received = htlc_amount + fee;
+	let received = htlc_amount.checked_add(fee).context("Lightning receive amount overflows").abort()?;
 	if received < invoice_amount {
 		abort!("Server didn't return enough VTXOs to cover invoice amount");
 	}

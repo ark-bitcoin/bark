@@ -237,6 +237,7 @@ Class | Method | HTTP request | Description
  - [FeeSchedule](docs/FeeSchedule.md)
  - [ImportVtxoRequest](docs/ImportVtxoRequest.md)
  - [InternalServerError](docs/InternalServerError.md)
+ - [IntraArkFees](docs/IntraArkFees.md)
  - [InvoiceInfo](docs/InvoiceInfo.md)
  - [LightningInvoiceForAddressRequest](docs/LightningInvoiceForAddressRequest.md)
  - [LightningInvoiceRequest](docs/LightningInvoiceRequest.md)

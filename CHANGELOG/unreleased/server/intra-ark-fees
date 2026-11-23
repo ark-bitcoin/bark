@@ -3,4 +3,4 @@
   server issued for one of its own wallets pays the intra-Ark send fee, and
   its receiver the intra-Ark receive fee. Payments to and from the outside
   still pay `lightning_send` and `lightning_receive`.
-  [#XXXX](https://github.com/SatoshiPortal/scuttle/pull/XXXX)
+  [Bitcoin-Jungle/scuttle#1](https://github.com/Bitcoin-Jungle/scuttle/pull/1)

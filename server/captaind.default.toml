@@ -334,7 +334,8 @@ ppm_expiry_table = [
 # this server issued for one of its own wallets never leaves the server, so it
 # can be priced on its own. These fees replace lightning_send and
 # lightning_receive for such a payment only. Without this section it pays
-# those, like any other payment.
+# those, like any other payment. Wallets predating this table quote the
+# ordinary fees. Update them before enabling different rates.
 #
 # A wallet can pay itself this way to swap VTXOs that expire soon for fresh
 # pool VTXOs, so keep these at or above the refresh fees.

@@ -388,7 +388,7 @@ pub(crate) async fn start_lightning_send(
 	original_payment_method: PaymentMethod,
 	retry_for: Option<Duration>,
 ) -> anyhow::Result<LightningSend> {
-	let (_, ark_info) = wallet.require_server().await?;
+	let (mut server, ark_info) = wallet.require_server().await?;
 	let tip = wallet.inner.chain.tip().await?;
 
 	let properties = wallet.inner.db.read_properties().await?.context("Missing config")?;
@@ -407,8 +407,7 @@ pub(crate) async fn start_lightning_send(
 	}
 
 	// The server charges the intra-Ark fee when it holds the receive itself.
-	let intra_ark = wallet.is_intra_ark_invoice(&invoice).await;
-	let fees = ark_info.fees.lightning_send_fees(intra_ark);
+	let fees = crate::fees::lightning_send_fees_for_invoice(&mut server, &ark_info.fees, Some(&invoice)).await?;
 	let (inputs, fee) = wallet.select_any_vtxos_to_cover_with_fee(
 		payment_amount,
 		|a, v| fees.calculate(a, v).context("fee overflowed"),

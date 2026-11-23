@@ -128,6 +128,7 @@ docs/FeesApi.md
 docs/HistoryApi.md
 docs/ImportVtxoRequest.md
 docs/InternalServerError.md
+docs/IntraArkFees.md
 docs/InvoiceInfo.md
 docs/LightningApi.md
 docs/LightningInvoiceForAddressRequest.md
@@ -365,6 +366,7 @@ src/models/fee_info.rs
 src/models/fee_schedule.rs
 src/models/import_vtxo_request.rs
 src/models/internal_server_error.rs
+src/models/intra_ark_fees.rs
 src/models/invoice_info.rs
 src/models/lightning_invoice_for_address_request.rs
 src/models/lightning_invoice_request.rs
