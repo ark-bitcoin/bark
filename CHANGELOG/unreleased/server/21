@@ -3,4 +3,6 @@
   server issued for one of its own wallets pays the intra-Ark send fee, and
   its receiver the intra-Ark receive fee. Payments to and from the outside
   still pay `lightning_send` and `lightning_receive`.
-  [Bitcoin-Jungle/scuttle#1](https://github.com/Bitcoin-Jungle/scuttle/pull/1)
+  Before upgrading a payout server, finish pending invoice-bound transfers
+  and back up its database. See `docs/expiry-payouts.md`.
+  [#21](https://github.com/SatoshiPortal/scuttle/pull/21)

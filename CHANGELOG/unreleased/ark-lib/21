@@ -3,4 +3,4 @@
   payment between two wallets of the same Ark server, which the server
   settles without Lightning. When it is absent, such a payment pays the
   normal Lightning fees.
-  [Bitcoin-Jungle/scuttle#1](https://github.com/Bitcoin-Jungle/scuttle/pull/1)
+  [#21](https://github.com/SatoshiPortal/scuttle/pull/21)
