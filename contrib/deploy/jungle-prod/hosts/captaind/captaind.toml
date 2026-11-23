@@ -1,0 +1,438 @@
+#
+# Scuttle mainnet captaind config (jungle-prod). Installed to
+# /etc/captaind/captaind.toml by setup-host.sh ONLY if that file is absent, so
+# local edits and secrets are never overwritten by a deploy.
+#
+# Derived from server/captaind.default.toml. When a new release adds config
+# keys, `deploy.sh` refuses to flip until `captaind check-config` accepts the
+# live file; diff against server/captaind.default.toml to catch up.
+#
+# Everything marked CHANGE_ME must be set before the first start; the systemd
+# unit refuses to start while any CHANGE_ME remains.
+#
+
+
+# The directory all captaind data is stored
+data_dir = "/var/lib/captaind"
+
+# The bitcoin network this server runs on
+network = "bitcoin"
+
+# Pay each VTXO of an expired tree to the owner mailbox it records.
+# The mode is fixed when the database is created.
+expiry_payouts = true
+
+# The lifetime of VTXOs in blocks
+vtxo_lifetime = 4320
+
+# Maximum value of VTXOs
+#max_vtxo_amount = "1000000 sat"
+
+# Minimum amount required for board transactions
+min_board_amount = "20000 sat"
+
+# Maximum amount for a board
+# Unset means no limit. Zero disables boards.
+#max_board_amount = "1000000 sat"
+
+# Maximum total input amount for an offboard or send-onchain
+# Unset means no limit. Zero disables offboards.
+#max_offboard_amount = "1000000 sat"
+
+# Maximum total input amount for an arkoor send
+# Unset means no limit. Zero disables arkoor sends.
+#max_arkoor_amount = "1000000 sat"
+
+# The time between execution of each exit clause of the VTXO, in blocks
+vtxo_exit_delta = 144
+
+# The maximum transaction depth of the arkoor part of VTXOs that server cosigns
+# Maximum exit depth (genesis chain length) allowed for a VTXO.
+# Once a VTXO's exit depth reaches this value the server will refuse to
+# cosign further OOR transactions spending it. Clients should refresh
+# their VTXOs into a round before this limit is reached.
+max_vtxo_exit_depth = 100
+
+# The maximum number of outputs per input of an arkoor tx
+max_arkoor_fanout = 4
+
+# Number of confirmation required for a board tx to be accepted as a VTXO
+required_board_confirmations = 3
+
+# Minimum number of confirmations for a UTXO to be considered trusted.
+min_trusted_confs = 2
+
+# Whether to provide rich errors and stacktraces in RPC error returns
+rpc_rich_errors = true
+
+# The interval at which the SyncManager polls for new blocks
+sync_manager_block_poll_interval = "100ms"
+
+# The number of blocks within which a tx broadcast via the TxNursery is
+# expected to confirm; when the target passes the operator is warned
+# on every new block
+nursery_confirm_target_blocks = 6
+
+# A public service announcement to send on each client-server handshake request
+#
+# Clients are supposed to display this message to their users.
+#handshake_psa = "Welcome to the most Awesome Ark Server!"
+
+# Link to the terms of service of this server, announced to clients
+# via `ArkInfo.tos_link`
+#tos_link = "https://example.com/terms-of-service"
+
+# Endpoint for OpenTelemetry collector
+#otel_collector_endpoint = "http://127.0.0.1:4000"
+# Probability of enabling OpenTelemetry tracing
+#otel_tracing_sampler = "0.5"
+# The name of your deployment used by OpenTelemetry
+otel_deployment_name = "scuttle-mainnet"
+
+# The maximum number of items we return to mailbox queries
+max_read_mailbox_items = 100
+
+# Number of child keys derived from a client xpub when it recovers its VTXOs
+# without the mailbox. Each key costs one EC multiplication per call.
+# Zero disables the rpc.
+recovery_xpub_nb_keys = 100000
+
+# The maximum number of xpub recovery scans that run at once. Each scan holds
+# a database connection while it reads, and calls over the limit wait in a queue.
+max_concurrent_xpub_recoveries = 1
+
+
+##########
+# ROUNDS #
+##########
+
+# The interval to start new rounds
+round_interval = "10s"
+
+# The time users have to submit payments when a round starts
+round_submit_time = "2s"
+
+# The time users have to provide VTXO tree and forfeit tx signatures
+round_sign_time = "2s"
+
+# The amount of round cosign nonces we require users to provide
+#
+# This effectively caps the maximum number of leaf VTXOs in a round.
+# So, by default, the maximum number of output VTXOs in a round is:
+#   `radix ^ nb_round_nonces` (= 4 ^ 8 = 65 536)
+nb_round_nonces = 8
+
+# The maximum number of outputs of a single round participation
+#
+# It has to fit in a round, so at most `radix ^ nb_round_nonces`.
+max_round_participation_outputs = 4
+
+# The duration after which to drop forfeit nonces
+round_forfeit_nonces_timeout = "30s"
+
+# Maximum total output amount for a single round participation
+# Unset means no limit. Zero disables round participation.
+#
+# NB this can strand a large balance: clients can't see the limit and don't
+# split a refresh to fit under it, and a VTXO above it can never be refreshed,
+# leaving a unilateral exit as the only way out.
+#max_round_amount = "1000000 sat"
+
+
+#############
+# OFFBOARDS #
+#############
+
+# The time after which we drop offboard sessions and release locked VTXOs
+offboard_session_timeout = "30s"
+
+# The most of the rounds wallet's trusted balance that pending offboard
+# sessions may lock together, in percent
+offboard_max_locked_percent = 25
+
+# How often we check pending offboards: expiring timed-out sessions and
+# retrying the commit and broadcast of signed offboard txs
+offboard_check_interval = "1s"
+
+# The time in which a fee rate is considered valid for performing an offboard.
+#
+# This allows us to handle the case where clients don't receive up-to-date fee rates due to
+# caching, so we allow a grace period in which we honor historical fee rates when they
+# request an offboard.
+#
+# Note: Setting this lower than fee_estimator.history_duration will result in the duration
+# being limited by that.
+offboard_acceptable_fee_rate_duration = "15m"
+
+# Interval to retry connecting to disconnected CLN nodes
+cln_reconnect_interval = "10s"
+
+# Interval to double check on pending invoices
+invoice_check_interval = "3s"
+
+# The time we give xpay to try finish a payment, unless the client asks for a
+# different time
+cln_xpay_timeout = "60s"
+
+# The longest time a client may ask us to give xpay to finish a payment
+cln_xpay_max_retry_for = "5m"
+
+# FIXME
+invoice_check_base_delay = "10s"
+
+# FIXME
+max_invoice_check_delay = "10m"
+
+# FIXME
+invoice_poll_interval = "30s"
+
+# Interval at which the settler polls for cross-process HTLC settlements
+htlc_settlement_poll_interval = "60s"
+
+# Base delay for TrackAll stream reconnection backoff
+track_all_base_delay = "1s"
+
+# Maximum delay for TrackAll stream reconnection backoff
+max_track_all_delay = "60s"
+
+# The number of blocks to keep between Lightning and Ark HTLCs expiries.
+htlc_expiry_delta = 40
+
+# The number of blocks after which an HTLC-send VTXO expires once granted.
+# When granting an HTLC-send VTXO, the Server doesn't know the lightning
+# route yet, so it needs this config to be sufficiently high to account
+# for the worst routing scenario.
+htlc_send_expiry_delta = 1008
+
+# Maximum CLTV delta server will allow clients to request an
+# invoice generation with.
+max_user_invoice_cltv_delta = 250
+
+# The duration after which a generated invoice will expire, unless the
+# client asks for a shorter one. It is also the longest a client can ask for.
+invoice_expiry = "48h"
+
+# The duration for which the server will hold inbound HTLC(s) while
+# waiting for a user to claim a lightning receive.
+# After this timeout the server will fail the HTLC(s) back to the sender and
+# also cancel the hold invoice.
+receive_htlc_forward_timeout = "3min"
+
+# Indicates whether the Ark server requires clients to either
+# provide a VTXO ownership proof, or a lightning receive token
+# when preparing a lightning claim.
+ln_receive_anti_dos_required = false
+
+# Whether users can ask to have their Ark address put in the route
+# hints of their lightning receive invoices. Other users of this
+# server can then pay those invoices with an arkoor, without the
+# lightning send and receive fees.
+ln_receive_ark_address_hints = false
+
+# Indicates whether the Ark server requires clients to sign with the
+# participation's mailbox key when querying a round participation status.
+# Clients that don't send this attestation can then no longer query their
+# participations, and a participation stored without a mailbox id answers
+# not found, like an unknown unlock hash.
+round_status_attestation_required = false
+
+# Indicates whether the Ark server requires clients to prove ownership
+# of their round inputs when requesting forfeit nonces.
+forfeit_attestation_required = false
+
+# Maximum amount for which the server will issue lightning receive
+# invoices.
+# Unset means no limit. Zero disables lightning receives.
+#max_ln_receive_amount = "100000 sat"
+
+# Maximum amount for a lightning send
+# Unset means no limit. Zero disables lightning sends.
+#max_ln_send_amount = "100000 sat"
+
+# The fraction of the fee we charge that we allow CLN to claim at most
+#
+# E.g. if a user wants to pay 1000 sat, we charge him 0.4%, so 4 sats,
+# and the ln_max_fee_ppm is set to 750000, we set CLN's maxfee to 3 sats.
+ln_max_fee_ppm = 900000
+
+# This allows you to configure one or more lightning nodes for the server to use. Just add as
+# many [[cln_array]] entries as you need!
+#
+# ark-cln. cln-grpc and hold generate their own CA and client certs on the first
+# start of lightningd; copy them from ark-cln (see README, "First-time setup").
+# The TLS server names are fixed by the plugins' certs (cln-grpc: `cln`,
+# `localhost`; hold: `hold`, `localhost`, `127.0.0.1`), so the URIs use the
+# names `cln` and `hold`, which setup-host.sh maps to 10.42.0.22 in /etc/hosts.
+[[cln_array]]
+uri = "https://cln:9736"
+priority = 10
+server_cert_path = "/etc/captaind/cln/ca.pem"
+client_cert_path = "/etc/captaind/cln/client.pem"
+client_key_path = "/etc/captaind/cln/client-key.pem"
+hold_invoice.uri = "https://hold:9737"
+hold_invoice.server_cert_path = "/etc/captaind/cln/hold/ca.pem"
+hold_invoice.client_cert_path = "/etc/captaind/cln/hold/client.pem"
+hold_invoice.client_key_path = "/etc/captaind/cln/hold/client-key.pem"
+
+
+###############
+# BLOCKLIST   #
+###############
+
+# Optional path to a file containing one bitcoin address per line.
+# Addresses in this file are blocked from being used for boards, offboards, or
+# sending money to our internal wallets.
+#bitcoin_address_blocklist = "/etc/captaind/blocklist.txt"
+
+# How often the blocklist file is re-read from disk (default: 1h).
+# Only relevant if bitcoin_address_blocklist is set.
+#bitcoin_address_blocklist_refresh_interval = "1h"
+
+
+########
+# FEES #
+########
+
+# Board fees
+[fees.board]
+min_fee_sat = 330 # Can be dust
+base_fee_sat = 100
+ppm = 1000 # 0.1%
+
+# Offboard fees with expiry-based PPM
+[fees.offboard]
+base_fee_sat = 200
+# The number of bytes we charge fixed for each offboard
+#
+# This is multiplied with the offboard feerate. The user's output script is
+# charged on top, so this covers the rest of a 2-in-3-out taproot keyspend tx:
+#   2-in-3-out taproot keyspend tx     1018 wu   255 vb
+#   user's p2tr output script         - 136 wu  - 34 vb
+#                                      882 wu   221 vb
+fixed_additional_vb = 221
+ppm_expiry_table = [
+    { expiry_blocks_threshold = 0, ppm = 0 },       # exp <= 96: 0 ppm
+    { expiry_blocks_threshold = 97, ppm = 1000 },   # 96 < exp <= 198: 1,000 ppm (0.1%)
+    { expiry_blocks_threshold = 199, ppm = 4000 },  # 198 < exp <= 2160: 4,000 ppm (0.4%)
+    { expiry_blocks_threshold = 2161, ppm = 8000 }, # 2160 < exp: 8,000 ppm (0.8%)
+]
+
+# Refresh fees with expiry-based PPM
+[fees.refresh]
+base_fee_sat = 150
+ppm_expiry_table = [
+    { expiry_blocks_threshold = 0, ppm = 0 },       # exp <= 96: 0 ppm
+    { expiry_blocks_threshold = 97, ppm = 1000 },   # 96 < exp <= 198: 1,000 ppm (0.1%)
+    { expiry_blocks_threshold = 199, ppm = 4000 },  # 198 < exp <= 2160: 4,000 ppm (0.4%)
+    { expiry_blocks_threshold = 2161, ppm = 8000 }, # 2160 < exp: 8,000 ppm (0.8%)
+]
+
+# Lightning receive fees
+[fees.lightning_receive]
+base_fee_sat = 100
+ppm = 2000 # 0.2%
+
+# Lightning send fees with expiry-based PPM
+[fees.lightning_send]
+min_fee_sat = 10
+base_fee_sat = 75
+ppm_expiry_table = [
+    { expiry_blocks_threshold = 0, ppm = 0 },       # exp <= 96: 0 ppm
+    { expiry_blocks_threshold = 97, ppm = 1000 },   # 96 < exp <= 198: 1,000 ppm (0.1%)
+    { expiry_blocks_threshold = 199, ppm = 4000 },  # 198 < exp <= 2160: 4,000 ppm (0.4%)
+    { expiry_blocks_threshold = 2161, ppm = 8000 }, # 2160 < exp: 8,000 ppm (0.8%)
+]
+
+#############
+# VTXO POOL #
+#############
+
+[vtxopool]
+# The target set of VTXOs to maintain in the pool
+# Format: "<amount>:<count>", f.e. "1000sat:50"
+vtxo_targets = [ "1000sat:10", "10000sat:10" ]
+# At what % of the target should new VTXOs be issued
+#
+# Once one of the target amounts falls below target, all amounts
+# will be replenished.
+vtxo_target_issue_threshold = 80
+# The lifetime in blocks of the VTXOs in the pool
+vtxo_lifetime = 432
+# Time in blocks before the expiry to no longer use VTXOs
+vtxo_pre_expiry = 144
+# Maximum depth for pool VTXOs
+max_vtxo_exit_depth = 50
+
+
+#################
+# FEE ESTIMATOR #
+#################
+
+[fee_estimator]
+# Interval to update fee estimates from bitcoind
+update_interval = "1m"
+# How long to maintain the fee rate history for
+history_duration = "60m"
+# Fallback feerate for fast confirmation (1 block target)
+fallback_fee_rate_fast = "25sat/vb"
+# Fallback feerate for regular confirmation (3 block target)
+fallback_fee_rate_regular = "10sat/vb"
+# Fallback feerate for slow confirmation (6 block target)
+fallback_fee_rate_slow = "4sat/vb"
+# Optional ceiling for fetched fee rates. Any rate returned by the backend
+# above this value is clamped down to it. Useful to guard against mempool
+# spikes or a misconfigured esplora/bitcoind returning absurd rates.
+# Accepts the same units as the fallback rates (e.g. "1000sat/vb").
+# Unset by default (no ceiling).
+# max_fee_rate = "1000sat/vb"
+
+
+##################
+# gRPC interface #
+##################
+
+[rpc]
+# Listen address for the public gRPC API.
+# captaind does not rate-limit this API; the reverse proxy in front of it
+# must. See contrib/docs/captaind-deployment.md in the source repository.
+# The future public listener. Binds the backend address; ingress arrives over a
+# tunnel to a rate-limiting proxy, never directly (contrib/docs/captaind-deployment.md).
+public_address = "10.42.0.20:3535"
+# Listen address for the private admin gRPC API.
+# Unauthenticated by design and as privileged as shell access to this host.
+# Keep it on loopback, or comment it out to not start it.
+admin_address = "127.0.0.1:3536"
+# Listen address for the integration manager gRPC API.
+# Keep it reachable only on a trusted network.
+integration_address = "127.0.0.1:3537"
+
+
+#################
+# POSTGRESQL DB #
+#################
+
+[postgres]
+# Patroni VIP
+host = "10.42.0.10"
+user = "captaind"
+password = "CHANGE_ME_PG_PASSWORD"
+port = 5432
+name = "captaind"
+# Maximum parallel connections to maintain in our connection pool
+max_connections = 10
+# Timeout in seconds for acquiring a connection from the pool (default: 10)
+#connection_timeout_secs = 10
+# Idle connections are recycled after this many seconds (default: 90)
+#idle_timeout_secs = 90
+
+
+############
+# BITCOIND #
+############
+
+[bitcoind]
+# Bitcoind JSON_RPC API endpoint
+url = "http://192.168.128.172:8332"
+rpc_user = "CHANGE_ME_BITCOIND_RPC_USER"
+rpc_pass = "CHANGE_ME_BITCOIND_RPC_PASSWORD"
+

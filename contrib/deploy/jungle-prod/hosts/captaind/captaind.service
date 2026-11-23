@@ -1,0 +1,37 @@
+[Unit]
+Description=Scuttle captaind (Ark server)
+Documentation=https://github.com/SatoshiPortal/scuttle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=captaind
+Group=captaind
+Environment=CAPTAIND_LOG=info
+# Refuse to start with unfilled placeholders.
+ExecStartPre=/bin/sh -c '! grep -q CHANGE_ME_ /etc/captaind/captaind.toml'
+ExecStartPre=/opt/scuttle/current/bin/captaind check-config /etc/captaind/captaind.toml
+ExecStart=/opt/scuttle/current/bin/captaind --config /etc/captaind/captaind.toml start
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+LimitNOFILE=65536
+
+# Hardening. The data dir holds the seed (mnemonic) and must stay private.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/captaind
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

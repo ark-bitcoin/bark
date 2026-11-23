@@ -1,0 +1,109 @@
+# Patroni configuration for @NAME@. No secrets in this file.
+# Secrets (superuser, replication, rewind, REST API) come from
+# /etc/patroni_env.conf (root:root, mode 600) as PATRONI_* variables.
+scope: ark-pg
+namespace: /service
+name: @NAME@
+
+restapi:
+  listen: @IP@:8008
+  connect_address: @IP@:8008
+
+etcd:
+  hosts:
+    - 10.42.0.11:2379
+    - 10.42.0.12:2379
+    - 10.42.0.13:2379
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: true
+    synchronous_mode_strict: true
+    synchronous_node_count: 1
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        # Durability: never relax these.
+        fsync: "on"
+        full_page_writes: "on"
+        synchronous_commit: "on"
+        wal_level: replica
+        wal_log_hints: "on"
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        password_encryption: scram-sha-256
+        # Memory: 8 vCPU, 7 GiB RAM.
+        max_connections: 200
+        shared_buffers: 1920MB
+        effective_cache_size: 5GB
+        work_mem: 16MB
+        maintenance_work_mem: 512MB
+        # WAL and checkpoints.
+        wal_compression: "on"
+        checkpoint_timeout: 15min
+        checkpoint_completion_target: 0.9
+        max_wal_size: 4GB
+        min_wal_size: 1GB
+        # Storage is a virtual SSD-backed disk.
+        random_page_cost: 1.1
+        effective_io_concurrency: 64
+        jit: "off"
+        # Detect dead peers quickly.
+        tcp_keepalives_idle: 60
+        tcp_keepalives_interval: 10
+        tcp_keepalives_count: 6
+        # Archiving: enabled so a later switch is a reload, not a restart.
+        # /bin/true discards WAL. Replace it when the pgBackRest repo exists.
+        archive_mode: "on"
+        archive_command: /bin/true
+        # Logging.
+        logging_collector: "on"
+        log_directory: /var/log/postgresql
+        log_filename: postgresql-%a.log
+        log_truncate_on_rotation: "on"
+        log_rotation_age: 1d
+        log_rotation_size: 0
+        log_min_duration_statement: 1000
+        log_checkpoints: "on"
+        log_connections: "on"
+        log_lock_waits: "on"
+        log_line_prefix: "%m [%p] %q%u@%d "
+  initdb:
+    - encoding: UTF8
+    - locale: C.UTF-8
+    - data-checksums
+
+postgresql:
+  # The VIP is listed so the leader accepts connections on it as soon as
+  # vip-manager adds it (net.ipv4.ip_nonlocal_bind=1 is set).
+  listen: "@IP@,10.42.0.10,127.0.0.1:5432"
+  connect_address: @IP@:5432
+  data_dir: /srv/pgdata/17/main
+  bin_dir: /usr/lib/postgresql/17/bin
+  pgpass: /var/lib/postgresql/.pgpass-patroni
+  use_unix_socket: true
+  use_unix_socket_repl: true
+  pg_hba:
+    - local all postgres peer
+    - host replication replicator 10.42.0.11/32 scram-sha-256
+    - host replication replicator 10.42.0.12/32 scram-sha-256
+    - host replication replicator 10.42.0.13/32 scram-sha-256
+    - host all rewind_user 10.42.0.11/32 scram-sha-256
+    - host all rewind_user 10.42.0.12/32 scram-sha-256
+    - host all rewind_user 10.42.0.13/32 scram-sha-256
+    - host captaind captaind 10.42.0.20/32 scram-sha-256
+    - host captaind watchmand 10.42.0.21/32 scram-sha-256
+    - host cln cln 10.42.0.22/32 scram-sha-256
+    - host hold cln 10.42.0.22/32 scram-sha-256
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

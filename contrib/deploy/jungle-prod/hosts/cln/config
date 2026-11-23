@@ -1,0 +1,37 @@
+# Scuttle mainnet lightningd config (jungle-prod). Installed to
+# /etc/lightning/config ONLY if that file is absent.
+# Replace every CHANGE_ME before the first start; the systemd unit refuses to
+# start while any CHANGE_ME remains.
+#
+# NB the first start of lightningd creates /var/lib/lightning/bitcoin/hsm_secret.
+# Back it up immediately; it is the only way to recover the node's funds.
+
+network=bitcoin
+alias=scuttle-cln
+
+# Wallet and hold database on the Patroni cluster (VIP 10.42.0.10); see
+# postgres.md. Password from /root/ark-db-credentials on ark-pg-1.
+wallet=postgres://cln:CHANGE_ME_PG_PASSWORD@10.42.0.10:5432/cln
+
+# bitcoind (Core, mainnet)
+bitcoin-rpcconnect=192.168.128.172
+bitcoin-rpcport=8332
+bitcoin-rpcuser=CHANGE_ME_BITCOIND_RPC_USER
+bitcoin-rpcpassword=CHANGE_ME_BITCOIND_RPC_PASSWORD
+
+# Lightning P2P: loopback only until the Tor / public-address decision is made.
+# Without an explicit address lightningd autolistens on 0.0.0.0:9735.
+bind-addr=127.0.0.1:9735
+# Tor is installed but not configured; no announce-addr, no proxy yet.
+
+# cln-grpc (bundled with the release). Certs are generated on first start in
+# /var/lib/lightning/bitcoin/{ca,client,client-key,server,server-key}.pem.
+grpc-host=10.42.0.22
+grpc-port=9736
+
+# hold plugin, built from the revision pinned in nix/dev-shell.nix. Certs are
+# generated on first start in /var/lib/lightning/bitcoin/hold/.
+important-plugin=/opt/scuttle/current/plugins-extra/hold
+hold-grpc-host=10.42.0.22
+hold-grpc-port=9737
+hold-database=postgresql://cln:CHANGE_ME_PG_PASSWORD@10.42.0.10:5432/hold

@@ -1,0 +1,36 @@
+[Unit]
+Description=Scuttle watchmand (Ark watchman)
+Documentation=https://github.com/SatoshiPortal/scuttle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=watchmand
+Group=watchmand
+Environment=WATCHMAND_LOG=info
+# Refuse to start with unfilled placeholders or without the seed.
+ExecStartPre=/bin/sh -c '! grep -q CHANGE_ME_ /etc/watchmand/watchmand.toml'
+ExecStartPre=/usr/bin/test -s /var/lib/watchmand/mnemonic
+ExecStart=/opt/scuttle/current/bin/watchmand --config /etc/watchmand/watchmand.toml start
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/watchmand
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

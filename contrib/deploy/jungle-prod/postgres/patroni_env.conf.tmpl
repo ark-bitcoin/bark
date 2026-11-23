@@ -1,0 +1,10 @@
+# /etc/patroni_env.conf (root:root, mode 600). Same on all three nodes.
+# Generate each value with: tr -dc 'A-Za-z0-9' </dev/urandom | head -c 40
+PATRONI_SUPERUSER_USERNAME=postgres
+PATRONI_SUPERUSER_PASSWORD=<secret>
+PATRONI_REPLICATION_USERNAME=replicator
+PATRONI_REPLICATION_PASSWORD=<secret>
+PATRONI_REWIND_USERNAME=rewind_user
+PATRONI_REWIND_PASSWORD=<secret>
+PATRONI_RESTAPI_USERNAME=patroni
+PATRONI_RESTAPI_PASSWORD=<secret>

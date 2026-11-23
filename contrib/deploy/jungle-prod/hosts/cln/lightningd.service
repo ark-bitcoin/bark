@@ -1,0 +1,36 @@
+[Unit]
+Description=Core Lightning (lightningd) with cln-grpc and hold plugins
+Documentation=https://github.com/SatoshiPortal/scuttle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lightning
+Group=lightning
+# Refuse to start with unfilled placeholders.
+ExecStartPre=/bin/sh -c '! grep -q CHANGE_ME_ /etc/lightning/config'
+# --lightning-dir cannot be set in the config file. lightningd finds its
+# subdaemons and bundled plugins relative to its own binary.
+ExecStart=/opt/scuttle/current/usr/bin/lightningd --conf=/etc/lightning/config --lightning-dir=/var/lib/lightning
+Restart=on-failure
+RestartSec=10
+# lightningd needs time to stop cleanly and sync the database.
+TimeoutStopSec=120
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lightning
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
