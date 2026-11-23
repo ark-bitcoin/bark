@@ -909,7 +909,8 @@ impl Server {
 	///
 	/// The id only commits to the vtxo's point, so the whole encoding is
 	/// compared. Not the chain's txs: building the chain of an unvalidated vtxo
-	/// can panic. Refuses a vtxo with a stored vtxo's id but another encoding.
+	/// can panic. Refuses a vtxo with a stored vtxo's id but another encoding,
+	/// and a stored vtxo that is not a board.
 	async fn is_registered_board(&self, vtxo: &Vtxo<Full>) -> anyhow::Result<bool> {
 		let id = vtxo.id();
 		let stored = self.db.read(async |t| t.get_existing_vtxos_by_id(&[id]).await).await?
@@ -926,7 +927,7 @@ impl Server {
 		let mut txs = stored.vtxo.transactions();
 		let exit_txid = match (txs.next(), txs.next()) {
 			(Some(item), None) => item.tx.compute_txid(),
-			_ => return Ok(false),
+			_ => return badarg!("vtxo {} is registered but is not a board", id),
 		};
 		let anchor = stored.vtxo.chain_anchor();
 		self.db.read(async |t| t.is_board_exit(anchor, exit_txid).await).await
