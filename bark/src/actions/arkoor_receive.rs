@@ -24,7 +24,7 @@ use crate::actions::{
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
-use crate::vtxo::VtxoLockHolder;
+use crate::vtxo::{VtxoLockHolder, VtxoValidationError};
 
 const ARKOOR_RECV_NAMESPACE: &str = "arkoor_recv";
 
@@ -70,26 +70,38 @@ impl ArkoorReceive {
 	pub fn vtxo_ids(&self) -> impl Iterator<Item = VtxoId> + '_ {
 		self.vtxos.iter().map(|v| v.id())
 	}
+
+	/// The VTXOs not refused before being stored.
+	fn valid_vtxos<'a>(
+		&'a self,
+		resolution: &'a Resolution,
+	) -> impl Iterator<Item = &'a Vtxo<Full>> + 'a {
+		self.vtxos.iter().filter(|v| !resolution.invalid.contains(&v.id()))
+	}
 }
 
 /// The phases of an arkoor receive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Progress {
-	/// The package was read from the mailbox. Its VTXOs are not stored yet.
+	/// The package was read from the mailbox. Its VTXOs are neither validated
+	/// nor stored yet.
 	Received,
-	/// The VTXOs are stored locked by the action. Each drive asks the server
-	/// to register the VTXOs that are neither registered nor lost yet, and a
-	/// drive that leaves some of them unresolved records a pending receive
-	/// movement.
+	/// The VTXOs not refused are stored locked by the action. Each drive asks
+	/// the server to register the stored VTXOs that are neither registered nor
+	/// lost yet, and a drive that leaves some of them unresolved records a
+	/// pending receive movement.
 	Registering(Resolution),
-	/// Every VTXO is registered or lost. The registered ones still need to
-	/// become spendable and the lost ones spent.
+	/// Every VTXO is refused, registered or lost. The registered ones still
+	/// need to become spendable and the lost ones spent.
 	Settling(Resolution),
 }
 
 /// The VTXOs of the receive that are not to be registered any more.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Resolution {
+	/// The VTXOs refused before being stored, sorted. See
+	/// [`validate_arkoor_receive`].
+	pub invalid: Vec<VtxoId>,
 	/// The VTXOs the server registered, sorted.
 	pub registered: Vec<VtxoId>,
 	/// The VTXOs whose chain lost a double spend on-chain, sorted.
@@ -98,7 +110,7 @@ pub struct Resolution {
 
 impl Resolution {
 	fn is_resolved(&self, id: VtxoId) -> bool {
-		self.registered.contains(&id) || self.lost.contains(&id)
+		self.invalid.contains(&id) || self.registered.contains(&id) || self.lost.contains(&id)
 	}
 }
 
@@ -114,21 +126,29 @@ impl WalletAction for ArkoorReceive {
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
 		let progress = match &self.progress {
 			Progress::Received => {
-				start_arkoor_receive(wallet, &self).await?;
-				Progress::Registering(Resolution::default())
+				let resolution = Resolution {
+					invalid: validate_arkoor_receive(wallet, &self).await?,
+					..Resolution::default()
+				};
+				if self.vtxo_ids().all(|id| resolution.is_resolved(id)) {
+					warn!("Arkoor receive {} has no valid VTXO, dropping it", self.id);
+					return Ok(Advance::Done);
+				}
+				start_arkoor_receive(wallet, &self, &resolution).await?;
+				Progress::Registering(resolution)
 			},
 			Progress::Registering(resolution) => {
 				let resolution = match register_arkoor_receive(wallet, &self, resolution.clone()).await {
 					Ok(resolution) => resolution,
 					Err(e) => {
-						record_pending_arkoor_receive(wallet, &self).await?;
+						record_pending_arkoor_receive(wallet, &self, resolution).await?;
 						return Err(e);
 					},
 				};
 				if self.vtxo_ids().all(|id| resolution.is_resolved(id)) {
 					Progress::Settling(resolution)
 				} else {
-					record_pending_arkoor_receive(wallet, &self).await?;
+					record_pending_arkoor_receive(wallet, &self, &resolution).await?;
 					return Ok(Advance::Park {
 						state: ArkoorReceive { progress: Progress::Registering(resolution), ..self },
 						wake_after: None,
@@ -158,27 +178,31 @@ impl WalletAction for ArkoorReceive {
 	}
 }
 
-/// Refuses the received arkoor VTXOs that are not a payment to this wallet,
-/// logging why.
+/// Received -> Registering. Refuses the VTXOs that are not a payment to this
+/// wallet, logging why. A chain source error is retried.
 ///
-/// Returns the refused VTXOs, sorted. Only returns an error when it cannot
-/// validate any VTXO, for example when the server is down or the chain tip is
-/// unknown.
-pub(crate) async fn validate_arkoor_receive(
+/// Returns the refused VTXOs, sorted.
+async fn validate_arkoor_receive(
 	wallet: &Wallet,
-	vtxos: &[Vtxo<Full>],
-) -> anyhow::Result<Vec<VtxoId>> {
-	let (_, ark_info) = wallet.require_server().await
-		.context("refuse_htlc_send_vtxo_posted_to_arkoor_mailbox")?;
+	recv: &ArkoorReceive,
+) -> Result<Vec<VtxoId>, AdvanceError> {
+	let (_, ark_info) = wallet.require_server().await.retry()?;
 	let tip = wallet.inner.chain.tip().await
-		.context("cannot vet received arkoor VTXOs, no chain tip")?;
+		.context("cannot vet received arkoor VTXOs, no chain tip").retry()?;
 
 	let mut invalid = Vec::new();
-	for vtxo in vtxos {
-		if let Err(e) = wallet.validate_vtxo(vtxo).await {
-			error!("Received invalid arkoor VTXO {} from server: {}", vtxo.id(), e);
-			invalid.push(vtxo.id());
-			continue;
+	for vtxo in &recv.vtxos {
+		match wallet.validate_vtxo(vtxo).await {
+			Ok(()) => {},
+			Err(VtxoValidationError::Chain(e)) => {
+				return Err(e.context(format!("failed to validate received arkoor VTXO {}", vtxo.id())))
+					.retry();
+			},
+			Err(e) => {
+				error!("Received invalid arkoor VTXO {} from server: {}", vtxo.id(), e);
+				invalid.push(vtxo.id());
+				continue;
+			},
 		}
 		if let Err(e) = check_arkoor_receive_policy(vtxo, ark_info.server_pubkey) {
 			error!("Refusing received arkoor VTXO {}: {}", vtxo.id(), e);
@@ -199,7 +223,7 @@ pub(crate) async fn validate_arkoor_receive(
 
 	if !invalid.is_empty() {
 		error!("Received {} invalid arkoor VTXOs out of {} from server",
-			invalid.len(), vtxos.len(),
+			invalid.len(), recv.vtxos.len(),
 		);
 	}
 	invalid.sort_unstable();
@@ -221,7 +245,6 @@ pub(crate) async fn validate_arkoor_receive(
 /// Expiry is not a reason to refuse. The sender paid with a vtxo that was
 /// valid when the server cosigned it; if we only sync after it expired, the
 /// payment is still ours and the coin needs a refresh, not a rejection.
-/// Refusing would drop the payment, since the mailbox checkpoint advances.
 ///
 /// Ownership (that the wallet holds a signable key) is checked by the caller,
 /// which has async database access.
@@ -239,26 +262,34 @@ fn check_arkoor_receive_policy(
 	Ok(())
 }
 
-/// Received -> Registering. Stores the VTXOs locked by the action.
-async fn start_arkoor_receive(wallet: &Wallet, recv: &ArkoorReceive) -> Result<(), AdvanceError> {
+/// Stores the VTXOs not refused, locked by the action.
+async fn start_arkoor_receive(
+	wallet: &Wallet,
+	recv: &ArkoorReceive,
+	resolution: &Resolution,
+) -> Result<(), AdvanceError> {
+	let valid = recv.valid_vtxos(resolution).cloned().collect::<Vec<_>>();
 	wallet.store_locked_vtxos(
-		&recv.vtxos,
+		&valid,
 		Some(VtxoLockHolder::Action { id: recv.id() }),
 	).await.retry()
 }
 
-/// The receive movement of `recv`, crediting `credited` of its VTXOs.
+/// The receive movement of the VTXOs of `recv` not refused, crediting
+/// `credited` of them.
 async fn arkoor_receive_movement_update(
 	wallet: &Wallet,
 	recv: &ArkoorReceive,
+	resolution: &Resolution,
 	credited: &[Vtxo<Full>],
 ) -> Result<MovementUpdate, AdvanceError> {
-	let intended = recv.vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+	let valid = recv.valid_vtxos(resolution).cloned().collect::<Vec<_>>();
+	let intended = valid.iter().map(|v| v.amount()).sum::<Amount>();
 	let effective = credited.iter().map(|v| v.amount()).sum::<Amount>();
 	Ok(MovementUpdate::new()
 		.intended_balance(intended.to_signed().context("receive amount out of range").abort()?)
 		.effective_balance(effective.to_signed().context("receive amount out of range").abort()?)
-		.replace_received_on(received_on_destinations(wallet, &recv.vtxos).await)
+		.replace_received_on(received_on_destinations(wallet, &valid).await)
 		.produced_vtxos(credited))
 }
 
@@ -267,12 +298,13 @@ async fn arkoor_receive_movement_update(
 async fn record_pending_arkoor_receive(
 	wallet: &Wallet,
 	recv: &ArkoorReceive,
+	resolution: &Resolution,
 ) -> Result<(), AdvanceError> {
 	wallet.inner.movements.get_or_create_movement_with_action(
 		Subsystem::ARKOOR,
 		ArkoorMovement::Receive.to_string(),
 		&recv.id(),
-		arkoor_receive_movement_update(wallet, recv, &[]).await?,
+		arkoor_receive_movement_update(wallet, recv, resolution, &[]).await?,
 	).await.context("failed to create arkoor receive movement").retry()?;
 	Ok(())
 }
@@ -357,7 +389,7 @@ async fn settle_arkoor_receive(
 		ArkoorMovement::Receive.to_string(),
 		&recv.id(),
 		status,
-		arkoor_receive_movement_update(wallet, recv, &credited).await?,
+		arkoor_receive_movement_update(wallet, recv, resolution, &credited).await?,
 	).await.context("failed to finish arkoor receive movement").retry()?;
 
 	if credited.is_empty() {

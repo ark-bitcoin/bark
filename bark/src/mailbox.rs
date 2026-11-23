@@ -28,7 +28,7 @@ use server_rpc::protos::mailbox_server::MailboxMessage;
 
 use crate::{Wallet, WalletInner, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::actions::DriveMode;
-use crate::actions::arkoor_receive::{validate_arkoor_receive, ArkoorReceive};
+use crate::actions::arkoor_receive::ArkoorReceive;
 use crate::actions::lightning::pay::{ln_pay_action_id, LightningSend, Progress};
 use crate::utils::ReconnectBackoff;
 
@@ -309,7 +309,7 @@ impl Wallet {
 	}
 
 	/// Deserializes the VTXOs of an arkoor package, logging and skipping the
-	/// ones that do not deserialize.
+	/// ones that do not deserialize. The receive action validates the rest.
 	fn deserialize_arkoor_vtxos(raw_vtxos: &[Vec<u8>]) -> Vec<Vtxo<Full>> {
 		raw_vtxos.iter().filter_map(|bytes| match Vtxo::<Full>::deserialize(bytes) {
 			Ok(vtxo) => Some(vtxo),
@@ -413,8 +413,6 @@ impl Wallet {
 		raw_vtxos: Vec<Vec<u8>>,
 	) -> anyhow::Result<bool> {
 		let vtxos = Self::deserialize_arkoor_vtxos(&raw_vtxos);
-		let invalid = validate_arkoor_receive(self, &vtxos).await?;
-		let vtxos = vtxos.into_iter().filter(|v| !invalid.contains(&v.id())).collect::<Vec<_>>();
 
 		// Serialize the receive dedup across all consumers of this wallet's
 		// mailbox so two of them can't both start a receive for the same
