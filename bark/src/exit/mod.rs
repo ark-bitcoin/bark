@@ -42,8 +42,9 @@
 //!    - Use [Exit::get_exit_vtxos] or [Exit::list_claimable] to browse tracked exits and locate
 //!      those that are fully confirmed onchain.
 //! 4) Claim the exited funds (optional)
-//!    - Once your transaction is confirmed onchain the funds are fully yours. However, recovery
-//!      from seed is not supported. By claiming your VTXO you move them to your onchain wallet.
+//!    - Once your transaction is confirmed onchain the funds are fully yours. However, a wallet
+//!      restored from the seed phrase finds an unclaimed exit again only if the server still
+//!      reports the VTXO as spendable. By claiming your VTXO you move them to your onchain wallet.
 //!    - Once claimable, construct a PSBT to drain them with [Exit::drain_exits].
 //!    - Alternatively, you can use [Exit::sign_exit_claim_inputs] to sign the inputs of a given
 //!      PSBT if any are the outputs of a claimable unilateral exit.
