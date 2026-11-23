@@ -123,7 +123,8 @@ pub struct RecoveryReport {
 	/// VTXOs found in the mailbox whose key we could not derive within the gap
 	/// limit. Only the seed owner can post here, so these are most likely our own
 	/// VTXOs whose key sits beyond the gap limit; their presence means funds may
-	/// be missing and the scan can't be reported complete.
+	/// be missing and the scan can't be reported complete. Also holds VTXOs from
+	/// the xpub lookup whose reported key index does not derive their key.
 	foreign: RecoveryReportEntry,
 	/// VTXOs that have been fully exited on-chain.
 	exited: RecoveryReportEntry,
