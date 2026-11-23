@@ -4,7 +4,7 @@
 //! Same shape as [`super::pid_flock::FlockPidLockManager`] — one
 //! OS-level lock on `<datadir>/LOCK` held for the manager's lifetime,
 //! all per-key locking delegated to an internal
-//! [`MemoryLockManager`]. The only
+//! `InternalMemoryLockManager`. The only
 //! difference is the OS primitive: this variant uses POSIX
 //! `fcntl(F_SETLK)` instead of `flock(2)`.
 //!
@@ -39,7 +39,7 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::Context;
 
 use super::{LockGuard, LockManager, PidLockError};
-use super::memory::MemoryLockManager;
+use super::internal_memory::InternalMemoryLockManager;
 
 /// File name used for the datadir-level PID lock.
 pub const LOCK_FILE: &str = "LOCK";
@@ -82,7 +82,7 @@ pub struct FcntlPidLockManager {
 	// subsequent `new()` can re-acquire.
 	_registration: Registration,
 	datadir: PathBuf,
-	in_process: MemoryLockManager,
+	in_process: InternalMemoryLockManager,
 }
 
 impl FcntlPidLockManager {
@@ -129,7 +129,7 @@ impl FcntlPidLockManager {
 			_pid_file: file,
 			_registration: registration,
 			datadir,
-			in_process: MemoryLockManager::new(),
+			in_process: InternalMemoryLockManager::new(),
 		})
 	}
 
@@ -252,5 +252,19 @@ mod test {
 		assert!(g2.is_some(), "different key should be free");
 
 		let _ = fs::remove_dir_all(&dir);
+	}
+
+	#[tokio::test]
+	async fn distinct_datadirs_dont_share_keys() {
+		let dir_a = tmp_dir();
+		let dir_b = tmp_dir();
+		let a = FcntlPidLockManager::new(&dir_a).unwrap();
+		let b = FcntlPidLockManager::new(&dir_b).unwrap();
+
+		let _g = a.try_lock("bark.distinct.datadirs").await.unwrap();
+		assert!(b.try_lock("bark.distinct.datadirs").await.is_some());
+
+		let _ = fs::remove_dir_all(&dir_a);
+		let _ = fs::remove_dir_all(&dir_b);
 	}
 }
