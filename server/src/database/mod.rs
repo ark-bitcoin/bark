@@ -442,12 +442,22 @@ impl<'t> Tx<'t> {
 		query::get_used_vtxo_policies(&self, policies).await
 	}
 
+	/// The user VTXO with this id. A server-internal record with this id is
+	/// not found, like an unknown id.
 	pub async fn get_user_vtxo_by_id(&self, id: VtxoId) -> anyhow::Result<VtxoState> {
 		let v = self.get_server_vtxo_by_id(id).await?;
-		match v.try_into_user_vtxo_state() {
-			Ok(v) => Ok(v),
-			Err(_) => bail!("requested VTXO {} is not a user VTXO", id),
-		}
+		Ok(v.try_into_user_vtxo_state().ok().not_found([id], "VTXO not found")?)
+	}
+
+	/// Like [Self::get_user_vtxos_by_id], but unknown ids and server-internal
+	/// records are left out instead of failing the lookup.
+	pub async fn get_existing_user_vtxos_by_id(
+		&self,
+		ids: &[VtxoId],
+	) -> anyhow::Result<HashMap<VtxoId, VtxoState>> {
+		Ok(query::get_existing_vtxos_by_id(&self, ids).await?.into_iter()
+			.filter_map(|(id, v)| Some((id, v.try_into_user_vtxo_state().ok()?)))
+			.collect())
 	}
 
 	pub async fn get_user_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
