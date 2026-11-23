@@ -1,4 +1,4 @@
-- Fix a vulnerability found by [Loupe](https://github.com/project-loupe/loupe) and, one day later, by [MrHodl](https://github.com/MrHodlX)
+- Fix a bug found by [Loupe](https://github.com/project-loupe/loupe) and, one day later, by [MrHodl](https://github.com/MrHodlX)
   The server stored all of a round's mailbox messages under one checkpoint.
   When two participations in a round shared a mailbox, every later read of
   that mailbox failed, including seed recovery. Each message now gets its own
