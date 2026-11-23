@@ -11,7 +11,6 @@ use bitcoin::hex::DisplayHex;
 use log::{error, info};
 
 use ark::arkoor::ArkoorDestination;
-use ark::lightning::{Bolt11Invoice, PaymentHash};
 use ark::vtxo::{Full, VtxoId, Vtxo};
 
 use crate::Wallet;
@@ -45,10 +44,12 @@ pub struct ArkoorSend {
 	/// pre-split bark, meaning one whole change output.
 	#[serde(default, with = "crate::utils::serde::opt_amount_vec_sat")]
 	pub change_pieces: Option<Vec<Amount>>,
-	/// The invoice that this send pays on the Ark address in its route
-	/// hints. The server settles the invoice when it co-signs the send.
-	#[serde(default)]
-	pub paid_invoice: Option<Bolt11Invoice>,
+
+	// Older checkpoints could bind the co-signature to an invoice. Never
+	// resume one of those as an ordinary transfer. Unit accepts an absent
+	// or null legacy field and rejects a populated one during decoding.
+	#[serde(default, rename = "paid_invoice", skip_serializing)]
+	legacy_invoice: (),
 
 	// Mutable state:
 	pub progress: Progress,
@@ -259,7 +260,6 @@ pub(crate) async fn start_arkoor_send(
 	wallet: &Wallet,
 	destination: ark::Address,
 	amount: Amount,
-	paid_invoice: Option<Bolt11Invoice>,
 ) -> anyhow::Result<ArkoorSend> {
 	let _ = wallet.require_server().await?;
 	wallet.validate_arkoor_address(&destination).await
@@ -294,7 +294,7 @@ pub(crate) async fn start_arkoor_send(
 		change_pieces: Some(split_change_amount(
 			change, amount, wallet.config().change_vtxo_split_factor,
 		)),
-		paid_invoice,
+		legacy_invoice: (),
 		progress: Progress::Cosigning,
 	})
 }
@@ -333,17 +333,12 @@ async fn run_cosign(wallet: &Wallet, send: &ArkoorSend) -> Result<Progress, Adva
 
 	let arkoor = wallet.create_checkpointed_arkoor_with_vtxos(
 		dest, inputs, change_keypair, send.change_pieces.clone(), Some(&send.destination),
-		send.paid_invoice.as_ref().map(PaymentHash::from),
 	).await.retry_unless_rejected()?;
 
-	let sent_to = match &send.paid_invoice {
-		Some(invoice) => MovementDestination::new(invoice.clone().into(), send.amount),
-		None => MovementDestination::ark(send.destination.clone(), send.amount),
-	};
 	let initial_update = MovementUpdate::new()
 		.intended_and_effective_balance(neg_amount)
 		.consumed_vtxos(&arkoor.inputs)
-		.sent_to([sent_to]);
+		.sent_to([MovementDestination::ark(send.destination.clone(), send.amount)]);
 
 	// The server has cosigned by now, so from here on only retry: the cosign
 	// replays with the same change key and `abort` would release inputs
@@ -413,9 +408,19 @@ mod test {
 			input_vtxo_ids: vec![],
 			change_key_index: 0,
 			change_pieces: Some(vec![Amount::from_sat(5_000), Amount::from_sat(5_000)]),
-			paid_invoice: None,
+			legacy_invoice: (),
 			progress: Progress::Cosigning,
 		}
+	}
+
+	#[test]
+	fn ordinary_sends_cannot_resume_an_invoice_bound_checkpoint() {
+		let mut payload = serde_json::to_value(dummy_send()).unwrap();
+		assert!(payload.get("paid_invoice").is_none());
+		payload["paid_invoice"] = serde_json::Value::Null;
+		assert!(serde_json::from_value::<ArkoorSend>(payload.clone()).is_ok());
+		payload["paid_invoice"] = serde_json::json!("ln-payment-from-an-earlier-wallet");
+		assert!(serde_json::from_value::<ArkoorSend>(payload).is_err());
 	}
 
 	/// A checkpoint written before change_pieces existed must deserialize

@@ -318,8 +318,8 @@ async fn expiry_payout_owner_migration_rejects_legacy_gap() {
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 	let id = vtxo.id().to_string();
 	db.write(async |t| {
-		// Remove the V3 owner checks and the later V4 payout view so the
-		// migration runner can apply both after we insert the legacy coin.
+		// Restore the V1 schema before inserting a legacy coin. V6 already
+		// removed the objects created by V2 and V5.
 		t.batch_execute("DROP TRIGGER vtxo_require_owner_mailbox ON vtxo;
 			DROP TRIGGER vtxo_owner_mailbox_immutable ON vtxo_owner_mailbox;
 			DROP TRIGGER vtxo_owner_mailbox_no_truncate ON vtxo_owner_mailbox;
@@ -328,7 +328,7 @@ async fn expiry_payout_owner_migration_rejects_legacy_gap() {
 			DROP FUNCTION vtxo_requires_owner_mailbox(spend_state, bytea);
 			DROP VIEW v_expiry_payout_state;
 			DROP FUNCTION expiry_payout_observed(bigint);
-			DELETE FROM expiry_payout_schema_history WHERE version IN (3, 4);").await?;
+			DELETE FROM expiry_payout_schema_history WHERE version BETWEEN 2 AND 6;").await?;
 		insert_raw_vtxo(t, &vtxo, SpendState::Spendable).await
 	}).await.unwrap();
 	let error = Db::connect(&config).await.err().expect("upgrade must reject missing binding");
@@ -340,6 +340,45 @@ async fn expiry_payout_owner_migration_rejects_legacy_gap() {
 		Ok(())
 	}).await.unwrap();
 	Db::connect(&config).await.expect("upgrade succeeds after binding the held coin");
+}
+
+/// Retiring direct-invoice receipts must leave an unfinished delivery recoverable.
+#[tokio::test]
+async fn expiry_payout_upgrade_preserves_unfinished_invoice_receipts() {
+	let mut ctx = TestContext::new_minimal("postgresd/expiry_payout_upgrade_preserves_unfinished_invoice_receipts").await;
+	ctx.init_central_postgres().await;
+	let config = ctx.new_postgres(&ctx.test_name).await;
+	let db = Db::create_with_payouts(&config, true).await.unwrap();
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
+	let mailbox = test_server_mailbox_key().public_key();
+	db.write(async |t| {
+		t.batch_execute(include_str!("../../../../server/src/database/migrations_expiry_payout/V2__lightning_receive_arkoor.sql")).await?;
+		t.batch_execute(include_str!("../../../../server/src/database/migrations_expiry_payout/V5__arkoor_receive_output.sql")).await?;
+		t.execute("DELETE FROM expiry_payout_schema_history WHERE version = 6", &[]).await?;
+		insert_raw_vtxo(t, &vtxo, SpendState::Spent).await?;
+		let (node, _) = t.register_lightning_node(&mailbox).await?;
+		t.execute("WITH sub AS (
+			INSERT INTO lightning_htlc_subscription(lightning_node_id, status, payment_hash, invoice, created_at, updated_at)
+			VALUES ($1, 'settled', 'legacy_hash', 'legacy_invoice', NOW(), NOW()) RETURNING id
+		) INSERT INTO arkoor_receive_output(vtxo_id, subscription_id, mailbox_pk)
+			SELECT $2, id, $3 FROM sub", &[&node, &vtxo.id().to_string(), &mailbox.to_string()]).await?;
+		Ok(())
+	}).await.unwrap();
+
+	let err = Db::connect(&config).await.err().expect("undelivered output must block removal");
+	assert!(format!("{err:#}").contains("undelivered invoice outputs remain"), "{err:#}");
+	db.write(async |t| {
+		assert_eq!(t.execute("UPDATE arkoor_receive_output SET delivered_height = 1", &[]).await?, 1);
+		Ok(())
+	}).await.unwrap();
+	let upgraded = Db::connect(&config).await.expect("delivered output permits upgrade");
+	upgraded.read(async |t| {
+		let row = t.query_one("SELECT to_regclass('arkoor_receive_output') IS NULL,
+			status::text FROM lightning_htlc_subscription WHERE payment_hash = 'legacy_hash'", &[]).await?;
+		assert!(row.get::<_, bool>(0));
+		assert_eq!(row.get::<_, String>(1), "settled");
+		Ok(())
+	}).await.unwrap();
 }
 
 /// A VTXO decided for an expiry payout refuses every tree writer that

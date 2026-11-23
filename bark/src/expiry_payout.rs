@@ -655,9 +655,9 @@ impl Wallet {
 		Ok(true)
 	}
 
-	/// Finish a Lightning receive whose HTLC VTXOs the server paid out
-	/// instead of honouring the claim. The payout goes to the payout address
-	/// of this wallet or of the claim destination.
+	/// Finish a local Lightning receive whose HTLC grants expired. The grant
+	/// payout goes to the wallet that requested the invoice, even when the
+	/// claim was meant for another wallet.
 	///
 	/// Returns whether the receive is finished. An error is only logged.
 	pub(crate) async fn finish_paid_out_lightning_receive(
@@ -669,6 +669,10 @@ impl Wallet {
 		};
 		let res = async {
 			if !self.check_expiry_payout_all_spent(&htlcs.vtxo_ids).await? {
+				return Ok(false);
+			}
+			if let Some(destination) = &recv.claim_destination && !self.is_own_address(destination).await? {
+				// Only delivery of the claim outputs pays an external destination.
 				return Ok(false);
 			}
 			// The settled record goes first, see claim_lightning_receive_htlcs.

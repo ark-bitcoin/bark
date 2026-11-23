@@ -1254,8 +1254,7 @@ CREATE TABLE public.lightning_htlc_subscription (
     final_amount_msat bigint,
     receiver_mailbox_id text,
     user_agent text,
-    claim_pubkey text,
-    arkoor_input_ids text[]
+    claim_pubkey text
 );
 
 

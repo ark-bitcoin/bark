@@ -438,9 +438,8 @@ async fn expiry_payout_lightning_cosign_replay_survives_registration_refusal() {
 	assert_ne!(movement(&wallet, "bark.lightning_send").await.status, MovementStatus::Failed);
 }
 
-/// A Lightning receive whose claim the server refuses ends once its grants
-/// are paid out at expiry, to this wallet or, for a forwarded receive, to
-/// the recipient.
+/// An expiry payout of a receive grant goes to the wallet that requested it.
+/// It ends a local receive, while a forwarded receive still owes its destination.
 #[tokio::test]
 async fn expiry_payout_ends_lightning_receive_of_paid_grants() {
 	let ctx = TestContext::new("bark_sdk/expiry_payout_ends_lightning_receive_of_paid_grants").await;
@@ -455,9 +454,13 @@ async fn expiry_payout_ends_lightning_receive_of_paid_grants() {
 	lightning.sync().await;
 	proxy.refuse_lightning.store(true, Ordering::SeqCst);
 
-	for forwarded in [false, true] {
+	let destinations = [
+		(Some(recipient.new_address().await.unwrap()), true),
+		(None, false),
+		(Some(wallet.new_address().await.unwrap()), false),
+	];
+	for (destination, forwarded) in destinations {
 		proxy.decide.store(false, Ordering::SeqCst);
-		let destination = if forwarded { Some(recipient.new_address().await.unwrap()) } else { None };
 		let invoice = wallet.bolt11_invoice_builder().amount(sat(50_000)).claim_destination(destination)
 			.build().await.unwrap();
 		let hash = PaymentHash::from(&invoice);
@@ -475,22 +478,29 @@ async fn expiry_payout_ends_lightning_receive_of_paid_grants() {
 			panic!("unexpected {:?}", receive.progress);
 		};
 
-		// The grants are paid out: to this wallet, or to the recipient.
+		// Until a claim output is registered, the grants pay the original receiver.
+		proxy.decide_for(&wallet);
 		if forwarded {
-			*proxy.owner.lock().unwrap() = recipient.mailbox_identifier().as_pubkey().serialize().to_vec();
-			proxy.decide.store(true, Ordering::SeqCst);
+			for _ in 0..2 {
+				let _ = wallet.try_claim_lightning_receive(hash, false).await;
+				let state = wallet.lightning_receive_state(hash).await.unwrap();
+				assert!(matches!(state, LightningReceiveState::InProgress(ref recv)
+					if recv.progress == receive::Progress::PreimageRevealed(htlcs.clone())),
+					"forwarder's payout must preserve the merchant's checkpoint: {state:?}");
+			}
 		} else {
-			proxy.decide_for(&wallet);
+			let state = wallet.try_claim_lightning_receive(hash, false).await.unwrap();
+			assert!(matches!(state, LightningReceiveState::Settled(_)), "{state:?}");
 		}
-		let state = wallet.try_claim_lightning_receive(hash, false).await.unwrap();
-		assert!(matches!(state, LightningReceiveState::Settled(_)), "{state:?}");
 		let receive = wallet.history().await.unwrap().into_iter()
 			.find(|m| m.id == htlcs.movement_id).unwrap();
-		assert_eq!((receive.status, receive.effective_balance), (MovementStatus::Successful, SignedAmount::ZERO));
+		assert_eq!(receive.status, if forwarded { MovementStatus::Pending } else { MovementStatus::Successful });
+		if !forwarded {
+			assert_eq!(receive.effective_balance, SignedAmount::ZERO);
+		}
 		for id in htlcs.vtxo_ids {
 			let grant = wallet.get_vtxo_by_id(id).await.unwrap();
-			let expected = if forwarded { None } else { Some(ExpiryPayoutState::Paid) };
-			assert_eq!((grant.state, grant.expiry_payout_state), (VtxoState::Spent, expected));
+			assert_eq!((grant.state, grant.expiry_payout_state), (VtxoState::Spent, Some(ExpiryPayoutState::Paid)));
 		}
 	}
 }

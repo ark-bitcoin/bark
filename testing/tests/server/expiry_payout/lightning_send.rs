@@ -737,7 +737,7 @@ async fn expiry_payout_unrelated_preimage_keeps_failed_send() {
 	let second = rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
 		payment_hash: hash.to_vec(), amount_sat: 100_000, min_cltv_delta: 6,
 		mailbox_id: Some(mailbox.serialize()), description: None, expiry_secs: None,
-		claim_pubkey: Some(key.public_key().serialize().to_vec()), ark_address_hint: false,
+		claim_pubkey: Some(key.public_key().serialize().to_vec()),
 	}).await.unwrap().into_inner().bolt11;
 	let paying = {
 		let payer = payer.clone();
