@@ -111,8 +111,6 @@ pub struct HodlInvoiceClnPlugin {
 pub struct Lightningd {
 	#[serde(with = "utils::serde::string")]
 	pub uri: tonic::transport::Uri,
-	/// Lowest number has the highest priority.
-	pub priority: u8,
 	pub server_cert_path: PathBuf,
 	pub client_cert_path: PathBuf,
 	pub client_key_path: PathBuf,
@@ -352,7 +350,7 @@ pub struct Config {
 	pub bitcoind: Bitcoind,
 
 	#[serde(default)]
-	pub cln_array: Vec<Lightningd>,
+	pub cln: Option<Lightningd>,
 	#[serde(with = "utils::serde::duration")]
 	pub cln_reconnect_interval: Duration,
 	#[serde(with = "utils::serde::duration")]
@@ -547,20 +545,13 @@ impl Config {
 		// // we have to manually add all lists that are empty
 		builder = builder.set_default("vtxopool.vtxo_targets", Vec::<Value>::new()).unwrap();
 
-		let cln_array = {
-			let env_cfg = builder.clone().build().context("error building config")?;
-			if let Ok(raw) = env_cfg.get_string("cln_array") {
-				// if the environment variable is set, we have to clean up the
-				// actual builder so that it doesn't fail on parsing the value regularly
-				builder = builder.set_override("cln_array", Vec::<Value>::new()).unwrap();
-				serde_json::from_str::<Vec<Lightningd>>(&raw)
-					.context("invalid cln_array env var")?
-			} else {
-				Vec::new()
-			}
-		};
-
 		let raw_cfg = builder.build().context("error building config")?;
+
+		if raw_cfg.get::<Value>("cln_array").is_ok() {
+			bail!("captaind supports a single lightning node. \
+				Replace [[cln_array]] in the captaind config with a [cln] section \
+				and drop the priority field.");
+		}
 
 		// captaind used to be able to run the watchman inside its own process.
 		// Silently ignoring these leftover keys would leave an upgrading
@@ -579,8 +570,6 @@ impl Config {
 		let max_retry_for_set = raw_cfg.get::<Value>("cln_xpay_max_retry_for").is_ok();
 
 		let mut cfg = raw_cfg.try_deserialize::<Config>().context("error parsing config")?;
-		// merge the json parsed cln_array
-		cfg.cln_array.extend(cln_array);
 
 		// A config from before cln_xpay_max_retry_for existed may give xpay
 		// more than the default maximum. Keep such a config starting up.
@@ -1128,21 +1117,18 @@ mod test {
 
 		let cln = Lightningd {
 			uri: Uri::from_str(uri.clone().as_str()).unwrap(),
-			priority: 1,
 			server_cert_path: PathBuf::from(server_cert_path.clone()),
 			client_cert_path: PathBuf::from(client_cert_path.clone()),
 			client_key_path: PathBuf::from(client_key_path.clone()),
 			hold_invoice: None,
 		};
-		let mut cln_array = Vec::new();
-		cln_array.push(cln);
 
 		cfg.bitcoind.cookie = bitcoind_cookie.clone();
-		cfg.cln_array = cln_array;
+		cfg.cln = Some(cln);
 
 		cfg.validate().expect("invalid configuration");
 
-		let lncfg = cfg.cln_array.get(0).unwrap();
+		let lncfg = cfg.cln.as_ref().unwrap();
 		assert_eq!(lncfg.uri, Uri::from_str(uri.clone().as_str()).unwrap());
 		assert_eq!(lncfg.server_cert_path, PathBuf::from(server_cert_path));
 		assert_eq!(lncfg.client_cert_path, PathBuf::from(client_cert_path));
@@ -1160,13 +1146,14 @@ mod test {
 		let env = [
 			("BARK_SERVER__VTXO_LIFETIME", "42"),
 			("BARK_SERVER__BITCOIND__COOKIE", "/not/hot/dog/but/cookie"),
-			("BARK_SERVER__CLN_ARRAY", r#"[{
-				"uri": "http://belson.labs:12345",
-				"priority": 1,
-				"server_cert_path": "/hooli/http_public/certs/server.crt",
-				"client_cert_path": "/hooli/http_public/certs/client.crt",
-				"client_key_path": "/hooli/http_public/certs/client.key"
-			}]"#),
+			("BARK_SERVER__CLN__URI", uri),
+			("BARK_SERVER__CLN__SERVER_CERT_PATH", server_cert_path),
+			("BARK_SERVER__CLN__CLIENT_CERT_PATH", client_cert_path),
+			("BARK_SERVER__CLN__CLIENT_KEY_PATH", client_key_path),
+			("BARK_SERVER__CLN__HOLD_INVOICE__URI", "http://belson.labs:12346"),
+			("BARK_SERVER__CLN__HOLD_INVOICE__SERVER_CERT_PATH", server_cert_path),
+			("BARK_SERVER__CLN__HOLD_INVOICE__CLIENT_CERT_PATH", client_cert_path),
+			("BARK_SERVER__CLN__HOLD_INVOICE__CLIENT_KEY_PATH", client_key_path),
 		].into_iter().map(|(k, v)| (k.into(), v.into())).collect::<HashMap<String, String>>();
 
 		let cfg = Config::load_with_custom_env(DEFAULT_CAPTAIND_CONFIG_PATH, Some(env)).unwrap();
@@ -1174,10 +1161,22 @@ mod test {
 
 		assert_eq!(cfg.vtxo_lifetime, BlockDelta::new(42));
 		assert_eq!(cfg.bitcoind.cookie, Some("/not/hot/dog/but/cookie".into()));
-		let lncfg = cfg.cln_array.get(0).unwrap();
+		let lncfg = cfg.cln.as_ref().unwrap();
 		assert_eq!(lncfg.uri, Uri::from_str(uri).unwrap());
 		assert_eq!(lncfg.server_cert_path, PathBuf::from(server_cert_path));
 		assert_eq!(lncfg.client_cert_path, PathBuf::from(client_cert_path));
 		assert_eq!(lncfg.client_key_path, PathBuf::from(client_key_path));
+		let hold = lncfg.hold_invoice.as_ref().unwrap();
+		assert_eq!(hold.uri, Uri::from_str("http://belson.labs:12346").unwrap());
+	}
+
+	#[test]
+	fn refuses_cln_array() {
+		let env = [
+			("BARK_SERVER__CLN_ARRAY", r#"[{"uri": "http://belson.labs:12345"}]"#),
+		].into_iter().map(|(k, v)| (k.into(), v.into())).collect::<HashMap<String, String>>();
+
+		let err = Config::load_with_custom_env(DEFAULT_CAPTAIND_CONFIG_PATH, Some(env)).unwrap_err();
+		assert!(err.to_string().contains("[cln] section"), "{}", err);
 	}
 }

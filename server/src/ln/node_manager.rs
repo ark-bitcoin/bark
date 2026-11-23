@@ -1,27 +1,24 @@
-//! Manages lightning node connections and proxies requests to per-backend monitors.
+//! Manages the lightning node connection and proxies requests to per-backend monitors.
 //!
 //! ## Node lifecycle
 //!
-//! Each configured node is tracked by a per-backend node-info struct with the
-//! same state machine: `Offline ↔ Online ↔ Error`, where `Invalid` and
-//! `Disabled` are terminal states. The manager periodically reconnects
-//! offline/errored nodes and monitors online nodes for crashed sub-monitors.
-//! When multiple nodes are online, the highest-priority node is selected for
-//! operations.
+//! The configured node is tracked by a per-backend node-info struct with the
+//! state machine `Offline ↔ Online ↔ Error`, where `Invalid` is a terminal
+//! state. The manager periodically reconnects an offline/errored node and
+//! monitors an online node for crashed sub-monitors.
 //!
 //! ## Architecture
 //!
 //! [`LightningManager`] is the public handle held by the rest of the server.
 //! `LightningManagerProcess` runs as a tokio task and is a pure supervisor:
-//! it reconnects offline nodes, watches monitor liveness, and republishes a
-//! snapshot of `NodeHandle`s for the currently-online nodes into a shared
+//! it reconnects the node, watches monitor liveness, and republishes a
+//! `NodeHandle` for the node while it is online into a shared
 //! `parking_lot::RwLock` whenever node state changes.
 //!
 //! Data-path operations (pay, generate/settle invoice, fetch bolt12)
-//! run directly on the caller's task: they pick a node via one of the
-//! manager's getters (`active_node`, `hold_active_node`, `node_by_id`) and
-//! issue RPCs on the cloned handle. A small `Ctrl` mpsc channel survives only
-//! for `activate`/`disable`, where the supervisor owns the state transition.
+//! run directly on the caller's task: they take the handle via one of the
+//! manager's getters (`online_node`, `online_hold_node`) and issue RPCs on
+//! the cloned handle.
 //!
 //! ## Routing
 //!
@@ -32,7 +29,6 @@
 //! broadcasts the result without making a backend round-trip.
 
 use std::fmt;
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,9 +41,8 @@ use chrono::{DateTime, Local, TimeDelta};
 use cln_rpc::plugins::hold as hold_plugin;
 use lightning_invoice::Bolt11Invoice;
 use futures::Stream;
-use tokio::sync::{broadcast, Notify, mpsc};
+use tokio::sync::{broadcast, Notify};
 use tokio_stream::StreamExt;
-use tonic::transport::Uri;
 use tracing::{debug, error, info, trace, warn};
 use ark::VtxoId;
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
@@ -96,13 +91,10 @@ pub struct LightningManager {
 	htlc_expiry_delta: BlockDelta,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 
-	/// This channel is to manage individual CLN integrations.
-	ctrl_tx: mpsc::UnboundedSender<Ctrl>,
-
-	/// Snapshot of command handles for the currently-online nodes, republished
-	/// by the manager process on every maintenance pass. The node getters read
-	/// from here to route data-path operations without a channel round-trip.
-	node_handles: Arc<parking_lot::RwLock<Vec<NodeHandle>>>,
+	/// Command handle for the node while it is online, republished by the
+	/// manager process on every maintenance pass. The node getters read from
+	/// here to route data-path operations without a channel round-trip.
+	node_handle: Arc<parking_lot::RwLock<Option<NodeHandle>>>,
 
 	/// We also keep a handle of the update channel to update from
 	/// payment request that fail before they reach CLN.
@@ -128,54 +120,54 @@ impl LightningManager {
 		settler: Arc<HtlcSettler>,
 		payment_guards: PaymentGuards,
 	) -> anyhow::Result<LightningManager> {
-		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
-		let node_handles = Arc::new(parking_lot::RwLock::new(Vec::new()));
+		let node_handle = Arc::new(parking_lot::RwLock::new(None));
 
-		let hold_config = ClnHoldConfig {
-			invoice_check_interval: config.invoice_check_interval,
-			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
-			track_all_base_delay: config.track_all_base_delay,
-			max_track_all_delay: config.max_track_all_delay,
-		};
-		let xpay_config = ClnXpayConfig {
-			invoice_check_interval: config.invoice_check_interval,
-			check_base_delay: config.invoice_check_base_delay,
-			max_check_delay: config.max_invoice_check_delay,
-		};
-		let proc = LightningManagerProcess {
-			db: db.clone(),
-			rtmgr,
-			waker: Arc::new(Notify::new()),
+		if let Some(cln) = &config.cln {
+			let hold_config = ClnHoldConfig {
+				invoice_check_interval: config.invoice_check_interval,
+				receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
+				track_all_base_delay: config.track_all_base_delay,
+				max_track_all_delay: config.max_track_all_delay,
+			};
+			let xpay_config = ClnXpayConfig {
+				invoice_check_interval: config.invoice_check_interval,
+				check_base_delay: config.invoice_check_base_delay,
+				max_check_delay: config.max_invoice_check_delay,
+			};
+			let proc = LightningManagerProcess {
+				db: db.clone(),
+				rtmgr,
+				waker: Arc::new(Notify::new()),
 
-			ctrl_rx,
-			node_handles: node_handles.clone(),
-			hold_config,
-			xpay_config,
-			sync_manager,
-			mailbox_manager: mailbox_manager.clone(),
-			settler: settler.clone(),
-			payment_guards,
+				node_handle: node_handle.clone(),
+				hold_config,
+				xpay_config,
+				sync_manager,
+				mailbox_manager: mailbox_manager.clone(),
+				settler: settler.clone(),
+				payment_guards,
 
-			payment_update_tx: payment_update_tx.clone(),
+				payment_update_tx: payment_update_tx.clone(),
 
-			network: config.network,
-			nodes: config.cln_array.iter().map(|conf| (conf.uri.clone(), ClnNodeInfo {
-				uri: conf.uri.clone(),
-				config: conf.clone(),
-				state: NodeState::Offline,
-			})).collect(),
-			node_by_id: HashMap::with_capacity(config.cln_array.len()),
-		};
-		info!("Starting LightningManager thread... nb_nodes={}", proc.nodes.len());
-		tokio::spawn(proc.run(config.cln_reconnect_interval));
+				network: config.network,
+				node: ClnNodeInfo {
+					uri: cln.uri.clone(),
+					config: cln.clone(),
+					state: NodeState::Offline,
+				},
+			};
+			info!("Starting LightningManager thread for CLN node at {}", cln.uri);
+			tokio::spawn(proc.run(config.cln_reconnect_interval));
+		} else {
+			info!("No lightning node configured");
+		}
 
 		Ok(LightningManager {
 			db,
 			settler,
 			mailbox_manager,
-			ctrl_tx,
-			node_handles,
+			node_handle,
 			payment_update_tx,
 			payment_update_rx,
 			invoice_poll_interval: config.invoice_poll_interval,
@@ -193,35 +185,27 @@ impl LightningManager {
 		let _ = self.payment_update_tx.send(payment_hash);
 	}
 
-	/// Send a control message to the process
-	fn send_ctrl(&self, ctrl: Ctrl) {
-		self.ctrl_tx.send(ctrl).expect("called LightningManager after shutting down");
-	}
-
-	/// The highest-priority online node, if any.
+	/// The node, if it is online.
 	///
 	/// Reads the snapshot published by the manager process; the returned handle
 	/// talks to the node directly, without a control-channel round-trip.
-	fn active_node(&self) -> Option<NodeHandle> {
-		self.node_handles.read().iter().min_by_key(|h| h.priority).cloned()
+	fn online_node(&self) -> Option<NodeHandle> {
+		self.node_handle.read().clone()
 	}
 
-	/// The highest-priority online node that supports hold invoices, if any.
-	fn hold_active_node(&self) -> Option<NodeHandle> {
-		self.node_handles.read().iter()
-			.filter(|h| h.hold_rpc.is_some())
-			.min_by_key(|h| h.priority)
-			.cloned()
+	/// The node, if it is online and supports hold invoices.
+	fn online_hold_node(&self) -> Option<NodeHandle> {
+		self.online_node().filter(|h| h.hold_rpc.is_some())
 	}
 
-	/// Whether a hold-capable lightning node is currently registered as online.
-	pub fn has_hold_active_node(&self) -> bool {
-		self.hold_active_node().is_some()
+	/// Whether the lightning node is online and supports hold invoices.
+	pub fn has_online_hold_node(&self) -> bool {
+		self.online_hold_node().is_some()
 	}
 
-	/// The currently-online node with the given id, if any.
+	/// The node, if it is online and has the given id.
 	fn node_by_id(&self, id: LightningNodeId) -> Option<NodeHandle> {
-		self.node_handles.read().iter().find(|h| h.id == id).cloned()
+		self.online_node().filter(|h| h.id == id)
 	}
 
 	/// Pays a bolt-11 invoice
@@ -279,7 +263,7 @@ impl LightningManager {
 		Ok(())
 	}
 
-	/// Kick off a bolt-11 payment on the highest-priority online node.
+	/// Kick off a bolt-11 payment on the lightning node.
 	///
 	/// If a hold-invoice subscription already exists for this payment hash,
 	/// this is an intra-Ark payment and we settle off-CLN instead of issuing
@@ -304,7 +288,7 @@ impl LightningManager {
 		retry_for: Duration,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
-		let node = self.active_node().context("no active cln node")?;
+		let node = self.online_node().context("cln node is offline")?;
 		let tip = node.rpc.clone().getinfo(cln_rpc::GetinfoRequest {}).await
 			.context("failed to get info from rpc")?
 			.into_inner().blockheight;
@@ -619,7 +603,7 @@ impl LightningManager {
 		}
 	}
 
-	/// Generate a bolt-11 invoice on the highest-priority hold-capable node.
+	/// Generate a bolt-11 invoice on the lightning node.
 	pub async fn generate_invoice(
 		&self,
 		payment_hash: PaymentHash,
@@ -630,7 +614,7 @@ impl LightningManager {
 		receiver_mailbox_id: Option<MailboxIdentifier>,
 		claim_pubkey: Option<PublicKey>,
 	) -> anyhow::Result<Bolt11Invoice> {
-		let node = self.hold_active_node().context("no active hold-compatible cln node")?;
+		let node = self.online_hold_node().context("cln node is offline or has no hold plugin")?;
 		let mut hold_client = node.hold_rpc.clone().expect("hold-active node has hold_rpc");
 
 		let res = hold_client.invoice(hold_plugin::InvoiceRequest {
@@ -795,7 +779,7 @@ impl LightningManager {
 		offer: Offer,
 		amount: Amount,
 	) -> anyhow::Result<Bolt12Invoice> {
-		let node = self.active_node().context("no active cln node")?;
+		let node = self.online_node().context("cln node is offline")?;
 
 		let resp = node.rpc.clone().fetch_invoice(cln_rpc::FetchinvoiceRequest {
 			offer: offer.to_string(),
@@ -814,13 +798,7 @@ impl LightningManager {
 			.map_err(|e| anyhow!("Invalid bolt12 invoice: {:?}", e))
 	}
 
-	pub fn activate(&self, uri: Uri) {
-		self.send_ctrl(Ctrl::ActivateNode(uri));
-	}
 
-	pub fn disable(&self, uri: Uri) {
-		self.send_ctrl(Ctrl::DisableNode(uri));
-	}
 
 	/// Spawn a background task that settles hold invoices on the active
 	/// backend when new preimages appear on the settler's stream.
@@ -975,14 +953,12 @@ pub enum NodeState {
 	Invalid {
 		msg: String,
 	},
-	Disabled,
 }
 
 const OFFLINE: &'static str = "offline";
 const ONLINE: &'static str = "online";
 const ERROR: &'static str = "error";
 const INVALID: &'static str = "invalid";
-const DISABLED: &'static str = "disabled";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NodeStateKind {
@@ -994,8 +970,6 @@ pub enum NodeStateKind {
 	Error,
 	/// see [NodeState::Invalid]
 	Invalid,
-	/// see [NodeState::Disabled]
-	Disabled,
 }
 
 impl NodeStateKind {
@@ -1005,7 +979,6 @@ impl NodeStateKind {
 			NodeStateKind::Online => ONLINE,
 			NodeStateKind::Error => ERROR,
 			NodeStateKind::Invalid => INVALID,
-			NodeStateKind::Disabled => DISABLED,
 		}
 	}
 	pub fn get_all() -> &'static [NodeStateKind] {
@@ -1014,7 +987,6 @@ impl NodeStateKind {
 			NodeStateKind::Online,
 			NodeStateKind::Error,
 			NodeStateKind::Invalid,
-			NodeStateKind::Disabled,
 		]
 	}
 }
@@ -1026,7 +998,6 @@ impl NodeState {
 			Self::Online(_) => NodeStateKind::Online,
 			Self::Error { .. } => NodeStateKind::Error,
 			Self::Invalid { .. } => NodeStateKind::Invalid,
-			Self::Disabled => NodeStateKind::Disabled,
 		}
 	}
 	pub(crate) fn error(msg: impl fmt::Display) -> Self {
@@ -1044,15 +1015,8 @@ impl fmt::Display for NodeState {
 			NodeState::Online(i) => write!(f, "online: {}", i.id),
 			NodeState::Error { msg } => write!(f, "error: {}", msg),
 			NodeState::Invalid { msg } => write!(f, "invalid: {}", msg),
-			NodeState::Disabled => f.write_str("disabled"),
 		}
 	}
-}
-
-#[derive(Debug)]
-enum Ctrl {
-	ActivateNode(Uri),
-	DisableNode(Uri),
 }
 
 struct LightningManagerProcess {
@@ -1060,17 +1024,14 @@ struct LightningManagerProcess {
 	rtmgr: RuntimeManager,
 	waker: Arc<Notify>,
 
-	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
-
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 
 	/// Shared with [`LightningManager`]; rebuilt by [`Self::publish`] whenever
-	/// node state changes so the manager's getters see fresh handles.
-	node_handles: Arc<parking_lot::RwLock<Vec<NodeHandle>>>,
+	/// node state changes so the manager's getters see a fresh handle.
+	node_handle: Arc<parking_lot::RwLock<Option<NodeHandle>>>,
 
 	network: bitcoin::Network,
-	nodes: HashMap<Uri, ClnNodeInfo>,
-	node_by_id: HashMap<LightningNodeId, Uri>,
+	node: ClnNodeInfo,
 	hold_config: ClnHoldConfig,
 	xpay_config: ClnXpayConfig,
 	sync_manager: Arc<SyncManager>,
@@ -1080,201 +1041,115 @@ struct LightningManagerProcess {
 }
 
 impl LightningManagerProcess {
-	/// Rebuild the shared snapshot of command handles for the currently-online
-	/// nodes. Called after every maintenance pass and state change so the
-	/// manager's getters route to nodes that were online as of the last pass.
+	/// Rebuild the shared command handle for the node. Called after every
+	/// maintenance pass so the manager's getters route to the node only if it
+	/// was online as of the last pass.
 	fn publish(&self) {
-		let handles = self.nodes.values().filter_map(|node| {
-			let NodeState::Online(ref state) = node.state else { return None };
-			Some(state.handle(node.config.priority))
-		}).collect();
-		*self.node_handles.write() = handles;
+		let handle = match self.node.state {
+			NodeState::Online(ref state) => Some(state.handle()),
+			_ => None,
+		};
+		*self.node_handle.write() = handle;
 	}
 
-	async fn check_nodes(&mut self) {
-		for (uri, node) in self.nodes.iter_mut() {
-			match node.state {
-				NodeState::Online(ref mut rt) => {
-					// check if the monitor is still running
-					if !rt.monitor.as_ref().expect("online").is_running() {
-						match rt.monitor.take().unwrap().wait().await {
-							Ok(Err(e)) => {
-								let new_state = NodeState::error(format!("{:?}", e));
-								telemetry::set_lightning_node_state(
-									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
-								);
-								node.set_state(new_state)
-							},
-							Ok(Ok(())) => {
-								error!("ClnHold for {uri} unexpectedly exited without error");
-								let new_state = NodeState::Offline;
-								telemetry::set_lightning_node_state(
-									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
-								);
-								node.set_state(new_state);
-							},
-							Err(e) => {
-								if e.is_panic() {
-									error!("ClnHold for {uri} thread paniced!");
-								}
-								let new_state = NodeState::error(e);
-								telemetry::set_lightning_node_state(
-									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
-								);
-								node.set_state(new_state);
-							},
-						}
-					// check if xpay is still running
-					} else if !rt.xpay.as_ref().expect("online").is_running() {
-						match rt.xpay.take().unwrap().wait().await {
-							Ok(Err(e)) => {
-								let new_state = NodeState::error(format!("{:?}", e));
-								telemetry::set_lightning_node_state(
-									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
-								);
-								node.set_state(new_state)
-							},
-							Ok(Ok(())) => {
-								error!("ClnXpay for {uri} unexpectedly exited without error");
-								let new_state = NodeState::Offline;
-								telemetry::set_lightning_node_state(
-									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
-								);
-								node.set_state(new_state);
-							},
-							Err(e) => {
-								let msg = e.to_string();
-								if let Ok(p) = e.try_into_panic() {
-									error!("ClnXpay for {uri} thread paniced!: {:?}", p);
-								}
-								let new_state = NodeState::error(msg);
-								telemetry::set_lightning_node_state(
-									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
-								);
-								node.set_state(new_state);
-							},
-						}
-					}
-				},
-				NodeState::Offline | NodeState::Error { .. } => {
-					trace!("Trying to connect to offline node at {}", uri);
-					match node.try_connect(
-						&self.db,
-						self.network,
-						&self.hold_config,
-						&self.xpay_config,
-						&self.payment_update_tx,
-						&self.rtmgr,
-						&self.waker,
-						&self.sync_manager,
-						&self.mailbox_manager,
-						&self.settler,
-						&self.payment_guards,
-					).await {
-						Ok(id) => {
-							info!("Successfully connected to CLN node at {}", uri);
-							self.node_by_id.insert(id, node.uri.clone());
+	async fn check_node(&mut self) {
+		let node = &mut self.node;
+		let uri = node.uri.clone();
+		match node.state {
+			NodeState::Online(ref mut rt) => {
+				// check if the monitor is still running
+				if !rt.monitor.as_ref().expect("online").is_running() {
+					match rt.monitor.take().unwrap().wait().await {
+						Ok(Err(e)) => {
+							let new_state = NodeState::error(format!("{:?}", e));
+							telemetry::set_lightning_node_state(
+								uri, Some(rt.id), Some(rt.pubkey), new_state.kind(),
+							);
+							node.set_state(new_state)
+						},
+						Ok(Ok(())) => {
+							error!("ClnHold for {uri} unexpectedly exited without error");
+							let new_state = NodeState::Offline;
+							telemetry::set_lightning_node_state(
+								uri, Some(rt.id), Some(rt.pubkey), new_state.kind(),
+							);
+							node.set_state(new_state);
 						},
 						Err(e) => {
-							trace!("Failed to connect to CLN node at {}: {:#}", uri, e);
-							if let Ok(state) = e.downcast::<NodeState>() {
-								telemetry::set_lightning_node_state(
-									uri.clone(), None, None, state.kind(),
-								);
-								node.set_state(state);
+							if e.is_panic() {
+								error!("ClnHold for {uri} thread paniced!");
 							}
+							let new_state = NodeState::error(e);
+							telemetry::set_lightning_node_state(
+								uri, Some(rt.id), Some(rt.pubkey), new_state.kind(),
+							);
+							node.set_state(new_state);
+						},
+					}
+				// check if xpay is still running
+				} else if !rt.xpay.as_ref().expect("online").is_running() {
+					match rt.xpay.take().unwrap().wait().await {
+						Ok(Err(e)) => {
+							let new_state = NodeState::error(format!("{:?}", e));
+							telemetry::set_lightning_node_state(
+								uri, Some(rt.id), Some(rt.pubkey), new_state.kind(),
+							);
+							node.set_state(new_state)
+						},
+						Ok(Ok(())) => {
+							error!("ClnXpay for {uri} unexpectedly exited without error");
+							let new_state = NodeState::Offline;
+							telemetry::set_lightning_node_state(
+								uri, Some(rt.id), Some(rt.pubkey), new_state.kind(),
+							);
+							node.set_state(new_state);
+						},
+						Err(e) => {
+							let msg = e.to_string();
+							if let Ok(p) = e.try_into_panic() {
+								error!("ClnXpay for {uri} thread paniced!: {:?}", p);
+							}
+							let new_state = NodeState::error(msg);
+							telemetry::set_lightning_node_state(
+								uri, Some(rt.id), Some(rt.pubkey), new_state.kind(),
+							);
+							node.set_state(new_state);
+						},
+					}
+				}
+			},
+			NodeState::Offline | NodeState::Error { .. } => {
+				trace!("Trying to connect to offline node at {}", uri);
+				match node.try_connect(
+					&self.db,
+					self.network,
+					&self.hold_config,
+					&self.xpay_config,
+					&self.payment_update_tx,
+					&self.rtmgr,
+					&self.waker,
+					&self.sync_manager,
+					&self.mailbox_manager,
+					&self.settler,
+					&self.payment_guards,
+				).await {
+					Ok(()) => info!("Successfully connected to CLN node at {}", uri),
+					Err(e) => {
+						trace!("Failed to connect to CLN node at {}: {:#}", uri, e);
+						if let Ok(state) = e.downcast::<NodeState>() {
+							telemetry::set_lightning_node_state(
+								uri, None, None, state.kind(),
+							);
+							node.set_state(state);
 						}
 					}
-				},
-				NodeState::Invalid { .. } | NodeState::Disabled => {}, // do nothing anymore
-			}
+				}
+			},
+			NodeState::Invalid { .. } => {}, // do nothing anymore
 		}
 
-		// Republish the snapshot so the manager's getters see the latest set
-		// of online nodes.
+		// Republish the handle so the manager's getters see the latest state.
 		self.publish();
-	}
-
-	async fn disable_node(&mut self, uri: &Uri) {
-		let Some(node) = self.nodes.get_mut(uri) else {
-			error!("Cannot disable node since URI {uri} cannot be found.");
-			return;
-		};
-
-		let disable = match &node.state {
-			NodeState::Online(_) => {
-				info!("ClnNode {uri} was Online and is now disabled.");
-				true
-			}
-			NodeState::Error { .. } => {
-				info!("ClnNode {uri} was in Error and is now disabled.");
-				true
-			}
-			NodeState::Offline => {
-				info!("ClnNode {uri} was Offline and is now disabled.");
-				true
-			}
-			NodeState::Disabled => {
-				info!("ClnNode {uri} is already disabled.");
-				false
-			}
-			NodeState::Invalid { .. } => {
-				info!("ClnNode {uri} is invalid.");
-				false
-			}
-		};
-
-		if disable {
-			let new_state = NodeState::Disabled;
-			telemetry::set_lightning_node_state(
-				uri.clone(), None, None, new_state.kind(),
-			);
-			node.set_state(new_state);
-			// Drop the node from the snapshot so getters stop routing to it.
-			self.publish();
-		}
-	}
-
-	async fn enable_node(&mut self, uri: &Uri) {
-		let Some(node) = self.nodes.get_mut(uri) else {
-			error!("Cannot enable node since URI {uri} cannot be found.");
-			return;
-		};
-
-		let enable = match &node.state {
-			NodeState::Online(_) => {
-				info!("ClnNode with {uri} is already Online (not disabled).");
-				false
-			},
-			NodeState::Error { .. } => {
-				info!("ClnNode with {uri} is in state Error (not disabled).");
-				false
-			},
-			NodeState::Offline => {
-				info!("ClnNode with {uri} is in state Offline (not disabled).");
-				false
-			},
-			NodeState::Disabled => {
-				info!("ClnNode with {uri} was disabled and is now enabled.");
-				true
-			},
-			NodeState::Invalid { .. } => {
-				info!("ClnNode with {uri} is invalid.");
-				false
-			},
-		};
-
-		if enable {
-			// NB: mark Offline (not Disabled) so check_nodes reconnects the
-			// node, and nudge the supervisor so it happens on the next loop
-			// iteration rather than waiting for the reconnect interval.
-			let new_state = NodeState::Offline;
-			telemetry::set_lightning_node_state(
-				uri.clone(), None, None, new_state.kind(),
-			);
-			node.set_state(new_state);
-			self.waker.notify_one();
-		}
 	}
 
 	async fn run(mut self, reconnect_interval: Duration) {
@@ -1291,25 +1166,11 @@ impl LightningManagerProcess {
 
 				_ = self.waker.notified() => {
 					trace!("LightningManagerProcess woken up by child");
-					self.check_nodes().await;
+					self.check_node().await;
 				},
 				_ = interval.tick() => {
-					trace!("LightningManagerProcess checking nodes on interval");
-					self.check_nodes().await;
-				},
-
-				msg = self.ctrl_rx.recv() => if let Some(msg) = msg {
-					 match msg {
-						Ctrl::ActivateNode(uri) => {
-							self.enable_node(&uri).await;
-						},
-						Ctrl::DisableNode(uri) => {
-							self.disable_node(&uri).await;
-						},
-					}
-				} else {
-					warn!("control channel closed, shutting down LightningManager");
-					break;
+					trace!("LightningManagerProcess checking node on interval");
+					self.check_node().await;
 				},
 			};
 		}

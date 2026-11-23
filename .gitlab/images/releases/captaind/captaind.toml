@@ -108,9 +108,8 @@ max_connections = 10
 [rpc]
 public_address = "0.0.0.0:3535"
 
-[[cln_array]]
+[cln]
 uri = "https://cln:9736"
-priority = 1
 server_cert_path = "/data/cln/regtest/ca.pem"
 client_cert_path = "/data/cln/regtest/client.pem"
 client_key_path = "/data/cln/regtest/client-key.pem"

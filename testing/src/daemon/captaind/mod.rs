@@ -533,6 +533,18 @@ impl Captaind {
 	}
 }
 
+/// Serialize the config for captaind 0.9.0 and older, which read [[cln_array]].
+fn release_config_pre_091(cfg: &Config) -> anyhow::Result<String> {
+	let mut value = toml::Value::try_from(cfg).context("error serializing server config")?;
+	let table = value.as_table_mut().context("server config is not a table")?;
+	if let Some(mut cln) = table.remove("cln") {
+		cln.as_table_mut().context("cln config is not a table")?
+			.insert("priority".into(), toml::Value::Integer(1));
+		table.insert("cln_array".into(), toml::Value::Array(vec![cln]));
+	}
+	Ok(toml::to_string_pretty(&value)?)
+}
+
 #[async_trait]
 impl DaemonHelper for CaptaindHelper {
 	fn name(&self) -> &str {
@@ -592,9 +604,16 @@ impl DaemonHelper for CaptaindHelper {
 
 		let config_path = data_dir.join(CAPTAIND_CONFIG_FILE);
 		info!("Preparing to create configuration file at: {}", config_path.display());
-		let mut config_file = fs::File::create(&config_path).unwrap();
-		self.cfg.lock().write_into(&mut config_file)
-			.with_context(|| format!("error writing server config to '{}'", config_path.display()))?;
+		// TODO: Remove once 0.9.1 has been released
+		if self.exec.lock().is_some() {
+			let s = release_config_pre_091(&self.cfg.lock())?;
+			fs::write(&config_path, s)
+				.with_context(|| format!("error writing server config to '{}'", config_path.display()))?;
+		} else {
+			let mut config_file = fs::File::create(&config_path).unwrap();
+			self.cfg.lock().write_into(&mut config_file)
+				.with_context(|| format!("error writing server config to '{}'", config_path.display()))?;
+		}
 		info!("Configuration file successfully created at: {}", config_path.display());
 
 		if first_run {

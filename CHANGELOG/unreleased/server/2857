@@ -1,0 +1,25 @@
+- captaind supports a single CLN node
+  Nobody runs captaind with more than one CLN node, so `[[cln_array]]` has
+  one entry everywhere. captaind refuses to start with the old
+  `[[cln_array]]` config. Update the captaind config before you upgrade:
+  - Rename `[[cln_array]]` to `[cln]`.
+  - Remove the `priority` field.
+  - Replace the JSON env var `BARK_SERVER__CLN_ARRAY` with one env var per
+    field, for example `BARK_SERVER__CLN__URI` and
+    `BARK_SERVER__CLN__HOLD_INVOICE__URI`.
+
+  ```toml
+  [cln]
+  uri = "https://cln:9736"
+  server_cert_path = "/data/cln/regtest/ca.pem"
+  client_cert_path = "/data/cln/regtest/client.pem"
+  client_key_path = "/data/cln/regtest/client-key.pem"
+  hold_invoice.uri = "https://cln:9988"
+  hold_invoice.server_cert_path = "/data/cln/regtest/hold/ca.pem"
+  hold_invoice.client_cert_path = "/data/cln/regtest/hold/client.pem"
+  hold_invoice.client_key_path = "/data/cln/regtest/hold/client-key.pem"
+  ```
+  [#2857](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2857)
+  - **BREAKING:** The `[[cln_array]]` config section is replaced by `[cln]`.
+  - **BREAKING:** The admin RPCs `StartLightningNode` and
+    `StopLightningNode` are removed.

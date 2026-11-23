@@ -244,11 +244,9 @@ forfeit_attestation_required = false
 # and the ln_max_fee_ppm is set to 750000, we set CLN's maxfee to 3 sats.
 ln_max_fee_ppm = 900000
 
-# This allows you to configure one or more lightning nodes for the server to use. Just add as
-# many [[cln_array]] entries as you need!
-#[[cln_array]]
+# The lightning node the server uses.
+#[cln]
 #uri = "http://127.0.0.1:8000"
-#priority = 10
 #server_cert_path = "/etc/cln/server.cert"
 #client_cert_path = "/etc/cln/client.cert"
 #client_key_path = "/etc/cln/client.key"
