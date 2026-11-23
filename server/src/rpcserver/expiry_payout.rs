@@ -13,7 +13,6 @@ use ark::tree::signed::UnlockHash;
 use server_rpc::{self as rpc, protos, RequestExt};
 
 use crate::Server;
-use crate::database::expiry_payout::payout::{ExpiryPayoutReceipt, ExpiryPayoutState};
 use crate::error::ExpiryPayoutRefusal;
 use crate::rpcserver::{StatusContext, ToStatusResult};
 
@@ -37,7 +36,7 @@ fn require_expiry_payout_version(req: tonic::Request<()>) -> Result<tonic::Reque
 #[derive(Default)]
 pub(crate) struct VtxoPayouts {
 	owners: BTreeMap<VtxoId, PublicKey>,
-	receipts: BTreeMap<VtxoId, ExpiryPayoutReceipt>,
+	receipts: BTreeMap<VtxoId, protos::ExpiryPayout>,
 }
 
 impl VtxoPayouts {
@@ -46,23 +45,7 @@ impl VtxoPayouts {
 	}
 
 	pub(crate) fn expiry_payout(&self, id: &VtxoId) -> Option<protos::ExpiryPayout> {
-		self.receipts.get(id).copied().map(Into::into)
-	}
-}
-
-impl From<ExpiryPayoutReceipt> for protos::ExpiryPayout {
-	fn from(receipt: ExpiryPayoutReceipt) -> Self {
-		let state = match receipt.state {
-			ExpiryPayoutState::Pending => protos::ExpiryPayoutState::Pending,
-			ExpiryPayoutState::Paid => protos::ExpiryPayoutState::Paid,
-			ExpiryPayoutState::Forfeited => protos::ExpiryPayoutState::Forfeited,
-		};
-		protos::ExpiryPayout {
-			state: state as i32,
-			gross_sat: receipt.gross.to_sat(),
-			fee_sat: receipt.fee.to_sat(),
-			payout_sat: receipt.payout.to_sat(),
-		}
+		self.receipts.get(id).copied()
 	}
 }
 
@@ -105,7 +88,7 @@ impl Server {
 			vtxo_id: id.to_bytes().to_vec(),
 			spend_state: spend_state as i32,
 			owner_mailbox: board.mailbox.serialize().to_vec(),
-			expiry_payout: receipt.map(Into::into),
+			expiry_payout: receipt,
 		}))
 	}
 

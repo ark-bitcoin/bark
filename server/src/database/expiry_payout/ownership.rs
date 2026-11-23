@@ -2,7 +2,6 @@
 //! created, and the decision of who gets the value of an expired VTXO.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::str::FromStr;
 
 use anyhow::Context;
@@ -18,6 +17,7 @@ use bitcoin_ext::BlockHeight;
 use crate::database::{AdvisoryLock, SpendState, Tx};
 use crate::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution, HtlcVtxo};
 use crate::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::ln::htlc_recvs_expired;
 use crate::round::UNSPENDABLE;
 
 use super::decision::ExpiredTreeVtxo;
@@ -25,16 +25,9 @@ use super::decision::ExpiredTreeVtxo;
 /// The owner mailboxes of a write differ from the new VTXOs that need one.
 /// The write stores nothing, so its caller can drop it: a round with such
 /// an output fails, and the server keeps running rounds.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("mailbox binding set differs from the owner VTXOs")]
 pub struct OwnerBindingMismatch;
-
-impl fmt::Display for OwnerBindingMismatch {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		f.write_str("mailbox binding set differs from the owner VTXOs")
-	}
-}
-
-impl std::error::Error for OwnerBindingMismatch {}
 
 impl OwnerBindingMismatch {
 	/// Recognize the deferred check without treating other constraint or
@@ -50,16 +43,9 @@ impl OwnerBindingMismatch {
 /// A replay tried to change the owner mailbox of an existing VTXO.
 /// The original binding remains in place. This is a precondition failure
 /// rather than a terminal bad argument because a co-sign reply may be lost.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("owner VTXO {0} has a conflicting mailbox binding")]
 pub struct StoredMailboxConflict(pub VtxoId);
-
-impl fmt::Display for StoredMailboxConflict {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "owner VTXO {} has a conflicting mailbox binding", self.0)
-	}
-}
-
-impl std::error::Error for StoredMailboxConflict {}
 
 impl Tx<'_> {
 	/// The owner mailbox recorded for each VTXO when it was created. The
@@ -222,7 +208,7 @@ impl Tx<'_> {
 			return Ok(None);
 		}
 		Ok(Some(row.get::<_, i64>("open") == 0
-			&& payout_htlc_recvs_expired(htlcs, tip, Some(tip))))
+			&& htlc_recvs_expired(true, htlcs, tip, Some(tip))))
 	}
 }
 
@@ -681,7 +667,7 @@ impl Tx<'_> {
 				return Ok(proposal);
 			};
 			if htlc.direction() == HtlcDirection::Outgoing && resolution == HtlcResolution::Revoked
-				&& !payout_htlc_recvs_expired(&htlcs, tip, Some(tip)) {
+				&& !htlc_recvs_expired(true, &htlcs, tip, Some(tip)) {
 				proposal.disposition = OwnershipDisposition::Unresolved("lightning receive grants not final");
 				return Ok(proposal);
 			}
@@ -714,53 +700,6 @@ pub(super) fn htlc_terms(policy: &VtxoPolicy) -> Option<(PaymentHash, BlockHeigh
 		VtxoPolicy::ServerHtlcRecv_v0(p) => Some((p.payment_hash, p.htlc_expiry, false)),
 		VtxoPolicy::Pubkey(_) => None,
 	}
-}
-
-/// Whether the HTLC-recv grants of a payment expired, by the rule of the
-/// server mode: [payout_htlc_recvs_expired] in payout mode, else
-/// [crate::ln::htlc_recvs_expired].
-pub(crate) fn htlc_recvs_expired_in_mode(
-	expiry_payouts: bool,
-	htlc_vtxos: &[HtlcVtxo],
-	tip: BlockHeight,
-	watchman_tip: Option<BlockHeight>,
-) -> bool {
-	if expiry_payouts {
-		payout_htlc_recvs_expired(htlc_vtxos, tip, watchman_tip)
-	} else {
-		crate::ln::htlc_recvs_expired(htlc_vtxos, tip, watchman_tip)
-	}
-}
-
-/// The payout-mode form of [crate::ln::htlc_recvs_expired]. A collected
-/// grant never expires, and a grant that the operator took back on-chain
-/// counts only when that spend is six blocks deep, so a reorg cannot both
-/// refund the sender and let the receiver claim.
-pub(crate) fn payout_htlc_recvs_expired(
-	htlc_vtxos: &[HtlcVtxo],
-	tip: BlockHeight,
-	watchman_tip: Option<BlockHeight>,
-) -> bool {
-	let Some(watchman_tip) = watchman_tip else {
-		return false;
-	};
-	let height = std::cmp::min(tip, watchman_tip);
-	let htlc_recvs = htlc_vtxos.iter()
-		.filter(|h| h.direction() == HtlcDirection::Outgoing)
-		.collect::<Vec<_>>();
-	!htlc_recvs.is_empty() && htlc_recvs.iter().all(|h| {
-		if h.htlc.resolution() == Some(HtlcResolution::Fulfilled) || height <= h.htlc_expiry() {
-			return false;
-		}
-		match h.htlc.chain_resolution {
-			// Resolution heights roll back with a reorg, so six blocks deep
-			// in both daemons' views is final.
-			Some(HtlcResolution::Revoked) => h.htlc.chain_resolution_height.is_some_and(|block|
-				height.to_u32().checked_sub(block.to_u32()).is_some_and(|depth| depth >= 5)),
-			None => !h.vtxo.is_exited(),
-			Some(HtlcResolution::Fulfilled) => false,
-		}
-	})
 }
 
 #[cfg(test)]
@@ -798,18 +737,23 @@ mod tests {
 				banned_until_height: None, spend_state: crate::database::SpendState::Spendable,
 				decided_for_payout: false, confirmed_height: None, created_at: now, updated_at: now },
 		};
-		assert!(!payout_htlc_recvs_expired(std::slice::from_ref(&grant), BlockHeight::new(150), Some(BlockHeight::new(150))));
+		let expired = |grant: &HtlcVtxo, payout_mode, server, watchman: Option<u32>| {
+			htlc_recvs_expired(payout_mode, std::slice::from_ref(grant), BlockHeight::new(server),
+				watchman.map(BlockHeight::new))
+		};
+		assert!(!expired(&grant, true, 150, Some(150)));
+		assert!(expired(&grant, false, 150, Some(150)));
 		grant.htlc.offchain_resolution = None;
-		assert!(payout_htlc_recvs_expired(std::slice::from_ref(&grant), BlockHeight::new(150), Some(BlockHeight::new(150))));
+		assert!(expired(&grant, true, 150, Some(150)));
 		grant.vtxo.confirmed_height = Some(BlockHeight::new(110));
 		grant.htlc.chain_resolution = Some(HtlcResolution::Revoked);
 		grant.htlc.chain_resolution_height = Some(BlockHeight::new(120));
 		for (server, watchman, expected) in [(124, Some(124), false), (125, Some(125), true),
 			(150, Some(124), false), (124, Some(150), false), (150, None, false)] {
-			assert_eq!(payout_htlc_recvs_expired(std::slice::from_ref(&grant), BlockHeight::new(server),
-				watchman.map(BlockHeight::new)), expected);
+			assert_eq!(expired(&grant, true, server, watchman), expected);
 		}
+		assert!(expired(&grant, false, 124, Some(124)));
 		grant.htlc.chain_resolution = Some(HtlcResolution::Fulfilled);
-		assert!(!payout_htlc_recvs_expired(std::slice::from_ref(&grant), BlockHeight::new(150), Some(BlockHeight::new(150))));
+		assert!(!expired(&grant, true, 150, Some(150)));
 	}
 }

@@ -54,21 +54,12 @@ impl DestinationBindings {
 				.context("invalid blinded arkoor mailbox")?;
 			let blinded = BlindedMailboxIdentifier::from_pubkey(point);
 			let mailbox = MailboxIdentifier::from_blinded(blinded, key, server_mailbox_key)
-				.context("invalid arkoor recipient mailbox")?;
-			ret.insert(key, mailbox.as_pubkey())?;
-		}
-		Ok(ret)
-	}
-
-	fn insert(&mut self, key: PublicKey, mailbox: PublicKey) -> anyhow::Result<()> {
-		if let Some(previous) = self.mailboxes.get(&key) {
-			if *previous != mailbox {
+				.context("invalid arkoor recipient mailbox")?.as_pubkey();
+			if ret.mailboxes.insert(key, mailbox).is_some_and(|previous| previous != mailbox) {
 				bail!("output {key} has conflicting payout mailboxes");
 			}
-			return Ok(());
 		}
-		self.mailboxes.insert(key, mailbox);
-		Ok(())
+		Ok(ret)
 	}
 
 	/// The same bindings for a Lightning send, the only arkoor that can

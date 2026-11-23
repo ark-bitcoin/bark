@@ -416,14 +416,17 @@ mod test {
 
 /// A refusal caused by an expiry payout. The RPC server sends its reason and
 /// identifier to the client in metadata, so that the client can act on it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum ExpiryPayoutRefusal {
 	/// The VTXO is decided for an expiry payout.
+	#[error("vtxo {0} is decided for an expiry payout")]
 	DecidedForPayout(VtxoId),
 	/// The VTXO is in an expired tree, so a new lightning send cannot use it.
+	#[error("vtxo {0} is in an expired tree and cannot fund a new lightning send")]
 	ExpiredNewLightning(VtxoId),
 	/// An expiry payout cancelled the round participation before it
 	/// accepted forfeits.
+	#[error("round participation {0} was cancelled for an expiry payout")]
 	RoundCancelledBeforeForfeit(UnlockHash),
 }
 
@@ -444,19 +447,3 @@ impl ExpiryPayoutRefusal {
 		}
 	}
 }
-
-impl fmt::Display for ExpiryPayoutRefusal {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::DecidedForPayout(id) => write!(f, "vtxo {} is decided for an expiry payout", id),
-			Self::ExpiredNewLightning(id) => {
-				write!(f, "vtxo {} is in an expired tree and cannot fund a new lightning send", id)
-			},
-			Self::RoundCancelledBeforeForfeit(hash) => {
-				write!(f, "round participation {} was cancelled for an expiry payout", hash)
-			},
-		}
-	}
-}
-
-impl StdError for ExpiryPayoutRefusal {}

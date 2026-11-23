@@ -11,6 +11,7 @@ use bitcoin::{Amount, FeeRate, ScriptBuf, Transaction, TxOut, Txid};
 
 use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId};
 use bitcoin_ext::{BlockRef, TxOutExt};
+use server_rpc::protos::{ExpiryPayout, ExpiryPayoutState};
 
 use crate::database::Tx;
 use crate::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution};
@@ -21,23 +22,6 @@ use super::ownership::{htlc_terms, LightningSourceState};
 
 /// The largest payout transaction that is still standard.
 const MAX_PAYOUT_VSIZE: usize = 100_000;
-
-/// The state of the expiry payout of a VTXO, as the wallet sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExpiryPayoutState {
-	Pending,
-	Paid,
-	Forfeited,
-}
-
-/// The expiry payout decided for a VTXO.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ExpiryPayoutReceipt {
-	pub state: ExpiryPayoutState,
-	pub gross: Amount,
-	pub fee: Amount,
-	pub payout: Amount,
-}
 
 /// Whether the watchman can take back a receive grant after its timeout:
 /// the receive is canceled, or its HTLCs are ready and no preimage is
@@ -84,7 +68,7 @@ impl Tx<'_> {
 	/// output that the recipient never registered and that goes back to
 	/// its sender, is not reported for the VTXO.
 	pub(crate) async fn expiry_payout_receipts(&self, owners: &BTreeMap<VtxoId, PublicKey>)
-		-> anyhow::Result<BTreeMap<VtxoId, ExpiryPayoutReceipt>>
+		-> anyhow::Result<BTreeMap<VtxoId, ExpiryPayout>>
 	{
 		if !self.expiry_payouts() || owners.is_empty() {
 			return Ok(BTreeMap::new());
@@ -108,14 +92,18 @@ impl Tx<'_> {
 			// The owner exited the VTXO on-chain, so no payout follows.
 			let status: &str = row.get("status");
 			if status == "conflicted" && row.get::<_, bool>("exposed") { continue; }
-			let amount = |column| -> anyhow::Result<Amount> {
-				Ok(Amount::from_sat(u64::try_from(row.get::<_, i64>(column))?))
-			};
-			let payout = amount("payout_sat")?;
+			let sats = |column| u64::try_from(row.get::<_, i64>(column));
+			let payout_sat = sats("payout_sat")?;
 			let state = if status != "confirmed" || row.get::<_, Option<bool>>("deep") != Some(true) {
 				ExpiryPayoutState::Pending
-			} else if payout > Amount::ZERO { ExpiryPayoutState::Paid } else { ExpiryPayoutState::Forfeited };
-			receipts.insert(id, ExpiryPayoutReceipt { state, gross: amount("gross_sat")?, fee: amount("fee_sat")?, payout });
+			} else if payout_sat > 0 {
+				ExpiryPayoutState::Paid
+			} else {
+				ExpiryPayoutState::Forfeited
+			};
+			receipts.insert(id, ExpiryPayout {
+				state: state as i32, gross_sat: sats("gross_sat")?, fee_sat: sats("fee_sat")?, payout_sat,
+			});
 		}
 		Ok(receipts)
 	}

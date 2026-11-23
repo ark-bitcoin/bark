@@ -38,7 +38,6 @@ use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
 use crate::database::block::BlockTable;
-use crate::database::expiry_payout::ownership::htlc_recvs_expired_in_mode;
 use crate::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution, HtlcVtxo};
 use crate::database::tree::VtxoTreeUpdate;
 use crate::database::ln::{
@@ -99,7 +98,10 @@ fn validate_htlc_recv_expiry(
 /// Exits and resolutions are only known up to `watchman_tip`, so expiry is
 /// judged at the lower of that and `tip`. Without a watchman, or without any
 /// HTLC-recv vtxo, nothing counts as expired.
+/// In expiry payout mode a fulfilled grant never expires, and an on-chain
+/// revocation needs six confirmations before the sender can be refunded.
 pub(crate) fn htlc_recvs_expired(
+	expiry_payouts: bool,
 	htlc_vtxos: &[HtlcVtxo],
 	tip: BlockHeight,
 	watchman_tip: Option<BlockHeight>,
@@ -109,13 +111,20 @@ pub(crate) fn htlc_recvs_expired(
 	};
 	let height = std::cmp::min(tip, watchman_tip);
 
-	let htlc_recvs = htlc_vtxos.iter()
-		.filter(|h| h.direction() == HtlcDirection::Outgoing)
-		.collect::<Vec<_>>();
-	!htlc_recvs.is_empty() && htlc_recvs.iter().all(|h| {
-		height > h.htlc_expiry() && (
-			!h.vtxo.is_exited() || h.htlc.chain_resolution == Some(HtlcResolution::Revoked)
-		)
+	let mut grants = htlc_vtxos.iter().filter(|h| h.direction() == HtlcDirection::Outgoing).peekable();
+	grants.peek().is_some() && grants.all(|grant| {
+		if height <= grant.htlc_expiry() {
+			return false;
+		}
+		if !expiry_payouts {
+			return !grant.vtxo.is_exited() || grant.htlc.chain_resolution == Some(HtlcResolution::Revoked);
+		}
+		match grant.htlc.chain_resolution {
+			Some(HtlcResolution::Revoked) => grant.htlc.chain_resolution_height
+				.and_then(|block| height.checked_blocks_since(block)).is_some_and(|depth| depth >= 5),
+			Some(HtlcResolution::Fulfilled) => false,
+			None => !grant.vtxo.is_exited() && grant.htlc.offchain_resolution != Some(HtlcResolution::Fulfilled),
+		}
 	})
 }
 
@@ -633,7 +642,7 @@ impl Server {
 			// user's receive on the same hash.
 			let htlc_vtxos = htlc_vtxo::get_htlc_vtxo_states_by_payment_hash(&t, payment_hash).await?;
 			let watchman_tip = t.get_highest_block(BlockTable::Watchmand).await?.map(|b| b.height);
-			let htlc_recvs_expired = htlc_recvs_expired_in_mode(
+			let htlc_recvs_expired = htlc_recvs_expired(
 				self.config.expiry_payouts, &htlc_vtxos, tip, watchman_tip,
 			);
 			let canceled = match subscription_id {
