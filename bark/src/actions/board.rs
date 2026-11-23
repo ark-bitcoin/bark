@@ -233,6 +233,7 @@ enum BroadcastOutcome {
 /// Store the cosigned vtxo locked under the action and get the funding tx onto the
 /// network if we hold its signatures. Both steps are idempotent: the store no-ops if
 /// the vtxo exists, and a tx already on the network is not pushed again.
+#[allow(deprecated)]
 async fn run_broadcast(
 	wallet: &Wallet,
 	board: &Board,
@@ -398,6 +399,7 @@ async fn run_confirm(wallet: &Wallet, board: Board) -> Result<Advance<Board>, Ad
 /// Register the board with the server, mark the vtxo spendable and finalize the
 /// movement. All steps are idempotent: the server tolerates an already-registered
 /// board and the state update is gated on the unspent states.
+#[allow(deprecated)]
 async fn run_register(wallet: &Wallet, board: &Board) -> anyhow::Result<()> {
 	let (mut srv, _) = wallet.require_server().await?;
 

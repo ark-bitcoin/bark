@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use ark::VtxoId;
 
 use ark_testing::{TestContext, btc};

@@ -35,28 +35,17 @@ use crate::movement::MovementId;
 
 /// What kind of entity holds a [VtxoState::Locked] reservation.
 ///
-/// The wallet's invariant is "every vtxo lock is owned by exactly one
-/// operation." For subsystems modelled as a [crate::actions::WalletAction] (today: the
-/// lightning send), that's an `Action(id)`. For subsystems that still
-/// run pre-action machinery (round, offboard, board, lightning receive)
-/// the holder is the operation's movement, captured as
-/// `Movement(MovementId)`. As those subsystems get converted to actions,
-/// new variants land here and the migration from `Movement` happens
-/// per-subsystem.
+/// Every vtxo lock is owned by exactly one operation. New code locks with
+/// `Action`. Rounds and boards still lock with `Movement`, and wallets
+/// created by older versions have `Movement` locks stored in their database.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum VtxoLockHolder {
 	/// A [crate::actions::WalletAction] checkpointed in `bark_wallet_action_checkpoint`.
 	Action { id: WalletActionId },
-	/// A pre-action subsystem (round, offboard, board, lightning
-	/// receive). The movement is used as a stable handle.
+	/// The movement of the operation that holds the lock.
+	#[deprecated(note = "lock vtxos with an Action holder")]
 	Movement { id: MovementId },
-}
-
-impl From<MovementId> for VtxoLockHolder {
-	fn from(id: MovementId) -> Self {
-		VtxoLockHolder::Movement { id }
-	}
 }
 
 const SPENDABLE: &'static str = "Spendable";
