@@ -1,20 +1,29 @@
 pub mod tip_watcher;
 
+use std::future::Future;
 use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ark::rounds::RoundEvent;
+use bark_runtime::Instant;
 use futures::{FutureExt, StreamExt};
+#[cfg(feature = "wasm-web")]
+use futures::channel::oneshot;
+#[cfg(feature = "wasm-web")]
+use futures::future::AbortHandle;
 use log::{info, trace, warn};
 #[cfg(not(feature = "wasm-web"))]
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::{Wallet, WalletInner};
-use crate::utils::ReconnectBackoff;
+use crate::utils::{RECONNECT_BACKOFF_MAX, ReconnectBackoff};
 
 
+/// How long a restart lets the previous daemon
+/// finish its work in flight before aborting it.
+const RESTART_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A handle to a running background daemon
 #[cfg(not(feature = "wasm-web"))]
@@ -27,6 +36,10 @@ pub struct DaemonHandle {
 #[cfg(feature = "wasm-web")]
 pub struct DaemonHandle {
 	shutdown: CancellationToken,
+	/// Aborts the daemon's task.
+	abort: AbortHandle,
+	/// Resolves once the daemon's task has finished or was aborted.
+	done: oneshot::Receiver<()>,
 }
 
 impl DaemonHandle {
@@ -42,6 +55,68 @@ impl DaemonHandle {
 		self.jh.await?;
 		Ok(())
 	}
+
+	/// Stop the daemon process, wait up to `timeout` for it to finish its
+	/// work in flight and abort whatever is still running after that.
+	///
+	/// An aborted task stops at its current await point, as if the process
+	/// had been killed there, except that the locks it holds are released.
+	///
+	/// The daemon is also aborted if this future is dropped before the
+	/// daemon has finished.
+	#[cfg(not(feature = "wasm-web"))]
+	async fn stop_wait_or_abort(self, timeout: Duration) {
+		self.stop();
+
+		let mut task = AbortOnDrop(self.jh);
+		match bark_runtime::timeout(timeout, &mut task.0).await {
+			Ok(Ok(())) => {},
+			Ok(Err(e)) => warn!("Daemon terminated unexpectedly while stopping: {e}"),
+			Err(_) => {
+				warn!("Daemon still busy {timeout:?} after the stop signal, aborting its tasks");
+				task.0.abort();
+				let _ = (&mut task.0).await;
+			},
+		}
+	}
+
+	/// See the native variant.
+	#[cfg(feature = "wasm-web")]
+	async fn stop_wait_or_abort(self, timeout: Duration) {
+		self.stop();
+
+		let task = AbortOnDrop(self.abort);
+		let mut done = self.done;
+		if bark_runtime::timeout(timeout, &mut done).await.is_err() {
+			warn!("Daemon still busy {timeout:?} after the stop signal, aborting its tasks");
+			task.0.abort();
+			let _ = done.await;
+		}
+	}
+}
+
+/// Run `fut` as the task of a daemon that shuts down on `shutdown`.
+#[cfg(not(feature = "wasm-web"))]
+fn spawn_daemon<F>(shutdown: CancellationToken, fut: F) -> DaemonHandle
+where
+	F: Future<Output = ()> + Send + 'static,
+{
+	DaemonHandle { shutdown, jh: crate::utils::spawn(fut) }
+}
+
+/// Run `fut` as the task of a daemon that shuts down on `shutdown`.
+#[cfg(feature = "wasm-web")]
+fn spawn_daemon<F>(shutdown: CancellationToken, fut: F) -> DaemonHandle
+where
+	F: Future<Output = ()> + 'static,
+{
+	let (fut, abort) = futures::future::abortable(fut);
+	let (done_tx, done) = oneshot::channel();
+	crate::utils::spawn(async move {
+		let _ = fut.await;
+		let _ = done_tx.send(());
+	});
+	DaemonHandle { shutdown, abort, done }
 }
 
 pub(crate) fn start_daemon(
@@ -49,17 +124,35 @@ pub(crate) fn start_daemon(
 ) -> DaemonHandle {
 	let shutdown = CancellationToken::new();
 	let proc = DaemonProcess::new(shutdown.clone(), wallet);
+	spawn_daemon(shutdown, proc.run())
+}
 
-	#[cfg(not(feature = "wasm-web"))]
-	{
-		let jh = crate::utils::spawn(proc.run());
-		DaemonHandle { shutdown, jh }
-	}
-	#[cfg(feature = "wasm-web")]
-	{
-		crate::utils::spawn(proc.run());
-		DaemonHandle { shutdown }
-	}
+/// Start a new daemon that first stops the `previous` one, if any.
+///
+/// A request the previous daemon has stuck on a dead connection can take
+/// over a minute to fail, and it may hold a wallet lock the new daemon
+/// needs. The previous daemon is therefore aborted if it has not finished
+/// within [RESTART_DRAIN_TIMEOUT].
+///
+/// Stopping the previous daemon is part of the new daemon's task, so the
+/// returned handle covers the whole restart: stopping it while the previous
+/// daemon is still finishing keeps the new one from doing any work.
+pub(crate) fn restart_daemon(
+	wallet: &Wallet,
+	previous: Option<DaemonHandle>,
+) -> DaemonHandle {
+	let shutdown = CancellationToken::new();
+	let proc = DaemonProcess::new(shutdown.clone(), wallet);
+	spawn_daemon(shutdown, async move {
+		if let Some(previous) = previous {
+			previous.stop_wait_or_abort(RESTART_DRAIN_TIMEOUT).await;
+		}
+		if proc.shutdown.is_cancelled() {
+			info!("Daemon stopped before it finished restarting");
+			return;
+		}
+		proc.run().await;
+	})
 }
 
 /// The daemon is responsible for running the wallet and performing the
@@ -119,32 +212,59 @@ impl DaemonProcess {
 		}
 	}
 
-	/// Recursively resubscribe to mailbox message stream by waiting and
-	/// calling [Wallet::subscribe_store_mailbox_messages] again until
-	/// the daemon is shutdown.
+	/// Keep the mailbox message subscription alive for the lifetime of
+	/// the daemon, reconnecting as needed.
 	///
-	/// The mailbox stream is always-on and sets `connected` to `false`
-	/// when it breaks, so other processes can back off.
+	/// When the stream breaks or the server is marked unreachable, this
+	/// process replaces the server connection itself and resubscribes
+	/// after a reconnect backoff, which grows while attempts keep failing.
+	///
+	/// `connected` follows the outcome of that replacement, so other
+	/// processes back off while the server is unreachable.
 	async fn run_mailbox_messages_process(&self) {
+		let mut backoff = ReconnectBackoff::new();
 		loop {
-			let shutdown = self.shutdown.clone();
-			if self.connected.load(Ordering::Relaxed) {
+			let mut needs_server_check = !self.connected.load(Ordering::Relaxed);
+			if !needs_server_check {
 				trace!("Daemon subscribing to mailbox message stream");
+				let subscribed_at = Instant::now();
 				let r = Wallet::subscribe_process_mailbox_messages_weak(
-					self.wallet.clone(), None, shutdown,
+					self.wallet.clone(), None, self.shutdown.clone(),
 				).await;
 				if let Err(e) = r {
 					warn!("An error occurred while processing mailbox messages: {e:#}");
-					self.connected.store(false, Ordering::Relaxed);
+					needs_server_check = true;
+				}
+
+				// A subscription that outlived the longest backoff step was
+				// healthy, so the next reconnect is prompt again.
+				if subscribed_at.elapsed() >= RECONNECT_BACKOFF_MAX {
+					backoff.reset();
 				}
 			}
 
 			futures::select! {
-				_ = bark_runtime::sleep(self.sync_interval).fuse() => {},
+				_ = backoff.wait().fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting mailbox messages process...");
 					break;
 				},
+			}
+
+			if needs_server_check {
+				let Some(wallet) = self.wallet() else {
+					info!("Wallet has been dropped. Shutting down mailbox messages process...");
+					break;
+				};
+				match wallet.reconnect_server().await {
+					Ok(()) => self.connected.store(true, Ordering::Relaxed),
+					Err(e) => {
+						// The server connection check process reports
+						// an unreachable server at a higher log level.
+						trace!("Ark server reconnect before mailbox resubscribe failed: {e:#}");
+						self.connected.store(false, Ordering::Relaxed);
+					},
+				}
 			}
 		}
 	}
@@ -212,6 +332,10 @@ impl DaemonProcess {
 
 	/// Keep the round events subscription alive for the
 	/// lifetime of the daemon, reconnecting as needed.
+	///
+	/// While the server is marked unreachable, this process does not
+	/// subscribe: a subscription on a connection that may have died
+	/// hangs until its keepalive gives up.
 	async fn run_round_events_process(&self) {
 		let mut backoff = ReconnectBackoff::new();
 		loop {
@@ -220,17 +344,21 @@ impl DaemonProcess {
 				break;
 			}
 
-			match self.process_round_event_stream(&mut backoff).await {
-				Ok(()) => {},
-				// A tonic h2 stream reset is almost always a
-				// proxy- or server-side idle timeout rather than
-				// a real failure; resubscribe quietly.
-				Err(e) if crate::utils::is_h2_stream_error(&e) => {
-					trace!("Round events stream reset by server, reconnecting: {e:#}");
-				},
-				Err(e) => {
-					warn!("An error occured while processing pending rounds: {e:#}");
-				},
+			if !self.connected.load(Ordering::Relaxed) {
+				trace!("Round events subscription waits for the server to be reachable");
+			} else {
+				match self.process_round_event_stream(&mut backoff).await {
+					Ok(()) => {},
+					// A tonic h2 stream reset is almost always a
+					// proxy- or server-side idle timeout rather than
+					// a real failure; resubscribe quietly.
+					Err(e) if crate::utils::is_h2_stream_error(&e) => {
+						trace!("Round events stream reset by server, reconnecting: {e:#}");
+					},
+					Err(e) => {
+						warn!("An error occured while processing pending rounds: {e:#}");
+					},
+				}
 			}
 
 			// Always back off before resubscribing. Otherwise a stream the
@@ -268,7 +396,7 @@ impl DaemonProcess {
 			}
 
 			let Some(wallet) = self.wallet() else { break };
-			let result = wallet.refresh_server().await;
+			let result = wallet.reconnect_server().await;
 			if let Err(ref e) = result {
 				warn!("Ark server reconnect failed: {:#}", e);
 			} else {
@@ -316,12 +444,14 @@ impl DaemonProcess {
 						warn!("An error occurred while syncing pending lightning sends: {e:#}");
 					}
 
-					if let Err(e) = wallet.sync_pending_arkoor_sends().await {
-						warn!("An error occurred while syncing pending arkoor sends: {e:#}");
-					}
-
+					// Ahead of the arkoor sends, so an arkoor send stuck on a
+					// dead connection does not hold up a claim the payer waits on.
 					if let Err(e) = wallet.sync_pending_lightning_receives().await {
 						warn!("An error occurred while syncing pending lightning receives: {e:#}");
+					}
+
+					if let Err(e) = wallet.sync_pending_arkoor_sends().await {
+						warn!("An error occurred while syncing pending arkoor sends: {e:#}");
 					}
 				}
 
@@ -417,16 +547,21 @@ impl DaemonProcess {
 	async fn run_startup_tasks(&self) {
 		let Some(wallet) = self.wallet() else { return };
 
-		// Eagerly refresh the server connection before starting the other
-		// daemon tasks so they don't race the first connection check and
-		// skip their initial iteration with `connected = false` (which
-		// would delay mailbox subscription by `slow_interval`).
-		let result = wallet.refresh_server().await;
-		if let Err(ref e) = result {
-			warn!("Ark server refresh failed: {:#}", e);
+		// Replace the server connection before starting the other daemon
+		// tasks, so they don't race the first connection check and skip
+		// their initial iteration with `connected = false`.
+		//
+		// If that fails, the existing connection may have died, so it does
+		// not count as connected and the startup sync is skipped: a request
+		// on a dead connection hangs until its keepalive gives up. The
+		// mailbox process retries the replacement, and the periodic sync
+		// resumes once it succeeds.
+		if let Err(e) = wallet.reconnect_server().await {
+			warn!("Ark server reconnect failed: {:#}", e);
+			self.connected.store(false, Ordering::Relaxed);
+			return;
 		}
-		let connected = wallet.inner.server.initialized();
-		self.connected.store(connected, Ordering::Relaxed);
+		self.connected.store(true, Ordering::Relaxed);
 
 		if !self.manual_sync {
 			wallet.sync().await;
@@ -520,12 +655,37 @@ where
 	Fut: std::future::Future<Output = ()> + Send + 'static,
 {
 	loop {
-		match tokio::spawn(f()).await {
+		// Abort the task when this future is dropped, so
+		// aborting the daemon does not leave its tasks running.
+		let mut task = AbortOnDrop(tokio::spawn(f()));
+		match (&mut task.0).await {
 			Ok(()) => break,
 			Err(e) => {
 				warn!("Daemon task '{}' terminated unexpectedly, restarting: {e}", name);
 				bark_runtime::sleep(Duration::from_secs(1)).await;
 			},
 		}
+	}
+}
+
+/// Aborts the wrapped task when dropped.
+#[cfg(not(feature = "wasm-web"))]
+struct AbortOnDrop(JoinHandle<()>);
+
+#[cfg(not(feature = "wasm-web"))]
+impl Drop for AbortOnDrop {
+	fn drop(&mut self) {
+		self.0.abort();
+	}
+}
+
+/// Aborts the wrapped task when dropped.
+#[cfg(feature = "wasm-web")]
+struct AbortOnDrop(AbortHandle);
+
+#[cfg(feature = "wasm-web")]
+impl Drop for AbortOnDrop {
+	fn drop(&mut self) {
+		self.0.abort();
 	}
 }

@@ -925,8 +925,9 @@ struct WalletInner {
 	/// Lazily initialised on first use via [`Wallet::require_server`]. A
 	/// [`OnceCell`] is the right primitive here: concurrent callers on a
 	/// cold cell all await the same in-flight `connect_to_server` future
-	/// instead of each opening a fresh gRPC channel.
-	server: tokio::sync::OnceCell<ServerConnection>,
+	/// instead of each opening a fresh gRPC channel. The cell itself is
+	/// swapped out by [`Wallet::reconnect_server`].
+	server: parking_lot::RwLock<Arc<tokio::sync::OnceCell<ServerConnection>>>,
 
 	/// Onchain wallet used for boarding, exit fee-bumping, and onchain syncing.
 	///
@@ -1474,7 +1475,7 @@ impl Wallet {
 		chain.require_version().await
 			.context("provided chain source doesn't meet version requirement")?;
 
-		let server = tokio::sync::OnceCell::new();
+		let server = parking_lot::RwLock::new(Arc::new(tokio::sync::OnceCell::new()));
 
 		let notifications = NotificationDispatch::new();
 		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
@@ -1562,7 +1563,7 @@ impl Wallet {
 		let wallet = Wallet { inner: Arc::new(WalletInner {
 			config, db, seed, exit, movements, notifications, chain,
 			lock_manager: Box::new(crate::lock_manager::memory::MemoryLockManager::new()),
-			server: tokio::sync::OnceCell::new(),
+			server: parking_lot::RwLock::new(Arc::new(tokio::sync::OnceCell::new())),
 			onchain: None,
 			daemon: parking_lot::Mutex::new(None),
 			finished_recovery: parking_lot::Mutex::new(None),
@@ -1637,7 +1638,7 @@ impl Wallet {
 		// Connect lazily if not yet connected. `get_or_try_init` ensures
 		// concurrent callers on a cold cell all await the same in-flight
 		// connect future instead of each opening a fresh gRPC channel.
-		let conn = self.inner.server.get_or_try_init(|| async {
+		let conn = self.server_cell().get_or_try_init(|| async {
 			let network = self.properties().await?.network;
 			Self::connect_to_server(&self.inner.config, network).await
 				.context("You should be connected to Ark server to perform this action")
@@ -1654,18 +1655,50 @@ impl Wallet {
 		Ok((conn, ark_info))
 	}
 
+	/// The cell holding the current connection to the Ark server.
+	///
+	/// Returns a clone so the lock on [WalletInner::server]
+	/// is never held across an await point.
+	pub(crate) fn server_cell(&self) -> Arc<tokio::sync::OnceCell<ServerConnection>> {
+		self.inner.server.read().clone()
+	}
+
+	/// Replace the connection to the Ark server with a newly established one.
+	///
+	/// [Wallet::refresh_server] keeps using the existing connection, which
+	/// only notices that its network path died once its keepalive times
+	/// out. Use this instead when the connection is likely stale, for
+	/// example after the process was suspended or the network changed.
+	///
+	/// The existing connection is kept if the new one cannot be established
+	/// or if the server behind it is rejected.
+	pub async fn reconnect_server(&self) -> anyhow::Result<()> {
+		let network = self.properties().await?.network;
+		let conn = Self::connect_to_server(&self.inner.config, network).await?;
+		self.check_server(&conn).await?;
+		*self.inner.server.write() = Arc::new(tokio::sync::OnceCell::new_with(Some(conn)));
+
+		Ok(())
+	}
+
 	pub async fn refresh_server(&self) -> anyhow::Result<()> {
 		// If the cell is still cold, initialise it with a fresh connection.
 		// If it is already initialised, run a heartbeat against the existing
-		// one — `OnceCell` does not support replacing a stored value, but
-		// `ServerConnection` is built around a tonic `Channel` which
-		// transparently reconnects, so we don't need to swap it.
-		let srv = self.inner.server.get_or_try_init(|| async {
+		// one: `ServerConnection` is built around a tonic `Channel` which
+		// transparently reconnects once it notices the connection broke.
+		let cell = self.server_cell();
+		let srv = cell.get_or_try_init(|| async {
 			let properties = self.properties().await?;
 			Self::connect_to_server(&self.inner.config, properties.network).await
 				.map_err(anyhow::Error::from)
 		}).await?;
 
+		self.check_server(srv).await
+	}
+
+	/// Check that `srv` is reachable and that the
+	/// Ark server behind it is safe to use.
+	async fn check_server(&self, srv: &ServerConnection) -> anyhow::Result<()> {
 		srv.check_connection().await?;
 		let ark_info = srv.ark_info().await;
 		ark_info.fees.validate().context("invalid fee schedule")?;
@@ -1726,7 +1759,7 @@ impl Wallet {
 
 	/// Return [ArkInfo] fetched on last handshake with the Ark server
 	pub async fn ark_info(&self) -> anyhow::Result<Option<ArkInfo>> {
-		match self.inner.server.get() {
+		match self.server_cell().get() {
 			Some(srv) => Ok(Some(srv.ark_info().await)),
 			None => Ok(None),
 		}
@@ -2645,6 +2678,9 @@ impl Wallet {
 
 	/// Starts a daemon for the wallet.
 	///
+	/// The daemon begins by replacing the wallet's connection to the Ark
+	/// server, and replaces it again whenever it has to reconnect.
+	///
 	/// The daemon uses the onchain wallet stored in [OpenWalletArgs::onchain] (if any)
 	/// for background onchain syncing and exit fee-bumping.
 	///
@@ -2667,6 +2703,42 @@ impl Wallet {
 		#[cfg(feature = "nwc")]
 		if let Some(manager) = self.inner.nwc.lock().as_ref() {
 			manager.start_all();
+		}
+
+		Ok(())
+	}
+
+	/// Restarts the daemon for the wallet on a new connection to the Ark
+	/// server, or starts one if none is running.
+	///
+	/// A connection can die without the daemon noticing for over a minute,
+	/// for example when a mobile app is suspended in the background. Call
+	/// this when the app returns to the foreground: the new daemon
+	/// reconnects and, unless [crate::Config::daemon_manual_sync] is set, syncs
+	/// right away instead of waiting on the stale connection. While the
+	/// server is unreachable it keeps trying to reconnect and does not use
+	/// the stale connection.
+	///
+	/// This returns right away. The new daemon first gives the previous one
+	/// a few seconds to finish its work in flight. Whatever is still
+	/// running after that is aborted, because a request stuck on the dead
+	/// connection would otherwise keep holding wallet locks the new daemon
+	/// needs. The interrupted work is picked up again by the new daemon's
+	/// sync, like after a crash.
+	pub fn restart_daemon(&self) -> anyhow::Result<()> {
+		let mut daemon = self.inner.daemon.lock();
+		let previous = daemon.take();
+		// NWC serving survives a restart, so it only starts here when no
+		// daemon was running, as in [Wallet::start_daemon].
+		#[cfg(feature = "nwc")]
+		let start_nwc = previous.is_none();
+		*daemon = Some(crate::daemon::restart_daemon(self, previous));
+
+		#[cfg(feature = "nwc")]
+		if start_nwc {
+			if let Some(manager) = self.inner.nwc.lock().as_ref() {
+				manager.start_all();
+			}
 		}
 
 		Ok(())
@@ -2710,12 +2782,14 @@ impl Wallet {
 
 	/// Stops the daemon for the wallet if it is running, otherwise does nothing.
 	pub fn stop_daemon(&self) {
+		// NWC stops under the daemon lock, so a concurrent
+		// [Wallet::start_daemon] cannot restart it in between.
+		let mut daemon = self.inner.daemon.lock();
 		#[cfg(feature = "nwc")]
 		if let Some(manager) = self.inner.nwc.lock().as_ref() {
 			manager.stop_all();
 		}
 
-		let mut daemon = self.inner.daemon.lock();
 		if let Some(handle) = daemon.take() {
 			handle.stop();
 		}
@@ -2724,12 +2798,15 @@ impl Wallet {
 	/// Stops the daemon for the wallet if it is running and waits until its
 	/// tasks have finished.
 	pub async fn stop_daemon_wait(&self) -> anyhow::Result<()> {
-		#[cfg(feature = "nwc")]
-		if let Some(manager) = self.inner.nwc.lock().as_ref() {
-			manager.stop_all();
-		}
-
-		let handle = self.inner.daemon.lock().take();
+		let handle = {
+			// See [Wallet::stop_daemon] for why NWC stops under the daemon lock.
+			let mut daemon = self.inner.daemon.lock();
+			#[cfg(feature = "nwc")]
+			if let Some(manager) = self.inner.nwc.lock().as_ref() {
+				manager.stop_all();
+			}
+			daemon.take()
+		};
 		if let Some(handle) = handle {
 			handle.stop_wait().await?;
 		}

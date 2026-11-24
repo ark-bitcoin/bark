@@ -11,7 +11,7 @@ use server_rpc::StatusExt;
 /// Base delay for the first reconnect of a dropped subscription stream.
 const RECONNECT_BACKOFF_BASE: Duration = Duration::from_secs(1);
 /// Cap on the reconnect delay so we keep probing a long-down server.
-const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(30);
+pub(crate) const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(30);
 
 /// Exponential backoff for reconnecting a dropped server subscription stream.
 ///

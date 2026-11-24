@@ -1,11 +1,15 @@
 use std::time::Duration;
 
+use bitcoin::Amount;
 use futures::StreamExt;
+use tokio::sync::watch;
+use tokio_stream::Stream;
 
 use ark::lightning::{PaymentHash, Preimage};
 use bitcoin_ext::BlockDelta;
-use ark_testing::{TestContext, btc, util::{FutureExt, poll_interval}};
+use ark_testing::{TestContext, btc, sat, util::{FutureExt, poll_interval, wait_timeout}};
 use ark_testing::balance::assert_balance_consistent;
+use ark_testing::daemon::captaind::{self, MailboxClient};
 
 use bark::actions::lightning::pay::LightningSendState;
 use bark::actions::lightning::receive::LightningReceiveState;
@@ -14,6 +18,7 @@ use bark::subsystem::Subsystem;
 use bark::LightningSendOptions;
 use cln_rpc::plugins::hold;
 use server::database::Db;
+use server_rpc::protos;
 use server_rpc::protos::mailbox_server::mailbox_message::Message as MailboxMsg;
 
 /// Wait until the hold plugin holds the payment's HTLCs. The invoice turns
@@ -483,4 +488,180 @@ async fn pay_with_retry_for() {
 		).await.expect("db read").expect("payment attempt");
 		assert_eq!(attempt.retry_for, Some(expected));
 	}
+}
+
+/// A mailbox proxy whose subscriptions can be cut and refused on demand,
+/// standing in for a connection that died underneath the wallet.
+#[derive(Clone)]
+struct InterruptibleMailbox {
+	down: watch::Sender<bool>,
+	/// Counts the subscriptions that reached the server.
+	subscriptions: watch::Sender<usize>,
+	/// Counts the subscriptions refused while the mailbox was down.
+	refused: watch::Sender<usize>,
+}
+
+impl InterruptibleMailbox {
+	/// Wait until more than `count` subscriptions reached the server.
+	async fn wait_for_subscriptions_above(&self, count: usize) {
+		self.subscriptions.subscribe().wait_for(|n| *n > count).await
+			.expect("sender is alive");
+	}
+
+	/// Wait until more than `count` subscriptions were refused.
+	async fn wait_for_refused_above(&self, count: usize) {
+		self.refused.subscribe().wait_for(|n| *n > count).await
+			.expect("sender is alive");
+	}
+}
+
+#[async_trait::async_trait]
+impl captaind::proxy::MailboxRpcProxy for InterruptibleMailbox {
+	async fn subscribe_mailbox(
+		&self, upstream: &mut MailboxClient, req: protos::mailbox_server::MailboxRequest,
+	) -> Result<Box<
+		dyn Stream<Item = Result<protos::mailbox_server::MailboxMessage, tonic::Status>> + Unpin + Send + 'static
+	>, tonic::Status> {
+		let mut down = self.down.subscribe();
+		if *down.borrow() {
+			self.refused.send_modify(|n| *n += 1);
+			return Err(tonic::Status::unavailable("mailbox is down"));
+		}
+
+		let stream = upstream.subscribe_mailbox(req).await?.into_inner();
+		self.subscriptions.send_modify(|n| *n += 1);
+		let cut = async move {
+			let _ = down.wait_for(|down| *down).await;
+		};
+		Ok(Box::new(Box::pin(stream.take_until(cut))))
+	}
+}
+
+/// Wait until the spendable balance of `wallet` is `expected`, checking
+/// again on every notification.
+///
+/// A receive stores its VTXOs before it dispatches its movement, so the
+/// notification that comes with a receive finds the balance updated.
+async fn wait_for_spendable(
+	wallet: &bark::Wallet,
+	notifications: &mut bark::NotificationStream,
+	expected: Amount,
+) {
+	loop {
+		let balance = wallet.balance().await.expect("wallet balance");
+		if balance.spendable == expected {
+			break;
+		}
+		notifications.next().await.expect("notification stream ended");
+	}
+}
+
+/// The daemon's mailbox subscription is what notices incoming payments.
+/// When it breaks, the daemon must resubscribe shortly after the mailbox
+/// is back.
+#[tokio::test]
+async fn daemon_recovers_from_broken_mailbox_stream() {
+	let ctx = TestContext::new("bark_sdk/daemon_recovers_from_broken_mailbox_stream").await;
+	let srv = ctx.captaind("server").create().await;
+
+	let mailbox = InterruptibleMailbox {
+		down: watch::channel(false).0,
+		subscriptions: watch::channel(0).0,
+		refused: watch::channel(0).0,
+	};
+	let down = mailbox.down.clone();
+	let proxy = srv.start_proxy_with_mailbox((), mailbox.clone()).await;
+
+	let sender = ctx.bark_sdk("sender", &srv)
+		.boarded(sat(400_000))
+		.create().await;
+	// Long enough that nothing in this test can happen on the sync interval.
+	// Sync passes only run when a new block arrives, which relies on the
+	// ZMQ tip notifications of the bitcoind backend.
+	let sync_interval = Duration::from_secs(24 * 60 * 60);
+	let wallet = ctx.bark_sdk("bark", &proxy)
+		.cfg(move |cfg| cfg.daemon_sync_interval_secs = sync_interval.as_secs())
+		.create().await;
+
+	let mut notifications = wallet.subscribe_notifications();
+
+	// The startup sync reads the mailbox before the daemon subscribes, so
+	// only an observed subscription proves there is a stream to cut. The
+	// periodic sync does not read the mailbox, so only the stream delivers
+	// arkoors from here on.
+	mailbox.wait_for_subscriptions_above(0).wait(wait_timeout()).await;
+	let address = wallet.new_address().await.expect("new address");
+	sender.send_arkoor_payment(&address, sat(100_000)).await.expect("first arkoor send");
+	wait_for_spendable(&wallet, &mut notifications, sat(100_000)).ready().await;
+
+	// Cut the subscription and refuse new ones until the daemon tried again.
+	// The daemon resubscribes within a few reconnect backoff steps once the
+	// mailbox is back, and a payment sent after that arrives right away.
+	let subscriptions = *mailbox.subscriptions.borrow();
+	let refused = *mailbox.refused.borrow();
+	down.send_replace(true);
+	mailbox.wait_for_refused_above(refused).wait(Duration::from_secs(10)).await;
+	down.send_replace(false);
+	mailbox.wait_for_subscriptions_above(subscriptions).wait(Duration::from_secs(10)).await;
+
+	let address = wallet.new_address().await.expect("new address");
+	sender.send_arkoor_payment(&address, sat(50_000)).await.expect("second arkoor send");
+	wait_for_spendable(&wallet, &mut notifications, sat(150_000)).ready().await;
+
+	assert_balance_consistent(&wallet, false).await;
+}
+
+/// Without a mailbox subscription, the daemon's sync passes must still
+/// claim a lightning receive, so the payer is not left waiting on an
+/// incoming-payment notification that never arrives.
+#[tokio::test]
+async fn daemon_claims_lightning_receive_while_mailbox_is_down() {
+	let ctx = TestContext::new("bark_sdk/daemon_claims_lightning_receive_while_mailbox_is_down").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	// The mailbox refuses every subscription for the whole test.
+	let mailbox = InterruptibleMailbox {
+		down: watch::channel(true).0,
+		subscriptions: watch::channel(0).0,
+		refused: watch::channel(0).0,
+	};
+	let proxy = srv.start_proxy_with_mailbox((), mailbox).await;
+
+	// Long enough that only a new block triggers a sync pass. That relies
+	// on the ZMQ tip notifications of the bitcoind backend.
+	let sync_interval = Duration::from_secs(24 * 60 * 60);
+	let wallet = ctx.bark_sdk("bark", &proxy)
+		.cfg(move |cfg| cfg.daemon_sync_interval_secs = sync_interval.as_secs())
+		.create().await;
+	lightning.sync().await;
+
+	let mut notifications = wallet.subscribe_notifications();
+
+	// The payment resolves once the wallet reveals the preimage, which is up
+	// to a sync pass. A pass finds nothing to claim until the server has
+	// registered the HTLCs its node accepted, so a block is mined every few
+	// seconds until the payment resolves.
+	let invoice_amount = sat(200_000);
+	let invoice = wallet.bolt11_invoice(invoice_amount, None, None).await
+		.expect("creating invoice");
+	let payment_hash = PaymentHash::from(&invoice);
+	let mine_until_claimed = async {
+		lightning.internal.wait_for_hold_invoice_accepted(payment_hash).await;
+		for _ in 0..5 {
+			ctx.generate_blocks(1).await;
+			tokio::time::sleep(Duration::from_secs(3)).await;
+		}
+	};
+	tokio::select! {
+		result = lightning.external.try_pay_bolt11(invoice.to_string()) => {
+			result.expect("lightning payment failed");
+		},
+		() = mine_until_claimed => panic!("lightning receive not claimed after five sync passes"),
+	}
+	wait_for_spendable(&wallet, &mut notifications, invoice_amount).ready().await;
+
+	assert_balance_consistent(&wallet, false).await;
 }
