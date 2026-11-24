@@ -101,13 +101,15 @@ pub struct ConfigOpts {
 
 	/// The address of the Esplora HTTP server to use.
 	///
-	/// Either this or the `bitcoind_address` field has to be provided.
+	/// Either this or `--bitcoind` has to be provided, unless the network has a
+	/// default chain source (mainnet, signet and mutinynet).
 	#[arg(long)]
 	pub esplora: Option<String>,
 
 	/// The address of the bitcoind RPC server to use.
 	///
-	/// Either this or the `esplora_address` field has to be provided.
+	/// Either this or `--esplora` has to be provided, unless the network has a
+	/// default chain source (mainnet, signet and mutinynet).
 	#[arg(long)]
 	pub bitcoind: Option<String>,
 

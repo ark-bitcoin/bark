@@ -70,7 +70,7 @@ pub struct ListExitsOpts {
 	transactions: bool,
 
 	/// Also include exits that reached a terminal state: claimed, aborted because the VTXO
-	/// was already spent, or canceled.
+	/// was already spent or swept, or canceled.
 	#[arg(long)]
 	include_finished: bool,
 }
@@ -86,7 +86,7 @@ pub struct StartExitOpts {
 	/// The ID of a VTXO to unilaterally exit, can be specified multiple times.
 	#[arg(long = "vtxo", value_name = "VTXO_ID")]
 	vtxos: Vec<VtxoId>,
-	/// Whether to exit all VTXO's, either this or --vtxo must be specificed
+	/// Whether to exit all VTXO's, either this or --vtxo must be specified
 	#[arg(long)]
 	all: bool,
 }
