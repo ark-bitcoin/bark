@@ -2066,8 +2066,10 @@ impl Wallet {
 	/// Checks VTXOs that are due to be refreshed, and schedules a delegated refresh if any
 	///
 	/// This will include any VTXOs within the expiry threshold
-	/// ([Config::vtxo_refresh_expiry_threshold]) or those which
-	/// are uneconomical to exit due to onchain network conditions.
+	/// ([Config::vtxo_refresh_expiry_threshold]) or at the server's maximum
+	/// exit depth. If there is at least one of those, it also includes VTXOs
+	/// that should be refreshed soon, for example those which are
+	/// uneconomical to exit due to onchain network conditions.
 	///
 	/// Returns a [RoundStateId] if a refresh is scheduled.
 	pub async fn maybe_schedule_maintenance_refresh_delegated(
@@ -2136,8 +2138,10 @@ impl Wallet {
 	/// Performs an interactive refresh of all VTXOs that are due to be refreshed, if any
 	///
 	/// This will include any VTXOs within the expiry threshold
-	/// ([Config::vtxo_refresh_expiry_threshold]) or those which
-	/// are uneconomical to exit due to onchain network conditions.
+	/// ([Config::vtxo_refresh_expiry_threshold]) or at the server's maximum
+	/// exit depth. If there is at least one of those, it also includes VTXOs
+	/// that should be refreshed soon, for example those which are
+	/// uneconomical to exit due to onchain network conditions.
 	///
 	/// Waits for a round to start, joins it, dropping any inputs the server rejects
 	/// as unusable and retries within the same attempt, then drives that round to
