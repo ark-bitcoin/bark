@@ -154,8 +154,9 @@ enum MessageCommand {
 enum Command {
 	/// Create a new wallet
 	///
-	/// Configuration will pass in default values when --signet is used, but will
-	/// require full configuration for regtest
+	/// Configuration will pass in default values when --mainnet or --signet is used
+	/// (--mutinynet only has a default chain source), but will require full
+	/// configuration for regtest
 	///
 	/// Stop barkd before you use this command on its datadir, or create the wallet
 	/// through the daemon API.
@@ -310,6 +311,7 @@ enum Command {
 		/// - BOLT11 invoice
 		/// - BOLT12 offer
 		/// - Lightning address
+		/// - LNURL
 		/// - Bitcoin address
 		/// - BIP321 payment URI
 		destination: String,
@@ -338,7 +340,6 @@ enum Command {
 	},
 
 	/// Send money from your vtxo's to an onchain address
-	/// This method requires to wait for a round
 	#[command()]
 	SendOnchain {
 		/// The bitcoin address to which money will be sent
@@ -353,7 +354,6 @@ enum Command {
 	},
 
 	/// Turn VTXOs into UTXOs
-	/// This command sends
 	#[command()]
 	Offboard {
 		/// Optional address to receive offboarded VTXOs. If no address is provided, one will be
@@ -364,7 +364,7 @@ enum Command {
 		/// Either this or --all should be provided
 		#[arg(long = "vtxo", value_name = "VTXO_ID")]
 		vtxos: Option<Vec<String>>,
-		/// Whether or not all VTXOs should be offboarded. Either this or --vtxos should be provided
+		/// Whether or not all VTXOs should be offboarded. Either this or --vtxo should be provided
 		#[arg(long)]
 		all: bool,
 		/// Skip syncing wallet
@@ -392,7 +392,7 @@ enum Command {
 	#[command()]
 	Watch,
 
-	/// Run wallet maintenence
+	/// Run wallet maintenance
 	///
 	/// This includes onchain sync, offchain sync, registering boards with the server,
 	/// syncing Lightning VTXOs, syncing exits, and refreshing soon-to-expire VTXOs
@@ -643,7 +643,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					}
 					vtxos
 				}
-				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours, counterparty or all"),
+				_ => bail!("provide at most one of --vtxo, --threshold-blocks, \
+					--threshold-hours, --counterparty or --all"),
 			};
 
 			info!("Refreshing {} vtxos...", vtxos.len());
@@ -854,7 +855,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				info!("Offboarding all off-chain funds...");
 				wallet.offboard_all(address).await?
 			} else {
-				bail!("Either --vtxos or --all argument must be provided to offboard");
+				bail!("Either --vtxo or --all argument must be provided to offboard");
 			};
 			output_json(&json::cli::OffboardResult {
 				offboard_txid: offboard.txid,

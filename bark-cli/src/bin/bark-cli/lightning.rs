@@ -81,7 +81,7 @@ pub enum PayCommand {
 	Invoice {
 		/// The invoice to pay
 		invoice: String,
-		/// Conditionnally required if invoice doesn't have amount defined
+		/// Conditionally required if invoice doesn't have amount defined
 		///
 		/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
 		amount: Option<Amount>,

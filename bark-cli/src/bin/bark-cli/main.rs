@@ -135,13 +135,15 @@ struct CreateOpts {
 
 	/// The address of the Esplora HTTP server to use.
 	///
-	/// Either this or the `bitcoind_address` field has to be provided.
+	/// Either this or `--bitcoind` has to be provided, unless the network has a
+	/// default chain source (mainnet, signet and mutinynet).
 	#[arg(long)]
 	esplora: Option<String>,
 
 	/// The address of the bitcoind RPC server to use.
 	///
-	/// Either this or the `esplora_address` field has to be provided.
+	/// Either this or `--esplora` has to be provided, unless the network has a
+	/// default chain source (mainnet, signet and mutinynet).
 	#[arg(long)]
 	bitcoind: Option<String>,
 
@@ -234,8 +236,9 @@ enum PaymentMethodArg {
 enum Command {
 	/// Create a new wallet
 	///
-	/// Configuration will pass in default values when --signet is used, but will
-	/// require full configuration for regtest
+	/// Configuration will pass in default values when --mainnet or --signet is used
+	/// (--mutinynet only has a default chain source), but will require full
+	/// configuration for regtest
 	#[command()]
 	Create(CreateOpts),
 
@@ -387,7 +390,6 @@ enum Command {
 	},
 
 	/// Send money from your vtxo's to an onchain address
-	/// This method requires to wait for a round
 	#[command()]
 	SendOnchain {
 		/// The bitcoin address to which money will be sent
@@ -399,7 +401,6 @@ enum Command {
 	},
 
 	/// Turn VTXOs into UTXOs
-	/// This command sends
 	#[command()]
 	Offboard {
 		/// Optional address to receive offboarded VTXOs. If no address is provided, one will be
@@ -410,7 +411,7 @@ enum Command {
 		/// Either this or --all should be provided
 		#[arg(long = "vtxo", value_name = "VTXO_ID")]
 		vtxos: Option<Vec<String>>,
-		/// Whether or not all VTXOs should be offboarded. Either this or --vtxos should be provided
+		/// Whether or not all VTXOs should be offboarded. Either this or --vtxo should be provided
 		#[arg(long)]
 		all: bool,
 	},
@@ -689,7 +690,7 @@ async fn execute_command(command: Command, config: &Configuration) -> anyhow::Re
 					let req = models::OffboardAllRequest { address };
 					wallet_api::offboard_all(config, req).await.rest()?
 				},
-				_ => bail!("Either --vtxos or --all argument must be provided to offboard"),
+				_ => bail!("Either --vtxo or --all argument must be provided to offboard"),
 			};
 			output_json(&resp);
 		},
