@@ -1,6 +1,8 @@
 #
 # This is a template config file for captaind.
-# All required values have a default value provided in this file.
+# All required values have a default value provided in this file, with one
+# exception: you must set the bitcoind authentication in the [bitcoind]
+# section (either cookie, or rpc_user and rpc_pass).
 # All optional values are included here but are commented out.
 #
 
@@ -35,7 +37,6 @@ min_board_amount = "20000 sat"
 # The time between execution of each exit clause of the VTXO, in blocks
 vtxo_exit_delta = 144
 
-# The maximum transaction depth of the arkoor part of VTXOs that server cosigns
 # Maximum exit depth (genesis chain length) allowed for a VTXO.
 # Once a VTXO's exit depth reaches this value the server will refuse to
 # cosign further OOR transactions spending it. Clients should refresh
@@ -172,13 +173,15 @@ cln_xpay_timeout = "60s"
 # The longest time a client may ask us to give xpay to finish a payment
 cln_xpay_max_retry_for = "5m"
 
-# FIXME
+# Base delay between two checks of the same open lightning payment attempt.
+# The delay doubles after each check, up to max_invoice_check_delay.
 invoice_check_base_delay = "10s"
 
-# FIXME
+# Maximum delay between two checks of the same open lightning payment attempt
 max_invoice_check_delay = "10m"
 
-# FIXME
+# Interval at which captaind polls the status of a lightning payment while it
+# waits for the payment to succeed or fail
 invoice_poll_interval = "30s"
 
 # Interval at which the settler polls for cross-process HTLC settlements
@@ -255,7 +258,7 @@ ln_max_fee_ppm = 900000
 #hold_invoice.uri = "http://127.0.0.1:8001"
 #hold_invoice.server_cert_path = "/etc/cln/hold/server.cert"
 #hold_invoice.client_cert_path = "/etc/cln/hold/client.cert"
-#hold_invoice.client_key_path = "/etc/cln/chold/lient.key"
+#hold_invoice.client_key_path = "/etc/cln/hold/client.key"
 
 
 ###############

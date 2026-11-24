@@ -1,6 +1,9 @@
 #
 # This is a template config file for watchmand.
-# All required values have a default value provided in this file.
+# All required values have a default value provided in this file, with two
+# exceptions: you must set sweep_address, and you must set the bitcoind
+# authentication in the [bitcoind] section (either cookie, or rpc_user and
+# rpc_pass).
 # All optional values are included here but are commented out.
 #
 
@@ -9,6 +12,11 @@ data_dir = "./bark-server-watchmand"
 
 # The bitcoin network this server runs on
 network = "regtest"
+
+# The address that receives the bitcoin from the VTXOs that watchmand claims.
+# watchmand does not start without it. The address must be for the network
+# set above.
+#sweep_address = "<bitcoin address>"
 
 # The interval at which the SyncManager polls for new blocks
 sync_manager_block_poll_interval = "100ms"
@@ -19,13 +27,17 @@ htlc_settlement_poll_interval = "60s"
 # Minimum number of confirmations for a UTXO to be considered trusted
 min_trusted_confs = 1
 
+# Endpoint for OpenTelemetry collector
+#otel_collector_endpoint = "http://127.0.0.1:4000"
+# Probability of enabling OpenTelemetry tracing
+#otel_tracing_sampler = "0.5"
 # The name of your deployment used by OpenTelemetry
 otel_deployment_name = "my_regtest"
 
 # Optional listen address for the private admin gRPC API.
 # Unauthenticated by design and as privileged as shell access to this host.
 # Keep it on loopback.
-#admin_address = "127.0.0.1:4536"
+#admin_address = "127.0.0.1:3538"
 
 ###############
 # BLOCKLIST   #
