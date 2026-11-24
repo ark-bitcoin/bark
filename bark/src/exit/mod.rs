@@ -551,7 +551,7 @@ impl Exit {
 	}
 
 	/// Returns statuses for exits in a terminal state: claimed, aborted because the VTXO was
-	/// already spent, or canceled.
+	/// already spent or swept, or canceled.
 	pub async fn list_finished(
 		&self,
 		include_history: bool,

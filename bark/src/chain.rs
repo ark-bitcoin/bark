@@ -238,7 +238,7 @@ impl ChainSource {
 			struct NetworkInfo { version: usize }
 			let info: NetworkInfo = rpc.call_raw("getnetworkinfo", &[]).await?;
 			if info.version < MIN_BITCOIND_VERSION {
-				bail!("Bitcoin Core version is too old, you can participate in rounds but won't be able to unilaterally exit. Please upgrade to 29.0 or higher.");
+				bail!("Bitcoin Core version is too old to broadcast unilateral exits. Please upgrade to 29.0 or higher.");
 			}
 		}
 

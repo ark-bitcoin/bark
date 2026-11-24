@@ -83,7 +83,7 @@ pub const MAX_VTXO_KEY_GAP_LIMIT: u32 = 100_000;
 /// let cfg = Config {
 ///   server_address: "https://ark.signet.2nd.dev".into(),
 ///   esplora_address: Some("https://esplora.signet.2nd.dev".into()),
-///   ..Config::network_default(bitcoin::Network::Bitcoin)
+///   ..Config::network_default(bitcoin::Network::Signet)
 /// };
 /// // cfg now has all other fields from the default configuration
 /// ```
@@ -209,7 +209,7 @@ pub struct Config {
 	/// confirmed. If set to 0, offboard movements are marked as successful
 	/// immediately without waiting for confirmation.
 	///
-	/// Default value: 2 for mainnet
+	/// Default value: 2 for mainnet, 0 for other networks
 	pub offboard_required_confirmations: BlockDelta,
 
 	/// How long, in seconds, a broadcast offboard tx may be missing from
@@ -226,7 +226,7 @@ pub struct Config {
 	/// Default value: 60
 	pub daemon_sync_interval_secs: u64,
 
-	/// The number of pieces to split arkoor and lightning-send change into,
+	/// The number of pieces to split arkoor, lightning-send and on-chain send change into,
 	/// between 1 (no splitting) and 3 (the server's default arkoor fanout
 	/// limit of 4, minus the payment output).
 	///
