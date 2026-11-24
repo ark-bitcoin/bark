@@ -117,8 +117,8 @@ records the payout state:
 
 `WalletVtxo::expiry_payout_state` holds the state. `Wallet::expiry_payout`
 returns the state, the VTXO amount, the fee, the payout amount and the payout
-address. The REST API returns the state in the `expiry_payout` field of a VTXO,
-and the full payout at `GET /api/v1/wallet/vtxos/{id}/expiry-payout`.
+address. The REST API returns the state in the optional `expiry_payout` field of
+`GET /api/v1/wallet/vtxos/{id}` and the VTXO list.
 
 This is what the server reports. Confirm the payout output on-chain before you
 count it as received.
