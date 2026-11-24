@@ -22,11 +22,6 @@ services:
       ]
     volumes:
       - bitcoind:/home/bitcoin/.bitcoin
-    develop:
-      watch:
-        - action: sync+restart
-          path: ./contrib/config/
-          target: /home/bitcoin/bitcoin.conf
     ports:
       - "18443:18443"
     healthcheck:
