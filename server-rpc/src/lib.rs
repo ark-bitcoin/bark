@@ -74,7 +74,6 @@ pub use crate::protos::bark_server::ark_service_client::ArkServiceClient;
 pub mod admin {
 	pub use crate::protos::bark_server::wallet_admin_service_client::WalletAdminServiceClient;
 	pub use crate::protos::bark_server::round_admin_service_client::RoundAdminServiceClient;
-	pub use crate::protos::bark_server::lightning_admin_service_client::LightningAdminServiceClient;
 	pub use crate::protos::bark_server::watchman_admin_service_client::WatchmanAdminServiceClient;
 	pub use crate::protos::bark_server::ban_admin_service_client::BanAdminServiceClient;
 	pub use crate::protos::bark_server::blocklist_admin_service_client::BlocklistAdminServiceClient;
@@ -91,7 +90,6 @@ pub mod server {
 	pub use crate::protos::bark_server::ark_service_server::{ArkService, ArkServiceServer};
 	pub use crate::protos::bark_server::wallet_admin_service_server::{WalletAdminService, WalletAdminServiceServer};
 	pub use crate::protos::bark_server::round_admin_service_server::{RoundAdminService, RoundAdminServiceServer};
-	pub use crate::protos::bark_server::lightning_admin_service_server::{LightningAdminService, LightningAdminServiceServer};
 	pub use crate::protos::bark_server::watchman_admin_service_server::{WatchmanAdminService, WatchmanAdminServiceServer};
 	pub use crate::protos::bark_server::ban_admin_service_server::{BanAdminService, BanAdminServiceServer};
 	pub use crate::protos::bark_server::blocklist_admin_service_server::{BlocklistAdminService, BlocklistAdminServiceServer};

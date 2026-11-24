@@ -696,11 +696,6 @@ service RoundAdminService {
 	rpc TriggerRound(core.Empty) returns (core.Empty) {}
 }
 
-service LightningAdminService {
-	rpc StartLightningNode(LightningNodeUri) returns (core.Empty) {}
-	rpc StopLightningNode(LightningNodeUri) returns (core.Empty) {}
-}
-
 service WatchmanAdminService {
 	rpc TriggerSweep(core.Empty) returns (core.Empty) {}
 	rpc ReindexFrontier(core.Empty) returns (ReindexFrontierResponse) {}
@@ -820,8 +815,4 @@ message WalletStatus {
 message WalletStatusResponse {
 	WalletStatus rounds = 1;
 	WalletStatus watchman = 2;
-}
-
-message LightningNodeUri {
-	string uri = 1;
 }

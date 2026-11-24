@@ -389,13 +389,12 @@ impl TestContext {
 		let name = name.as_ref();
 		let data_dir = self.datadir.join(name);
 
-		let cln_array = if let Some(lnd) = lightningd {
+		let cln = if let Some(lnd) = lightningd {
 			let grpc_details = lnd.grpc_details().await;
 			let hold_details = lnd.hold_details().await;
 
 			let lightningd = server::config::Lightningd {
 				uri: Uri::from_str(&grpc_details.uri).expect("failed to parse cln grpc uri"),
-				priority: 1,
 				server_cert_path: grpc_details.server_cert_path,
 				client_cert_path: grpc_details.client_cert_path,
 				client_key_path: grpc_details.client_key_path,
@@ -407,12 +406,9 @@ impl TestContext {
 				})
 			};
 
-			let mut cln_array = Vec::new();
-			cln_array.push(lightningd);
-
-			cln_array
+			Some(lightningd)
 		} else {
-			Vec::new()
+			None
 		};
 
 		// Create a new postgres database with the name of the test and database
@@ -492,7 +488,7 @@ impl TestContext {
 				rpc_pass: None,
 			},
 			postgres: postgres_cfg,
-			cln_array,
+			cln,
 			cln_reconnect_interval: Duration::from_secs(10),
 			invoice_check_interval: Duration::from_secs(3),
 			cln_xpay_timeout: Duration::from_secs(5),

@@ -335,7 +335,7 @@ impl Server {
 	/// LightningManager connects asynchronously, so this may return false right
 	/// after [`Self::start`] returns even if a node is configured.
 	pub fn has_hold_node(&self) -> bool {
-		self.lightning_manager.has_hold_active_node()
+		self.lightning_manager.has_online_hold_node()
 	}
 
 	/// Start the server.

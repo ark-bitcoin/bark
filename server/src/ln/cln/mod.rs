@@ -1,11 +1,10 @@
 //! CLN-specific node types: `ClnNodeInfo`, `ClnNodeOnlineState`, and the
 //! cloneable `NodeHandle` returned by the manager's node getters.
 //!
-//! Each configured CLN node is tracked as a `ClnNodeInfo` with a state machine:
-//! `Offline ↔ Online ↔ Error`, where `Invalid` and `Disabled` are terminal states.
-//! The supervisor (see [`crate::ln::node_manager`]) reconnects offline/errored
-//! nodes and watches `ClnHold`/`ClnXpay` for crashes. When multiple nodes are
-//! online, the highest-priority node is selected for operations.
+//! The configured CLN node is tracked as a `ClnNodeInfo` with a state machine:
+//! `Offline ↔ Online ↔ Error`, where `Invalid` is a terminal state.
+//! The supervisor (see [`crate::ln::node_manager`]) reconnects an offline/errored
+//! node and watches `ClnHold`/`ClnXpay` for crashes.
 //!
 //! `NodeHandle` carries the cheap RPC clients (gRPC, hold-plugin, xpay client)
 //! and is what data-path operations on `LightningManager` use to talk to a
@@ -56,7 +55,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Clone)]
 pub(crate) struct NodeHandle {
 	pub(crate) id: LightningNodeId,
-	pub(crate) priority: u8,
 	pub(crate) rpc: ClnGrpcClient,
 	pub(crate) hold_rpc: Option<HoldClient<Channel>>,
 	pub(crate) xpay: Arc<ClnXpayClient>,
@@ -74,15 +72,14 @@ pub struct ClnNodeOnlineState {
 }
 
 impl ClnNodeOnlineState {
-	/// Build a cloneable command handle for this node at the given priority.
+	/// Build a cloneable command handle for this node.
 	///
-	/// Online state always carries a live xpay monitor (check_nodes drops the
+	/// Online state always carries a live xpay monitor (check_node drops the
 	/// node from Online if its monitor crashes before publish runs), so it is
 	/// safe to expect it here.
-	pub(crate) fn handle(&self, priority: u8) -> NodeHandle {
+	pub(crate) fn handle(&self) -> NodeHandle {
 		NodeHandle {
 			id: self.id,
-			priority,
 			rpc: self.rpc.clone(),
 			hold_rpc: self.hold_rpc.clone(),
 			xpay: self.xpay.as_ref().expect("online node has live xpay monitor").client(),
@@ -124,7 +121,7 @@ impl ClnNodeInfo {
 		mailbox_manager: &Arc<crate::mailbox_manager::MailboxManager>,
 		settler: &Arc<HtlcSettler>,
 		payment_guards: &PaymentGuards,
-	) -> anyhow::Result<LightningNodeId> {
+	) -> anyhow::Result<()> {
 		// A node that accepts the connection but never answers would otherwise
 		// hold up the manager, which checks the nodes one by one.
 		let (rpc, hold_rpc, info) = tokio::time::timeout(CONNECT_TIMEOUT, async {
@@ -195,7 +192,7 @@ impl ClnNodeInfo {
 		);
 		self.set_state(new_state);
 
-		Ok(id)
+		Ok(())
 	}
 }
 

@@ -110,9 +110,8 @@ public_address = "0.0.0.0:3535"
 # Loopback only, for `captaind rpc` commands run inside the container
 admin_address = "127.0.0.1:3536"
 
-[[cln_array]]
+[cln]
 uri = "https://cln:9736"
-priority = 1
 server_cert_path = "/data/cln/regtest/ca.pem"
 client_cert_path = "/data/cln/regtest/client.pem"
 client_key_path = "/data/cln/regtest/client-key.pem"

@@ -60,31 +60,6 @@ impl rpc::server::RoundAdminService for Server {
 }
 
 #[async_trait]
-impl rpc::server::LightningAdminService for Server {
-	#[tracing::instrument(skip(self, req))]
-	async fn start_lightning_node(
-		&self,
-		req: tonic::Request<protos::LightningNodeUri>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let req = req.into_inner();
-		let uri = http::Uri::from_str(req.uri.as_str()).badarg("invalid lightning node uri")?;
-		let _ = self.lightning_manager.activate(uri);
-		Ok(tonic::Response::new(protos::Empty{}))
-	}
-
-	#[tracing::instrument(skip(self, req))]
-	async fn stop_lightning_node(
-		&self,
-		req: tonic::Request<protos::LightningNodeUri>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let req = req.into_inner();
-		let uri = http::Uri::from_str(req.uri.as_str()).badarg("invalid lightning node uri")?;
-		let _ = self.lightning_manager.disable(uri);
-		Ok(tonic::Response::new(protos::Empty{}))
-	}
-}
-
-#[async_trait]
 impl rpc::server::WatchmanAdminService for crate::watchman::Daemon {
 	#[tracing::instrument(skip(self, _req))]
 	async fn trigger_sweep(
@@ -252,7 +227,6 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	let routes = tonic::service::Routes::default()
 		.add_service(rpc::server::WalletAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::RoundAdminServiceServer::from_arc(srv.clone()))
-		.add_service(rpc::server::LightningAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::BanAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::NurseryAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::BlocklistAdminServiceServer::from_arc(srv.clone()));
