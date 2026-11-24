@@ -1,0 +1,5 @@
+- Enable the admin RPC in the captaind Docker image
+  The image config did not set `rpc.admin_address`, so captaind did not start
+  the admin gRPC server and `captaind rpc` commands could not be used in the
+  container. The config now sets it to `127.0.0.1:3536`.
+  [#2869](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2869)
