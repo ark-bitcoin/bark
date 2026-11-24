@@ -1,8 +1,13 @@
 # Extra information
 
-## check-clean-default-config.sh
-This script checks if file `server/config.default.toml` is dirty.
+## check-clean-diff.sh
+#### parameters:
+1. file-or-directory
+
+#### info:
+This script checks if the given file or directory is dirty.
 When it is dirty it will print the diff + exit code 1.
+CI runs it after `just generate-static-files`, to check that the generated files in the repository are up to date.
 
 ## check-commits.sh
 This script automates the process of cherry-picking commits from a feature branch onto the master branch while running predefined checks. It is designed to work in both local and CI environments.

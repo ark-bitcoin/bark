@@ -134,11 +134,12 @@ So if you add a database migration you should also update this file.
 
 There is an equivalent just command to generate this file `just dump-server-sql-schema`.
 
-## Server default configuration
-CI is also dumping and comparing the default configuration parameters for the server using file `server/config.default.toml`.
-So whenever you change or add a configuration of the server you should change this file accordingly.
+## Server config templates
+The files `server/captaind.default.toml` and `server/watchmand.default.toml` are the config templates for `captaind` and `watchmand`.
+They are written by hand, so whenever you change or add a configuration of the server you must change these files accordingly.
+The config of the captaind Docker image, `.gitlab/images/releases/captaind/captaind.toml`, must have every required value that has no default.
 
-There is a just command to generate this file `just default-server-config`.
+Unit tests in `server/src/config.rs` load and validate these three files.
 
 # Code hygiene
 
