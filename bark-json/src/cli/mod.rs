@@ -283,7 +283,7 @@ pub struct Balance {
 	#[serde(rename = "claimable_lightning_receive_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub claimable_lightning_receive: Amount,
-	/// Sats locked in VTXOs forfeited for a round that has not yet
+	/// Sats locked in VTXOs used as inputs to a round that has not yet
 	/// completed.
 	#[serde(rename = "pending_in_round_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
@@ -301,7 +301,8 @@ pub struct Balance {
 	pub pending_arkoor_send: Amount,
 	/// Sats locked in an offboard whose transaction has not been broadcast
 	/// yet, including any change that comes back. Once the transaction is on
-	/// the network the sats belong to the on-chain wallet.
+	/// the network the sats are no longer counted here: they belong to the
+	/// destination address, which can be in the wallet's own on-chain wallet.
 	#[serde(default, rename = "pending_offboard_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64, required))]
 	pub pending_offboard: Amount,
@@ -358,7 +359,8 @@ pub struct BalanceSummary {
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub needs_refresh: Amount,
 	/// Sats held by operations in progress: the sum of the `pending_*_sat`
-	/// fields of [Balance]. They either come back as spendable or leave the
+	/// fields and `claimable_lightning_receive_sat` of [Balance]. They either
+	/// come back as spendable or leave the
 	/// wallet, for example to the on-chain wallet.
 	#[serde(rename = "pending_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]

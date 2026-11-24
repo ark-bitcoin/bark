@@ -385,8 +385,8 @@ pub async fn next_round(
 		(status = 200, description = "Returns the Ark address", body = bark_json::web::ArkAddressResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Generates a new Ark receiving address. Each call returns the next unused \
-		address from the wallet's HD keychain.",
+	description = "Generates a new Ark receiving address. Each call derives a new \
+		address from the wallet's HD keychain, also when earlier addresses are unused.",
 	tag = "wallet"
 )]
 #[debug_handler]

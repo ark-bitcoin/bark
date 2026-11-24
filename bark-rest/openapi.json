@@ -1470,7 +1470,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns success message, optionally with preimage if payment was immediately settled",
+            "description": "Returns a success message and the payment hash",
             "content": {
               "application/json": {
                 "schema": {
@@ -2303,7 +2303,7 @@
           "onchain"
         ],
         "summary": "Generate on-chain address",
-        "description": "Generates a new on-chain receiving address. Each call returns the next unused address from the wallet's HD keychain.",
+        "description": "Generates a new on-chain receiving address. Each call reveals a new address from the wallet's HD keychain, also when earlier addresses are unused.",
         "operationId": "onchain_address",
         "responses": {
           "200": {
@@ -2713,7 +2713,7 @@
           "wallet"
         ],
         "summary": "Generate Ark address",
-        "description": "Generates a new Ark receiving address. Each call returns the next unused address from the wallet's HD keychain.",
+        "description": "Generates a new Ark receiving address. Each call derives a new address from the wallet's HD keychain, also when earlier addresses are unused.",
         "operationId": "address",
         "responses": {
           "200": {
@@ -4084,7 +4084,7 @@
           "pending_in_round_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "Sats locked in VTXOs forfeited for a round that has not yet\ncompleted.",
+            "description": "Sats locked in VTXOs used as inputs to a round that has not yet\ncompleted.",
             "minimum": 0
           },
           "pending_lightning_send_sat": {
@@ -4096,7 +4096,7 @@
           "pending_offboard_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "Sats locked in an offboard whose transaction has not been broadcast\nyet, including any change that comes back. Once the transaction is on\nthe network the sats belong to the on-chain wallet.",
+            "description": "Sats locked in an offboard whose transaction has not been broadcast\nyet, including any change that comes back. Once the transaction is on\nthe network the sats are no longer counted here: they belong to the\ndestination address, which can be in the wallet's own on-chain wallet.",
             "minimum": 0
           },
           "spendable_sat": {

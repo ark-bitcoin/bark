@@ -41,7 +41,7 @@ Method | HTTP request | Description
 > models::ArkAddressResponse address()
 Generate Ark address
 
-Generates a new Ark receiving address. Each call returns the next unused address from the wallet's HD keychain.
+Generates a new Ark receiving address. Each call derives a new address from the wallet's HD keychain, also when earlier addresses are unused.
 
 ### Parameters
 
