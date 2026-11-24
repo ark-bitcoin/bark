@@ -66,7 +66,8 @@ pub struct Balance {
 	pub pending_arkoor_send: Amount,
 	/// Sats locked in an offboard whose transaction has not been broadcast
 	/// yet, including any change that comes back. Once the transaction is on
-	/// the network the sats belong to the on-chain wallet.
+	/// the network the sats are no longer counted here: they belong to the
+	/// destination address, which can be in the wallet's own on-chain wallet.
 	pub pending_offboard: Amount,
 }
 

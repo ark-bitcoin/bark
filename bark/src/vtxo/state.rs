@@ -8,10 +8,10 @@
 //! - taken on-chain via a unilateral exit: [VtxoStateKind::Exited]. Distinct from
 //!   [VtxoStateKind::Spent] so callers can tell whether a VTXO disappeared from the
 //!   wallet because the user forfeited it (round, send) or because the user moved
-//!   it onchain. The server refuses VTXOs once every exit transaction for a VTXO has
-//!   been broadcast, even before the corresponding on-chain UTXO has been claimed, so
-//!   the VTXO will enter [VtxoStateKind::Exited] as soon as we expect a VTXO to become
-//!   unusable offchain.
+//!   it onchain. The VTXO enters [VtxoStateKind::Exited] once every exit transaction
+//!   for it has confirmed, even before the corresponding on-chain UTXO has been
+//!   claimed: from then on the server refuses the VTXO. Until then the VTXO keeps
+//!   its state, and an exit whose transactions are only broadcast changes nothing.
 //!
 //! Two layers of state are provided:
 //! - [VtxoStateKind]: a compact, serialization-friendly discriminator intended for storage, logs,
