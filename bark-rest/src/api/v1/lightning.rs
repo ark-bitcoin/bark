@@ -284,8 +284,8 @@ pub async fn cancel_receive(
 	summary = "Send a Lightning payment",
 	request_body = bark_json::web::LightningPayRequest,
 	responses(
-		(status = 200, description = "Returns success message, optionally with \
-			preimage if payment was immediately settled", body = bark_json::web::LightningPayResponse),
+		(status = 200, description = "Returns a success message and the payment \
+			hash", body = bark_json::web::LightningPayResponse),
 		(status = 400, description = "The provided destination is not a valid \
 			BOLT11 invoice, BOLT12 offer, Lightning address, or LNURL", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)

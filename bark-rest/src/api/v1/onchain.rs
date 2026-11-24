@@ -106,8 +106,8 @@ pub async fn onchain_balance(
 		(status = 200, description = "Returns the on-chain address", body = bark_json::cli::onchain::Address),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Generates a new on-chain receiving address. Each call returns the next \
-		unused address from the wallet's HD keychain.",
+	description = "Generates a new on-chain receiving address. Each call reveals a new \
+		address from the wallet's HD keychain, also when earlier addresses are unused.",
 	tag = "onchain"
 )]
 #[debug_handler]

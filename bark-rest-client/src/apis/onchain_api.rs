@@ -80,7 +80,7 @@ pub enum OnchainUtxosError {
 }
 
 
-/// Generates a new on-chain receiving address. Each call returns the next unused address from the wallet's HD keychain.
+/// Generates a new on-chain receiving address. Each call reveals a new address from the wallet's HD keychain, also when earlier addresses are unused.
 pub async fn onchain_address(configuration: &configuration::Configuration, ) -> Result<models::Address, Error<OnchainAddressError>> {
 
     let uri_str = format!("{}/api/v1/onchain/addresses/next", configuration.base_path);

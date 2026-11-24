@@ -266,7 +266,7 @@ pub enum WalletExistsError {
 }
 
 
-/// Generates a new Ark receiving address. Each call returns the next unused address from the wallet's HD keychain.
+/// Generates a new Ark receiving address. Each call derives a new address from the wallet's HD keychain, also when earlier addresses are unused.
 pub async fn address(configuration: &configuration::Configuration, ) -> Result<models::ArkAddressResponse, Error<AddressError>> {
 
     let uri_str = format!("{}/api/v1/wallet/addresses/next", configuration.base_path);

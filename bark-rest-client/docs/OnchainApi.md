@@ -20,7 +20,7 @@ Method | HTTP request | Description
 > models::Address onchain_address()
 Generate on-chain address
 
-Generates a new on-chain receiving address. Each call returns the next unused address from the wallet's HD keychain.
+Generates a new on-chain receiving address. Each call reveals a new address from the wallet's HD keychain, also when earlier addresses are unused.
 
 ### Parameters
 
