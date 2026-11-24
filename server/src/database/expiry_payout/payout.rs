@@ -24,7 +24,7 @@ const MAX_PAYOUT_VSIZE: usize = 100_000;
 
 /// Every owner script must receive its exact amount once. The only optional
 /// output is the watchman's change.
-fn check_owner_outputs(
+pub(crate) fn check_owner_outputs(
 	mut owners: BTreeMap<ScriptBuf, Amount>, outputs: &[TxOut], operator_spk: &ScriptBuf,
 ) -> anyhow::Result<()> {
 	ensure!(!owners.contains_key(operator_spk), "operator drain aliases an owner script");

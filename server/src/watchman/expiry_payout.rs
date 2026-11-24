@@ -19,7 +19,7 @@ use bitcoin_ext::{BlockRef, TxStatus};
 use crate::bitcoind as bcd;
 use crate::database::{BlockTable, SpendState};
 use crate::database::expiry_payout::decision::verify_expiry_tip;
-use crate::database::expiry_payout::payout::PendingExpiryPayout;
+use crate::database::expiry_payout::payout::{check_owner_outputs, PendingExpiryPayout};
 use crate::wallet::{BdkWalletExt, PersistedWallet};
 
 use super::{saturating_add_feerates, Watchman};
@@ -235,7 +235,11 @@ impl Watchman {
 		if let Some((latest, latest_fee)) = &group.latest {
 			let status = bcd::tx_status(&self.bitcoind, latest.compute_txid()).await?;
 			let latest_rate = *latest_fee / latest.weight();
-			bump = latest_rate < target;
+			// An older attempt may have paid only part of a shared payout address's amount.
+			bump = latest_rate < target || {
+				let owners = group.payouts.iter().map(|out| (out.script_pubkey.clone(), out.value)).collect();
+				check_owner_outputs(owners, &latest.output, &self.drain_spk).is_err()
+			};
 			if matches!(status, TxStatus::Mempool) && !bump {
 				// An earlier mempool snapshot can evict the wallet's copy in
 				// the gap between storing and broadcasting the payout. Core's
