@@ -107,6 +107,8 @@ max_connections = 10
 
 [rpc]
 public_address = "0.0.0.0:3535"
+# Loopback only, for `captaind rpc` commands run inside the container
+admin_address = "127.0.0.1:3536"
 
 [[cln_array]]
 uri = "https://cln:9736"
