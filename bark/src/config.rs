@@ -254,19 +254,6 @@ pub struct Config {
 	/// Default value: 250
 	pub vtxo_key_gap_limit: u32,
 
-	/// Put this wallet's Ark address in the route hints of its Lightning
-	/// invoices, and pay an invoice that carries an Ark address of the same
-	/// Ark server with an arkoor instead of over Lightning. The server must
-	/// allow it.
-	///
-	/// The server and the receiving wallet settle an invoice paid this way
-	/// like one paid over Lightning, but the payer gets no preimage as
-	/// proof of payment.
-	///
-	/// Default value: false
-	#[serde(default)]
-	pub lightning_ark_address_hints: bool,
-
 	/// Open the wallet only with an Ark server in expiry payout mode.
 	///
 	/// Default value: false
@@ -305,7 +292,6 @@ impl Config {
 			daemon_manual_sync: false,
 			change_vtxo_split_factor: 2,
 			vtxo_key_gap_limit: DEFAULT_VTXO_KEY_GAP_LIMIT,
-			lightning_ark_address_hints: false,
 			require_expiry_payouts: false,
 		};
 

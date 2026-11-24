@@ -4,7 +4,9 @@ use anyhow::Context;
 use bitcoin::Amount;
 
 use ark::{Vtxo, VtxoId};
-use ark::fees::VtxoFeeInfo;
+use ark::fees::{FeeSchedule, LightningSendFees, VtxoFeeInfo};
+use ark::lightning::Invoice;
+use server_rpc::{protos, ServerConnection};
 
 use crate::Wallet;
 
@@ -37,6 +39,21 @@ impl FeeEstimate {
 			net_amount,
 			vtxos_spent,
 		}
+	}
+}
+
+/// Use the advertised internal rate only for an invoice issued by this server.
+pub(crate) async fn lightning_send_fees_for_invoice<'a>(
+	server: &mut ServerConnection, fees: &'a FeeSchedule, invoice: Option<&Invoice>,
+) -> anyhow::Result<&'a LightningSendFees> {
+	let (Some(invoice), Some(internal)) = (invoice, &fees.intra_ark) else {
+		return Ok(&fees.lightning_send);
+	};
+	let req = protos::CheckLightningReceiveRequest { hash: invoice.payment_hash().to_vec(), wait: false };
+	match server.client.check_lightning_receive(req).await {
+		Ok(_) => Ok(&internal.lightning_send),
+		Err(status) if status.code() == tonic::Code::NotFound => Ok(&fees.lightning_send),
+		Err(status) => Err(status).context("could not determine the Lightning send fee"),
 	}
 }
 
@@ -113,18 +130,39 @@ impl Wallet {
 	/// If the wallet is lacking enough funds to send `amount` via lightning, then the estimate will
 	/// be the maximum possible fee, assuming the user acquires enough funds to cover the payment.
 	pub async fn estimate_lightning_send_fee(&self, amount: Amount) -> anyhow::Result<FeeEstimate> {
-		let (_, ark_info) = self.require_server().await?;
+		self.estimate_lightning_send_fee_inner(amount, None).await
+	}
+
+	/// Estimate fees for paying `invoice` with `amount`, like
+	/// [Wallet::estimate_lightning_send_fee]. An invoice that the Ark server
+	/// issued for one of its own wallets gets the intra-Ark fee, see
+	/// [ark::fees::FeeSchedule::intra_ark].
+	pub async fn estimate_invoice_payment_fee(
+		&self,
+		invoice: &Invoice,
+		amount: Amount,
+	) -> anyhow::Result<FeeEstimate> {
+		self.estimate_lightning_send_fee_inner(amount, Some(invoice)).await
+	}
+
+	async fn estimate_lightning_send_fee_inner(
+		&self,
+		amount: Amount,
+		invoice: Option<&Invoice>,
+	) -> anyhow::Result<FeeEstimate> {
+		let (mut server, ark_info) = self.require_server().await?;
+		let fees = lightning_send_fees_for_invoice(&mut server, &ark_info.fees, invoice).await?;
 
 		let (inputs, fee) = match self.select_any_vtxos_to_cover_with_fee(
 			amount,
-			|a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
+			|a, v| fees.calculate(a, v).context("fee overflowed"),
 		).await {
 			Ok((inputs, fee)) => (inputs, fee),
 			Err(_) => {
 				// We choose to ignore every error, even those which are not due to insufficient
 				// funds.
 				let info = [VtxoFeeInfo { amount, expiry_blocks: u32::MAX }];
-				let fee = ark_info.fees.lightning_send.calculate(amount, info)
+				let fee = fees.calculate(amount, info)
 					.context("fee overflowed")?;
 				(Vec::new(), fee)
 			},

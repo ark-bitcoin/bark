@@ -222,12 +222,6 @@ receive_htlc_forward_timeout = "3min"
 # when preparing a lightning claim.
 ln_receive_anti_dos_required = false
 
-# Whether users can ask to have their Ark address put in the route
-# hints of their lightning receive invoices. Other users of this
-# server can then pay those invoices with an arkoor, without the
-# lightning send and receive fees.
-ln_receive_ark_address_hints = false
-
 # Indicates whether the Ark server requires clients to sign with the
 # participation's mailbox key when querying a round participation status.
 # Clients that don't send this attestation can then no longer query their
@@ -335,6 +329,30 @@ ppm_expiry_table = [
     { expiry_blocks_threshold = 199, ppm = 4000 },  # 198 < exp <= 2160: 4,000 ppm (0.4%)
     { expiry_blocks_threshold = 2161, ppm = 8000 }, # 2160 < exp: 8,000 ppm (0.8%)
 ]
+
+# Intra-Ark Lightning fees, optional. A Lightning payment of an invoice that
+# this server issued for one of its own wallets never leaves the server, so it
+# can be priced on its own. These fees replace lightning_send and
+# lightning_receive for such a payment only. Without this section it pays
+# those, like any other payment. Wallets predating this table quote the
+# ordinary fees. Update them before enabling different rates.
+#
+# A wallet can pay itself this way to swap VTXOs that expire soon for fresh
+# pool VTXOs, so keep these at or above the refresh fees.
+#
+# [fees.intra_ark.lightning_send]
+# min_fee_sat = 0
+# base_fee_sat = 150
+# ppm_expiry_table = [
+#     { expiry_blocks_threshold = 0, ppm = 0 },       # exp <= 96: 0 ppm
+#     { expiry_blocks_threshold = 97, ppm = 1000 },   # 96 < exp <= 198: 1,000 ppm (0.1%)
+#     { expiry_blocks_threshold = 199, ppm = 4000 },  # 198 < exp <= 2160: 4,000 ppm (0.4%)
+#     { expiry_blocks_threshold = 2161, ppm = 8000 }, # 2160 < exp: 8,000 ppm (0.8%)
+# ]
+#
+# [fees.intra_ark.lightning_receive]
+# base_fee_sat = 0
+# ppm = 0
 
 #############
 # VTXO POOL #

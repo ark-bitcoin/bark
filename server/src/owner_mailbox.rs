@@ -54,25 +54,12 @@ impl DestinationBindings {
 				.context("invalid blinded arkoor mailbox")?;
 			let blinded = BlindedMailboxIdentifier::from_pubkey(point);
 			let mailbox = MailboxIdentifier::from_blinded(blinded, key, server_mailbox_key)
-				.context("invalid arkoor recipient mailbox")?;
-			ret.insert(key, mailbox.as_pubkey())?;
-		}
-		Ok(ret)
-	}
-
-	fn insert(&mut self, key: PublicKey, mailbox: PublicKey) -> anyhow::Result<()> {
-		if let Some(previous) = self.mailboxes.get(&key) {
-			if *previous != mailbox {
+				.context("invalid arkoor recipient mailbox")?.as_pubkey();
+			if ret.mailboxes.insert(key, mailbox).is_some_and(|previous| previous != mailbox) {
 				bail!("output {key} has conflicting payout mailboxes");
 			}
-			return Ok(());
 		}
-		self.mailboxes.insert(key, mailbox);
-		Ok(())
-	}
-
-	pub(crate) fn mailbox_for(&self, key: PublicKey) -> Option<PublicKey> {
-		self.mailboxes.get(&key).copied()
+		Ok(ret)
 	}
 
 	/// The same bindings for a Lightning send, the only arkoor that can
@@ -269,36 +256,8 @@ impl crate::Server {
 #[cfg(test)]
 mod tests {
 	use bitcoin::secp256k1::{Secp256k1, SecretKey};
-	use ark::mailbox::BlindedMailboxIdentifier;
 
 	use super::*;
-
-	#[test]
-	fn blinded_point_unblinds_to_mailbox_and_conflicting_copy_is_refused() {
-		let secp = Secp256k1::new();
-		let key = |byte| Keypair::from_secret_key(&secp, &SecretKey::from_slice(&[byte; 32]).unwrap());
-		let server = key(3);
-		let vtxo = key(4);
-		let mailbox = key(5);
-		let other_mailbox = key(6);
-		let policy = VtxoPolicy::new_pubkey(vtxo.public_key());
-		let output = |mailbox: &Keypair| {
-			let blinded_id = MailboxIdentifier::from_pubkey(mailbox.public_key())
-				.to_blinded(server.public_key(), &vtxo).unwrap();
-			protos::ArkoorDestination {
-				policy: policy.serialize(), blinded_mailbox_id: blinded_id.as_ref().to_vec(),
-				..Default::default()
-			}
-		};
-		let part = |outputs| protos::ArkoorCosignRequest { outputs, ..Default::default() };
-		let found = DestinationBindings::from_arkoor_parts(
-			&[part(vec![output(&mailbox)])], true, &server,
-		).unwrap();
-		assert_eq!(found.mailbox_for(vtxo.public_key()), Some(mailbox.public_key()));
-		assert!(DestinationBindings::from_arkoor_parts(
-			&[part(vec![output(&mailbox), output(&other_mailbox)])], true, &server,
-		).is_err());
-	}
 
 	#[test]
 	fn missing_blinded_mailbox_is_not_an_arkoor_destination() {
@@ -320,33 +279,5 @@ mod tests {
 			}], ..Default::default()
 		};
 		assert!(DestinationBindings::from_arkoor_parts(&[malformed], true, &server).is_err());
-	}
-
-	#[test]
-	fn altered_blinded_id_recovers_payer_mailbox_not_recipient() {
-		let secp = Secp256k1::new();
-		let key = |byte| Keypair::from_secret_key(&secp, &SecretKey::from_slice(&[byte; 32]).unwrap());
-		let server = key(3);
-		let recipient_vtxo = key(4);
-		let recipient_mailbox = key(5);
-		let payer_mailbox = key(6);
-		let policy = VtxoPolicy::new_pubkey(recipient_vtxo.public_key());
-		let original_blinded = MailboxIdentifier::from_pubkey(recipient_mailbox.public_key())
-			.to_blinded(server.public_key(), &recipient_vtxo).unwrap();
-		// B' = B + M_payer - M_recipient. The output still has the recipient's P.
-		let changed_point = PublicKey::combine_keys(&[
-			&original_blinded.as_pubkey(), &payer_mailbox.public_key(),
-			&recipient_mailbox.public_key().negate(&secp),
-		]).unwrap();
-		let altered = BlindedMailboxIdentifier::from_pubkey(changed_point);
-		let part = protos::ArkoorCosignRequest {
-			outputs: vec![protos::ArkoorDestination {
-				policy: policy.serialize(), blinded_mailbox_id: altered.as_ref().to_vec(),
-				..Default::default()
-			}], ..Default::default()
-		};
-		let found = DestinationBindings::from_arkoor_parts(&[part], true, &server).unwrap();
-		assert_eq!(found.mailbox_for(recipient_vtxo.public_key()), Some(payer_mailbox.public_key()));
-		assert_ne!(found.mailbox_for(recipient_vtxo.public_key()), Some(recipient_mailbox.public_key()));
 	}
 }

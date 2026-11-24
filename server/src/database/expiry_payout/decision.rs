@@ -132,8 +132,7 @@ struct ExpiryBranchState {
 }
 
 impl Tx<'_> {
-	async fn expiry_branch_state(&self, roots: &[ServerVtxo]) -> anyhow::Result<(Vec<ExpiredTreeVtxo>, ExpiryBranchState)> {
-		let snapshot = self.expired_tree_snapshot(roots).await?;
+	async fn expiry_branch_state(&self, snapshot: &[ExpiredTreeVtxo]) -> anyhow::Result<ExpiryBranchState> {
 		let mut ids = snapshot.iter().map(|fact| fact.state.vtxo_id.to_string()).collect::<Vec<_>>();
 		let hashes = snapshot.iter().filter_map(|fact| fact.full_vtxo.as_ref().and_then(|vtxo| vtxo.unlock_hash()))
 			.map(|hash| hash.to_string()).collect::<Vec<_>>();
@@ -152,7 +151,7 @@ impl Tx<'_> {
 		", &[&ids]).await?.into_iter().map(|row| (row.get(0), row.get(1))).collect();
 		let rows = snapshot.iter().map(|fact| (fact.state.vtxo_id, fact.state.updated_at, fact.state.spend_state,
 			fact.onchain_spent_height, fact.onchain_spent_txid)).collect();
-		Ok((snapshot, ExpiryBranchState { rows, parts, attempts }))
+		Ok(ExpiryBranchState { rows, parts, attempts })
 	}
 
 	/// For each previously decided VTXO, whether all its payouts have
@@ -179,6 +178,7 @@ impl Tx<'_> {
 			&[&root.id().to_string(), &i32::try_from(view.height.to_u32())?]).await?;
 		if current.is_none() { return Ok(None); }
 		let snapshot = self.expired_tree_snapshot(std::slice::from_ref(&root)).await?;
+		let child_txids = snapshot.iter().map(|fact| fact.state.vtxo.point().txid).collect::<BTreeSet<_>>();
 		let earlier = self.earlier_decisions_free(&snapshot.iter().map(|f| f.state.vtxo_id).collect::<Vec<_>>()).await?;
 		let mut vtxos = Vec::new();
 		let mut valid = true;
@@ -193,7 +193,7 @@ impl Tx<'_> {
 			// held below.
 			let spent_offchain = fact.state.oor_spent_txid
 				.filter(|_| fact.state.offboarded_in.is_none() && fact.state.spent_in_round.is_none());
-			if spent_offchain.is_some_and(|txid| snapshot.iter().any(|child| child.state.vtxo.point().txid == txid)) {
+			if spent_offchain.is_some_and(|txid| child_txids.contains(&txid)) {
 				continue;
 			}
 			let ownership = self.propose_expiry_ownership(fact, view.height).await?;
@@ -220,7 +220,7 @@ impl Tx<'_> {
 			valid = self.can_cancel_expiry_participations(&cancellations).await?;
 		}
 		if !valid || vtxos.is_empty() { return Ok(None); }
-		let (_, branch) = self.expiry_branch_state(std::slice::from_ref(&root)).await?;
+		let branch = self.expiry_branch_state(&snapshot).await?;
 		Ok(Some(ExpiryRootPlan { root, vtxos, branch, decided }))
 	}
 
@@ -234,8 +234,8 @@ impl Tx<'_> {
 		self.lock_watchman_tip(view).await?;
 		let ids = branch.rows.iter().map(|row| row.0.to_string()).collect::<Vec<_>>();
 		self.query("SELECT vtxo_id FROM vtxo WHERE vtxo_id=ANY($1) ORDER BY vtxo_id FOR UPDATE", &[&ids]).await?;
-		let (snapshot, current) = self.expiry_branch_state(std::slice::from_ref(&root)).await?;
-		ensure!(current == branch, "expiry branch changed during analysis");
+		let snapshot = self.expired_tree_snapshot(std::slice::from_ref(&root)).await?;
+		ensure!(self.expiry_branch_state(&snapshot).await? == branch, "expiry branch changed during analysis");
 		let lightning = vtxos.iter()
 			.filter(|vtxo| vtxo.evidence.as_ref().is_some_and(OwnershipEvidence::is_lightning))
 			.collect::<Vec<_>>();

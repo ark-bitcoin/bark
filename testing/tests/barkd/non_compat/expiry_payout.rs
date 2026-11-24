@@ -72,6 +72,9 @@ async fn expiry_payout_is_reported_after_restart_and_restore() {
 	barkd.sync().await;
 	let paid = barkd.get_vtxo(&id).await;
 	assert_eq!((paid.state, paid.expiry_payout), (VtxoStateInfo::Spent, Some(ExpiryPayoutStateInfo::Paid)));
+	let config = barkd.client_config();
+	let old_route = format!("{}/api/v1/wallet/vtxos/{id}/expiry-payout", config.base_path);
+	assert_eq!(config.client.get(old_route).send().await.unwrap().status(), reqwest::StatusCode::NOT_FOUND);
 	assert_eq!(barkd.history(None, None).await, history, "a payout is not an Ark movement");
 	assert_eq!(barkd.bark_balance().await.spendable, Amount::ZERO);
 	barkd.stop().await.unwrap();
@@ -83,6 +86,7 @@ async fn expiry_payout_is_reported_after_restart_and_restore() {
 	let vtxo = restored.vtxos(Some(true)).await.into_iter().find(|v| v.vtxo.id.to_string() == id)
 		.expect("the restored wallet knows the paid VTXO");
 	assert_eq!((vtxo.state, vtxo.expiry_payout), (VtxoStateInfo::Spent, Some(ExpiryPayoutStateInfo::Paid)));
+	assert_eq!(restored.get_vtxo(&id).await.expiry_payout, Some(ExpiryPayoutStateInfo::Paid));
 }
 
 /// A barkd that requires expiry payouts starts while the server is

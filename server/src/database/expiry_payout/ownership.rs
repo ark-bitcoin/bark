@@ -2,22 +2,22 @@
 //! created, and the decision of who gets the value of an expired VTXO.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
-use std::str::FromStr;
 
 use anyhow::Context;
 use bitcoin::{Amount, OutPoint, Script};
 use bitcoin::secp256k1::PublicKey;
 use tokio_postgres::error::SqlState;
 
-use ark::{ServerVtxoPolicy, VtxoId, VtxoPolicy};
+use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
 use ark::lightning::PaymentHash;
 use ark::mailbox::MailboxIdentifier;
+use ark::vtxo::Full;
 use bitcoin_ext::BlockHeight;
 
 use crate::database::{AdvisoryLock, SpendState, Tx};
 use crate::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution, HtlcVtxo};
 use crate::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::ln::htlc_recvs_expired;
 use crate::round::UNSPENDABLE;
 
 use super::decision::ExpiredTreeVtxo;
@@ -25,16 +25,9 @@ use super::decision::ExpiredTreeVtxo;
 /// The owner mailboxes of a write differ from the new VTXOs that need one.
 /// The write stores nothing, so its caller can drop it: a round with such
 /// an output fails, and the server keeps running rounds.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("mailbox binding set differs from the owner VTXOs")]
 pub struct OwnerBindingMismatch;
-
-impl fmt::Display for OwnerBindingMismatch {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		f.write_str("mailbox binding set differs from the owner VTXOs")
-	}
-}
-
-impl std::error::Error for OwnerBindingMismatch {}
 
 impl OwnerBindingMismatch {
 	/// Recognize the deferred check without treating other constraint or
@@ -50,16 +43,9 @@ impl OwnerBindingMismatch {
 /// A replay tried to change the owner mailbox of an existing VTXO.
 /// The original binding remains in place. This is a precondition failure
 /// rather than a terminal bad argument because a co-sign reply may be lost.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("owner VTXO {0} has a conflicting mailbox binding")]
 pub struct StoredMailboxConflict(pub VtxoId);
-
-impl fmt::Display for StoredMailboxConflict {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "owner VTXO {} has a conflicting mailbox binding", self.0)
-	}
-}
-
-impl std::error::Error for StoredMailboxConflict {}
 
 impl Tx<'_> {
 	/// The owner mailbox recorded for each VTXO when it was created. The
@@ -121,34 +107,53 @@ impl Tx<'_> {
 	/// spends, found through the registered arkoor spends. All of them must
 	/// have the same mailbox. The sender keeps a value that the recipient
 	/// never registered.
-	pub(crate) async fn expiry_input_owner(&self, id: VtxoId) -> anyhow::Result<Option<PublicKey>> {
-		let mut pending = vec![id];
-		let mut seen = BTreeSet::from([id]);
-		let mut mailboxes = BTreeSet::new();
-		while let Some(current_id) = pending.pop() {
-			let current = self.get_server_vtxo_by_id(current_id).await?.vtxo;
+	async fn expiry_input_owner(&self, root: &ServerVtxo<Full>) -> anyhow::Result<Option<PublicKey>> {
+		let mut pending = vec![root.clone()];
+		let mut seen = BTreeSet::from([root.id()]);
+		let mut owner = None;
+		while let Some(current) = pending.pop() {
 			let Some(last) = current.transactions().last() else { return Ok(None); };
 			if last.tx.input.is_empty() { return Ok(None); }
 			for input in &last.tx.input {
 				let parent = VtxoId::from(input.previous_output);
 				if !seen.insert(parent) { return Ok(None); }
-				let Some(row) = self.query_opt("SELECT v.vtxo_id,c.mailbox_pk FROM vtxo v \
+				let Some(row) = self.query_opt("SELECT v.vtxo,c.mailbox_pk FROM vtxo v \
 					LEFT JOIN vtxo_owner_mailbox c ON c.vtxo_id=v.vtxo_id \
 					WHERE v.vtxo_id=$1 AND v.oor_spent_txid=$2",
 					&[&parent.to_string(), &current.point().txid.to_string()]).await? else { return Ok(None); };
-				let source = self.get_server_vtxo_by_id(parent).await?.vtxo;
+				let source = ServerVtxo::<Full>::deserialize(row.get("vtxo"))?;
+				ensure!(source.id() == parent, "expiry payout input has inconsistent VTXO id");
 				match source.policy() {
-					ServerVtxoPolicy::Checkpoint(_) => pending.push(parent),
+					ServerVtxoPolicy::Checkpoint(_) => pending.push(source),
 					ServerVtxoPolicy::User(_) => {
 						let Some(mailbox) = row.get::<_, Option<&str>>("mailbox_pk") else { return Ok(None); };
-						mailboxes.insert(PublicKey::from_str(mailbox)?);
+						let mailbox = mailbox.parse::<PublicKey>()?;
+						if owner.replace(mailbox).is_some_and(|previous| previous != mailbox) { return Ok(None); }
 					},
 					_ => return Ok(None),
 				}
 			}
 		}
-		if mailboxes.len() != 1 { return Ok(None); }
-		Ok(mailboxes.pop_first())
+		Ok(owner)
+	}
+}
+
+/// Whether the watchman can take back a receive grant after its timeout:
+/// the receive is canceled, or its HTLCs are ready and no preimage is
+/// known. A fulfilled grant is never taken back.
+pub(super) fn receive_timeout_allowed(
+	status: LightningHtlcSubscriptionStatus,
+	offchain: Option<HtlcResolution>,
+	onchain: Option<HtlcResolution>,
+	preimage_known: bool,
+) -> bool {
+	if offchain == Some(HtlcResolution::Fulfilled) || onchain == Some(HtlcResolution::Fulfilled) {
+		return false;
+	}
+	match status {
+		LightningHtlcSubscriptionStatus::Canceled => true,
+		LightningHtlcSubscriptionStatus::HtlcsReady => !preimage_known,
+		_ => false,
 	}
 }
 
@@ -222,7 +227,7 @@ impl Tx<'_> {
 			return Ok(None);
 		}
 		Ok(Some(row.get::<_, i64>("open") == 0
-			&& payout_htlc_recvs_expired(htlcs, tip, Some(tip))))
+			&& htlc_recvs_expired(true, htlcs, tip, Some(tip))))
 	}
 }
 
@@ -299,6 +304,10 @@ pub(crate) struct UnregisteredBoardStatus {
 }
 
 impl OwnershipProposal {
+	fn with_evidence(self, disposition: OwnershipDisposition, evidence: OwnershipEvidence) -> Self {
+		Self { disposition, evidence: Some(evidence), ..self }
+	}
+
 	fn pending(fact: &ExpiredTreeVtxo, reason: &'static str) -> Self {
 		Self {
 			id: fact.state.vtxo_id, gross: fact.state.vtxo.amount(),
@@ -459,12 +468,9 @@ impl Tx<'_> {
 		tip: BlockHeight,
 	) -> anyhow::Result<OwnershipProposal> {
 		let mut proposal = OwnershipProposal::pending(fact, "owner unknown");
-		let full = &fact.state.vtxo;
 		let state = &fact.state;
 		if let Some((_, mailbox)) = self.unregistered_board_owner(state.vtxo_id).await? {
-			proposal.disposition = OwnershipDisposition::Owner { mailbox };
-			proposal.evidence = Some(OwnershipEvidence::Board);
-			return Ok(proposal);
+			return Ok(proposal.with_evidence(OwnershipDisposition::Owner { mailbox }, OwnershipEvidence::Board));
 		}
 
 		if let Some(txid) = state.offboarded_in {
@@ -481,9 +487,7 @@ impl Tx<'_> {
 			if !paid {
 				return Ok(OwnershipProposal::pending(fact, "offboard not confirmed"));
 			}
-			proposal.disposition = OwnershipDisposition::Operator;
-			proposal.evidence = Some(OwnershipEvidence::Offboard);
-			return Ok(proposal);
+			return Ok(proposal.with_evidence(OwnershipDisposition::Operator, OwnershipEvidence::Offboard));
 		}
 
 		// After a conflict, a VTXO is decided again. Its first decision still
@@ -495,12 +499,11 @@ impl Tx<'_> {
 			", &[&state.vtxo_id.to_string()]).await? {
 				if !row.get::<_, bool>("replannable") {
 					// The table allows only these two dispositions.
-					proposal.disposition = match row.get::<_, &str>("disposition") {
+					let disposition = match row.get::<_, &str>("disposition") {
 						"owner" => OwnershipDisposition::Owner { mailbox: row.get::<_, &str>("owner_mailbox").parse()? },
 						_ => OwnershipDisposition::Operator,
 					};
-					proposal.evidence = Some(OwnershipEvidence::PriorDecision);
-					return Ok(proposal);
+					return Ok(proposal.with_evidence(disposition, OwnershipEvidence::PriorDecision));
 				}
 			}
 		}
@@ -522,14 +525,13 @@ impl Tx<'_> {
 		if let Some(part) = parts.first() {
 			let forfeited = part.get::<_, bool>("forfeited");
 			if !forfeited && part.get::<_, bool>("any_forfeit") {
-				proposal.disposition = OwnershipDisposition::Unresolved("forfeits partly stored");
-				return Ok(proposal);
+				return Ok(OwnershipProposal::pending(fact, "forfeits partly stored"));
 			}
 			let id = part.get::<_, i64>("id");
 			proposal.evidence = Some(OwnershipEvidence::Participation);
 			if forfeited {
 				proposal.disposition = OwnershipDisposition::Operator;
-			} else if full.clone().try_into_user_vtxo().is_ok() {
+			} else if state.vtxo.policy().is_user_policy() {
 				proposal.disposition = self.vtxo_owner(state.vtxo_id).await?;
 				proposal.cancellations.push(id);
 			}
@@ -538,34 +540,25 @@ impl Tx<'_> {
 
 		if state.spend_state == SpendState::Pool {
 			// Only the server's own pool issuance sets this state.
-			proposal.disposition = OwnershipDisposition::Operator;
-			proposal.evidence = Some(OwnershipEvidence::Pool);
-			return Ok(proposal);
+			return Ok(proposal.with_evidence(OwnershipDisposition::Operator, OwnershipEvidence::Pool));
 		}
 		let forfeit = matches!(state.spend_state,
 			SpendState::RoundForfeit | SpendState::OffboardForfeit | SpendState::OffboardConnector);
 		if forfeit {
-			proposal.disposition = OwnershipDisposition::Operator;
-			proposal.evidence = Some(OwnershipEvidence::Forfeit);
-			return Ok(proposal);
+			return Ok(proposal.with_evidence(OwnershipDisposition::Operator, OwnershipEvidence::Forfeit));
 		}
-		let Ok(user) = full.clone().try_into_user_vtxo() else { return Ok(proposal); };
+		let ServerVtxoPolicy::User(policy) = state.vtxo.policy() else { return Ok(proposal); };
 		if state.spend_state == SpendState::Unregistered {
-			if fact.full_vtxo.is_some() {
-				if let Some(mailbox) = self.expiry_input_owner(state.vtxo_id).await? {
-					proposal.disposition = OwnershipDisposition::Owner { mailbox };
-					proposal.evidence = Some(OwnershipEvidence::InputOwner);
-				}
+			if let Some(full) = &fact.full_vtxo && let Some(mailbox) = self.expiry_input_owner(full).await? {
+				return Ok(proposal.with_evidence(OwnershipDisposition::Owner { mailbox }, OwnershipEvidence::InputOwner));
 			}
 			return Ok(proposal);
 		}
 		if state.spend_state == SpendState::Unclaimed {
 			// Round padding has no owner. An arkoor output with the same key
 			// is not round padding: it has an owner as any other output.
-			if matches!(user.policy(), VtxoPolicy::Pubkey(policy) if policy.user_pubkey == *UNSPENDABLE) {
-				proposal.disposition = OwnershipDisposition::Operator;
-				proposal.evidence = Some(OwnershipEvidence::Padding);
-				return Ok(proposal);
+			if matches!(policy, VtxoPolicy::Pubkey(policy) if policy.user_pubkey == *UNSPENDABLE) {
+				return Ok(proposal.with_evidence(OwnershipDisposition::Operator, OwnershipEvidence::Padding));
 			}
 			let Some(hash) = fact.full_vtxo.as_ref().and_then(|vtxo| vtxo.unlock_hash()) else { return Ok(proposal); };
 			let part = self.query_opt("SELECT id, forfeited_at IS NOT NULL AS forfeited \
@@ -580,16 +573,14 @@ impl Tx<'_> {
 				// A superseded participation can be deleted, but its tombstone
 				// stays. The tombstone keeps the unlock preimage from release,
 				// so the unclaimed output goes to the operator.
-				proposal.disposition = OwnershipDisposition::Operator;
-				proposal.evidence = Some(OwnershipEvidence::Participation);
+				return Ok(proposal.with_evidence(OwnershipDisposition::Operator, OwnershipEvidence::Participation));
 			}
 			return Ok(proposal);
 		}
 		if state.oor_spent_txid.is_some() {
-			proposal.disposition = OwnershipDisposition::Unresolved("VTXO has registered children");
-			return Ok(proposal);
+			return Ok(OwnershipProposal::pending(fact, "VTXO has registered children"));
 		}
-		if let Some((hash, _, _)) = htlc_terms(user.policy()) {
+		if let Some((hash, _, _)) = htlc_terms(policy) {
 			let htlcs = htlc_vtxo::get_htlc_vtxo_states_by_payment_hash(self, hash).await?;
 			let Some(htlc) = htlcs.iter().find(|h| h.vtxo.vtxo_id == proposal.id) else { return Ok(proposal); };
 			let has_stored_preimage = self.get_htlc_settlement_by_payment_hash(hash).await?.is_some();
@@ -605,29 +596,19 @@ impl Tx<'_> {
 						return Ok(proposal);
 					};
 					if subscription.payment_hash != hash { return Ok(proposal); }
-					match subscription.status {
-						LightningHtlcSubscriptionStatus::Settled => {
-							// Until its claim output is registered, the grant
-							// goes to its own owner mailbox: the receiver's.
-							proposal.disposition = self.vtxo_owner(state.vtxo_id).await?;
-							proposal.evidence = Some(OwnershipEvidence::HtlcStoredPreimage);
-						},
-						LightningHtlcSubscriptionStatus::Canceled if expired_contract => {
-							proposal.disposition = OwnershipDisposition::Operator;
-							proposal.evidence = Some(OwnershipEvidence::HtlcRecvExpired);
-						},
-						LightningHtlcSubscriptionStatus::HtlcsReady if expired_contract && !has_stored_preimage => {
-							proposal.disposition = OwnershipDisposition::Operator;
-							proposal.evidence = Some(OwnershipEvidence::HtlcRecvExpired);
-						},
-						_ => proposal.disposition = OwnershipDisposition::Unresolved("lightning receive open"),
+					if subscription.status == LightningHtlcSubscriptionStatus::Settled {
+						// Until the claim output is registered, its grant belongs to the receiver.
+						let owner = self.vtxo_owner(state.vtxo_id).await?;
+						return Ok(proposal.with_evidence(owner, OwnershipEvidence::HtlcStoredPreimage));
 					}
-					return Ok(proposal);
+					if expired_contract && receive_timeout_allowed(subscription.status, htlc.htlc.offchain_resolution,
+						htlc.htlc.chain_resolution, has_stored_preimage) {
+						return Ok(proposal.with_evidence(OwnershipDisposition::Operator, OwnershipEvidence::HtlcRecvExpired));
+					}
+					return Ok(OwnershipProposal::pending(fact, "lightning receive open"));
 				}
 				if source == LightningSourceState::Discharged {
-					proposal.disposition = OwnershipDisposition::Operator;
-					proposal.evidence = Some(OwnershipEvidence::HtlcSourceDischarged);
-					return Ok(proposal);
+					return Ok(proposal.with_evidence(OwnershipDisposition::Operator, OwnershipEvidence::HtlcSourceDischarged));
 				}
 				if source == LightningSourceState::Failed && fact.onchain_spent_height.is_none()
 					&& fact.onchain_spent_txid.is_none() && htlc.htlc.chain_resolution.is_none() {
@@ -636,13 +617,11 @@ impl Tx<'_> {
 					// HTLC expiry of the source.
 					match self.internal_receive_closed(state.vtxo_id, hash, &htlcs, tip).await? {
 						Some(true) => {
-							proposal.disposition = self.vtxo_owner(state.vtxo_id).await?;
-							proposal.evidence = Some(OwnershipEvidence::HtlcInternalGrantsReclaimed);
-							return Ok(proposal);
+							let owner = self.vtxo_owner(state.vtxo_id).await?;
+							return Ok(proposal.with_evidence(owner, OwnershipEvidence::HtlcInternalGrantsReclaimed));
 						},
 						Some(false) => {
-							proposal.disposition = OwnershipDisposition::Unresolved("receive grants not reclaimed");
-							return Ok(proposal);
+							return Ok(OwnershipProposal::pending(fact, "receive grants not reclaimed"));
 						},
 						None => {},
 					}
@@ -662,8 +641,7 @@ impl Tx<'_> {
 						AND NOT EXISTS(SELECT 1 FROM lightning_htlc_subscription s \
 							WHERE s.payment_hash=$2 AND s.status='settled')",
 						&[&state.vtxo_id.to_string(), &hash.to_string()]).await?.get::<_, bool>(0) {
-					proposal.disposition = OwnershipDisposition::Unresolved("failed lightning payment has a stored preimage");
-					return Ok(proposal);
+					return Ok(OwnershipProposal::pending(fact, "failed lightning payment has a stored preimage"));
 				}
 				// A receive on the same hash that another source paid cannot
 				// keep the value of this sender. Open attempts still wait.
@@ -681,26 +659,21 @@ impl Tx<'_> {
 				return Ok(proposal);
 			};
 			if htlc.direction() == HtlcDirection::Outgoing && resolution == HtlcResolution::Revoked
-				&& !payout_htlc_recvs_expired(&htlcs, tip, Some(tip)) {
-				proposal.disposition = OwnershipDisposition::Unresolved("lightning receive grants not final");
-				return Ok(proposal);
+				&& !htlc_recvs_expired(true, &htlcs, tip, Some(tip)) {
+				return Ok(OwnershipProposal::pending(fact, "lightning receive grants not final"));
 			}
 			if htlc.htlc.chain_resolution.is_some() { return Ok(proposal); }
-			proposal.evidence = Some(OwnershipEvidence::HtlcOffchain);
-			proposal.disposition = match (htlc.direction(), resolution) {
+			let disposition = match (htlc.direction(), resolution) {
 				(HtlcDirection::Incoming, HtlcResolution::Fulfilled)
 					| (HtlcDirection::Outgoing, HtlcResolution::Revoked) => OwnershipDisposition::Operator,
 				_ => self.vtxo_owner(state.vtxo_id).await?,
 			};
-			return Ok(proposal);
+			return Ok(proposal.with_evidence(disposition, OwnershipEvidence::HtlcOffchain));
 		}
 		if state.spend_state != SpendState::Spendable {
-			proposal.disposition = OwnershipDisposition::Unresolved("spend state not final");
-			return Ok(proposal);
+			return Ok(OwnershipProposal::pending(fact, "spend state not final"));
 		}
-		proposal.disposition = self.vtxo_owner(state.vtxo_id).await?;
-		proposal.evidence = Some(OwnershipEvidence::Pubkey);
-		Ok(proposal)
+		Ok(proposal.with_evidence(self.vtxo_owner(state.vtxo_id).await?, OwnershipEvidence::Pubkey))
 	}
 }
 
@@ -714,53 +687,6 @@ pub(super) fn htlc_terms(policy: &VtxoPolicy) -> Option<(PaymentHash, BlockHeigh
 		VtxoPolicy::ServerHtlcRecv_v0(p) => Some((p.payment_hash, p.htlc_expiry, false)),
 		VtxoPolicy::Pubkey(_) => None,
 	}
-}
-
-/// Whether the HTLC-recv grants of a payment expired, by the rule of the
-/// server mode: [payout_htlc_recvs_expired] in payout mode, else
-/// [crate::ln::htlc_recvs_expired].
-pub(crate) fn htlc_recvs_expired_in_mode(
-	expiry_payouts: bool,
-	htlc_vtxos: &[HtlcVtxo],
-	tip: BlockHeight,
-	watchman_tip: Option<BlockHeight>,
-) -> bool {
-	if expiry_payouts {
-		payout_htlc_recvs_expired(htlc_vtxos, tip, watchman_tip)
-	} else {
-		crate::ln::htlc_recvs_expired(htlc_vtxos, tip, watchman_tip)
-	}
-}
-
-/// The payout-mode form of [crate::ln::htlc_recvs_expired]. A collected
-/// grant never expires, and a grant that the operator took back on-chain
-/// counts only when that spend is six blocks deep, so a reorg cannot both
-/// refund the sender and let the receiver claim.
-pub(crate) fn payout_htlc_recvs_expired(
-	htlc_vtxos: &[HtlcVtxo],
-	tip: BlockHeight,
-	watchman_tip: Option<BlockHeight>,
-) -> bool {
-	let Some(watchman_tip) = watchman_tip else {
-		return false;
-	};
-	let height = std::cmp::min(tip, watchman_tip);
-	let htlc_recvs = htlc_vtxos.iter()
-		.filter(|h| h.direction() == HtlcDirection::Outgoing)
-		.collect::<Vec<_>>();
-	!htlc_recvs.is_empty() && htlc_recvs.iter().all(|h| {
-		if h.htlc.resolution() == Some(HtlcResolution::Fulfilled) || height <= h.htlc_expiry() {
-			return false;
-		}
-		match h.htlc.chain_resolution {
-			// Resolution heights roll back with a reorg, so six blocks deep
-			// in both daemons' views is final.
-			Some(HtlcResolution::Revoked) => h.htlc.chain_resolution_height.is_some_and(|block|
-				height.to_u32().checked_sub(block.to_u32()).is_some_and(|depth| depth >= 5)),
-			None => !h.vtxo.is_exited(),
-			Some(HtlcResolution::Fulfilled) => false,
-		}
-	})
 }
 
 #[cfg(test)]
@@ -798,18 +724,23 @@ mod tests {
 				banned_until_height: None, spend_state: crate::database::SpendState::Spendable,
 				decided_for_payout: false, confirmed_height: None, created_at: now, updated_at: now },
 		};
-		assert!(!payout_htlc_recvs_expired(std::slice::from_ref(&grant), BlockHeight::new(150), Some(BlockHeight::new(150))));
+		let expired = |grant: &HtlcVtxo, payout_mode, server, watchman: Option<u32>| {
+			htlc_recvs_expired(payout_mode, std::slice::from_ref(grant), BlockHeight::new(server),
+				watchman.map(BlockHeight::new))
+		};
+		assert!(!expired(&grant, true, 150, Some(150)));
+		assert!(expired(&grant, false, 150, Some(150)));
 		grant.htlc.offchain_resolution = None;
-		assert!(payout_htlc_recvs_expired(std::slice::from_ref(&grant), BlockHeight::new(150), Some(BlockHeight::new(150))));
+		assert!(expired(&grant, true, 150, Some(150)));
 		grant.vtxo.confirmed_height = Some(BlockHeight::new(110));
 		grant.htlc.chain_resolution = Some(HtlcResolution::Revoked);
 		grant.htlc.chain_resolution_height = Some(BlockHeight::new(120));
 		for (server, watchman, expected) in [(124, Some(124), false), (125, Some(125), true),
 			(150, Some(124), false), (124, Some(150), false), (150, None, false)] {
-			assert_eq!(payout_htlc_recvs_expired(std::slice::from_ref(&grant), BlockHeight::new(server),
-				watchman.map(BlockHeight::new)), expected);
+			assert_eq!(expired(&grant, true, server, watchman), expected);
 		}
+		assert!(expired(&grant, false, 124, Some(124)));
 		grant.htlc.chain_resolution = Some(HtlcResolution::Fulfilled);
-		assert!(!payout_htlc_recvs_expired(std::slice::from_ref(&grant), BlockHeight::new(150), Some(BlockHeight::new(150))));
+		assert!(!expired(&grant, true, 150, Some(150)));
 	}
 }

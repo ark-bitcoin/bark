@@ -30,6 +30,7 @@ use server_rpc::protos;
 
 use ark_testing::{btc, Captaind, TestContext};
 use ark_testing::context::LightningPaymentSetup;
+use ark_testing::daemon::captaind::ArkClient;
 use ark_testing::lightning::sign_lightning_send_request;
 use ark_testing::util::{poll_interval, FutureExt};
 
@@ -167,6 +168,17 @@ async fn send_request(
 		intent_nonce: None,
 		source_owner_signature: Vec::new(),
 	}, key).await
+}
+
+async fn receive_invoice(
+	rpc: &mut ArkClient, hash: PaymentHash, amount: Amount, min_cltv_delta: u32,
+	mailbox: MailboxIdentifier, claim: &Keypair,
+) -> String {
+	rpc.start_lightning_receive(protos::StartLightningReceiveRequest {
+		payment_hash: hash.to_vec(), amount_sat: amount.to_sat(), min_cltv_delta,
+		mailbox_id: Some(mailbox.serialize()), claim_pubkey: Some(claim.public_key().serialize().to_vec()),
+		description: None, expiry_secs: None,
+	}).await.unwrap().into_inner().bolt11
 }
 
 /// The key a wallet bound its receive to, for tests that prepare the

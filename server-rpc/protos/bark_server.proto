@@ -60,7 +60,6 @@ service ArkService {
 	rpc PrepareLightningReceiveClaim(PrepareLightningReceiveClaimRequest) returns (PrepareLightningReceiveClaimResponse) {}
 	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc CancelLightningReceive(CancelLightningReceiveRequest) returns (core.Empty) {}
-	rpc RequestLightningReceiveArkoorCosign(LightningReceiveArkoorCosignRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// * OFFBOARDS
 
@@ -149,6 +148,14 @@ message FeeSchedule {
 	RefreshFees refresh = 3;
 	LightningReceiveFees lightning_receive = 4;
 	LightningSendFees lightning_send = 5;
+	// The fees of a Lightning payment between two wallets of this server.
+	// Unset charges it lightning_send and lightning_receive.
+	optional IntraArkFees intra_ark = 6;
+}
+
+message IntraArkFees {
+	LightningSendFees lightning_send = 1;
+	LightningReceiveFees lightning_receive = 2;
 }
 
 message PpmExpiryFeeEntry {
@@ -453,6 +460,7 @@ message FetchBolt12InvoiceResponse {
 }
 
 message StartLightningReceiveRequest {
+	reserved 1000, 1001;
 	bytes payment_hash = 1;
 	uint64 amount_sat = 2;
 	uint32 min_cltv_delta = 3;
@@ -464,10 +472,6 @@ message StartLightningReceiveRequest {
 	// The key the HTLC-recv VTXOs will be locked to. When set, the claim can
 	// only be prepared with this key and a claim_attestation signed by it.
 	optional bytes claim_pubkey = 7;
-	// Put the Ark address of claim_pubkey and mailbox_id in the invoice as
-	// route hints, so a user of this server can pay it with an arkoor
-	// instead. A server that does not allow it ignores this field.
-	bool ark_address_hint = 1000;
 }
 
 message StartLightningReceiveResponse {
@@ -508,13 +512,6 @@ message CancelLightningReceiveRequest {
 	bytes payment_hash = 1;
 }
 
-// An arkoor that pays the invoice of a Lightning receive on the Ark address
-// in its route hints. The server settles the receive when it co-signs.
-message LightningReceiveArkoorCosignRequest {
-	bytes payment_hash = 1;
-	ArkoorPackageCosignRequest cosign_request = 2;
-}
-
 enum LightningReceiveStatus {
 	// We have created the invoice and are awaiting the sender to start the process
 	CREATED = 0;
@@ -529,6 +526,7 @@ enum LightningReceiveStatus {
 }
 
 message CheckLightningReceiveResponse {
+	reserved 5;
 	string invoice = 1;
 	uint64 amount_sat = 2;
 	LightningReceiveStatus status = 3;

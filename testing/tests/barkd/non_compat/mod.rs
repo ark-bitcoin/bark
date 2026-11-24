@@ -8,3 +8,4 @@ mod lifecycle;
 mod mnemonic;
 mod onchain;
 mod signmessage;
+mod lightning;

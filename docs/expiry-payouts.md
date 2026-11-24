@@ -117,8 +117,8 @@ records the payout state:
 
 `WalletVtxo::expiry_payout_state` holds the state. `Wallet::expiry_payout`
 returns the state, the VTXO amount, the fee, the payout amount and the payout
-address. The REST API returns the state in the `expiry_payout` field of a VTXO,
-and the full payout at `GET /api/v1/wallet/vtxos/{id}/expiry-payout`.
+address. The REST API returns the state in the optional `expiry_payout` field of
+`GET /api/v1/wallet/vtxos/{id}` and the VTXO list.
 
 This is what the server reports. Confirm the payout output on-chain before you
 count it as received.
@@ -127,37 +127,17 @@ A round, offboard or Lightning action that holds a VTXO ends when the server
 pays out that VTXO. A server in expiry payout mode does not register an arkoor
 output after its expiry. It refunds the arkoor to the sender on-chain instead.
 
+# Upgrading an existing payout server
 
-# Ark address route hints
+Finish pending invoice-bound Ark transfers and their mailbox deliveries with the
+previous wallets and server before switching versions. Back up the server
+database before the upgrade. Migration V6 drops the retired invoice receipt
+table and input list. If a recorded output still has no delivery confirmation,
+the migration stops and leaves the data intact. Per-output receipts first
+appeared in V5 for payout-mode payments. Verify older payments and payments
+outside payout mode in the wallets before switching. Restoring the pre-upgrade
+backup restores the schema expected by the previous server.
 
-A Lightning invoice can carry the Ark address of the receiver in two route
-hints. A payer on the same Ark server then pays the invoice with an arkoor to
-that address, without a Lightning payment. This feature does not need expiry
-payouts.
-
-Each route hint is one hop over a channel that does not exist. Its short channel
-id starts with `ark\x01` for the hint with the public key of the address, or
-`ark\x02` for the hint with the blinded mailbox. The last four bytes of both are
-the Ark id of the address. Lightning payers find no route through these hints
-and pay the invoice as usual.
-
-To enable it:
-
-- Set `ln_receive_ark_address_hints = true` in the captaind configuration.
-- Set `lightning_ark_address_hints = true` in the configuration of the
-  receiving wallet and of the paying wallet.
-
-The paying wallet asks the server to co-sign the arkoor with
-`RequestLightningReceiveArkoorCosign`. The server settles the Lightning receive
-when it co-signs, so the invoice cannot be paid again. The payer gets no
-preimage as proof of payment.
-
-In expiry payout mode, the server binds the output of that arkoor to the
-mailbox of the receiving wallet. The expiry payout of the VTXO goes to the
-receiver once the VTXO is registered with the server. The paying wallet
-registers it after the co-sign, and the receiving wallet registers it when it
-receives it. An output that the payer never registers and never delivers stays
-with the payer, and an expiry payout pays it to the payer.
-
-The server reports the receive as settled when it co-signs the arkoor. A client
-must treat the invoice as paid only when the wallet holds the VTXOs.
+An ordinary Ark send can resume across the upgrade. A wallet with an unfinished
+invoice-bound send or a receive awaiting its delivery must finish that action
+with its previous version. Replaying it as a new Ark send could pay twice.

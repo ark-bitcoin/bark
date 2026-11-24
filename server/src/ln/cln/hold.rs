@@ -44,13 +44,13 @@ use cln_rpc::plugins::hold::hold_client::HoldClient;
 
 use crate::database;
 use crate::database::block::BlockTable;
-use crate::database::expiry_payout::ownership::htlc_recvs_expired_in_mode;
 use crate::database::htlc_vtxo;
 use crate::database::hold::{self as hold_db, HoldTransition};
 use crate::database::ln::{
 	LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
 use crate::ln::guard::{PaymentGuard, PaymentGuards};
+use crate::ln::htlc_recvs_expired;
 use crate::ln::node_manager::post_lightning_receive_notification;
 use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
@@ -318,7 +318,7 @@ impl ClnHoldProcess {
 					let watchman_tip = t.get_highest_block(BlockTable::Watchmand).await?.map(|b| b.height);
 					Ok((htlc_vtxos, watchman_tip))
 				}).await?;
-				if htlc_recvs_expired_in_mode(self.db.expiry_payouts(), &htlc_vtxos, tip, watchman_tip) {
+				if htlc_recvs_expired(self.db.expiry_payouts(), &htlc_vtxos, tip, watchman_tip) {
 					return Ok(Some("htlc-recv vtxos expired"));
 				}
 

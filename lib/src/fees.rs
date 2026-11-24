@@ -15,16 +15,58 @@ pub struct FeeSchedule {
 	pub refresh: RefreshFees,
 	pub lightning_receive: LightningReceiveFees,
 	pub lightning_send: LightningSendFees,
+	/// The Lightning fees of a payment from one wallet of this Ark server to
+	/// another, which never leaves the server. `None` charges such a payment
+	/// [FeeSchedule::lightning_send] and [FeeSchedule::lightning_receive],
+	/// like any other.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub intra_ark: Option<IntraArkFees>,
+}
+
+/// The Lightning fees of an intra-Ark payment: a payment of an invoice that
+/// this Ark server issued for a receive of one of its own wallets.
+///
+/// The server settles such a payment without Lightning: the payer's HTLC
+/// VTXOs go to the server, and the receiver claims VTXOs from the server's
+/// pool. A payer can use one to swap VTXOs that expire soon for fresh ones,
+/// so these fees should not be below the refresh fees.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub struct IntraArkFees {
+	/// Charged to the payer in place of [FeeSchedule::lightning_send].
+	pub lightning_send: LightningSendFees,
+	/// Charged to the receiver in place of [FeeSchedule::lightning_receive].
+	pub lightning_receive: LightningReceiveFees,
 }
 
 impl FeeSchedule {
+	/// The fees for sending a Lightning payment, given whether it is
+	/// intra-Ark.
+	pub fn lightning_send_fees(&self, intra_ark: bool) -> &LightningSendFees {
+		match (&self.intra_ark, intra_ark) {
+			(Some(fees), true) => &fees.lightning_send,
+			_ => &self.lightning_send,
+		}
+	}
+
+	/// The fees for receiving a Lightning payment, given whether it is
+	/// intra-Ark.
+	pub fn lightning_receive_fees(&self, intra_ark: bool) -> &LightningReceiveFees {
+		match (&self.intra_ark, intra_ark) {
+			(Some(fees), true) => &fees.lightning_receive,
+			_ => &self.lightning_receive,
+		}
+	}
+
 	pub fn validate(&self) -> Result<(), FeeScheduleValidationError> {
 		// Validate the order of the fee structs
-		let tables = [
+		let mut tables = vec![
 			("lightning_send", &self.lightning_send.ppm_expiry_table),
 			("offboard", &self.offboard.ppm_expiry_table),
 			("refresh", &self.refresh.ppm_expiry_table),
 		];
+		if let Some(intra_ark) = &self.intra_ark {
+			tables.push(("intra_ark.lightning_send", &intra_ark.lightning_send.ppm_expiry_table));
+		}
 		for (name, ppm_expiry_table) in tables {
 			let mut prev_entry : Option<&PpmExpiryFeeEntry> = None;
 			for current in ppm_expiry_table {
@@ -83,6 +125,7 @@ impl Default for FeeSchedule {
 				base_fee: Amount::ZERO,
 				ppm_expiry_table: table.clone(),
 			},
+			intra_ark: None,
 		}
 	}
 }
@@ -957,5 +1000,35 @@ mod tests {
 				"fee changed for order {:?}", order.iter().map(|v| v.amount).collect::<Vec<_>>(),
 			);
 		}
+	}
+
+	#[test]
+	fn intra_ark_fees_apply_only_to_intra_ark_payments() {
+		let mut schedule = FeeSchedule::default();
+		schedule.lightning_send.base_fee = Amount::from_sat(75);
+		schedule.lightning_receive.base_fee = Amount::from_sat(100);
+		assert_eq!(schedule.lightning_send_fees(true).base_fee, Amount::from_sat(75),
+			"without intra-Ark fees an intra-Ark payment pays the normal fees");
+		assert_eq!(schedule.lightning_receive_fees(true).base_fee, Amount::from_sat(100));
+
+		schedule.intra_ark = Some(IntraArkFees {
+			lightning_send: LightningSendFees {
+				min_fee: Amount::ZERO,
+				base_fee: Amount::from_sat(10),
+				ppm_expiry_table: vec![],
+			},
+			lightning_receive: LightningReceiveFees { base_fee: Amount::ZERO, ppm: PpmFeeRate::ZERO },
+		});
+		assert_eq!(schedule.lightning_send_fees(true).base_fee, Amount::from_sat(10));
+		assert_eq!(schedule.lightning_receive_fees(true).base_fee, Amount::ZERO);
+		assert_eq!(schedule.lightning_send_fees(false).base_fee, Amount::from_sat(75));
+		assert_eq!(schedule.lightning_receive_fees(false).base_fee, Amount::from_sat(100));
+
+		// The intra-Ark table is validated like the others.
+		schedule.intra_ark.as_mut().unwrap().lightning_send.ppm_expiry_table = vec![
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 100, ppm: PpmFeeRate(10) },
+			PpmExpiryFeeEntry { expiry_blocks_threshold: 50, ppm: PpmFeeRate(20) },
+		];
+		assert!(matches!(schedule.validate(), Err(FeeScheduleValidationError::UnsortedPpmFeeTable { .. })));
 	}
 }

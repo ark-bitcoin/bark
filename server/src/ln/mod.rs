@@ -29,12 +29,7 @@ use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignRespon
 use ark::attestations::{LightningReceiveAttestation, LightningReceiveClaimAttestation};
 use ark::fees::{validate_and_subtract_fee, VtxoFeeInfo};
 use ark::integration::{TokenStatus, TokenType};
-use ark::address::VtxoDelivery;
-use ark::lightning::{
-	ark_address_route_hints, Bolt11InvoiceExt, Bolt12Invoice, Invoice, Offer, PaymentHash, PaymentStatus,
-	Preimage,
-};
-use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
+use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use ark::util::IteratorExt;
 use server_rpc::protos::{self, InputVtxo, lightning_payment_status};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
@@ -43,7 +38,6 @@ use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
 use crate::database::block::BlockTable;
-use crate::database::expiry_payout::ownership::htlc_recvs_expired_in_mode;
 use crate::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution, HtlcVtxo};
 use crate::database::tree::VtxoTreeUpdate;
 use crate::database::ln::{
@@ -104,7 +98,10 @@ fn validate_htlc_recv_expiry(
 /// Exits and resolutions are only known up to `watchman_tip`, so expiry is
 /// judged at the lower of that and `tip`. Without a watchman, or without any
 /// HTLC-recv vtxo, nothing counts as expired.
+/// In expiry payout mode a fulfilled grant never expires, and an on-chain
+/// revocation needs six confirmations before the sender can be refunded.
 pub(crate) fn htlc_recvs_expired(
+	expiry_payouts: bool,
 	htlc_vtxos: &[HtlcVtxo],
 	tip: BlockHeight,
 	watchman_tip: Option<BlockHeight>,
@@ -114,13 +111,20 @@ pub(crate) fn htlc_recvs_expired(
 	};
 	let height = std::cmp::min(tip, watchman_tip);
 
-	let htlc_recvs = htlc_vtxos.iter()
-		.filter(|h| h.direction() == HtlcDirection::Outgoing)
-		.collect::<Vec<_>>();
-	!htlc_recvs.is_empty() && htlc_recvs.iter().all(|h| {
-		height > h.htlc_expiry() && (
-			!h.vtxo.is_exited() || h.htlc.chain_resolution == Some(HtlcResolution::Revoked)
-		)
+	let mut grants = htlc_vtxos.iter().filter(|h| h.direction() == HtlcDirection::Outgoing).peekable();
+	grants.peek().is_some() && grants.all(|grant| {
+		if height <= grant.htlc_expiry() {
+			return false;
+		}
+		if !expiry_payouts {
+			return !grant.vtxo.is_exited() || grant.htlc.chain_resolution == Some(HtlcResolution::Revoked);
+		}
+		match grant.htlc.chain_resolution {
+			Some(HtlcResolution::Revoked) => grant.htlc.chain_resolution_height
+				.and_then(|block| height.checked_blocks_since(block)).is_some_and(|depth| depth >= 5),
+			Some(HtlcResolution::Fulfilled) => false,
+			None => !grant.vtxo.is_exited() && grant.htlc.offchain_resolution != Some(HtlcResolution::Fulfilled),
+		}
 	})
 }
 
@@ -319,7 +323,7 @@ impl Server {
 		slog!(LightningPayHtlcsRequested, payment_hash, expiry);
 
 		let destinations = destinations.for_lightning_send();
-		let (builder, _) = self.cosign_oor_with_builder(builder, &destinations, None).await?;
+		let (builder, _) = self.cosign_oor_with_builder(builder, &destinations).await?;
 		Ok(builder.cosign_response())
 	}
 
@@ -413,11 +417,16 @@ impl Server {
 			}
 		}
 
-		if let Some(sub) = self.db.read(async |t|
+		// A receive of ours for this hash makes the payment intra-Ark, the
+		// same test that start_payment uses to settle it without Lightning.
+		let intra_ark = if let Some(sub) = self.db.read(async |t|
 			t.get_htlc_subscription_by_payment_hash(payment_hash).await
 		).await? {
 			validate_intra_ark_payment(&sub, &invoice, payment_amount)?;
-		}
+			true
+		} else {
+			false
+		};
 
 		// Verify we can actually perform the payment when fees are taken into account. If for some
 		// reason the client chooses to pay less than the sum of the HTLC VTXOs and the fees, then
@@ -425,7 +434,8 @@ impl Server {
 		let tip = self.sync_manager.chain_tip();
 		let vtxo_fee_infos = vtxos.iter()
 			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip.height));
-		let user_fee = self.config.fees.lightning_send.calculate(payment_amount, vtxo_fee_infos)
+		let user_fee = self.config.fees.lightning_send_fees(intra_ark)
+			.calculate(payment_amount, vtxo_fee_infos)
 			.context("fee overflowed")?;
 		let amount_with_fee = payment_amount.checked_add(user_fee).context("validation overflow")?;
 
@@ -632,7 +642,7 @@ impl Server {
 			// user's receive on the same hash.
 			let htlc_vtxos = htlc_vtxo::get_htlc_vtxo_states_by_payment_hash(&t, payment_hash).await?;
 			let watchman_tip = t.get_highest_block(BlockTable::Watchmand).await?.map(|b| b.height);
-			let htlc_recvs_expired = htlc_recvs_expired_in_mode(
+			let htlc_recvs_expired = htlc_recvs_expired(
 				self.config.expiry_payouts, &htlc_vtxos, tip, watchman_tip,
 			);
 			let canceled = match subscription_id {
@@ -690,7 +700,6 @@ impl Server {
 		description: Option<String>,
 		expiry: Option<Duration>,
 		claim_pubkey: Option<PublicKey>,
-		ark_address_hint: bool,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
@@ -808,16 +817,8 @@ impl Server {
 		// between last lightning htlc and htlc-recv vtxo one
 		let ln_cltv_delta = min_cltv_delta + self.config.htlc_expiry_delta;
 
-		let route_hints = match (claim_pubkey, mailbox_id) {
-			(Some(claim_pubkey), Some(mailbox_id))
-				if ark_address_hint && self.config.ln_receive_ark_address_hints
-			=> self.ark_address_route_hints(claim_pubkey, mailbox_id)?.to_vec(),
-			_ => vec![],
-		};
-
 		let invoice = self.lightning_manager.generate_invoice(
 			payment_hash, amount, ln_cltv_delta, expiry, description, mailbox_id, claim_pubkey,
-			route_hints,
 		).await?;
 		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}",
 			payment_hash, amount, invoice.to_string(),
@@ -826,105 +827,6 @@ impl Server {
 		Ok(protos::StartLightningReceiveResponse {
 			bolt11: invoice.to_string()
 		})
-	}
-
-	/// The route hints that put the Ark address of a user's key and mailbox
-	/// in an invoice.
-	fn ark_address_route_hints(
-		&self,
-		user_pubkey: PublicKey,
-		mailbox_id: MailboxIdentifier,
-	) -> anyhow::Result<[(PublicKey, u64); 2]> {
-		// The user blinds the mailbox in its own addresses with the ECDH of
-		// its key and the server's mailbox key, so this gives the same id.
-		let blinded_id = BlindedMailboxIdentifier::new(
-			mailbox_id, user_pubkey, self.mailbox_key.leak_ref(),
-		).badarg("claim key doesn't blind the mailbox")?;
-
-		let address = ark::Address::new(
-			self.config.network != bitcoin::Network::Bitcoin,
-			self.server_pubkey,
-			VtxoPolicy::new_pubkey(user_pubkey),
-			vec![VtxoDelivery::ServerMailbox { blinded_id }],
-		);
-		ark_address_route_hints(&address).context("address has no route hints")
-	}
-
-	/// Co-sign an arkoor that pays the invoice of a lightning receive on the
-	/// Ark address in its route hints, which settles the receive.
-	///
-	/// Afterwards the invoice cannot be paid, as after a payment over
-	/// lightning. A retry of the arkoor that settled the receive is
-	/// co-signed again and changes nothing. Any other request for a receive
-	/// that is not open is refused.
-	#[tracing::instrument(skip(self, request, destinations))]
-	pub(crate) async fn cosign_lightning_receive_arkoor(
-		&self,
-		payment_hash: PaymentHash,
-		request: ArkoorPackageCosignRequest<VtxoId>,
-		destinations: &DestinationBindings,
-	) -> anyhow::Result<ArkoorPackageCosignResponse> {
-		if !self.config.ln_receive_ark_address_hints {
-			return badarg!("paying invoices by arkoor is disabled on this server");
-		}
-
-		// Held for the whole call, so no other call decides on this payment
-		// while the arkoor is validated and the receive settled.
-		let _guard = self.payment_guards.lock(payment_hash).await;
-
-		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
-			.not_found([payment_hash], "no pending payment with this payment hash")?;
-		// A receive can have a claim key without route hints.
-		let claim_pubkey = sub.claim_pubkey.filter(|_| sub.invoice.ark_address().is_some())
-			.badarg("invoice has no Ark address")?;
-		let retry = match sub.status {
-			LightningHtlcSubscriptionStatus::Created if !sub.invoice.is_expired() => false,
-			LightningHtlcSubscriptionStatus::Settled => true,
-			_ => return badarg!("invoice is not payable"),
-		};
-
-		let policy = VtxoPolicy::new_pubkey(claim_pubkey);
-		let paid = request.all_outputs()
-			.filter(|o| o.policy == policy)
-			.map(|o| o.total_amount)
-			.sum::<Amount>();
-		if paid < sub.amount() {
-			return badarg!("arkoor pays {} of the {} invoice", paid, sub.amount());
-		}
-
-		if self.config.expiry_payouts {
-			// The payer could bind the VTXO to another mailbox than the
-			// one the receive was started for.
-			let mailbox_id = self.db.read(async |t|
-				t.get_lightning_receiver_mailbox_id(payment_hash).await
-			).await?;
-			if destinations.mailbox_for(claim_pubkey) != mailbox_id.map(|m| m.as_pubkey()) {
-				return badarg!("arkoor doesn't pay the mailbox of the invoice");
-			}
-		}
-
-		let paid_receive = if retry {
-			let inputs = request.inputs().copied().collect::<Vec<_>>();
-			let settled_by = self.db.read(async |t|
-				t.lightning_receive_settled_by_arkoor(sub.id, &inputs).await
-			).await?;
-			if !settled_by {
-				return badarg!("invoice is not payable");
-			}
-			None
-		} else {
-			Some(&sub)
-		};
-
-		// The co-sign of a new arkoor settles the receive, or it fails.
-		let response = self.cosign_oor(request, destinations, paid_receive).await?;
-
-		// The server can stop after the co-sign and before this step, so a
-		// retry also notifies the receiver and cancels the hold invoice.
-		// Both are idempotent.
-		self.lightning_manager.finish_intra_ark_payment(sub).await;
-
-		Ok(response)
 	}
 
 	/// Polls until the HTLC subscription for `payment_hash` reaches a
@@ -1078,9 +980,13 @@ impl Server {
 
 		self.verify_ln_receive_anti_dos(anti_dos, payment_hash, client_address).await?;
 
-		// Deduct the fees from the HTLC VTXOs.
+		// Deduct the fees from the HTLC VTXOs. An intra-Ark payment has an
+		// open payment attempt on this receive.
+		let intra_ark = self.config.fees.intra_ark.is_some() && self.db.read(async |t|
+			t.get_open_lightning_payment_attempt_by_subscription_id(sub.id).await
+		).await?.is_some();
 		let received_amount = sub.amount();
-		let fee = self.config.fees.lightning_receive.calculate(received_amount)
+		let fee = self.config.fees.lightning_receive_fees(intra_ark).calculate(received_amount)
 			.context("fee overflowed")?;
 		let htlc_amount = validate_and_subtract_fee(received_amount, fee)?;
 
@@ -1330,7 +1236,7 @@ impl Server {
 				.context("could not settle hold invoice, refusing to release the claim")?;
 		}
 
-		let (builder, _) = self.cosign_oor_with_builder(builder, destinations, None).await?;
+		let (builder, _) = self.cosign_oor_with_builder(builder, destinations).await?;
 		let vtxo_request = VtxoRequest {
 			amount: sub.amount(),
 			policy: vtxo_policy,
@@ -1339,8 +1245,9 @@ impl Server {
 		slog!(LightningReceiveClaimed, payment_hash, vtxo_request,
 			amount: sub.amount());
 		if first_claim {
-			let user_fee = self.config.fees.lightning_receive.calculate(sub.amount())
-				.context("fee overflowed")?;
+			// The fee is what the grant kept back, which depends on whether
+			// the payment was intra-Ark.
+			let user_fee = sub.amount().checked_sub(htlc_amount).unwrap_or(Amount::ZERO);
 			telemetry::record_ark_fee(telemetry::ArkFeeOp::LightningReceive, user_fee.to_sat(), None);
 		}
 

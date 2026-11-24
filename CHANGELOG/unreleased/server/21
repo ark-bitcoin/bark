@@ -1,0 +1,11 @@
+- Charge intra-Ark Lightning fees on payments between our own wallets
+  With `[fees.intra_ark]` set, a Lightning payment of an invoice that the
+  server issued for one of its own wallets pays the intra-Ark send fee, and
+  its receiver the intra-Ark receive fee. Payments to and from the outside
+  still pay `lightning_send` and `lightning_receive`.
+  Before upgrading a payout server, finish pending invoice-bound transfers
+  and back up its database. See `docs/expiry-payouts.md`.
+  [#21](https://github.com/SatoshiPortal/scuttle/pull/21)
+- Pay the full expiry amount when two mailbox keys share a Taproot address
+  Each payout address receives its combined amount in a single output.
+  [#21](https://github.com/SatoshiPortal/scuttle/pull/21)

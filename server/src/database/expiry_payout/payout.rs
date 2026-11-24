@@ -11,51 +11,29 @@ use bitcoin::{Amount, FeeRate, ScriptBuf, Transaction, TxOut, Txid};
 
 use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId};
 use bitcoin_ext::{BlockRef, TxOutExt};
+use server_rpc::protos::{ExpiryPayout, ExpiryPayoutState};
 
 use crate::database::Tx;
 use crate::database::htlc_vtxo::{self, HtlcDirection, HtlcResolution};
-use crate::database::ln::LightningHtlcSubscriptionStatus;
 use crate::error::ExpiryPayoutRefusal;
 
-use super::ownership::{htlc_terms, LightningSourceState};
+use super::ownership::{htlc_terms, receive_timeout_allowed, LightningSourceState};
 
 /// The largest payout transaction that is still standard.
 const MAX_PAYOUT_VSIZE: usize = 100_000;
 
-/// The state of the expiry payout of a VTXO, as the wallet sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExpiryPayoutState {
-	Pending,
-	Paid,
-	Forfeited,
-}
-
-/// The expiry payout decided for a VTXO.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ExpiryPayoutReceipt {
-	pub state: ExpiryPayoutState,
-	pub gross: Amount,
-	pub fee: Amount,
-	pub payout: Amount,
-}
-
-/// Whether the watchman can take back a receive grant after its timeout:
-/// the receive is canceled, or its HTLCs are ready and no preimage is
-/// known. A fulfilled grant is never taken back.
-fn receive_timeout_allowed(
-	status: LightningHtlcSubscriptionStatus,
-	offchain: Option<HtlcResolution>,
-	onchain: Option<HtlcResolution>,
-	preimage_known: bool,
-) -> bool {
-	if offchain == Some(HtlcResolution::Fulfilled) || onchain == Some(HtlcResolution::Fulfilled) {
-		return false;
+/// Every owner script must receive its exact amount once. The only optional
+/// output is the watchman's change.
+pub(crate) fn check_owner_outputs(
+	mut owners: BTreeMap<ScriptBuf, Amount>, outputs: &[TxOut], operator_spk: &ScriptBuf,
+) -> anyhow::Result<()> {
+	ensure!(!owners.contains_key(operator_spk), "operator drain aliases an owner script");
+	ensure!(outputs.len().saturating_sub(owners.len()) <= 1, "expiry payout attempt has extra outputs");
+	for out in outputs.iter().filter(|out| &out.script_pubkey != operator_spk) {
+		ensure!(owners.remove(&out.script_pubkey) == Some(out.value), "expiry payout attempt changes owner outputs");
 	}
-	match status {
-		LightningHtlcSubscriptionStatus::Canceled => true,
-		LightningHtlcSubscriptionStatus::HtlcsReady => !preimage_known,
-		_ => false,
-	}
+	ensure!(owners.is_empty(), "expiry payout attempt omits an owner output");
+	Ok(())
 }
 
 /// An expiry payout that is not confirmed and not conflicted.
@@ -84,7 +62,7 @@ impl Tx<'_> {
 	/// output that the recipient never registered and that goes back to
 	/// its sender, is not reported for the VTXO.
 	pub(crate) async fn expiry_payout_receipts(&self, owners: &BTreeMap<VtxoId, PublicKey>)
-		-> anyhow::Result<BTreeMap<VtxoId, ExpiryPayoutReceipt>>
+		-> anyhow::Result<BTreeMap<VtxoId, ExpiryPayout>>
 	{
 		if !self.expiry_payouts() || owners.is_empty() {
 			return Ok(BTreeMap::new());
@@ -108,27 +86,42 @@ impl Tx<'_> {
 			// The owner exited the VTXO on-chain, so no payout follows.
 			let status: &str = row.get("status");
 			if status == "conflicted" && row.get::<_, bool>("exposed") { continue; }
-			let amount = |column| -> anyhow::Result<Amount> {
-				Ok(Amount::from_sat(u64::try_from(row.get::<_, i64>(column))?))
-			};
-			let payout = amount("payout_sat")?;
+			let sats = |column| u64::try_from(row.get::<_, i64>(column));
+			let payout_sat = sats("payout_sat")?;
 			let state = if status != "confirmed" || row.get::<_, Option<bool>>("deep") != Some(true) {
 				ExpiryPayoutState::Pending
-			} else if payout > Amount::ZERO { ExpiryPayoutState::Paid } else { ExpiryPayoutState::Forfeited };
-			receipts.insert(id, ExpiryPayoutReceipt { state, gross: amount("gross_sat")?, fee: amount("fee_sat")?, payout });
+			} else if payout_sat > 0 {
+				ExpiryPayoutState::Paid
+			} else {
+				ExpiryPayoutState::Forfeited
+			};
+			receipts.insert(id, ExpiryPayout {
+				state: state as i32, gross_sat: sats("gross_sat")?, fee_sat: sats("fee_sat")?, payout_sat,
+			});
 		}
 		Ok(receipts)
 	}
 
-	/// The owner outputs of an expiry payout: the total of each mailbox `M`,
-	/// paid to `tr(M)`.
+	/// The owner outputs, grouped by the Taproot script. Mailbox keys that
+	/// differ only in parity pay the same script.
 	async fn expiry_owner_outputs(&self, id: i64) -> anyhow::Result<BTreeMap<ScriptBuf, Amount>> {
-		self.query("SELECT owner_mailbox,SUM(payout_sat)::BIGINT AS amount_sat FROM expiry_payout_vtxo \
+		let rows = self.query("SELECT owner_mailbox,SUM(payout_sat)::BIGINT AS amount_sat FROM expiry_payout_vtxo \
 			WHERE expiry_payout_id=$1 AND disposition='owner' GROUP BY owner_mailbox HAVING SUM(payout_sat)>0",
-			&[&id]).await?.into_iter().map(|row| Ok((
-				ark::expiry_payout::payout_script(row.get::<_, &str>("owner_mailbox").parse()?),
-				Amount::from_sat(u64::try_from(row.get::<_, i64>("amount_sat"))?),
-			))).collect()
+			&[&id]).await?;
+		let mut outputs = BTreeMap::new();
+		for row in rows {
+			let script = ark::expiry_payout::payout_script(row.get::<_, &str>("owner_mailbox").parse()?);
+			let amount = Amount::from_sat(u64::try_from(row.get::<_, i64>("amount_sat"))?);
+			let total = outputs.entry(script).or_insert(Amount::ZERO);
+			*total = total.checked_add(amount).context("expiry output amount overflow")?;
+		}
+		Ok(outputs)
+	}
+
+	async fn expiry_inputs(&self, id: i64) -> anyhow::Result<Vec<ServerVtxo>> {
+		self.query("SELECT v.vtxo FROM expiry_payout_input i JOIN vtxo v ON v.vtxo_id=i.vtxo_id \
+			WHERE i.expiry_payout_id=$1 ORDER BY v.vtxo_id", &[&id]).await?
+			.into_iter().map(|row| Ok(ServerVtxo::deserialize(row.get("vtxo"))?)).collect()
 	}
 
 	/// The pending expiry payouts, in the order of their expiry.
@@ -139,13 +132,7 @@ impl Tx<'_> {
 		let mut ret = Vec::with_capacity(rows.len());
 		for row in rows {
 			let id: i64 = row.get("id");
-			let inputs = self.query("
-				SELECT v.vtxo
-				FROM expiry_payout_input i JOIN vtxo v ON v.vtxo_id=i.vtxo_id
-				WHERE i.expiry_payout_id=$1
-				ORDER BY v.vtxo_id
-			", &[&id]).await?
-				.into_iter().map(|r| ServerVtxo::deserialize(r.get("vtxo"))).collect::<Result<Vec<_>, _>>()?;
+			let inputs = self.expiry_inputs(id).await?;
 			let payouts = self.expiry_owner_outputs(id).await?.into_iter()
 				.map(|(script_pubkey, value)| TxOut { script_pubkey, value }).collect();
 			let latest = match row.get::<_, Option<&[u8]>>("signed_tx") {
@@ -173,34 +160,20 @@ impl Tx<'_> {
 			&& payout.input.iter().any(|input| input.sequence.to_consensus_u32() <= 0xFFFFFFFD)
 			&& payout.output.iter().all(TxOutExt::is_standard),
 			"expiry payout attempt is nonstandard or lacks RBF");
-		let roots = self.query("SELECT v.vtxo FROM expiry_payout_input i \
-			JOIN vtxo v ON v.vtxo_id=i.vtxo_id WHERE i.expiry_payout_id=$1", &[&id]).await?
-			.into_iter().map(|row| ServerVtxo::deserialize(row.get("vtxo")))
-			.collect::<Result<Vec<ServerVtxo>, _>>()?;
-		let expired_tree = roots.iter().map(|root| root.point()).collect::<BTreeSet<_>>();
+		let roots = self.expiry_inputs(id).await?;
 		let spent = payout.input.iter().map(|input| input.previous_output)
 			.collect::<BTreeSet<_>>();
-		ensure!(!expired_tree.is_empty() && expired_tree.is_subset(&spent)
+		ensure!(!roots.is_empty() && roots.iter().all(|root| spent.contains(&root.point()))
 			&& spent.len() == payout.input.len(),
 			"expiry payout attempt omits or duplicates allocated expired tree");
 		let expected = self.expiry_owner_outputs(id).await?;
-		ensure!(!expected.contains_key(operator_spk),
-			"operator drain aliases an owner script");
-		let owner_outputs = payout.output.iter().filter(|out| expected.contains_key(&out.script_pubkey))
-			.collect::<Vec<_>>();
-		ensure!(owner_outputs.len() == expected.len() && owner_outputs.iter().all(|out|
-			expected.get(&out.script_pubkey) == Some(&out.value)),
-			"expiry payout attempt changes owner outputs");
 		// The owners are paid from the roots only. Watchman inputs can pay
 		// the mining fee, never an owner.
 		let swept = roots.iter().try_fold(Amount::ZERO, |sum, root| sum.checked_add(root.amount()));
 		let owed = expected.values().try_fold(Amount::ZERO, |sum, value| sum.checked_add(*value));
 		ensure!(owed.zip(swept).is_some_and(|(owed, swept)| owed <= swept),
 			"expiry payout attempt pays owners more than its roots hold");
-		let other = payout.output.iter().filter(|out| !expected.contains_key(&out.script_pubkey))
-			.collect::<Vec<_>>();
-		ensure!(other.len() <= 1 && other.iter().all(|out| &out.script_pubkey == operator_spk),
-			"expiry payout attempt pays an unknown script");
+		check_owner_outputs(expected, &payout.output, operator_spk)?;
 		let txid = payout.compute_txid().to_string();
 		let raw = serialize(payout);
 		let fee_sat = i64::try_from(fee.to_sat())?;
@@ -304,8 +277,24 @@ impl Tx<'_> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use LightningHtlcSubscriptionStatus::{Canceled, Created, Accepted, HtlcsReady, Settled};
+	use crate::database::ln::LightningHtlcSubscriptionStatus::{Canceled, Created, Accepted, HtlcsReady, Settled};
 	use HtlcResolution::{Fulfilled, Revoked};
+
+	#[test]
+	fn owner_outputs_match_each_script_and_amount_once() {
+		let output = |tag, sats| TxOut { script_pubkey: ScriptBuf::from_bytes(vec![tag]), value: Amount::from_sat(sats) };
+		let alice = output(1, 3_000);
+		let bob = output(2, 3_000);
+		let change = output(3, 500);
+		let owners = BTreeMap::from([(alice.script_pubkey.clone(), alice.value), (bob.script_pubkey.clone(), bob.value)]);
+		let matches = |outputs: &[TxOut]| check_owner_outputs(owners.clone(), outputs, &change.script_pubkey).is_ok();
+		assert!(matches(&[bob.clone(), alice.clone()]));
+		assert!(matches(&[bob.clone(), change.clone(), alice.clone()]));
+		assert!(!matches(&[alice.clone(), alice.clone()]));
+		assert!(!matches(&[alice.clone(), output(2, 2_999)]));
+		assert!(!matches(&[alice.clone(), bob, change.clone(), change.clone()]));
+		assert!(!matches(&[alice]));
+	}
 
 	#[test]
 	fn receive_timeout_keeps_collected_and_inflight_grants() {

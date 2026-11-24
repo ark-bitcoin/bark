@@ -13,7 +13,7 @@ use futures::StreamExt;
 use ark::{
 	musig, ProtocolEncoding, SECP, ServerVtxo, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest,
 };
-use ark::arkoor::ArkoorDestination;
+use ark::arkoor::{state, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::attestations::{DelegatedRoundParticipationAttestation, VtxoStatusAttestation};
 use ark::lightning::{PaymentHash, Preimage};
@@ -556,6 +556,28 @@ async fn expiry_payout_pays_an_unregistered_arkoor_to_its_sender() {
 	assert!(status.expiry_payout.is_none(), "the sender's refund is not the recipient's payout");
 }
 
+async fn cosign_isolated_outputs(
+	srv: &Captaind, sender: &Owner, recipient: &Owner, builder: ArkoorPackageBuilder<state::Initial>,
+) -> Vec<Vtxo<Full>> {
+	let builder = builder.generate_user_nonces(&[sender.key(1)]).unwrap();
+	let mut request = protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
+	assert_eq!(request.parts.len(), 1);
+	assert_eq!(request.parts[0].isolated_outputs.len(), 2);
+	for output in request.parts.iter_mut().flat_map(|part| part.outputs.iter_mut().chain(&mut part.isolated_outputs)) {
+		let key = VtxoPolicy::deserialize(&output.policy).unwrap().user_pubkey();
+		let (signer, mailbox) = if key == sender.key(2).public_key() {
+			(sender.key(2), sender.mailbox_id())
+		} else {
+			assert_eq!(key, recipient.key(1).public_key());
+			(recipient.key(1), recipient.mailbox_id())
+		};
+		output.blinded_mailbox_id = blinded_mailbox(srv, &signer, mailbox).await;
+	}
+	let response = srv.get_public_rpc().await.request_arkoor_cosign(request).await.unwrap().into_inner();
+	builder.user_cosign(&[sender.key(1)], ArkoorPackageCosignResponse::try_from(response).unwrap())
+		.unwrap().build_signed_vtxos()
+}
+
 /// A dust output leaves the checkpoint through an isolation transaction. Its
 /// recipient is bound at co-sign, but the sender keeps it if nobody registers
 /// the signed VTXO before expiry.
@@ -573,23 +595,8 @@ async fn expiry_payout_refunds_unregistered_isolated_dust_to_sender() {
 			policy: VtxoPolicy::new_pubkey(recipient.key(1).public_key()),
 		},
 		VtxoPolicy::new_pubkey(sender.key(2).public_key()),
-	).unwrap().generate_user_nonces(&[sender.key(1)]).unwrap();
-	let mut request = protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
-	assert_eq!(request.parts.len(), 1);
-	assert_eq!(request.parts[0].isolated_outputs.len(), 2);
-	for output in request.parts.iter_mut().flat_map(|part| part.outputs.iter_mut().chain(&mut part.isolated_outputs)) {
-		let key = VtxoPolicy::deserialize(&output.policy).unwrap().user_pubkey();
-		let (signer, mailbox) = if key == sender.key(2).public_key() {
-			(sender.key(2), sender.mailbox_id())
-		} else {
-			assert_eq!(key, recipient.key(1).public_key());
-			(recipient.key(1), recipient.mailbox_id())
-		};
-		output.blinded_mailbox_id = blinded_mailbox(&srv, &signer, mailbox).await;
-	}
-	let response = srv.get_public_rpc().await.request_arkoor_cosign(request).await.unwrap().into_inner();
-	let signed = builder.user_cosign(&[sender.key(1)], ArkoorPackageCosignResponse::try_from(response).unwrap())
-		.unwrap().build_signed_vtxos();
+	).unwrap();
+	let signed = cosign_isolated_outputs(&srv, &sender, &recipient, builder).await;
 	let dust = signed.iter().find(|v| v.amount() == sat(160)).expect("isolated output");
 	let db = Db::connect(&srv.config().postgres).await.unwrap();
 	let bound = db.read(async |t| t.vtxo_owner_mailboxes(&[dust.id()]).await).await.unwrap();
@@ -616,25 +623,10 @@ async fn expiry_payout_registered_isolated_dust_follows_recipient() {
 		ArkoorDestination { total_amount: sat(160), policy: VtxoPolicy::new_pubkey(recipient.key(1).public_key()) },
 		ArkoorDestination { total_amount: sat(10_000), policy: VtxoPolicy::new_pubkey(recipient.key(1).public_key()) },
 		ArkoorDestination { total_amount: sat(89_840), policy: VtxoPolicy::new_pubkey(sender.key(2).public_key()) },
-	]).unwrap().generate_user_nonces(&[sender.key(1)]).unwrap();
-	let mut request = protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
-	assert_eq!(request.parts[0].isolated_outputs.len(), 2);
-	for output in request.parts.iter_mut().flat_map(|part| part.outputs.iter_mut().chain(&mut part.isolated_outputs)) {
-		let key = VtxoPolicy::deserialize(&output.policy).unwrap().user_pubkey();
-		let (signer, mailbox) = if key == sender.key(2).public_key() {
-			(sender.key(2), sender.mailbox_id())
-		} else {
-			assert_eq!(key, recipient.key(1).public_key());
-			(recipient.key(1), recipient.mailbox_id())
-		};
-		output.blinded_mailbox_id = blinded_mailbox(&srv, &signer, mailbox).await;
-	}
-	let mut rpc = srv.get_public_rpc().await;
-	let response = rpc.request_arkoor_cosign(request).await.unwrap().into_inner();
-	let signed = builder.user_cosign(&[sender.key(1)], ArkoorPackageCosignResponse::try_from(response).unwrap())
-		.unwrap().build_signed_vtxos();
+	]).unwrap();
+	let signed = cosign_isolated_outputs(&srv, &sender, &recipient, builder).await;
 	let dust = signed.iter().find(|v| v.amount() == sat(160)).expect("isolated output");
-	rpc.register_vtxo_transactions(protos::RegisterVtxoTransactionsRequest {
+	srv.get_public_rpc().await.register_vtxo_transactions(protos::RegisterVtxoTransactionsRequest {
 		vtxos: signed.iter().map(|v| v.serialize()).collect(),
 	}).await.unwrap();
 	let db = Db::connect(&srv.config().postgres).await.unwrap();

@@ -511,7 +511,6 @@ impl TestContext {
 			receive_htlc_forward_timeout: Duration::from_secs(30),
 			min_board_amount: Amount::from_sat(20_000),
 			ln_receive_anti_dos_required: false,
-			ln_receive_ark_address_hints: false,
 			round_status_attestation_required: false,
 			forfeit_attestation_required: false,
 			ln_max_fee_ppm: 900_000,
@@ -542,6 +541,7 @@ impl TestContext {
 					base_fee: Amount::ZERO,
 					ppm_expiry_table: vec![],
 				},
+				intra_ark: None,
 			},
 			bitcoin_address_blocklist: None,
 			bitcoin_address_blocklist_refresh_interval: None,
@@ -673,7 +673,6 @@ impl TestContext {
 			daemon_manual_sync: false,
 			change_vtxo_split_factor: 2,
 			vtxo_key_gap_limit: bark::DEFAULT_VTXO_KEY_GAP_LIMIT,
-			lightning_ark_address_hints: false,
 		}
 	}
 

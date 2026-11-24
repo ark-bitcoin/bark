@@ -1,4 +1,3 @@
 - Add the expiry payout of a VTXO
-  `WalletVtxoInfo` has the `expiry_payout` state of the VTXO, and
-  `ExpiryPayoutInfo` has the state, the amounts and the payout address.
+  `WalletVtxoInfo` reports the VTXO’s `expiry_payout` state.
   [#1](https://github.com/SatoshiPortal/scuttle/pull/1)

@@ -1,0 +1,4 @@
+- Report expiry payouts on the regular wallet VTXO endpoint
+  **BREAKING:** Clients using `GET /wallet/vtxos/{id}/expiry-payout` should read
+  the optional `expiry_payout` field from `GET /wallet/vtxos/{id}`.
+  [#21](https://github.com/SatoshiPortal/scuttle/pull/21)

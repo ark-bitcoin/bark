@@ -1,0 +1,4 @@
+- Carry intra-Ark Lightning fees in the fee schedule
+  With `FeeSchedule.intra_ark` unset, wallets use the configured Lightning
+  rates. Update older wallets before enabling a different internal rate.
+  [#21](https://github.com/SatoshiPortal/scuttle/pull/21)

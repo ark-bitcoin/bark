@@ -3846,69 +3846,6 @@
         }
       }
     },
-    "/api/v1/wallet/vtxos/{id}/expiry-payout": {
-      "get": {
-        "tags": [
-          "wallet"
-        ],
-        "summary": "Get the expiry payout of a VTXO",
-        "description": "Returns the expiry payout that an Ark server in expiry payout mode decided for a VTXO: its state, the VTXO amount, the payout fee, the payout amount and the payout address of the wallet. The server reports the payout; confirm it on-chain before you count it as received.",
-        "operationId": "get_vtxo_expiry_payout",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "VTXO identifier formatted as `txid:vout`.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Returns the expiry payout of the VTXO",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExpiryPayoutInfo"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid VTXO id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "VTXO or expiry payout not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InternalServerError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/ping": {
       "get": {
         "tags": [],
@@ -6248,44 +6185,6 @@
           }
         }
       },
-      "ExpiryPayoutInfo": {
-        "type": "object",
-        "description": "The expiry payout of a VTXO, as an Ark server in expiry payout mode\nreports it. Confirm the payout on-chain before you count it as received.",
-        "required": [
-          "state",
-          "gross_sat",
-          "fee_sat",
-          "payout_sat",
-          "address"
-        ],
-        "properties": {
-          "address": {
-            "type": "string",
-            "description": "The payout address of the wallet."
-          },
-          "fee_sat": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The payout fee in sats.",
-            "minimum": 0
-          },
-          "gross_sat": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The amount of the VTXO in sats.",
-            "minimum": 0
-          },
-          "payout_sat": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The amount paid on-chain in sats, zero for a forfeited VTXO.",
-            "minimum": 0
-          },
-          "state": {
-            "$ref": "#/components/schemas/ExpiryPayoutStateInfo"
-          }
-        }
-      },
       "ExpiryPayoutStateInfo": {
         "type": "string",
         "description": "The state of the expiry payout of a VTXO, as an Ark server in expiry\npayout mode reports it.",
@@ -6383,6 +6282,17 @@
           "board": {
             "$ref": "#/components/schemas/BoardFees"
           },
+          "intra_ark": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IntraArkFees",
+                "description": "The Lightning fees of a payment between two wallets of this Ark\nserver. Absent when such a payment pays `lightning_send` and\n`lightning_receive`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lightning_receive": {
             "$ref": "#/components/schemas/LightningReceiveFees"
           },
@@ -6438,6 +6348,22 @@
         "properties": {
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "IntraArkFees": {
+        "type": "object",
+        "description": "The Lightning fees of a payment between two wallets of the same Ark server.",
+        "required": [
+          "lightning_send",
+          "lightning_receive"
+        ],
+        "properties": {
+          "lightning_receive": {
+            "$ref": "#/components/schemas/LightningReceiveFees"
+          },
+          "lightning_send": {
+            "$ref": "#/components/schemas/LightningSendFees"
           }
         }
       },
@@ -8590,7 +8516,7 @@
                 "oneOf": [
                   {
                     "$ref": "#/components/schemas/ExpiryPayoutStateInfo",
-                    "description": "The state of the expiry payout of this VTXO, if the Ark server\ndecided one. `GET /wallet/vtxos/{id}/expiry-payout` returns the amounts."
+                    "description": "The state of the expiry payout of this VTXO, if the Ark server\ndecided one."
                   },
                   {
                     "type": "null"
