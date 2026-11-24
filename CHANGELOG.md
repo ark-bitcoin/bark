@@ -406,6 +406,13 @@ Below is a more detailed summary for each version.
     [#2681](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2681)
   - Stop compressing gRPC responses with zstd
     [#2683](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2683)
+  - Refuse to load a mnemonic file that other users can access
+    `captaind` and `watchmand` used to warn at startup when group or other
+    users could access the `mnemonic` file in the data directory. They now stop
+    with an error that gives the `chmod` command to run. A server with such a
+    file does not start after the upgrade until its permissions are owner-only.
+    A data directory that other users can access still gets a warning.
+    [#2694](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2694)
   - Refuse a delegated round participation over inputs a round attempt already holds
     Submitting a new participation replaces the pending one over the same inputs.
     When a round attempt had already picked the old one up, the replacement deleted
