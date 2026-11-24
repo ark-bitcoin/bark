@@ -193,8 +193,11 @@ fn decide_action_server_htlc_send(params: &ActionParams<HtlcSendExtra>) -> Actio
 	let confirmed_plus_2x = params.confirmed_at + params.exit_delta * 2;
 	let deadline = std::cmp::max(params.policy_extras.htlc_expiry, confirmed_plus_2x);
 
-	if let Some(action) = try_progress(params, params.policy_extras.next_tx, deadline) {
-		return action;
+	// A next tx, e.g. a revocation refund, means the HTLC is no longer ours.
+	// If unsigned, wait rather than claim with a preimage of a later payment.
+	if params.policy_extras.next_tx.is_some() {
+		return try_progress(params, params.policy_extras.next_tx, deadline)
+			.unwrap_or(Action::Wait);
 	}
 
 	if params.policy_extras.has_preimage {
@@ -218,8 +221,11 @@ fn decide_action_server_htlc_recv(params: &ActionParams<HtlcRecvExtra>) -> Actio
 	let confirmed_plus_exit = params.confirmed_at + params.exit_delta;
 	let deadline = confirmed_plus_exit + params.policy_extras.htlc_expiry_delta;
 
-	if let Some(action) = try_progress(params, params.policy_extras.next_tx, deadline) {
-		return action;
+	// A next tx, e.g. the user's claim, means the HTLC is no longer ours.
+	// If unsigned, wait rather than claim after the HTLC expiry.
+	if params.policy_extras.next_tx.is_some() {
+		return try_progress(params, params.policy_extras.next_tx, deadline)
+			.unwrap_or(Action::Wait);
 	}
 
 	// A CSV spend can confirm at `confirmed_plus_exit`, so broadcast a block
@@ -790,7 +796,7 @@ mod tests {
 	/// Server claims using the preimage once the claim height is reached.
 	#[test]
 	fn htlc_send_claims_with_preimage_at_claim_height() {
-		let params = ActionParams {
+		let mut params = ActionParams {
 			vtxo_id: test_vtxo_id(),
 			chain_tip_height: BlockHeight::new(243),
 			progress_grace_period: Some(BlockDelta::new(6)),
@@ -806,6 +812,11 @@ mod tests {
 		// claim_height = 100 + 144 - 1 = 243, chain_tip >= claim_height
 		// deadline = max(500, 100 + 288) = 500
 		assert_eq!(decide_action_server_htlc_send(&params), Action::Claim { deadline: BlockHeight::new(500) });
+
+		// A revocation refund whose signature we don't have isn't ours to claim.
+		let txid = Txid::from_byte_array([1; 32]);
+		params.policy_extras.next_tx = Some(ProgressSpec { next_txid: txid, is_signed: false });
+		assert_eq!(decide_action_server_htlc_send(&params), Action::Wait);
 	}
 
 	/// Without a preimage or progress tx, the server can only wait.
@@ -924,6 +935,11 @@ mod tests {
 		params.policy_extras.htlc_expiry = BlockHeight::new(200);
 		params.chain_tip_height = BlockHeight::new(243);
 		assert_eq!(decide_action_server_htlc_recv(&params), Action::Claim { deadline: BlockHeight::new(284) });
+
+		// A user claim whose signature we don't have isn't ours to claim.
+		let txid = Txid::from_byte_array([1; 32]);
+		params.policy_extras.next_tx = Some(ProgressSpec { next_txid: txid, is_signed: false });
+		assert_eq!(decide_action_server_htlc_recv(&params), Action::Wait);
 	}
 
 	fn p2tr_spk() -> bitcoin::ScriptBuf {
