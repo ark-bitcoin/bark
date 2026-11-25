@@ -12,6 +12,7 @@ use server_rpc::{protos, ServerConnection};
 
 use crate::{VtxoDelivery, Wallet, WalletVtxo};
 use crate::actions::DriveMode;
+use crate::actions::arkoor_receive::ArkoorReceive;
 use crate::actions::arkoor_send::{ArkoorSend, start_arkoor_send};
 use crate::movement::MovementId;
 
@@ -342,6 +343,28 @@ impl Wallet {
 			let id = send.id.clone();
 			if let Err(e) = self.drive_action::<ArkoorSend>(&id, DriveMode::UntilParkOrDone).await {
 				warn!("Failed to sync arkoor send {}: {:#}", id, e);
+			}
+		}
+		Ok(())
+	}
+
+	/// Returns every in-progress arkoor receive checkpoint.
+	pub async fn pending_arkoor_receives(&self) -> anyhow::Result<Vec<ArkoorReceive>> {
+		Ok(self.inner.db.get_all_wallet_action_checkpoints().await?
+			.into_iter()
+			.filter_map(|cp| cp.into_arkoor_receive())
+			.collect())
+	}
+
+	/// Drives every pending arkoor receive until it parks, a step fails, or it finishes.
+	///
+	/// An error on one arkoor receive is logged and does not stop the others.
+	/// It skips any arkoor receive that another caller is already driving.
+	pub async fn sync_pending_arkoor_receives(&self) -> anyhow::Result<()> {
+		for recv in self.pending_arkoor_receives().await? {
+			let id = recv.id();
+			if let Err(e) = self.drive_action::<ArkoorReceive>(&id, DriveMode::UntilParkOrDone).await {
+				warn!("Failed to sync arkoor receive {}: {:#}", id, e);
 			}
 		}
 		Ok(())

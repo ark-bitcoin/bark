@@ -7,6 +7,7 @@
 //! This module defines the generic vocabulary; per-kind machinery (state
 //! machines, transition functions) lives in submodules.
 
+pub mod arkoor_receive;
 pub mod arkoor_send;
 pub mod board;
 pub mod lightning;
@@ -24,6 +25,7 @@ use ark::VtxoId;
 
 use crate::movement::error::MovementError;
 use crate::{Wallet, WalletVtxo};
+use crate::actions::arkoor_receive::ArkoorReceive;
 use crate::actions::arkoor_send::ArkoorSend;
 use crate::actions::board::Board;
 use crate::actions::lightning::pay::LightningSend;
@@ -45,6 +47,7 @@ pub enum WalletActionCheckpoint {
 	LightningSend(LightningSend),
 	LightningReceive(LightningReceive),
 	ArkoorSend(ArkoorSend),
+	ArkoorReceive(ArkoorReceive),
 	Board(Board),
 	Offboard(Offboard),
 	Recovery(Recovery),
@@ -56,6 +59,7 @@ impl WalletActionCheckpoint {
 			WalletActionCheckpoint::LightningSend(s) => s.id(),
 			WalletActionCheckpoint::LightningReceive(r) => r.id(),
 			WalletActionCheckpoint::ArkoorSend(s) => s.id(),
+			WalletActionCheckpoint::ArkoorReceive(r) => r.id(),
 			WalletActionCheckpoint::Board(s) => s.id(),
 			WalletActionCheckpoint::Offboard(o) => o.id(),
 			WalletActionCheckpoint::Recovery(r) => r.id(),
@@ -100,6 +104,20 @@ impl WalletActionCheckpoint {
 	pub fn into_arkoor_send(self) -> Option<ArkoorSend> {
 		match self {
 			WalletActionCheckpoint::ArkoorSend(s) => Some(s),
+			_ => None,
+		}
+	}
+
+	pub fn as_arkoor_receive(&self) -> Option<&ArkoorReceive> {
+		match self {
+			WalletActionCheckpoint::ArkoorReceive(r) => Some(r),
+			_ => None,
+		}
+	}
+
+	pub fn into_arkoor_receive(self) -> Option<ArkoorReceive> {
+		match self {
+			WalletActionCheckpoint::ArkoorReceive(r) => Some(r),
 			_ => None,
 		}
 	}
@@ -162,6 +180,12 @@ impl From<LightningReceive> for WalletActionCheckpoint {
 impl From<ArkoorSend> for WalletActionCheckpoint {
 	fn from(s: ArkoorSend) -> Self {
 		WalletActionCheckpoint::ArkoorSend(s)
+	}
+}
+
+impl From<ArkoorReceive> for WalletActionCheckpoint {
+	fn from(r: ArkoorReceive) -> Self {
+		WalletActionCheckpoint::ArkoorReceive(r)
 	}
 }
 
