@@ -191,9 +191,9 @@ async fn board_validates_requests_and_replays_retries() {
 		let vtxo = builder.build_vtxo(&cosign, &key).unwrap();
 		let register = protos::BoardVtxoRequest { board_vtxo: vtxo.serialize() };
 
-		// Another board on the same utxo with another expiry, cosigned before the
-		// board is registered. It has the same id, as the exit tx doesn't commit
-		// to the expiry.
+		// Another board on the same utxo with another expiry would have the same
+		// id, as the exit tx doesn't commit to the expiry. Its funding script
+		// does, so the utxo doesn't pay it.
 		let other_builder = BoardBuilder::new(
 			key.public_key(), expiry + 1, info.server_pubkey, info.vtxo_exit_delta,
 		).unwrap()
@@ -202,9 +202,9 @@ async fn board_validates_requests_and_replays_retries() {
 		let other_req = cosign_request(
 			&key, other_builder.user_pub_nonce(), expiry + 1, sat(500_000), utxo, &funding_tx,
 		);
-		let other_cosign = rpc.request_board_cosign(other_req).await.unwrap().into_inner();
-		let other_vtxo = other_builder.build_vtxo(&other_cosign.try_into().unwrap(), &key).unwrap();
-		assert_eq!(other_vtxo.id(), vtxo.id());
+		let err = rpc.request_board_cosign(other_req).await.unwrap_err();
+		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+		assert!(err.message().contains("does not pay the board script"), "{err}");
 		let register_chain = protos::RegisterVtxoTransactionsRequest { vtxos: vec![vtxo.serialize()] };
 
 		// The server knows the vtxo only once its board is registered
@@ -239,12 +239,6 @@ async fn board_validates_requests_and_replays_retries() {
 		confirm(utxo.txid, 1).await;
 		rpc.register_board_vtxo(register).await.unwrap();
 
-		// The other board has the registered board's id, but it isn't that board
-		let err = rpc.register_board_vtxo(protos::BoardVtxoRequest { board_vtxo: other_vtxo.serialize() })
-			.await.unwrap_err();
-		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
-		assert!(err.message().contains("is registered as another vtxo"), "{err}");
-
 		let status = rpc.get_vtxo_status(protos::GetVtxoStatusRequest {
 			vtxo_id: vtxo.id().to_bytes().to_vec(),
 			attestation: VtxoStatusAttestation::new(vtxo.id(), &key).serialize(),
@@ -258,6 +252,12 @@ async fn board_validates_requests_and_replays_retries() {
 	Box::pin(async {
 		// One output of 100_000 sat, spending `inputs`. The server never
 		// broadcasts the funding tx, so it needn't be signed.
+		let key = Keypair::new(&SECP, &mut thread_rng());
+		let (_sec_nonce, nonce) = musig::nonce_pair(&key);
+		let expiry = tip().await + info.vtxo_lifetime;
+		let script = BoardBuilder::new(
+			key.public_key(), expiry, info.server_pubkey, info.vtxo_exit_delta,
+		).unwrap().funding_script_pubkey();
 		let funding_tx_spending = |inputs: &[OutPoint]| Transaction {
 			version: transaction::Version::TWO,
 			lock_time: absolute::LockTime::ZERO,
@@ -267,11 +267,8 @@ async fn board_validates_requests_and_replays_retries() {
 				sequence: Sequence::ZERO,
 				witness: Witness::new(),
 			}).collect(),
-			output: vec![TxOut { value: sat(100_000), script_pubkey: ScriptBuf::new() }],
+			output: vec![TxOut { value: sat(100_000), script_pubkey: script.clone() }],
 		};
-		let key = Keypair::new(&SECP, &mut thread_rng());
-		let (_sec_nonce, nonce) = musig::nonce_pair(&key);
-		let expiry = tip().await + info.vtxo_lifetime;
 
 		// Spends a tx that bitcoind has never seen
 		let unknown = Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001").unwrap();
@@ -476,22 +473,18 @@ async fn board_validates_requests_and_replays_retries() {
 		let cosign = rpc.request_board_cosign(req).await.unwrap().into_inner();
 		let vtxo = builder.build_vtxo(&cosign.try_into().unwrap(), &key).unwrap();
 
-		// A board of another key on the same utxo, which pays to another script
+		// A board of another key on the same utxo isn't cosigned: the utxo pays
+		// another script.
 		let (decoy_key, decoy_builder) = new_board(info.server_pubkey, expiry);
 		let decoy_builder = decoy_builder.set_funding_details(sat(100_000), sat(1_100), utxo).unwrap()
 			.generate_user_nonces();
 		let req = cosign_request(&decoy_key, decoy_builder.user_pub_nonce(), expiry, sat(100_000), utxo, &funding_tx);
-		let cosign = rpc.request_board_cosign(req).await.unwrap().into_inner();
-		let decoy = decoy_builder.build_vtxo(&cosign.try_into().unwrap(), &decoy_key).unwrap();
+		let err = rpc.request_board_cosign(req).await.unwrap_err();
+		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+		assert!(err.message().contains("does not pay the board script"), "{err}");
 		confirm(utxo.txid, u32::try_from(srv.config().required_board_confirmations).unwrap()).await;
 
 		block(&funding_tx.output[utxo.vout as usize].script_pubkey).await;
-
-		// The decoy is refused before the blocklist looks up the funding tx's inputs
-		let err = rpc.register_board_vtxo(protos::BoardVtxoRequest { board_vtxo: decoy.serialize() })
-			.await.unwrap_err();
-		assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
-		assert!(err.message().contains("invalid vtxo"), "{err}");
 
 		let mut blocked = srv.subscribe_log::<BoardAttemptBlockedAddress>();
 		let err = rpc.register_board_vtxo(protos::BoardVtxoRequest { board_vtxo: vtxo.serialize() })
