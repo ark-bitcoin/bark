@@ -35,6 +35,9 @@ impl Vtxo<Full> {
 			GenesisTransition::Arkoor(ref mut inner) => {
 				inner.signature.replace(fake).expect("didn't have arkoor signature");
 			},
+			GenesisTransition::ScriptArkoor(ref mut inner) => {
+				inner.signature.replace(fake).expect("didn't have signature");
+			},
 		}
 	}
 }

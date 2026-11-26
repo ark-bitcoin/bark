@@ -60,7 +60,7 @@ mod validation;
 
 pub use self::validation::VtxoValidationError;
 pub use self::policy::{NoUserPubkeyError, Policy, VtxoPolicy, VtxoPolicyKind, ServerVtxoPolicy};
-pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
+pub(crate) use self::genesis::{GenesisItem, GenesisTransition, ScriptArkoorGenesis};
 pub use self::genesis::TransitionKind;
 
 pub use self::policy::{
@@ -88,7 +88,9 @@ use bitcoin::{
 use bitcoin::absolute::LockTime;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
-use bitcoin::taproot::TapTweakHash;
+use bitcoin::taproot::{
+	TapNodeHash, TapTweakHash, TaprootMerkleBranch, TAPROOT_CONTROL_MAX_NODE_COUNT,
+};
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, NonStandardOutput, TxOutExt, P2TR_DUST, P2TR_DUST_SAT};
 
@@ -653,6 +655,9 @@ impl<P: Policy> Vtxo<Full, P> {
 				// NB in principle, a genesis item's transition MUST have
 				// an arkoor pubkey, otherwise the vtxo is invalid
 				GenesisTransition::Arkoor(inner) => Some(inner.client_cosigners().collect()),
+				GenesisTransition::ScriptArkoor(inner) => {
+					Some(inner.client_cosigners().collect())
+				},
 				_ => None,
 			}
 		}).collect()
@@ -1247,6 +1252,9 @@ const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED_V0: u8 = 3;
 /// The byte used to encode the [GenesisTransition::HashLockedCosigned] gen transition type.
 const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED: u8 = 4;
 
+/// The byte used to encode the [GenesisTransition::ScriptArkoor] gen transition type.
+const GENESIS_TRANSITION_TYPE_SCRIPT_ARKOOR: u8 = 5;
+
 impl ProtocolEncoding for GenesisTransition {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
@@ -1289,6 +1297,25 @@ impl ProtocolEncoding for GenesisTransition {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_ARKOOR)?;
 				LengthPrefixedVector::new(&t.client_cosigners).encode(w)?;
 				t.tap_tweak.encode(w)?;
+				t.signature.encode(w)?;
+			},
+			Self::ScriptArkoor(t) => {
+				w.emit_u8(GENESIS_TRANSITION_TYPE_SCRIPT_ARKOOR)?;
+				LengthPrefixedVector::new(&t.client_cosigners).encode(w)?;
+				w.emit_compact_size(t.script.len() as u64)?;
+				w.emit_slice(t.script.as_bytes())?;
+				t.internal_key.encode(w)?;
+				w.emit_compact_size(t.merkle_branch.len() as u64)?;
+				for hash in &t.merkle_branch {
+					w.emit_slice(&hash.to_byte_array())?;
+				}
+				w.emit_compact_size(t.witness_args.len() as u64)?;
+				for arg in &t.witness_args {
+					w.emit_compact_size(arg.len() as u64)?;
+					w.emit_slice(arg)?;
+				}
+				w.emit_u8(t.signature_index)?;
+				w.emit_u32(t.locktime.to_consensus_u32())?;
 				t.signature.encode(w)?;
 			},
 		}
@@ -1345,6 +1372,72 @@ impl ProtocolEncoding for GenesisTransition {
 				}
 				let signature = Option::<schnorr::Signature>::decode(r)?;
 				Ok(Self::new_arkoor(cosigners, taptweak, signature))
+			},
+			GENESIS_TRANSITION_TYPE_SCRIPT_ARKOOR => {
+				let client_cosigners: Vec<PublicKey> = LengthPrefixedVector::decode(r)?.into_inner();
+				if client_cosigners.is_empty() {
+					return Err(ProtocolDecodingError::invalid(
+						"script arkoor genesis transition with empty cosigner list",
+					));
+				}
+
+				let script_len = r.read_compact_size()? as usize;
+				if script_len > genesis::MAX_SCRIPT_ARKOOR_SCRIPT_SIZE {
+					return Err(ProtocolDecodingError::invalid(format_args!(
+						"script arkoor genesis tapscript too large: {script_len} bytes",
+					)));
+				}
+				let mut script = vec![0u8; script_len];
+				r.read_slice(&mut script)?;
+				let script = ScriptBuf::from_bytes(script);
+
+				let internal_key = XOnlyPublicKey::decode(r)?;
+
+				let nb_hashes = r.read_compact_size()? as usize;
+				if nb_hashes > TAPROOT_CONTROL_MAX_NODE_COUNT {
+					return Err(ProtocolDecodingError::invalid(format_args!(
+						"script arkoor genesis merkle branch too long: {nb_hashes} hashes",
+					)));
+				}
+				let mut hashes = Vec::with_capacity(nb_hashes);
+				for _ in 0..nb_hashes {
+					hashes.push(TapNodeHash::from_byte_array(r.read_byte_array()?));
+				}
+				let merkle_branch = TaprootMerkleBranch::try_from(hashes)
+					.expect("checked the length");
+
+				let nb_args = r.read_compact_size()? as usize;
+				if nb_args > genesis::MAX_SCRIPT_ARKOOR_WITNESS_ARGS {
+					return Err(ProtocolDecodingError::invalid(format_args!(
+						"script arkoor genesis has too many witness arguments: {nb_args}",
+					)));
+				}
+				let mut witness_args = Vec::with_capacity(nb_args);
+				for _ in 0..nb_args {
+					let len = r.read_compact_size()? as usize;
+					if len > genesis::MAX_SCRIPT_ARKOOR_WITNESS_ARG_SIZE {
+						return Err(ProtocolDecodingError::invalid(format_args!(
+							"script arkoor genesis witness argument too large: {len} bytes",
+						)));
+					}
+					let mut arg = vec![0u8; len];
+					r.read_slice(&mut arg)?;
+					witness_args.push(arg);
+				}
+
+				let signature_index = r.read_u8()?;
+				if usize::from(signature_index) > nb_args {
+					return Err(ProtocolDecodingError::invalid(format_args!(
+						"script arkoor genesis signature index out of range: {signature_index}",
+					)));
+				}
+
+				let locktime = LockTime::from_consensus(r.read_u32()?);
+				let signature = Option::<schnorr::Signature>::decode(r)?;
+				Ok(Self::ScriptArkoor(ScriptArkoorGenesis {
+					client_cosigners, script, internal_key, merkle_branch, witness_args,
+					signature_index, locktime, signature,
+				}))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid GenesisTransistion type byte: {v:#x}",
@@ -1947,15 +2040,19 @@ mod test {
 	}
 
 	mod genesis_transition_encoding {
+		use bitcoin::ScriptBuf;
+		use bitcoin::absolute::LockTime;
 		use bitcoin::hashes::{sha256, Hash};
 		use bitcoin::secp256k1::{Keypair, PublicKey};
-		use bitcoin::taproot::TapTweakHash;
+		use bitcoin::taproot::{TapNodeHash, TapTweakHash, TaprootMerkleBranch};
 		use std::str::FromStr;
 
 		use crate::encode::ProtocolEncoding;
 		use crate::test_util::encoding_roundtrip;
 		use super::genesis::{
-			GenesisTransition, CosignedGenesis, HashLockedCosignedGenesis_v0, ArkoorGenesis,
+			ArkoorGenesis, CosignedGenesis, GenesisTransition, HashLockedCosignedGenesis_v0,
+			ScriptArkoorGenesis, MAX_SCRIPT_ARKOOR_SCRIPT_SIZE, MAX_SCRIPT_ARKOOR_WITNESS_ARGS,
+			MAX_SCRIPT_ARKOOR_WITNESS_ARG_SIZE,
 		};
 		use super::MaybePreimage;
 
@@ -2012,6 +2109,63 @@ mod test {
 				signature: Some(test_signature()),
 			});
 			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn script_arkoor() {
+			let leaf = |n: u8| TapNodeHash::from_byte_array([n; 32]);
+			let transition = ScriptArkoorGenesis {
+				client_cosigners: vec![test_pubkey()],
+				script: ScriptBuf::from_bytes(vec![0x51; 40]),
+				internal_key: test_pubkey().x_only_public_key().0,
+				merkle_branch: TaprootMerkleBranch::try_from(vec![leaf(1), leaf(2)]).unwrap(),
+				witness_args: vec![vec![7u8; 32], vec![]],
+				signature_index: 2,
+				locktime: LockTime::from_consensus(100_000),
+				signature: Some(test_signature()),
+			};
+			encoding_roundtrip(&GenesisTransition::ScriptArkoor(transition.clone()));
+
+			// without signature, witness arguments and merkle branch
+			let minimal = ScriptArkoorGenesis {
+				merkle_branch: TaprootMerkleBranch::default(),
+				witness_args: vec![],
+				signature_index: 0,
+				locktime: LockTime::ZERO,
+				signature: None,
+				..transition.clone()
+			};
+			encoding_roundtrip(&GenesisTransition::ScriptArkoor(minimal));
+
+			// no cosigners is rejected
+			let bad = ScriptArkoorGenesis { client_cosigners: vec![], ..transition.clone() };
+			GenesisTransition::deserialize(&GenesisTransition::ScriptArkoor(bad).serialize())
+				.expect_err("empty cosigner list must be rejected");
+
+			// a signature index after the last witness argument is rejected
+			let bad = ScriptArkoorGenesis { signature_index: 3, ..transition.clone() };
+			GenesisTransition::deserialize(&GenesisTransition::ScriptArkoor(bad).serialize())
+				.expect_err("signature index out of range must be rejected");
+
+			// oversized items are rejected
+			let bad = ScriptArkoorGenesis {
+				script: ScriptBuf::from_bytes(vec![0x51; MAX_SCRIPT_ARKOOR_SCRIPT_SIZE + 1]),
+				..transition.clone()
+			};
+			GenesisTransition::deserialize(&GenesisTransition::ScriptArkoor(bad).serialize())
+				.expect_err("oversized tapscript must be rejected");
+			let bad = ScriptArkoorGenesis {
+				witness_args: vec![vec![0u8; MAX_SCRIPT_ARKOOR_WITNESS_ARG_SIZE + 1]],
+				..transition.clone()
+			};
+			GenesisTransition::deserialize(&GenesisTransition::ScriptArkoor(bad).serialize())
+				.expect_err("oversized witness argument must be rejected");
+			let bad = ScriptArkoorGenesis {
+				witness_args: vec![vec![]; MAX_SCRIPT_ARKOOR_WITNESS_ARGS + 1],
+				..transition
+			};
+			GenesisTransition::deserialize(&GenesisTransition::ScriptArkoor(bad).serialize())
+				.expect_err("too many witness arguments must be rejected");
 		}
 
 		#[test]

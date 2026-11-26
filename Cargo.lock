@@ -141,6 +141,7 @@ dependencies = [
  "lazy_static",
  "lightning",
  "lightning-invoice",
+ "miniscript",
  "rand 0.9.4",
  "secp256k1 0.33.0",
  "serde",

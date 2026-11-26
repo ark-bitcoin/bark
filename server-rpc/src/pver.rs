@@ -37,3 +37,9 @@ pub const PROTOCOL_VERSION_BOARD_FUNDING_TX: u64 = 4;
 /// scripts, so the server rejects Lightning sends and receives and round
 /// participations from clients below this version with an upgrade error.
 pub const PROTOCOL_VERSION_HASHLOCK_CLAUSES: u64 = 5;
+
+/// Version that introduces the `ScriptArkoor` genesis transition.
+///
+/// Old clients cannot parse VTXOs with this genesis transition, so the server
+/// should not send them such VTXOs.
+pub const PROTOCOL_VERSION_SCRIPT_ARKOOR: u64 = 6;
