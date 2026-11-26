@@ -2499,10 +2499,6 @@ impl Wallet {
 			info!("Skipping refresh since no VTXOs are provided.");
 			return Ok(None);
 		}
-		ensure!(total_amount >= VTXO_DUST,
-			"vtxo amount must be at least {} to participate in a round",
-			VTXO_DUST,
-		);
 
 		// Calculate refresh fees
 		let (_, ark_info) = self.require_server().await?;

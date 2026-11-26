@@ -19,7 +19,8 @@ async fn bark_allows_sending_dust_arkoor_but_errors_on_dust_refresh() {
 
 	let err = bark2.try_refresh_all_no_retry().await.unwrap_err();
 	let err_str = format!("{err:?}");
-	assert!(err_str.contains("vtxo amount must be at least"),
+	// Older barks report the dust limit before the fee is known.
+	assert!(err_str.contains("below dust limit") || err_str.contains("vtxo amount must be at least"),
 		"expected: dust validation error, got: {err_str}");
 }
 
