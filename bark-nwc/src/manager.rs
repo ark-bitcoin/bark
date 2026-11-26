@@ -193,7 +193,8 @@ impl<H: RequestHandler> NwcManager<H> {
 		info!("Started NWC service for connection {}", connection.name);
 	}
 
-	/// Register a connection, persist it and start serving it.
+	/// Register a connection, persist it and serve it if the manager is
+	/// serving. Otherwise [NwcManager::start_all] serves it.
 	pub fn add(self: &Arc<Self>, connection: Connection) -> anyhow::Result<()> {
 		let _operation = self.operation.lock();
 		{
@@ -207,7 +208,9 @@ impl<H: RequestHandler> NwcManager<H> {
 				return Err(e).context("failed to persist NWC connection");
 			}
 		}
-		self.start(&connection);
+		if self.serving.load(Ordering::SeqCst) {
+			self.start(&connection);
+		}
 		Ok(())
 	}
 
