@@ -108,10 +108,10 @@ impl<H: RequestHandler> NwcManager<H> {
 			connections.iter().cloned().collect::<Vec<_>>()
 		};
 
+		self.stop_services();
 		if !self.serving.load(Ordering::SeqCst) {
 			return Ok(());
 		}
-		self.stop_services();
 		for connection in existing {
 			self.start(&connection);
 		}
@@ -434,6 +434,18 @@ mod test {
 		manager.set_relays(vec![relay()]).unwrap();
 
 		assert!(manager.running.read().is_empty());
+	}
+
+	/// add serves a connection before start_all, so removing the relays then
+	/// must stop it.
+	#[tokio::test]
+	async fn removing_relays_before_serving_stops_added_services() {
+		let (manager, _connections) = manager_with(Arc::new(NoopPersister));
+		manager.add(connection(now())).unwrap();
+
+		manager.set_relays(Vec::new()).unwrap();
+
+		assert!(manager.running.read().is_empty(), "the service on the removed relays was left running");
 	}
 
 	/// With no relays there is nowhere to listen, so nothing is started.
