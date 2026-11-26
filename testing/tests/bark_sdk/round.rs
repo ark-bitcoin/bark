@@ -9,6 +9,7 @@ use ark::VtxoId;
 use ark::fees::RefreshFees;
 use ark::rounds::RoundEvent;
 use ark::tree::signed::UnlockPreimage;
+use ark::vtxo::VTXO_DUST;
 use bark::movement::MovementStatus;
 use bark::round::RoundFlowKind;
 use bark::subsystem::RoundMovement;
@@ -1242,6 +1243,54 @@ async fn participation_is_canceled_when_the_remainder_cannot_stand_alone() {
 
 	assert!(wallet.pending_round_states().await.unwrap().is_empty(),
 		"a participation whose remainder cannot be refreshed should be canceled");
+	assert_eq!(wallet.get_vtxo_by_id(b).await.unwrap().state, VtxoState::Spendable,
+		"the remaining input should be left spendable");
+}
+
+#[tokio::test]
+async fn delegated_participation_is_canceled_when_the_remainder_is_below_dust() {
+	//! A delegated participation that loses an input is re-delegated with the
+	//! inputs it has left. A remainder below the dust limit cannot be
+	//! refreshed on its own, so the participation is canceled.
+
+	let ctx = TestContext::new("bark_sdk/delegated_participation_is_canceled_when_the_remainder_is_below_dust").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).funded(btc(10)).create().await;
+	let wallet = ctx.bark_sdk("bark", &srv).funded(sat(1_000_000))
+		.boarded(sat(100_000))
+		.create().await;
+	let sender = ctx.bark_sdk("sender", &srv).funded(sat(1_000_000))
+		.boarded(sat(100_000))
+		.create().await;
+
+	// A board can not go below the server minimum, so the sub-dust input
+	// comes in over arkoor.
+	let address = wallet.new_address().await.unwrap();
+	sender.send_arkoor_payment(&address, VTXO_DUST - sat(1)).await.expect("arkoor send");
+	wallet.sync().await;
+
+	let vtxos = wallet.spendable_vtxos().await.unwrap();
+	let a = vtxos.iter().find(|v| v.vtxo.amount() == sat(100_000))
+		.expect("the boarded input").vtxo.id();
+	let b = vtxos.iter().find(|v| v.vtxo.amount() == VTXO_DUST - sat(1))
+		.expect("the arkoor input").vtxo.id();
+
+	let height = BlockHeight::new(ctx.bitcoind().get_block_count().await as u32 + 10);
+	wallet.refresh_vtxos_scheduled(vec![a, b], height).await.unwrap()
+		.expect("delegated refresh should register");
+
+	// A concurrent operation consumes the big input.
+	let holder = VtxoLockHolder::Action { id: "other-op-test-action".to_string() };
+	wallet.lock_vtxos(vec![a], Some(holder)).await.unwrap();
+	wallet.mark_vtxos_as_spent(vec![a]).await.unwrap();
+
+	// The first sync records the re-delegation, the second carries it out.
+	wallet.sync().await;
+	wallet.sync().await;
+
+	assert!(wallet.pending_round_states().await.unwrap().is_empty(),
+		"a delegated participation whose remainder is below dust should be canceled");
 	assert_eq!(wallet.get_vtxo_by_id(b).await.unwrap().state, VtxoState::Spendable,
 		"the remaining input should be left spendable");
 }
