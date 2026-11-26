@@ -76,6 +76,9 @@ pub trait DaemonHelper {
 	/// Clean up external resources that killing the child process doesn't
 	/// tear down (e.g. docker containers). Sync so it can run from [Drop].
 	fn cleanup_external(&self) {}
+
+	/// A hook to run from [Drop] before the child gets a SIGKILL.
+	fn prepare_kill(&self, _child: &mut Child) {}
 }
 
 pub struct Daemon<T>
@@ -288,6 +291,7 @@ impl<T> Drop for Daemon<T>
 {
 	fn drop(&mut self) {
 		if let Some(child) = self.child.get_mut() {
+			self.inner.prepare_kill(child);
 			if let Some(pid) = child.id() {
 				let pid = nix::unistd::Pid::from_raw(pid as i32);
 				nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL)
