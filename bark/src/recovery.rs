@@ -367,6 +367,7 @@ impl Wallet {
 		&self,
 		report: &mut RecoveryReport,
 		vtxo: &Vtxo<Full>,
+		holder: &Option<VtxoLockHolder>,
 	) -> anyhow::Result<bool> {
 		// An off-chain VTXO's tx is only confirmed once it has been exited,
 		// so if we see it on-chain the funds live in the on-chain wallet and
@@ -374,11 +375,12 @@ impl Wallet {
 		// doesn't capture unilateral exits, so we check the chain ourselves.
 		match self.inner.chain.tx_confirmed(vtxo.point().txid).await {
 			Ok(Some(height)) => {
-				// A row from an earlier, failed recovery attempt is forced along.
-				self.store_vtxos([vtxo], &VtxoState::Exited).await?;
-				self.mark_vtxos_as_exited(&[vtxo.id()]).await?;
+				// A row from an earlier, failed recovery attempt is forced along. It
+				// stays recovery-locked until its exit is stored, so a retry resumes it.
+				self.store_vtxos([vtxo], &VtxoState::Locked { holder: holder.clone() }).await?;
 				self.exit_mgr()
 					.start_exit_for_vtxos_including_non_standard(&[vtxo.to_bare()]).await?;
+				self.mark_vtxos_as_exited(&[vtxo.id()]).await?;
 				report.push_exited(vtxo);
 				debug!("Skipping recovery vtxo {}: confirmed on-chain at height {height} (exited)", vtxo.id());
 				Ok(true)
@@ -653,7 +655,7 @@ impl Wallet {
 					continue;
 				},
 			}
-			if self.check_vtxo_onchain_status(report, &vtxo).await? {
+			if self.check_vtxo_onchain_status(report, &vtxo, holder).await? {
 				continue;
 			}
 			recovered.push(vtxo);
