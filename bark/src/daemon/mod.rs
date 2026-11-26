@@ -427,11 +427,13 @@ impl DaemonProcess {
 		loop {
 			// using if let to scope the wallet variable
 			if let Some(wallet) = self.wallet() {
-				if self.connected.load(Ordering::Relaxed) {
-					if let Err(e) = wallet.chain().update_fee_rates(wallet.config().fallback_fee_rate).await {
-						warn!("An error occured while updating fee rates: {e:#}");
-					}
+				// Fee rates come from the chain source, and exits are fee-bumped
+				// with them, so they must stay current while the server is down.
+				if let Err(e) = wallet.chain().update_fee_rates(wallet.config().fallback_fee_rate).await {
+					warn!("An error occured while updating fee rates: {e:#}");
+				}
 
+				if self.connected.load(Ordering::Relaxed) {
 					if let Err(e) = wallet.sync_pending_boards().await {
 						warn!("An error occured while syncing pending board: {e:#}");
 					}
