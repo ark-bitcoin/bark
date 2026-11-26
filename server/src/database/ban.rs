@@ -10,14 +10,15 @@ use bitcoin_ext::BlockHeight;
 use super::Tx;
 use super::model::BannedVtxo;
 
-/// Ban a vtxo until the given block height
+/// Ban a vtxo until the given block height. A longer ban is kept; unban
+/// first to shorten it.
 pub async fn ban_vtxo<T: GenericClient>(
 	client: &T,
 	vtxo_id: VtxoId,
 	until_height: BlockHeight,
 ) -> anyhow::Result<()> {
 	let stmt = client.prepare_typed("
-		UPDATE vtxo SET banned_until_height = $2, updated_at = NOW()
+		UPDATE vtxo SET banned_until_height = GREATEST(banned_until_height, $2), updated_at = NOW()
 		WHERE vtxo_id = $1
 	", &[Type::TEXT, Type::INT4]).await?;
 
