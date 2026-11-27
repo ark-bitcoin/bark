@@ -475,9 +475,12 @@ pub(crate) async fn start_offboard(
 			if amount < dust {
 				bail!("the minimum you can send to {} is {}", destination, dust);
 			}
+			// The inputs go through an arkoor first, and the server refuses
+			// expired vtxos as arkoor inputs.
 			let (vtxos, fee) = wallet.spend_input_selection().await?
 				.max_inputs(srv.ark_info().await.max_offboard_inputs)
-				.fee_scheme(wallet.chain().tip().await?, |a, v| {
+				.expires_after(tip)
+				.fee_scheme(tip, |a, v| {
 					ark.fees.offboard.calculate(&destination_spk, a, offboard_feerate, v)
 						.ok_or_else(|| anyhow!("failed to calculate offboard fee for {}", a))
 				})

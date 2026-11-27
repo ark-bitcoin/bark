@@ -232,9 +232,11 @@ impl Wallet {
 		let offboard_feerate = srv.offboard_feerate().await?;
 		let script_buf = address.script_pubkey();
 
+		let tip = self.inner.chain.tip().await?;
 		let selection = self.spend_input_selection().await?
 			.max_inputs(srv.ark_info().await.max_offboard_inputs)
-			.fee_scheme(self.inner.chain.tip().await?, |a, v|
+			.expires_after(tip)
+			.fee_scheme(tip, |a, v|
 				ark_info.fees.offboard.calculate(&script_buf, a, offboard_feerate, v)
 					.ok_or_else(|| anyhow!("Error whilst calculating fee")),
 			);
