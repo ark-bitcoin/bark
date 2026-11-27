@@ -2076,6 +2076,12 @@ impl Server {
 		inputs: &[SelfSignedInput],
 		vtxo_requests: &[SignedVtxoRequest],
 	) -> anyhow::Result<()> {
+		// Each attestation hashes all outputs, so bound them first.
+		let max_outputs = self.config.max_round_participation_outputs;
+		if vtxo_requests.len() > max_outputs {
+			return badarg!("too many outputs, maximum is {}", max_outputs);
+		}
+
 		// The lookup below refuses a list with repeated ids, but reports it
 		// as a missing vtxo.
 		let mut unique_inputs = HashSet::with_capacity(inputs.len());
