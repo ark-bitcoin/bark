@@ -9,6 +9,7 @@ use bitcoin_ext::rpc::RpcApi;
 
 use bark::actions::offboard::Progress;
 use bark::movement::{Movement, MovementStatus, PaymentMethod};
+use bark::vtxo::VtxoState;
 use server_rpc::protos;
 
 use ark_testing::{btc, constants, sat, TestContext};
@@ -559,4 +560,52 @@ async fn offboard_returns_its_movement_id() {
 			.expect("offboard movement has a txid");
 		assert_eq!(txid, result.txid);
 	}
+}
+
+/// An on-chain send first moves its inputs into an arkoor, and the server
+/// refuses expired VTXOs as arkoor inputs. The send pays from the unexpired
+/// VTXO and leaves the expired one spendable for a refresh.
+#[tokio::test]
+async fn send_onchain_skips_expired_vtxos() {
+	let ctx = TestContext::new("bark_sdk/send_onchain_skips_expired_vtxos").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	// Manual sync keeps the daemon from refreshing the expiring VTXO.
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(1_000_000))
+		.boarded(sat(500_000))
+		.create().await;
+
+	// A second board with the shortest lifetime the board builder accepts.
+	wallet.sync_onchain().await.unwrap();
+	let min_lifetime = wallet.config().vtxo_exit_margin.to_u32() + constants::BOARD_CONFIRMATIONS;
+	let expiry_height = wallet.chain().tip().await.unwrap()
+		+ BlockDelta::try_from(min_lifetime + 1).unwrap();
+	let board = wallet.board()
+		.expiry(expiry_height)
+		.amount(sat(100_000))
+		.build().await
+		.expect("board with a short expiry");
+	let expiring = board.vtxos[0];
+	ctx.generate_blocks(constants::BOARD_CONFIRMATIONS).await;
+	wallet.sync_pending_boards().await.unwrap();
+	let vtxo = wallet.get_vtxo_by_id(expiring).await.unwrap();
+	assert!(matches!(vtxo.state, VtxoState::Spendable), "board not registered: {:?}", vtxo.state);
+
+	let tip = wallet.chain().tip().await.unwrap();
+	let tip = ctx.generate_blocks(expiry_height.checked_blocks_since(tip).unwrap()).await;
+	wallet.chain().invalidate_caches().await;
+	assert!(tip >= expiry_height, "the VTXO should be expired, tip {tip} expiry {expiry_height}");
+
+	// The expired VTXO alone would cover the send, and it expires first.
+	let address = ctx.bitcoind().get_new_address();
+	wallet.send_onchain(address.clone(), sat(50_000)).await
+		.expect("the unexpired VTXO covers the send");
+	ctx.generate_blocks(1).await;
+	assert_eq!(ctx.bitcoind().get_received_by_address(&address), sat(50_000));
+
+	let vtxo = wallet.get_vtxo_by_id(expiring).await.unwrap();
+	assert!(matches!(vtxo.state, VtxoState::Spendable),
+		"the expired VTXO must not be spent: {:?}", vtxo.state,
+	);
 }
