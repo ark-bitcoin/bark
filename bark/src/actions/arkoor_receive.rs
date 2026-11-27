@@ -449,7 +449,10 @@ async fn received_on_destinations(
 ) -> Vec<MovementDestination> {
 	let mut received_by_address = HashMap::<ark::Address, Amount>::new();
 	for vtxo in vtxos {
-		if let Ok(Some((index, _))) = wallet.pubkey_keypair(&vtxo.user_pubkey()).await {
+		let Some(user_pubkey) = vtxo.user_pubkey() else {
+			continue;
+		};
+		if let Ok(Some((index, _))) = wallet.pubkey_keypair(&user_pubkey).await {
 			if let Ok(address) = wallet.peek_address(index).await {
 				*received_by_address.entry(address).or_default() += vtxo.amount();
 			}

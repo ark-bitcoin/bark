@@ -8124,7 +8124,6 @@
           "id",
           "amount_sat",
           "policy_type",
-          "user_pubkey",
           "server_pubkey",
           "expiry_height",
           "exit_delta",
@@ -8175,8 +8174,11 @@
             "description": "The Ark server's public key used to co-sign transactions\ninvolving this VTXO."
           },
           "user_pubkey": {
-            "type": "string",
-            "description": "The owner's public key. Only the holder of the corresponding\nprivate key can spend this VTXO."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The owner's public key. Only the holder of the corresponding\nprivate key can spend this VTXO.\n\nAbsent for VTXOs whose policy has no single user key."
           }
         }
       },
@@ -8184,8 +8186,7 @@
         "type": "object",
         "required": [
           "amount_sat",
-          "policy_type",
-          "user_pubkey"
+          "policy_type"
         ],
         "properties": {
           "amount_sat": {
@@ -8197,7 +8198,11 @@
             "type": "string"
           },
           "user_pubkey": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent for VTXOs whose policy has no single user key."
           }
         }
       },

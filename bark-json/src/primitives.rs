@@ -116,8 +116,11 @@ pub struct VtxoInfo {
 	pub policy_type: VtxoPolicyKind,
 	/// The owner's public key. Only the holder of the corresponding
 	/// private key can spend this VTXO.
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub user_pubkey: PublicKey,
+	///
+	/// Absent for VTXOs whose policy has no single user key.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
+	pub user_pubkey: Option<PublicKey>,
 	/// The Ark server's public key used to co-sign transactions
 	/// involving this VTXO.
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]

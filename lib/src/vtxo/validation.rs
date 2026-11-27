@@ -91,6 +91,9 @@ fn verify_transition<P: Policy>(
 			GenesisTransition::HashLockedCosigned_v0(inner) => {
 				inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
 			}
+			GenesisTransition::ScriptArkoor(inner) => {
+				inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey)?
+			}
 		};
 
 		#[cfg(test)]

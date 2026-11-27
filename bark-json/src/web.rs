@@ -762,8 +762,10 @@ pub struct VtxoRequestInfo {
 	pub amount: Amount,
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub policy_type: VtxoPolicyKind,
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub user_pubkey: PublicKey,
+	/// Absent for VTXOs whose policy has no single user key.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
+	pub user_pubkey: Option<PublicKey>,
 }
 
 impl<'a> From<&'a ark::VtxoRequest> for VtxoRequestInfo {

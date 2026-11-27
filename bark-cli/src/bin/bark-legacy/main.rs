@@ -439,7 +439,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		let pubkey = if let Some(pubkey) = key.pubkey {
 			pubkey
 		} else if let Some(address) = key.address {
-			address.policy().user_pubkey()
+			address.policy().user_pubkey().context("unsupported VTXO policy")?
 		} else {
 			unreachable!("clap requires --pubkey or --address");
 		};

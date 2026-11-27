@@ -33,6 +33,7 @@ lightning-invoice.workspace = true
 lightning.workspace = true
 # can use bitcoin::hex once they upgrade to v0.3.0
 hex-conservative = "0.3.0"
+miniscript = "12.3.7"
 
 # testing
 serde_json = { workspace = true, optional = true }

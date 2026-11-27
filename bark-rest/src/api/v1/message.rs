@@ -97,7 +97,7 @@ pub async fn verify_message(
 		(Some(pubkey), None) => PublicKey::from_str(pubkey).badarg("invalid pubkey")?,
 		(None, Some(address)) => {
 			ark::Address::from_str(address).badarg("invalid ark address")?
-				.policy().user_pubkey()
+				.policy().user_pubkey().badarg("address has no user pubkey")?
 		},
 		_ => badarg!("exactly one of pubkey and address must be set"),
 	};

@@ -533,7 +533,7 @@ async fn double_exit_call() {
 	let last_moves = &movements[4..];
 	assert!(
 		vtxos.iter().all(|v| last_moves.iter().any(|m| {
-				let exit_spk = VtxoPolicy::new_pubkey(v.user_pubkey)
+				let exit_spk = VtxoPolicy::new_pubkey(v.user_pubkey.unwrap())
 					.taproot(v.server_pubkey, v.exit_delta, v.expiry_height).script_pubkey();
 				let address = Address::from_script(&exit_spk, Params::REGTEST)
 					.unwrap().to_string();
@@ -563,7 +563,7 @@ async fn double_exit_call() {
 	assert_eq!(*last_move.input_vtxos.first().unwrap(), vtxo.id);
 	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
-	let exit_spk = VtxoPolicy::new_pubkey(vtxo.user_pubkey)
+	let exit_spk = VtxoPolicy::new_pubkey(vtxo.user_pubkey.unwrap())
 		.taproot(vtxo.server_pubkey, vtxo.exit_delta, vtxo.expiry_height).script_pubkey();
 	let address = Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string();
 	assert_eq!(last_move.sent_to[0].destination, PaymentMethod::Bitcoin(address), "movement destination should be exit_spk");
@@ -768,7 +768,7 @@ async fn bark_should_exit_a_pending_board() {
 	assert_eq!(exit_mvt.sent_to.len(), 1);
 	assert_eq!(exit_mvt.sent_to.first().unwrap(), &MovementDestination {
 		destination: PaymentMethod::Bitcoin({
-			let exit_spk = VtxoPolicy::new_pubkey(board_vtxo.user_pubkey)
+			let exit_spk = VtxoPolicy::new_pubkey(board_vtxo.user_pubkey.unwrap())
 				.taproot(board_vtxo.server_pubkey, board_vtxo.exit_delta, board_vtxo.expiry_height)
 				.script_pubkey();
 			Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string()

@@ -7,12 +7,22 @@ use bitcoin::secp256k1::{self, schnorr, Message, PublicKey};
 use bitcoin_ext::BlockHeight;
 
 use crate::{SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest, SECP};
+use crate::vtxo::NoUserPubkeyError;
 use crate::arkoor::ArkoorDestination;
 use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
 use crate::lightning::PaymentHash;
 use crate::mailbox::MailboxIdentifier;
 use crate::offboard::OffboardRequest;
 use crate::tree::signed::UnlockHash;
+
+/// Error verifying an attestation against a VTXO.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AttestationVerifyError {
+	#[error(transparent)]
+	NoUserPubkey(#[from] NoUserPubkeyError),
+	#[error("invalid signature: {0}")]
+	InvalidSignature(#[from] secp256k1::Error),
+}
 
 /// Random 32-byte challenge for challenge-response protocols
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,9 +84,11 @@ impl RoundAttemptAttestation {
 		challenge: Challenge,
 		vtxo: &Vtxo,
 		vtxo_reqs: &[SignedVtxoRequest],
-	) -> Result<(), secp256k1::Error> {
+	) -> Result<(), AttestationVerifyError> {
 		let msg = Self::compute_message(challenge, vtxo.id(), vtxo_reqs);
-		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
+		SECP.verify_schnorr(&self.signature, &msg, &user_pubkey.x_only_public_key().0)?;
+		Ok(())
 	}
 
 	fn compute_message(
@@ -143,9 +155,11 @@ impl DelegatedRoundParticipationAttestation {
 		&self,
 		vtxo: &Vtxo,
 		vtxo_reqs: &[VtxoRequest],
-	) -> Result<(), secp256k1::Error> {
+	) -> Result<(), AttestationVerifyError> {
 		let msg = Self::compute_message(vtxo.id(), vtxo_reqs);
-		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
+		SECP.verify_schnorr(&self.signature, &msg, &user_pubkey.x_only_public_key().0)?;
+		Ok(())
 	}
 
 	fn compute_message(
@@ -209,9 +223,15 @@ impl LightningReceiveAttestation {
 	}
 
 	/// Verify the attestation against a VTXO
-	pub fn verify(&self, payment_hash: PaymentHash, vtxo: &Vtxo) -> Result<(), secp256k1::Error> {
+	pub fn verify(
+		&self,
+		payment_hash: PaymentHash,
+		vtxo: &Vtxo,
+	) -> Result<(), AttestationVerifyError> {
 		let msg = Self::compute_message(payment_hash, vtxo.id());
-		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
+		SECP.verify_schnorr(&self.signature, &msg, &user_pubkey.x_only_public_key().0)?;
+		Ok(())
 	}
 
 	fn compute_message(payment_hash: PaymentHash, vtxo_id: VtxoId) -> Message {
@@ -329,9 +349,11 @@ impl VtxoStatusAttestation {
 	}
 
 	/// Verify the attestation against a VTXO
-	pub fn verify(&self, vtxo: &Vtxo) -> Result<(), secp256k1::Error> {
+	pub fn verify(&self, vtxo: &Vtxo) -> Result<(), AttestationVerifyError> {
 		let msg = Self::compute_message(vtxo.id());
-		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
+		SECP.verify_schnorr(&self.signature, &msg, &user_pubkey.x_only_public_key().0)?;
+		Ok(())
 	}
 
 	fn compute_message(vtxo_id: VtxoId) -> Message {
@@ -389,9 +411,11 @@ impl OffboardRequestAttestation {
 		req: &OffboardRequest,
 		inputs: &[VtxoId],
 		vtxo: &Vtxo,
-	) -> Result<(), secp256k1::Error> {
+	) -> Result<(), AttestationVerifyError> {
 		let msg = Self::compute_message(req, inputs);
-		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
+		SECP.verify_schnorr(&self.signature, &msg, &user_pubkey.x_only_public_key().0)?;
+		Ok(())
 	}
 
 	fn compute_message(req: &OffboardRequest, inputs: &[VtxoId]) -> Message {
@@ -441,9 +465,15 @@ impl ArkoorCosignAttestation {
 	}
 
 	/// Verify the attestation against a VTXO and outputs
-	pub fn verify(&self, vtxo: &Vtxo, outputs: &[&ArkoorDestination]) -> Result<(), secp256k1::Error> {
+	pub fn verify(
+		&self,
+		vtxo: &Vtxo,
+		outputs: &[&ArkoorDestination],
+	) -> Result<(), AttestationVerifyError> {
 		let msg = Self::compute_message(vtxo.id(), outputs);
-		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
+		SECP.verify_schnorr(&self.signature, &msg, &user_pubkey.x_only_public_key().0)?;
+		Ok(())
 	}
 
 	fn compute_message(vtxo_id: VtxoId, outputs: &[&ArkoorDestination]) -> Message {
@@ -537,9 +567,11 @@ impl ForfeitNoncesAttestation {
 	}
 
 	/// Verify the attestation against a VTXO and unlock hash
-	pub fn verify(&self, unlock_hash: UnlockHash, vtxo: &Vtxo) -> Result<(), secp256k1::Error> {
+	pub fn verify(&self, unlock_hash: UnlockHash, vtxo: &Vtxo) -> Result<(), AttestationVerifyError> {
 		let msg = Self::compute_message(unlock_hash, vtxo.id());
-		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
+		SECP.verify_schnorr(&self.signature, &msg, &user_pubkey.x_only_public_key().0)?;
+		Ok(())
 	}
 
 	fn compute_message(unlock_hash: UnlockHash, vtxo_id: VtxoId) -> Message {

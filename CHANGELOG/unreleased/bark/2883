@@ -1,0 +1,4 @@
+- Make `user_pubkey` optional in `VtxoInfo` and `VtxoRequestInfo`
+  VTXOs without a single user key leave the field out.
+  [#2883](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2883)
+  - **BREAKING:** `user_pubkey` is no longer a required field in the REST API.

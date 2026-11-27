@@ -24,7 +24,10 @@ use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 use crate::error::IncorrectSigningKeyError;
 use crate::{musig, scripts, SECP};
 use crate::tree::signed::cosign_taproot;
-use crate::vtxo::{self, Full, Vtxo, VtxoId, VtxoPolicy, ServerVtxo, ServerVtxoPolicy, GenesisItem, GenesisTransition};
+use crate::vtxo::{
+	self, Full, GenesisItem, GenesisTransition, NoUserPubkeyError, ServerVtxo, ServerVtxoPolicy, Vtxo,
+	VtxoId, VtxoPolicy,
+};
 use crate::vtxo::policy::{check_block_delta, check_block_height, PolicyError};
 
 use self::state::BuilderState;
@@ -93,6 +96,8 @@ pub enum BoardFundingError {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BoardFromVtxoError {
+	#[error(transparent)]
+	NoUserPubkey(#[from] NoUserPubkeyError),
 	#[error("funding txid mismatch: expected {expected}, got {got}")]
 	FundingTxMismatch {
 		expected: Txid,
@@ -418,9 +423,10 @@ impl BoardBuilder<state::ServerCanBuildVtxos> {
 			});
 		}
 
+		let user_pubkey = vtxo.user_pubkey().ok_or(NoUserPubkeyError)?;
 		let fee = vtxo.genesis.items.first().unwrap().fee_amount;
 		let exit_data = compute_exit_data(
-			vtxo.user_pubkey(),
+			user_pubkey,
 			server_pubkey,
 			vtxo.expiry_height,
 			vtxo.exit_delta,
@@ -458,7 +464,7 @@ impl BoardBuilder<state::ServerCanBuildVtxos> {
 			user_sec_nonce: None,
 			amount: Some(vtxo.amount() + fee),
 			fee: Some(fee),
-			user_pubkey: vtxo.user_pubkey(),
+			user_pubkey: user_pubkey,
 			server_pubkey,
 			expiry_height: vtxo.expiry_height,
 			exit_delta: vtxo.exit_delta,

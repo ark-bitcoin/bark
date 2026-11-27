@@ -224,7 +224,7 @@ impl Wallet {
 			.context("failed to register arkoor input vtxo transactions with server")?;
 
 		let change_pubkey = change_keypair.public_key();
-		if arkoor_dest.policy.user_pubkey() == change_pubkey {
+		if arkoor_dest.policy.user_pubkey() == Some(change_pubkey) {
 			return Err(anyhow!("Cannot create arkoor to same address as change").into());
 		}
 

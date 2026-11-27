@@ -772,8 +772,10 @@ async fn claim_lightning_receive_htlcs(
 	// A destination owned by this wallet needs no mailbox delivery: the
 	// outputs are already keyed to one of our pubkeys.
 	let external_destination = match recv.claim_destination.as_ref() {
-		Some(destination) => wallet.pubkey_keypair(&destination.policy().user_pubkey())
-			.await.retry()?.is_none(),
+		Some(destination) => match destination.policy().user_pubkey() {
+			Some(pubkey) => wallet.pubkey_keypair(&pubkey).await.retry()?.is_none(),
+			None => true,
+		},
 		None => false,
 	};
 

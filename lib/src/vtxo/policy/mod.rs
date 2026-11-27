@@ -58,6 +58,15 @@ impl PolicyError {
 	}
 }
 
+/// The VTXO policy has no single user public key.
+///
+/// Returned by operations that need the user key of a VTXO, like signing
+/// forfeits or verifying attestations, when [VtxoPolicy::user_pubkey]
+/// returns [None].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("VTXO policy has no user pubkey")]
+pub struct NoUserPubkeyError;
+
 /// The maximum value of a block delta accepted in policies.
 ///
 /// Equals `u16::MAX / 4 = 16383` blocks, or roughly 114 days (~3.8 months).
@@ -950,7 +959,7 @@ impl From<HarkForfeit_v0_VtxoPolicy> for ServerVtxoPolicy {
 
 /// User-facing VTXO output policy.
 ///
-/// All variants have an associated user public key, accessible via the infallible
+/// Most variants have an associated user public key, accessible via the
 /// `user_pubkey()` method. These policies are used in protocol messages and by clients.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VtxoPolicy {
@@ -1063,13 +1072,15 @@ impl VtxoPolicy {
 	}
 
 	/// Returns the user pubkey associated with this policy.
-	pub fn user_pubkey(&self) -> PublicKey {
+	///
+	/// Returns [None] for policies that have no single user key.
+	pub fn user_pubkey(&self) -> Option<PublicKey> {
 		match self {
-			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => *user_pubkey,
-			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
-			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
-			Self::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy { user_pubkey, .. }) => *user_pubkey,
-			Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy { user_pubkey, .. }) => *user_pubkey,
+			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
+			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
+			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
+			Self::ServerHtlcSend_v0(ServerHtlcSend_v0_VtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
+			Self::ServerHtlcRecv_v0(ServerHtlcRecv_v0_VtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 		}
 	}
 
@@ -1227,7 +1238,7 @@ impl ServerVtxoPolicy {
 	/// Returns the user pubkey if this policy has one.
 	pub fn user_pubkey(&self) -> Option<PublicKey> {
 		match self {
-			Self::User(p) => Some(p.user_pubkey()),
+			Self::User(p) => p.user_pubkey(),
 			Self::ServerOwned => None,
 			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
 			Self::Expiry { .. } => None,

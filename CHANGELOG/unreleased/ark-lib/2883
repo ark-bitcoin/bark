@@ -1,0 +1,18 @@
+- Add a script arkoor genesis transition
+  An arkoor transaction can now spend a VTXO through a tapscript leaf that
+  the client cosigners and the Ark server cosign. Validation does not need
+  the VTXO policy of the spent output, so wallets can validate spends of
+  policies that they do not know.
+  [#2883](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2883)
+  - **BREAKING:** `TransitionKind` has a new `ScriptArkoor` variant.
+- Make the user pubkey of a VTXO optional
+  This prepares for VTXO policies that have no single user key, like an
+  HTLC between two users.
+  [#2883](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2883)
+  - **BREAKING:** `Vtxo::user_pubkey` and `VtxoPolicy::user_pubkey` now
+    return `Option<PublicKey>`.
+  - **BREAKING:** The attestation `verify` methods now return
+    `AttestationVerifyError` instead of `secp256k1::Error`.
+  - **BREAKING:** `VtxoTreeSpec::new` now returns
+    `Result<VtxoTreeSpec, NoUserPubkeyError>`. It fails if a leaf policy
+    has no user pubkey.

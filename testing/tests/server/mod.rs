@@ -121,7 +121,7 @@ async fn get_vtxo_status() {
 	let client = bark.client().await;
 	let bare_vtxo = client.vtxos().await.unwrap().into_iter().next().unwrap().vtxo;
 	let vtxo_id = bare_vtxo.id();
-	let vtxo_keypair = client.pubkey_keypair(&bare_vtxo.user_pubkey()).await
+	let vtxo_keypair = client.pubkey_keypair(&bare_vtxo.user_pubkey().unwrap()).await
 		.unwrap().expect("known vtxo keypair").1;
 
 	let mut rpc = srv.get_public_rpc().await;
@@ -239,7 +239,7 @@ async fn get_vtxos_status_by_ids() {
 	vtxos.reverse();
 	let mut queries = Vec::new();
 	for vtxo in &vtxos {
-		let keypair = client.pubkey_keypair(&vtxo.user_pubkey()).await
+		let keypair = client.pubkey_keypair(&vtxo.user_pubkey().unwrap()).await
 			.unwrap().expect("known vtxo keypair").1;
 		queries.push(protos::VtxoStatusQuery {
 			vtxo_id: vtxo.id().to_bytes().to_vec(),
@@ -1121,7 +1121,7 @@ async fn arkoor_rejects_dust_on_checkpoint_tx() {
 	let bark2_client = bark2.client().await;
 	let bare_vtxo = bark2_client.vtxos().await
 		.unwrap().into_iter().next().unwrap().vtxo;
-	let vtxo_keypair = bark2_client.pubkey_keypair(&bare_vtxo.user_pubkey()).await
+	let vtxo_keypair = bark2_client.pubkey_keypair(&bare_vtxo.user_pubkey().unwrap()).await
 		.unwrap().unwrap().1;
 	let vtxo = bark2_client.get_full_vtxo(bare_vtxo.id()).await.unwrap();
 
@@ -1172,7 +1172,7 @@ async fn double_spend_arkoor() {
 	// the genesis chain.
 	let bare_vtxo = bark_client.vtxos().await
 		.unwrap().into_iter().next().unwrap().vtxo;
-	let vtxo_keypair = bark_client.pubkey_keypair(&bare_vtxo.user_pubkey()).await
+	let vtxo_keypair = bark_client.pubkey_keypair(&bare_vtxo.user_pubkey().unwrap()).await
 		.unwrap().unwrap().1;
 	let vtxo = bark_client.get_full_vtxo(bare_vtxo.id()).await.unwrap();
 
@@ -1266,7 +1266,7 @@ async fn reject_expired_arkoor_cosign() {
 
 	let bare_vtxo = bark_client.vtxos().await
 		.unwrap().into_iter().next().unwrap().vtxo;
-	let vtxo_keypair = bark_client.pubkey_keypair(&bare_vtxo.user_pubkey()).await
+	let vtxo_keypair = bark_client.pubkey_keypair(&bare_vtxo.user_pubkey().unwrap()).await
 		.unwrap().unwrap().1;
 	let vtxo = bark_client.get_full_vtxo(bare_vtxo.id()).await.unwrap();
 	let change_pk = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
@@ -1353,7 +1353,7 @@ async fn double_spend_round() {
 					nonces: vec![],
 				}
 			}).collect::<Vec<_>>();
-			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).await.unwrap().unwrap();
+			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey.unwrap()).await.unwrap().unwrap();
 			let challenge = *self.challenge.lock().await.as_ref().unwrap();
 			req.input_vtxos[0].attestation = RoundAttemptAttestation::new(
 				challenge, self.vtxo.id, &vtxo_requests, &keypair,
@@ -1679,7 +1679,7 @@ async fn reject_dust_vtxo_request() {
 			}).collect::<Vec<_>>();
 
 			// Spending input boarded with first derivation
-			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).await.unwrap().unwrap();
+			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey.unwrap()).await.unwrap().unwrap();
 
 			let challenge = *self.challenge.lock().await.as_ref().unwrap();
 			req.input_vtxos.get_mut(0).unwrap().attestation = RoundAttemptAttestation::new(
@@ -2001,7 +2001,7 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 		async fn request_arkoor_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			let (_, keypair) = self.0.pubkey_keypair(&self.1.user_pubkey).await.unwrap().unwrap();
+			let (_, keypair) = self.0.pubkey_keypair(&self.1.user_pubkey.unwrap()).await.unwrap().unwrap();
 
 			let outputs = req.parts[0].outputs.iter()
 				.chain(&req.parts[0].isolated_outputs)
@@ -2217,7 +2217,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
 		) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
 			// Spending input boarded with first derivation
-			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).await.unwrap().unwrap();
+			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey.unwrap()).await.unwrap().unwrap();
 
 			let vtxo_requests = req.vtxo_requests.iter().map(|r| {
 				SignedVtxoRequest {
@@ -2383,7 +2383,7 @@ async fn confirmed_exit_during_signing_does_not_stop_round_coordinator() {
 	let input_id = bark.vtxo_ids().await[0];
 	let input = bark.raw_vtxo(input_id).await;
 	let wallet = bark.client().await;
-	let (_, input_key) = wallet.pubkey_keypair(&input.user_pubkey()).await
+	let (_, input_key) = wallet.pubkey_keypair(&input.user_pubkey().unwrap()).await
 		.unwrap().expect("participant owns the input");
 	let db = Db::connect(&srv.config().postgres.clone()).await.unwrap();
 
@@ -2404,7 +2404,7 @@ async fn confirmed_exit_during_signing_does_not_stop_round_coordinator() {
 	let (secret_nonce, public_nonce) = musig::nonce_pair(&cosign_key);
 	let request = SignedVtxoRequest {
 		vtxo: VtxoRequest {
-			policy: VtxoPolicy::new_pubkey(input.user_pubkey()),
+			policy: VtxoPolicy::new_pubkey(input.user_pubkey().unwrap()),
 			amount: sat(90_000),
 		},
 		cosign_pubkey: cosign_key.public_key(),

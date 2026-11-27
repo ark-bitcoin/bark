@@ -35,7 +35,7 @@ pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_PPM_FEE_TOTAL;
 /// The maximum protocol version supported by the server.
 ///
 /// For info on protocol versions, see [server_rpc::pver] module documentation.
-pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_HASHLOCK_CLAUSES;
+pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_SCRIPT_ARKOOR;
 
 /// Default maximum number of remotely-reset HTTP/2 streams that may sit in a
 /// connection's accept queue before h2 closes the connection.

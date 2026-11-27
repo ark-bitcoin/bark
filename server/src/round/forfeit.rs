@@ -263,7 +263,7 @@ impl Server {
 				&pub_nonce,
 				sec_nonce,
 				self.server_key.leak_ref(),
-			);
+			).with_context(|| format!("can't finish forfeit of vtxo {}", vtxo_ff.vtxo_id))?;
 			let ff_txid = ff_tx.compute_txid();
 
 			ff_txs.push(ff_tx);

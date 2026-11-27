@@ -35,6 +35,9 @@ impl Vtxo<Full> {
 			GenesisTransition::Arkoor(ref mut inner) => {
 				inner.signature.replace(fake).expect("didn't have arkoor signature");
 			},
+			GenesisTransition::ScriptArkoor(ref mut inner) => {
+				inner.signature.replace(fake).expect("didn't have signature");
+			},
 		}
 	}
 }
@@ -77,7 +80,7 @@ pub fn build_signed_tree_with_leaves(
 		BlockHeight::new(101_000),
 		BlockDelta::new(24),
 		vec![user_cosign_key.public_key(), server_cosign_key.public_key()],
-	);
+	).unwrap();
 	spec.hashlock_version = version;
 
 	let funding_tx = Transaction {
