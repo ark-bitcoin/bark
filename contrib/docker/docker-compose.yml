@@ -66,6 +66,8 @@ services:
   bark:
     image:
       docker.io/secondark/bark:latest
+    environment:
+      BARK_REGTEST_SETUP: "1"
     volumes:
       - bark:/root
     depends_on:

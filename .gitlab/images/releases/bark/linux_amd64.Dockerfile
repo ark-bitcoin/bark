@@ -15,4 +15,4 @@ RUN chmod a+x /usr/local/bin/bark && \
     chmod a+x /usr/local/bin/barkd && \
     chmod a+x /run.sh
 
-CMD ["/run.sh"]
+ENTRYPOINT ["/run.sh"]
