@@ -1,11 +1,12 @@
 use std::env;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::{Duration, Instant};
 
 use log::{debug, error, trace};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio_postgres::{Client, Config, NoTls};
 
 use server::config;
@@ -202,6 +203,26 @@ impl DaemonHelper for PostgresHelper {
 				return Ok(());
 			}
 			tokio::time::sleep(poll_interval()).await;
+		}
+	}
+
+	fn prepare_kill(&self, child: &mut Child) {
+		// Postgres removes its shared memory segments only when it shuts
+		// down by itself. SIGQUIT is the immediate shutdown: it does not
+		// wait for clients and writes no checkpoint, so it also works
+		// when the datadir is already removed.
+		let Some(pid) = child.id() else { return };
+		let pid = nix::unistd::Pid::from_raw(pid as i32);
+		if nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGQUIT).is_err() {
+			return;
+		}
+
+		let start = Instant::now();
+		while start.elapsed() < Duration::from_secs(5) {
+			if !matches!(child.try_wait(), Ok(None)) {
+				break;
+			}
+			std::thread::sleep(Duration::from_millis(10));
 		}
 	}
 }
