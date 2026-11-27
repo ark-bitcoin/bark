@@ -771,9 +771,15 @@ impl Server {
 			user_pub_nonce,
 		);
 
+		// Only an output paying the board script binds, or any public output
+		// would bind a new row per user key.
+		let spk = builder.funding_script_pubkey();
+		if funding_tx.output[utxo.vout as usize].script_pubkey != spk {
+			return badarg!("board outpoint does not pay the board script");
+		}
+
 		// Fees and the exit delta can change, so bind the output to one exit
 		// before signing, or two signed exits could spend it.
-		let spk = builder.funding_script_pubkey();
 		let exit_txid = builder.exit_txid();
 		let bound = self.db.write(async |t| t.bind_board_exit(utxo, &spk, exit_txid).await).await?;
 		if bound != exit_txid {
