@@ -510,6 +510,10 @@ impl rpc::server::ArkService for Server {
 				in order to be able to send Lightning payments.");
 		}
 
+		if req.htlc_vtxo_ids.len() > rpc::MAX_NB_VTXO_IDS {
+			macros::badarg!("too many vtxo ids, max is {}", rpc::MAX_NB_VTXO_IDS);
+		}
+
 		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
 			.map(VtxoId::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
